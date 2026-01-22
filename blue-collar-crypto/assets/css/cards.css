@@ -1,0 +1,27 @@
+/* -----------------------------------------
+   BCC: Allow PeepSo cards to grow naturally
+------------------------------------------ */
+
+.ps-blogposts__post,
+.ps-blogposts__post-inside,
+.ps-blogposts__post-body {
+    height: auto ;
+    overflow: visible ;
+}
+
+/* Never clip actions */
+.ps-blogposts__post-actions {
+    height: auto !important;
+    overflow: visible !important;
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 8px;
+    margin-top: 12px;
+    padding-bottom: 12px;
+}
+
+/* Buttons must fit text */
+.ps-blogposts__post-actions .ps-btn {
+    line-height: 1.4 !important;
+    padding: 8px 12px !important;
+}

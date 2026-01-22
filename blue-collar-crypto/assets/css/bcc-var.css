@@ -1,0 +1,39 @@
+/* =====================================================
+   BCC Plugin – Variable Bridge (FSE-compatible)
+   ===================================================== */
+
+/* Global fallbacks */
+:root {
+    --ps-primary: #2563eb;
+
+    --ps-text: #111827;
+    --ps-text-muted: rgba(107,114,128,1);
+
+    --ps-divider: #e5e7eb;
+}
+
+/* WordPress / PeepSo / FSE context */
+.plg-peepso,
+.wp-admin,
+.block-editor-iframe__body {
+    /* Text */
+    --ps-text: var(--wp--preset--color--contrast, #111827);
+    --ps-text-muted: var(--wp--preset--color--contrast-light, rgba(107,114,128,1));
+
+    /* Brand */
+    --ps-primary: var(--wp--preset--color--primary, #2563eb);
+
+    /* UI */
+    --ps-divider: color-mix(
+        in srgb,
+        var(--wp--preset--color--contrast, #111827) 15%,
+        transparent
+    );
+}
+
+/* Dark mode */
+.ps-dark-mode {
+    --ps-text: var(--wp--preset--color--base, #ffffff);
+    --ps-text-muted: rgba(255,255,255,.65);
+    --ps-divider: rgba(255,255,255,.2);
+}

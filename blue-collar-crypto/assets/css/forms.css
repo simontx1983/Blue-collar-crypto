@@ -1,0 +1,102 @@
+/* =========================================
+   Base Form Styles
+   ========================================= */
+
+.bcc-form,
+.bcc-filter {
+    margin-bottom: 1rem;
+}
+
+/* -----------------------------------------
+   Labels
+   ----------------------------------------- */
+
+.bcc-form label,
+.bcc-filter label {
+    display: block;
+    margin-bottom: 0.25rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #334155; /* slate-700 */
+}
+
+/* -----------------------------------------
+   Inputs / Selects / Textareas
+   ----------------------------------------- */
+
+.bcc-form input[type="text"],
+.bcc-form input[type="number"],
+.bcc-form input[type="url"],
+.bcc-form select,
+.bcc-form textarea,
+.bcc-filter select {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.875rem;
+    line-height: 1.25;
+    color: #0f172a; /* slate-900 */
+    background-color: #ffffff;
+    border: 1px solid #cbd5f5; /* slate-300 */
+    border-radius: 4px;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+/* -----------------------------------------
+   Focus States
+   ----------------------------------------- */
+
+.bcc-form input:focus,
+.bcc-form select:focus,
+.bcc-form textarea:focus,
+.bcc-filter select:focus {
+    outline: none;
+    border-color: #3b82f6; /* blue-500 */
+    box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.3);
+}
+
+/* -----------------------------------------
+   Buttons
+   ----------------------------------------- */
+
+.bcc-form button,
+.bcc-form input[type="submit"] {
+    display: inline-block;
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #ffffff;
+    background-color: #2563eb; /* blue-600 */
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+
+.bcc-form button:hover,
+.bcc-form input[type="submit"]:hover {
+    background-color: #1d4ed8; /* blue-700 */
+}
+
+/* -----------------------------------------
+   Help Text / Notices
+   ----------------------------------------- */
+
+.bcc-form .bcc-form__help {
+    margin-top: 0.25rem;
+    font-size: 0.75rem;
+    color: #64748b; /* slate-500 */
+}
+
+/* -----------------------------------------
+   Inline Filters (optional)
+   ----------------------------------------- */
+
+.bcc-filter--inline {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+}
+
+.bcc-filter--inline select {
+    max-width: 220px;
+}
