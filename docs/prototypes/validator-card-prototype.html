@@ -1,0 +1,1266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>BCC // Validator Card Collection — Series 01</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Stencil+Display:wght@400;700;800;900&family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;1,9..144,400;1,9..144,500&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+:root {
+  --cardstock:       #efe5cf;
+  --cardstock-deep:  #d9c9a3;
+  --cardstock-edge:  #b09877;
+  --ink:             #0f0d09;
+  --ink-soft:        #2a251c;
+  --blueprint:       #0f1e3c;
+  --safety:          #f05a28;
+  --weld:            #ffc01e;
+  --concrete:        #14110d;
+  --concrete-hi:     #1d1913;
+
+  --chain-cosmos:    #1a0f3e;
+  --chain-osmosis:   #c73f86;
+  --chain-injective: #0a72ff;
+  --chain-kujira:    #e62c3f;
+
+  --tier-common:     #6b6e72;
+  --tier-uncommon:   #247a3f;
+  --tier-rare:       #1d4fbb;
+  --tier-legendary:  #d9a400;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  min-height: 100vh;
+  font-family: 'Fraunces', Georgia, serif;
+  color: var(--cardstock);
+  background: var(--concrete);
+  overflow-x: hidden;
+}
+
+/* ──────────────────────────────────────────────────────────
+   WAREHOUSE FLOOR — concrete + blueprint grid + vignettes
+   ────────────────────────────────────────────────────────── */
+body {
+  background-color: var(--concrete);
+  background-image:
+    repeating-linear-gradient(0deg,  transparent 0 72px, rgba(239, 229, 207, 0.025) 72px 73px),
+    repeating-linear-gradient(90deg, transparent 0 72px, rgba(239, 229, 207, 0.025) 72px 73px),
+    radial-gradient(ellipse at 22% 10%, rgba(240, 90, 40, 0.10), transparent 55%),
+    radial-gradient(ellipse at 85% 85%, rgba(29, 79, 187, 0.08), transparent 60%);
+  background-size: 72px 72px, 72px 72px, 100% 100%, 100% 100%;
+  position: relative;
+}
+
+/* film grain overlay */
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='240' height='240' filter='url(%23n)' opacity='0.55'/></svg>");
+  opacity: 0.09;
+  mix-blend-mode: overlay;
+  z-index: 1000;
+}
+
+/* scan line shimmer */
+body::after {
+  content: '';
+  position: fixed; inset: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, transparent 0 49.5%, rgba(255,255,255,0.02) 50%, transparent 50.5% 100%);
+  background-size: 100% 3px;
+  mix-blend-mode: overlay;
+  z-index: 999;
+}
+
+/* ──────────────────────────────────────────────────────────
+   HEADER RAIL
+   ────────────────────────────────────────────────────────── */
+.rail {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 32px;
+  border-bottom: 1px dashed rgba(239, 229, 207, 0.22);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(239, 229, 207, 0.7);
+}
+.rail .dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  background: var(--safety);
+  border-radius: 50%;
+  margin-right: 8px;
+  vertical-align: middle;
+  box-shadow: 0 0 10px var(--safety);
+  animation: pulse 2.4s infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+.rail .rail-right span + span { margin-left: 24px; }
+
+/* ──────────────────────────────────────────────────────────
+   HERO
+   ────────────────────────────────────────────────────────── */
+.hero {
+  padding: 64px 32px 48px;
+  max-width: 1440px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 48px;
+  align-items: end;
+  position: relative;
+}
+
+.hero::before {
+  /* big stencil SERIES number watermark */
+  content: '01';
+  position: absolute;
+  top: -40px;
+  right: 32px;
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 900;
+  font-size: clamp(220px, 28vw, 420px);
+  line-height: 0.8;
+  color: rgba(239, 229, 207, 0.04);
+  pointer-events: none;
+  z-index: 0;
+  letter-spacing: -0.05em;
+}
+
+.hero > * { position: relative; z-index: 1; }
+
+.hero-title {
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 900;
+  font-size: clamp(56px, 9vw, 148px);
+  line-height: 0.86;
+  letter-spacing: -0.02em;
+  color: var(--cardstock);
+  text-transform: uppercase;
+}
+.hero-title .accent {
+  display: block;
+  color: var(--safety);
+  position: relative;
+}
+.hero-title .accent::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 50%;
+  width: 6px; height: 75%;
+  background: var(--safety);
+  transform: translate(-22px, -50%);
+}
+
+.hero-sub {
+  font-family: 'Fraunces', serif;
+  font-style: italic;
+  font-size: 20px;
+  line-height: 1.45;
+  color: rgba(239, 229, 207, 0.75);
+  max-width: 540px;
+  margin-top: 24px;
+}
+
+.hero-meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  text-align: right;
+  color: rgba(239, 229, 207, 0.7);
+  border-left: 2px solid var(--safety);
+  padding-left: 20px;
+  line-height: 1.9;
+}
+.hero-meta strong {
+  color: var(--cardstock);
+  font-weight: 500;
+}
+
+/* ──────────────────────────────────────────────────────────
+   RARITY LEGEND STRIP
+   ────────────────────────────────────────────────────────── */
+.legend {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 24px 32px;
+  display: flex;
+  gap: 36px;
+  flex-wrap: wrap;
+  align-items: center;
+  border-top: 1px dashed rgba(239, 229, 207, 0.18);
+  border-bottom: 1px dashed rgba(239, 229, 207, 0.18);
+}
+.legend-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  color: rgba(239, 229, 207, 0.55);
+  text-transform: uppercase;
+}
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--cardstock);
+  text-transform: uppercase;
+}
+.legend-swatch {
+  width: 22px; height: 14px;
+  border: 1px solid rgba(239, 229, 207, 0.35);
+}
+.legend-swatch.common    { background: var(--tier-common); }
+.legend-swatch.uncommon  { background: var(--tier-uncommon); }
+.legend-swatch.rare      { background: var(--tier-rare); }
+.legend-swatch.legendary {
+  background: linear-gradient(135deg, #ffd95e 0%, #d9a400 35%, #b87400 70%, #ffe98a 100%);
+}
+
+/* ──────────────────────────────────────────────────────────
+   CARD GRID
+   ────────────────────────────────────────────────────────── */
+.collection {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 72px 32px 32px;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 40px;
+  justify-items: center;
+  perspective: 2400px;
+}
+@media (max-width: 1100px) { .collection { grid-template-columns: repeat(2, 1fr); gap: 48px; } }
+@media (max-width: 560px)  { .collection { grid-template-columns: 1fr; } }
+
+/* ──────────────────────────────────────────────────────────
+   CARD — wrapper & 3D flip
+   ────────────────────────────────────────────────────────── */
+.card {
+  width: 316px;
+  height: 440px;
+  position: relative;
+  transform-style: preserve-3d;
+  cursor: pointer;
+  transition: transform 0.7s cubic-bezier(.2,.9,.25,1);
+  will-change: transform;
+  --rx: 0deg;
+  --ry: 0deg;
+  --mx: 50%;
+  --my: 50%;
+  transform: rotateX(var(--rx)) rotateY(var(--ry));
+}
+.card.flipped { transform: rotateX(var(--rx)) rotateY(calc(180deg + var(--ry))); }
+
+.card-face {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--cardstock);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.7) inset,
+    0 -1px 0 rgba(0, 0, 0, 0.2) inset,
+    0 30px 60px -20px rgba(0, 0, 0, 0.7),
+    0 10px 25px -5px rgba(0, 0, 0, 0.5);
+}
+.card-back { transform: rotateY(180deg); }
+
+/* aged cardstock texture */
+.card-face::before {
+  content: '';
+  position: absolute; inset: 0;
+  background-image:
+    radial-gradient(circle at 20% 15%, rgba(176, 152, 119, 0.22), transparent 40%),
+    radial-gradient(circle at 85% 80%, rgba(176, 152, 119, 0.28), transparent 50%),
+    radial-gradient(circle at 60% 30%, rgba(42, 37, 28, 0.08), transparent 30%);
+  pointer-events: none;
+  mix-blend-mode: multiply;
+  z-index: 1;
+}
+.card-face::after {
+  content: '';
+  position: absolute; inset: 0;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='1.3' numOctaves='2' stitchTiles='stitch'/></filter><rect width='200' height='200' filter='url(%23n)' opacity='0.45'/></svg>");
+  mix-blend-mode: multiply;
+  opacity: 0.18;
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* ──────────────────────────────────────────────────────────
+   CARD FRONT — regions
+   ────────────────────────────────────────────────────────── */
+.card-front {
+  display: grid;
+  grid-template-rows: 56px 1fr 92px 44px;
+  position: relative;
+  color: var(--ink);
+}
+
+/* TOP BAND — chain */
+.chain-band {
+  position: relative;
+  background: var(--chain-color, var(--chain-cosmos));
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  border-bottom: 3px solid var(--ink);
+  z-index: 3;
+}
+.chain-band::after {
+  /* bottom edge wear */
+  content: '';
+  position: absolute;
+  left: 0; right: 0; bottom: -3px;
+  height: 3px;
+  background: var(--ink);
+  clip-path: polygon(0 0, 3% 100%, 6% 0, 9% 100%, 12% 0, 100% 0, 100% 100%, 0 100%);
+}
+.chain-name {
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 800;
+  font-size: 26px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.chain-tag {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  padding: 3px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  text-transform: uppercase;
+}
+
+/* PORTRAIT */
+.portrait {
+  position: relative;
+  background:
+    radial-gradient(circle at 50% 35%, var(--chain-glow, rgba(255, 255, 255, 0.15)) 0%, transparent 60%),
+    linear-gradient(180deg, var(--chain-color) 0%, color-mix(in srgb, var(--chain-color) 60%, #000) 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  z-index: 3;
+}
+.portrait::before {
+  /* halftone dots */
+  content: '';
+  position: absolute; inset: 0;
+  background-image: radial-gradient(circle, rgba(255,255,255,0.12) 1px, transparent 1.5px);
+  background-size: 6px 6px;
+  mix-blend-mode: overlay;
+  pointer-events: none;
+}
+.portrait::after {
+  /* rule-of-thirds blueprint lines */
+  content: '';
+  position: absolute; inset: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  pointer-events: none;
+}
+
+/* Hexagonal crest with monogram */
+.crest {
+  width: 140px;
+  height: 160px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  filter: drop-shadow(0 6px 8px rgba(0, 0, 0, 0.5));
+}
+.crest-hex {
+  position: absolute;
+  inset: 0;
+  background: var(--cardstock);
+  clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+  border: 0;
+}
+.crest-hex::before {
+  /* inner stroke */
+  content: '';
+  position: absolute;
+  inset: 8px;
+  background: var(--chain-color);
+  clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+}
+.crest-hex::after {
+  content: '';
+  position: absolute;
+  inset: 14px;
+  background: var(--cardstock-deep);
+  clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+}
+.crest-mono {
+  position: relative;
+  z-index: 2;
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 900;
+  font-size: 78px;
+  line-height: 0.9;
+  color: var(--chain-color);
+  letter-spacing: -0.04em;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.12);
+}
+
+/* bolts at corners of portrait */
+.bolt {
+  position: absolute;
+  width: 10px; height: 10px;
+  background: radial-gradient(circle at 35% 35%, #d9c9a3, #7a6b4e);
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.3);
+  z-index: 4;
+}
+.bolt.tl { top: 8px; left: 8px; }
+.bolt.tr { top: 8px; right: 8px; }
+.bolt.bl { bottom: 8px; left: 8px; }
+.bolt.br { bottom: 8px; right: 8px; }
+
+/* NAME BANNER */
+.name-banner {
+  position: relative;
+  background: var(--cardstock);
+  border-top: 3px solid var(--ink);
+  padding: 10px 14px 6px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  overflow: hidden;
+}
+.name-banner::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; top: -6px;
+  height: 3px;
+  background: var(--tier-color, var(--tier-common));
+}
+.validator-name {
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 900;
+  font-size: 30px;
+  line-height: 0.92;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+  text-transform: uppercase;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.validator-sub {
+  font-family: 'Fraunces', serif;
+  font-style: italic;
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin-top: 3px;
+  letter-spacing: 0.01em;
+}
+
+/* STATS ROW */
+.stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  background: var(--cardstock-deep);
+  border-top: 1px solid var(--ink);
+  color: var(--ink);
+  z-index: 3;
+  position: relative;
+}
+.stat {
+  padding: 6px 8px;
+  border-right: 1px solid rgba(15, 13, 9, 0.3);
+  font-family: 'JetBrains Mono', monospace;
+  font-feature-settings: 'tnum' 1;
+  text-align: center;
+}
+.stat:last-child { border-right: 0; }
+.stat-label {
+  font-size: 8px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  display: block;
+}
+.stat-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.2;
+  display: block;
+  margin-top: 1px;
+}
+
+/* CARD NUMBER corner */
+.card-number {
+  position: absolute;
+  top: 6px; right: 10px;
+  z-index: 5;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.85);
+  letter-spacing: 0.14em;
+}
+
+/* TIER STAMP (top-left ribbon on card) */
+.tier-stamp {
+  position: absolute;
+  top: 66px; left: -8px;
+  z-index: 6;
+  background: var(--tier-color);
+  color: #fff;
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 900;
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  padding: 5px 10px 5px 14px;
+  text-transform: uppercase;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%, 6px 50%);
+}
+
+/* ──────────────────────────────────────────────────────────
+   TIER VARIANTS
+   ────────────────────────────────────────────────────────── */
+.card[data-tier="common"]    { --tier-color: var(--tier-common);    }
+.card[data-tier="uncommon"]  { --tier-color: var(--tier-uncommon);  }
+.card[data-tier="rare"]      { --tier-color: var(--tier-rare);      }
+.card[data-tier="legendary"] { --tier-color: var(--tier-legendary); }
+
+/* border treatment per tier */
+.card[data-tier="common"] .card-face {
+  border: 2px solid rgba(15, 13, 9, 0.18);
+}
+.card[data-tier="uncommon"] .card-face {
+  border: 2px solid var(--tier-uncommon);
+  box-shadow:
+    0 0 0 1px rgba(36, 122, 63, 0.3) inset,
+    0 30px 60px -20px rgba(0, 0, 0, 0.7),
+    0 10px 25px -5px rgba(0, 0, 0, 0.5);
+}
+.card[data-tier="rare"] .card-face {
+  border: 3px solid var(--tier-rare);
+  box-shadow:
+    0 0 0 1px rgba(29, 79, 187, 0.6) inset,
+    0 0 18px rgba(29, 79, 187, 0.25),
+    0 30px 60px -20px rgba(0, 0, 0, 0.7),
+    0 10px 25px -5px rgba(0, 0, 0, 0.5);
+}
+
+/* LEGENDARY — FOIL */
+.card[data-tier="legendary"] .card-face {
+  border: 3px solid var(--tier-legendary);
+  box-shadow:
+    0 0 0 1px rgba(217, 164, 0, 0.7) inset,
+    0 0 30px rgba(255, 192, 30, 0.35),
+    0 30px 60px -20px rgba(0, 0, 0, 0.7),
+    0 10px 25px -5px rgba(0, 0, 0, 0.5);
+}
+/* holographic foil sheen on portrait only */
+.card[data-tier="legendary"] .portrait {
+  background:
+    radial-gradient(circle at 50% 35%, rgba(255, 255, 255, 0.25) 0%, transparent 60%),
+    linear-gradient(180deg, var(--chain-color) 0%, color-mix(in srgb, var(--chain-color) 60%, #000) 100%);
+}
+.card[data-tier="legendary"] .portrait::before {
+  background-image:
+    radial-gradient(circle, rgba(255,255,255,0.12) 1px, transparent 1.5px),
+    conic-gradient(from calc(var(--mx) * 3.6deg) at var(--mx) var(--my),
+      rgba(255, 0, 120, 0.35),
+      rgba(255, 200, 0, 0.35),
+      rgba(0, 220, 180, 0.35),
+      rgba(80, 100, 255, 0.35),
+      rgba(255, 0, 120, 0.35));
+  background-size: 6px 6px, 100% 100%;
+  mix-blend-mode: color-dodge;
+  opacity: 0.75;
+}
+.card[data-tier="legendary"] .chain-band {
+  background: linear-gradient(90deg,
+    #d9a400 0%,
+    #ffd95e 20%,
+    #b87400 40%,
+    #ffe98a 60%,
+    #d9a400 80%,
+    #ffd95e 100%);
+  background-size: 300% 100%;
+  animation: foilshift 8s linear infinite;
+  color: var(--ink);
+}
+@keyframes foilshift {
+  0%   { background-position: 0% 50%; }
+  100% { background-position: 300% 50%; }
+}
+.card[data-tier="legendary"] .chain-band .chain-name,
+.card[data-tier="legendary"] .chain-band .chain-tag {
+  color: var(--ink);
+  border-color: rgba(15, 13, 9, 0.5);
+}
+
+/* GRADED stamp on legendary */
+.graded-stamp {
+  position: absolute;
+  bottom: 98px; right: 8px;
+  z-index: 6;
+  background: var(--ink);
+  color: var(--weld);
+  padding: 4px 7px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8px;
+  letter-spacing: 0.2em;
+  line-height: 1.2;
+  text-align: center;
+  border: 1px solid var(--weld);
+  text-transform: uppercase;
+  transform: rotate(4deg);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
+}
+.graded-stamp strong {
+  display: block;
+  font-size: 14px;
+  color: var(--weld);
+  font-weight: 700;
+}
+
+/* ──────────────────────────────────────────────────────────
+   CARD BACK
+   ────────────────────────────────────────────────────────── */
+.card-back {
+  background: var(--cardstock);
+  color: var(--ink);
+  display: grid;
+  grid-template-rows: 44px auto auto 1fr auto;
+  padding: 0;
+}
+.back-header {
+  background: var(--ink);
+  color: var(--cardstock);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 14px;
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 800;
+  font-size: 16px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  position: relative;
+  z-index: 3;
+}
+.back-header .back-no {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0.2em;
+  color: var(--weld);
+}
+
+.season-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  padding: 12px 14px 8px;
+  gap: 6px;
+  border-bottom: 1px dashed rgba(15, 13, 9, 0.3);
+  position: relative;
+  z-index: 3;
+}
+.season-cell {
+  font-family: 'JetBrains Mono', monospace;
+  font-feature-settings: 'tnum' 1;
+  text-align: center;
+}
+.season-cell .k {
+  display: block;
+  font-size: 7px;
+  letter-spacing: 0.2em;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+}
+.season-cell .v {
+  display: block;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+  margin-top: 2px;
+}
+
+.uptime-chart {
+  padding: 10px 14px;
+  position: relative;
+  z-index: 3;
+}
+.uptime-chart .chart-label {
+  display: flex;
+  justify-content: space-between;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8px;
+  letter-spacing: 0.2em;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.bars {
+  display: flex;
+  gap: 2px;
+  align-items: flex-end;
+  height: 34px;
+  padding: 2px 0;
+  border-bottom: 1px solid rgba(15, 13, 9, 0.3);
+}
+.bar {
+  flex: 1;
+  background: var(--tier-color, var(--chain-color));
+  opacity: 0.85;
+  min-height: 2px;
+}
+.bar.dip { background: var(--safety); opacity: 1; }
+
+.record {
+  padding: 10px 14px 4px;
+  position: relative;
+  z-index: 3;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--ink-soft);
+  line-height: 1.55;
+}
+.record .row {
+  display: flex;
+  justify-content: space-between;
+  border-bottom: 1px dotted rgba(15, 13, 9, 0.25);
+  padding: 2px 0;
+}
+.record .row strong { color: var(--ink); font-weight: 700; }
+
+.flavor {
+  padding: 12px 14px;
+  position: relative;
+  z-index: 3;
+  border-top: 1px dashed rgba(15, 13, 9, 0.3);
+  background: var(--cardstock-deep);
+  font-family: 'Fraunces', serif;
+  font-style: italic;
+  font-weight: 500;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--ink);
+  position: relative;
+}
+.flavor::before {
+  content: '"';
+  position: absolute;
+  top: -4px; left: 6px;
+  font-size: 52px;
+  line-height: 1;
+  font-family: 'Fraunces', serif;
+  color: rgba(15, 13, 9, 0.2);
+  font-style: normal;
+}
+.flavor-attr {
+  display: block;
+  margin-top: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-style: normal;
+  font-size: 9px;
+  letter-spacing: 0.15em;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+}
+
+/* ──────────────────────────────────────────────────────────
+   ENTRY ANIMATION — staggered "deal-in"
+   ────────────────────────────────────────────────────────── */
+@keyframes dealIn {
+  0% {
+    transform: translateY(140px) rotateZ(-14deg) scale(0.85);
+    opacity: 0;
+  }
+  60% {
+    transform: translateY(-6px) rotateZ(1deg) scale(1.01);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(0) rotateZ(0deg) scale(1);
+    opacity: 1;
+  }
+}
+.card-wrap {
+  animation: dealIn 0.9s cubic-bezier(.2,.9,.25,1) both;
+  transform-style: preserve-3d;
+  perspective: 2400px;
+}
+.card-wrap:nth-child(1) { animation-delay: 0.08s; }
+.card-wrap:nth-child(2) { animation-delay: 0.22s; }
+.card-wrap:nth-child(3) { animation-delay: 0.36s; }
+.card-wrap:nth-child(4) { animation-delay: 0.50s; }
+
+/* subtle floor reflection hint beneath each card */
+.card-wrap {
+  position: relative;
+}
+.card-wrap::after {
+  content: '';
+  position: absolute;
+  left: 8%; right: 8%;
+  bottom: -28px;
+  height: 28px;
+  background: radial-gradient(ellipse at 50% 0%, rgba(0, 0, 0, 0.55), transparent 70%);
+  filter: blur(4px);
+  z-index: -1;
+  pointer-events: none;
+}
+
+/* caption under each card */
+.card-caption {
+  margin-top: 42px;
+  text-align: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  color: rgba(239, 229, 207, 0.55);
+  text-transform: uppercase;
+}
+.card-caption strong {
+  color: var(--cardstock);
+  font-weight: 500;
+}
+
+/* ──────────────────────────────────────────────────────────
+   FOOTER
+   ────────────────────────────────────────────────────────── */
+.footer {
+  max-width: 1440px;
+  margin: 32px auto 0;
+  padding: 28px 32px 40px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top: 1px dashed rgba(239, 229, 207, 0.2);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  color: rgba(239, 229, 207, 0.45);
+  text-transform: uppercase;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.footer .stamp {
+  border: 1px solid var(--safety);
+  color: var(--safety);
+  padding: 4px 8px;
+  letter-spacing: 0.22em;
+  transform: rotate(-1.5deg);
+}
+
+/* reduce motion respect */
+@media (prefers-reduced-motion: reduce) {
+  .card-wrap { animation: none; }
+  .card { transition: none; }
+  .card[data-tier="legendary"] .chain-band { animation: none; }
+}
+</style>
+</head>
+<body>
+
+<div class="rail">
+  <div><span class="dot"></span>BCC // FLOOR 01 — VALIDATOR CARD COLLECTION</div>
+  <div class="rail-right">
+    <span>SERIES 01</span>
+    <span>PRINT RUN · OPEN</span>
+    <span>SIGNED ON-CHAIN</span>
+    <span id="clock">--:--:-- UTC</span>
+  </div>
+</div>
+
+<section class="hero">
+  <div>
+    <h1 class="hero-title">
+      Honest work,<br />
+      <span class="accent">signed.</span>
+    </h1>
+    <p class="hero-sub">
+      Every validator in the collection is graded by the community and verified on-chain.
+      Flip a card. Read the stats on the back. Trade it, stack it, or pin it to your binder.
+    </p>
+  </div>
+  <div class="hero-meta">
+    <div><strong>SET</strong> &nbsp; Series 01 · The Foundry</div>
+    <div><strong>PRINT</strong> &nbsp; 1 / ∞ per validator</div>
+    <div><strong>CONDITION</strong> &nbsp; Mint — Signed</div>
+    <div><strong>CERT</strong> &nbsp; BCC-GRADED</div>
+  </div>
+</section>
+
+<div class="legend">
+  <span class="legend-label">Rarity //</span>
+  <span class="legend-item"><span class="legend-swatch common"></span>Common</span>
+  <span class="legend-item"><span class="legend-swatch uncommon"></span>Uncommon</span>
+  <span class="legend-item"><span class="legend-swatch rare"></span>Rare</span>
+  <span class="legend-item"><span class="legend-swatch legendary"></span>Legendary · Foil</span>
+  <span class="legend-label" style="margin-left:auto">Tap a card to flip //</span>
+</div>
+
+<section class="collection" id="collection">
+
+  <!-- ───────── LEGENDARY ───────── -->
+  <div class="card-wrap">
+    <div class="card" data-tier="legendary"
+         style="--chain-color: var(--chain-cosmos);">
+      <!-- FRONT -->
+      <div class="card-face card-front">
+        <span class="tier-stamp">Legendary</span>
+        <span class="card-number">№ 001 / ∞</span>
+        <div class="chain-band">
+          <span class="chain-name">Cosmos Hub</span>
+          <span class="chain-tag">ATOM · Proof-of-Stake</span>
+        </div>
+        <div class="portrait">
+          <span class="bolt tl"></span><span class="bolt tr"></span>
+          <span class="bolt bl"></span><span class="bolt br"></span>
+          <div class="crest">
+            <div class="crest-hex"></div>
+            <div class="crest-mono">BN</div>
+          </div>
+        </div>
+        <div class="graded-stamp">BCC GRADED<strong>9.8</strong></div>
+        <div class="name-banner">
+          <div class="validator-name">Blacksmith Node</div>
+          <div class="validator-sub">Genesis validator · Active since 2019</div>
+        </div>
+        <div class="stats">
+          <div class="stat"><span class="stat-label">Trust</span><span class="stat-value">98</span></div>
+          <div class="stat"><span class="stat-label">Uptime</span><span class="stat-value">99.97%</span></div>
+          <div class="stat"><span class="stat-label">Fee</span><span class="stat-value">5%</span></div>
+        </div>
+      </div>
+      <!-- BACK -->
+      <div class="card-face card-back">
+        <div class="back-header">
+          <span>Career Stats</span>
+          <span class="back-no">REV 07 · 2026</span>
+        </div>
+        <div class="season-grid">
+          <div class="season-cell"><span class="k">Blocks</span><span class="v">2.4M</span></div>
+          <div class="season-cell"><span class="k">Delegators</span><span class="v">1,842</span></div>
+          <div class="season-cell"><span class="k">Disputes</span><span class="v">0</span></div>
+          <div class="season-cell"><span class="k">Slashes</span><span class="v">0</span></div>
+        </div>
+        <div class="uptime-chart">
+          <div class="chart-label"><span>Uptime · 12 Months</span><span>Apr 25 → Apr 26</span></div>
+          <div class="bars">
+            <div class="bar" style="height:88%"></div><div class="bar" style="height:92%"></div>
+            <div class="bar" style="height:90%"></div><div class="bar" style="height:94%"></div>
+            <div class="bar" style="height:96%"></div><div class="bar" style="height:98%"></div>
+            <div class="bar" style="height:95%"></div><div class="bar" style="height:93%"></div>
+            <div class="bar" style="height:97%"></div><div class="bar" style="height:100%"></div>
+            <div class="bar" style="height:99%"></div><div class="bar" style="height:98%"></div>
+          </div>
+        </div>
+        <div class="record">
+          <div class="row"><span>First block signed</span><strong>Mar 13, 2019</strong></div>
+          <div class="row"><span>Commission history</span><strong>5% · held steady</strong></div>
+          <div class="row"><span>Governance votes</span><strong>214 / 214</strong></div>
+          <div class="row"><span>Self-bond ratio</span><strong>12.4%</strong></div>
+        </div>
+        <div class="flavor">
+          Been here since genesis. Still forging blocks when the chain sleeps.
+          Never missed a vote. Never flinched.
+          <span class="flavor-attr">— Bio, signed by operator</span>
+        </div>
+      </div>
+    </div>
+    <div class="card-caption"><strong>001</strong> · Blacksmith Node · Cosmos Hub</div>
+  </div>
+
+  <!-- ───────── RARE ───────── -->
+  <div class="card-wrap">
+    <div class="card" data-tier="rare"
+         style="--chain-color: var(--chain-osmosis);">
+      <div class="card-face card-front">
+        <span class="tier-stamp">Rare</span>
+        <span class="card-number">№ 014 / ∞</span>
+        <div class="chain-band">
+          <span class="chain-name">Osmosis</span>
+          <span class="chain-tag">OSMO · DEX Chain</span>
+        </div>
+        <div class="portrait">
+          <span class="bolt tl"></span><span class="bolt tr"></span>
+          <span class="bolt bl"></span><span class="bolt br"></span>
+          <div class="crest">
+            <div class="crest-hex"></div>
+            <div class="crest-mono">IL</div>
+          </div>
+        </div>
+        <div class="name-banner">
+          <div class="validator-name">Iron Local 342</div>
+          <div class="validator-sub">Shift-validator · Active since 2021</div>
+        </div>
+        <div class="stats">
+          <div class="stat"><span class="stat-label">Trust</span><span class="stat-value">91</span></div>
+          <div class="stat"><span class="stat-label">Uptime</span><span class="stat-value">99.82%</span></div>
+          <div class="stat"><span class="stat-label">Fee</span><span class="stat-value">7%</span></div>
+        </div>
+      </div>
+      <div class="card-face card-back">
+        <div class="back-header">
+          <span>Career Stats</span>
+          <span class="back-no">REV 04 · 2026</span>
+        </div>
+        <div class="season-grid">
+          <div class="season-cell"><span class="k">Blocks</span><span class="v">812k</span></div>
+          <div class="season-cell"><span class="k">Delegators</span><span class="v">643</span></div>
+          <div class="season-cell"><span class="k">Disputes</span><span class="v">1</span></div>
+          <div class="season-cell"><span class="k">Slashes</span><span class="v">0</span></div>
+        </div>
+        <div class="uptime-chart">
+          <div class="chart-label"><span>Uptime · 12 Months</span><span>Apr 25 → Apr 26</span></div>
+          <div class="bars">
+            <div class="bar" style="height:90%"></div><div class="bar" style="height:94%"></div>
+            <div class="bar" style="height:88%"></div><div class="bar dip" style="height:48%"></div>
+            <div class="bar" style="height:92%"></div><div class="bar" style="height:96%"></div>
+            <div class="bar" style="height:95%"></div><div class="bar" style="height:97%"></div>
+            <div class="bar" style="height:98%"></div><div class="bar" style="height:100%"></div>
+            <div class="bar" style="height:96%"></div><div class="bar" style="height:98%"></div>
+          </div>
+        </div>
+        <div class="record">
+          <div class="row"><span>First block signed</span><strong>Jun 04, 2021</strong></div>
+          <div class="row"><span>Commission history</span><strong>10% → 7%</strong></div>
+          <div class="row"><span>Governance votes</span><strong>87 / 92</strong></div>
+          <div class="row"><span>Self-bond ratio</span><strong>8.1%</strong></div>
+        </div>
+        <div class="flavor">
+          Union-strong on every fork. When the chain stutters, the crew stays on the floor.
+          <span class="flavor-attr">— Delegator, verified on-chain</span>
+        </div>
+      </div>
+    </div>
+    <div class="card-caption"><strong>014</strong> · Iron Local 342 · Osmosis</div>
+  </div>
+
+  <!-- ───────── UNCOMMON ───────── -->
+  <div class="card-wrap">
+    <div class="card" data-tier="uncommon"
+         style="--chain-color: var(--chain-injective);">
+      <div class="card-face card-front">
+        <span class="tier-stamp">Uncommon</span>
+        <span class="card-number">№ 047 / ∞</span>
+        <div class="chain-band">
+          <span class="chain-name">Injective</span>
+          <span class="chain-tag">INJ · L1 Finance</span>
+        </div>
+        <div class="portrait">
+          <span class="bolt tl"></span><span class="bolt tr"></span>
+          <span class="bolt bl"></span><span class="bolt br"></span>
+          <div class="crest">
+            <div class="crest-hex"></div>
+            <div class="crest-mono">CS</div>
+          </div>
+        </div>
+        <div class="name-banner">
+          <div class="validator-name">Crosscut Stake</div>
+          <div class="validator-sub">Journeyman · Active since 2023</div>
+        </div>
+        <div class="stats">
+          <div class="stat"><span class="stat-label">Trust</span><span class="stat-value">84</span></div>
+          <div class="stat"><span class="stat-label">Uptime</span><span class="stat-value">99.50%</span></div>
+          <div class="stat"><span class="stat-label">Fee</span><span class="stat-value">8%</span></div>
+        </div>
+      </div>
+      <div class="card-face card-back">
+        <div class="back-header">
+          <span>Career Stats</span>
+          <span class="back-no">REV 02 · 2026</span>
+        </div>
+        <div class="season-grid">
+          <div class="season-cell"><span class="k">Blocks</span><span class="v">241k</span></div>
+          <div class="season-cell"><span class="k">Delegators</span><span class="v">198</span></div>
+          <div class="season-cell"><span class="k">Disputes</span><span class="v">0</span></div>
+          <div class="season-cell"><span class="k">Slashes</span><span class="v">0</span></div>
+        </div>
+        <div class="uptime-chart">
+          <div class="chart-label"><span>Uptime · 12 Months</span><span>Apr 25 → Apr 26</span></div>
+          <div class="bars">
+            <div class="bar" style="height:80%"></div><div class="bar" style="height:84%"></div>
+            <div class="bar" style="height:90%"></div><div class="bar" style="height:92%"></div>
+            <div class="bar" style="height:88%"></div><div class="bar dip" style="height:56%"></div>
+            <div class="bar" style="height:85%"></div><div class="bar" style="height:90%"></div>
+            <div class="bar" style="height:95%"></div><div class="bar" style="height:98%"></div>
+            <div class="bar" style="height:94%"></div><div class="bar" style="height:96%"></div>
+          </div>
+        </div>
+        <div class="record">
+          <div class="row"><span>First block signed</span><strong>Aug 22, 2023</strong></div>
+          <div class="row"><span>Commission history</span><strong>8% · held steady</strong></div>
+          <div class="row"><span>Governance votes</span><strong>41 / 44</strong></div>
+          <div class="row"><span>Self-bond ratio</span><strong>6.3%</strong></div>
+        </div>
+        <div class="flavor">
+          Measuring twice. Signing once.
+          The kind of operator you want on a chain that doesn't tolerate sloppy.
+          <span class="flavor-attr">— Community review, 4.7 / 5</span>
+        </div>
+      </div>
+    </div>
+    <div class="card-caption"><strong>047</strong> · Crosscut Stake · Injective</div>
+  </div>
+
+  <!-- ───────── COMMON ───────── -->
+  <div class="card-wrap">
+    <div class="card" data-tier="common"
+         style="--chain-color: var(--chain-kujira);">
+      <div class="card-face card-front">
+        <span class="tier-stamp">Common</span>
+        <span class="card-number">№ 118 / ∞</span>
+        <div class="chain-band">
+          <span class="chain-name">Kujira</span>
+          <span class="chain-tag">KUJI · App-Chain</span>
+        </div>
+        <div class="portrait">
+          <span class="bolt tl"></span><span class="bolt tr"></span>
+          <span class="bolt bl"></span><span class="bolt br"></span>
+          <div class="crest">
+            <div class="crest-hex"></div>
+            <div class="crest-mono">AV</div>
+          </div>
+        </div>
+        <div class="name-banner">
+          <div class="validator-name">Apprentice.val</div>
+          <div class="validator-sub">Rookie · Active since 2025</div>
+        </div>
+        <div class="stats">
+          <div class="stat"><span class="stat-label">Trust</span><span class="stat-value">72</span></div>
+          <div class="stat"><span class="stat-label">Uptime</span><span class="stat-value">99.10%</span></div>
+          <div class="stat"><span class="stat-label">Fee</span><span class="stat-value">10%</span></div>
+        </div>
+      </div>
+      <div class="card-face card-back">
+        <div class="back-header">
+          <span>Career Stats</span>
+          <span class="back-no">REV 01 · 2026</span>
+        </div>
+        <div class="season-grid">
+          <div class="season-cell"><span class="k">Blocks</span><span class="v">38k</span></div>
+          <div class="season-cell"><span class="k">Delegators</span><span class="v">27</span></div>
+          <div class="season-cell"><span class="k">Disputes</span><span class="v">0</span></div>
+          <div class="season-cell"><span class="k">Slashes</span><span class="v">0</span></div>
+        </div>
+        <div class="uptime-chart">
+          <div class="chart-label"><span>Uptime · 12 Months</span><span>Apr 25 → Apr 26</span></div>
+          <div class="bars">
+            <div class="bar" style="height:10%;opacity:.3"></div>
+            <div class="bar" style="height:10%;opacity:.3"></div>
+            <div class="bar" style="height:10%;opacity:.3"></div>
+            <div class="bar" style="height:10%;opacity:.3"></div>
+            <div class="bar" style="height:10%;opacity:.3"></div>
+            <div class="bar" style="height:10%;opacity:.3"></div>
+            <div class="bar" style="height:10%;opacity:.3"></div>
+            <div class="bar dip" style="height:62%"></div>
+            <div class="bar" style="height:85%"></div>
+            <div class="bar" style="height:92%"></div>
+            <div class="bar" style="height:96%"></div>
+            <div class="bar" style="height:94%"></div>
+          </div>
+        </div>
+        <div class="record">
+          <div class="row"><span>First block signed</span><strong>Nov 18, 2025</strong></div>
+          <div class="row"><span>Commission history</span><strong>10% · set at start</strong></div>
+          <div class="row"><span>Governance votes</span><strong>6 / 7</strong></div>
+          <div class="row"><span>Self-bond ratio</span><strong>4.0%</strong></div>
+        </div>
+        <div class="flavor">
+          New on the floor. Earning the wrench.
+          <span class="flavor-attr">— Operator bio</span>
+        </div>
+      </div>
+    </div>
+    <div class="card-caption"><strong>118</strong> · Apprentice.val · Kujira</div>
+  </div>
+
+</section>
+
+<footer class="footer">
+  <span>© 2026 Blue Collar Crypto · Signed on-chain · Graded by the community</span>
+  <span class="stamp">Handle with care</span>
+  <span>Series 01 / 04 · prototype</span>
+</footer>
+
+<script>
+// ─────────────────────────────────────────────────────
+// Interactions — tilt, foil tracking, flip, clock
+// ─────────────────────────────────────────────────────
+(function () {
+  const cards = document.querySelectorAll('.card');
+  const MAX_TILT = 9; // degrees
+
+  cards.forEach((card) => {
+    let raf = null;
+
+    card.addEventListener('mousemove', (e) => {
+      const rect = card.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const cx = rect.width / 2;
+      const cy = rect.height / 2;
+      const ry = ((x - cx) / cx) * MAX_TILT;
+      const rx = -((y - cy) / cy) * MAX_TILT;
+      const mx = (x / rect.width) * 100;
+      const my = (y / rect.height) * 100;
+
+      if (raf) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        card.style.setProperty('--rx', rx.toFixed(2) + 'deg');
+        card.style.setProperty('--ry', ry.toFixed(2) + 'deg');
+        card.style.setProperty('--mx', mx.toFixed(1) + '%');
+        card.style.setProperty('--my', my.toFixed(1) + '%');
+      });
+    });
+
+    card.addEventListener('mouseleave', () => {
+      card.style.setProperty('--rx', '0deg');
+      card.style.setProperty('--ry', '0deg');
+      card.style.setProperty('--mx', '50%');
+      card.style.setProperty('--my', '50%');
+    });
+
+    card.addEventListener('click', () => {
+      card.classList.toggle('flipped');
+    });
+  });
+
+  // UTC clock in the rail
+  const clock = document.getElementById('clock');
+  function tick() {
+    const d = new Date();
+    const hh = String(d.getUTCHours()).padStart(2, '0');
+    const mm = String(d.getUTCMinutes()).padStart(2, '0');
+    const ss = String(d.getUTCSeconds()).padStart(2, '0');
+    clock.textContent = `${hh}:${mm}:${ss} UTC`;
+  }
+  tick();
+  setInterval(tick, 1000);
+})();
+</script>
+</body>
+</html>

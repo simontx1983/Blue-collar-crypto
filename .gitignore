@@ -1,0 +1,34 @@
+# Repo-root umbrella .gitignore
+#
+# This umbrella repo intentionally tracks ONLY cross-cutting concerns:
+#   - CLAUDE.md          (workspace-wide guardrails)
+#   - docs/              (canonical contract, registry, prompts)
+#   - bcc-global-library/ (placeholder for future shared modules)
+#
+# Everything else is either its own git repo (the four bcc-* plugins
+# under app/public/wp-content/plugins/, and bcc-frontend/) or
+# environment-specific local state (Local by Flywheel files, WordPress
+# core, logs).
+#
+# The "deny everything, then re-allow" pattern below is deliberate:
+# adding new top-level files will NOT auto-track them — they have to
+# be explicitly allowlisted here. This prevents accidental commits of
+# secrets, dumps, or local-only files.
+
+# Deny everything by default
+/*
+
+# Allow only these top-level paths
+!/.gitignore
+!/CLAUDE.md
+!/docs/
+!/bcc-global-library/
+
+# Common junk that may appear inside allowed directories
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+*.bak
+*.orig

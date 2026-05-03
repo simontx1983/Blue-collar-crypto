@@ -1,0 +1,1870 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>BCC // Creator Profile — @welder</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Stencil+Display:wght@400;700;800;900&family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400;1,9..144,500&family=Homemade+Apple&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+:root {
+  --cardstock:       #efe5cf;
+  --cardstock-deep:  #d9c9a3;
+  --paper:           #f7efd9;
+  --paper-warm:      #f2e6c8;
+  --ink:             #0f0d09;
+  --ink-soft:        #2a251c;
+  --ink-ghost:       #6b6355;
+  --safety:          #f05a28;
+  --weld:            #ffc01e;
+  --phosphor:        #7dff9a;
+  --concrete:        #14110d;
+  --concrete-hi:     #1d1913;
+  --concrete-low:    #0b0907;
+  --verified:        #2c9d66;
+  --arc:             #ff5718;
+  --torch:           #ff9630;
+  --cobalt:          #2544a3;
+
+  --chain-eth:       #627eea;
+  --chain-sol:       #9945ff;
+  --chain-injective: #0a72ff;
+  --chain-osmosis:   #c73f86;
+
+  --tier-legendary:  #d9a400;
+  --tier-rare:       #1d4fbb;
+  --tier-uncommon:   #247a3f;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  min-height: 100vh;
+  font-family: 'Fraunces', Georgia, serif;
+  color: var(--cardstock);
+  background: var(--concrete);
+  overflow-x: hidden;
+}
+
+body {
+  background-color: var(--concrete);
+  background-image:
+    repeating-linear-gradient(0deg,  transparent 0 72px, rgba(239, 229, 207, 0.025) 72px 73px),
+    repeating-linear-gradient(90deg, transparent 0 72px, rgba(239, 229, 207, 0.025) 72px 73px),
+    radial-gradient(ellipse at 18% 8%, rgba(255, 87, 24, 0.10), transparent 55%),
+    radial-gradient(ellipse at 90% 90%, rgba(37, 68, 163, 0.08), transparent 60%);
+  background-size: 72px 72px, 72px 72px, 100% 100%, 100% 100%;
+}
+body::before {
+  content: ''; position: fixed; inset: 0;
+  pointer-events: none; z-index: 1000;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='240' height='240' filter='url(%23n)' opacity='0.55'/></svg>");
+  opacity: 0.09; mix-blend-mode: overlay;
+}
+
+/* ── TOP RAIL + NAV ───────────────────────────── */
+.rail {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 12px 28px;
+  border-bottom: 1px dashed rgba(239, 229, 207, 0.22);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: rgba(239, 229, 207, 0.7);
+}
+.rail .dot {
+  display: inline-block; width: 8px; height: 8px; background: var(--safety);
+  border-radius: 50%; margin-right: 8px; vertical-align: middle;
+  box-shadow: 0 0 10px var(--safety); animation: pulse 2.4s infinite;
+}
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+.rail .rail-right span + span { margin-left: 22px; }
+
+.nav {
+  display: grid; grid-template-columns: auto 1fr auto;
+  align-items: center; gap: 48px;
+  padding: 20px 28px 16px; max-width: 1560px; margin: 0 auto;
+}
+.brand {
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 900; font-size: 30px; line-height: 0.9;
+  color: var(--cardstock); text-transform: uppercase; letter-spacing: -0.01em;
+}
+.brand .brand-accent { color: var(--safety); }
+.brand .brand-sub {
+  display: block; font-family: 'JetBrains Mono', monospace;
+  font-size: 9px; letter-spacing: 0.28em; color: var(--ink-ghost);
+  font-weight: 400; margin-top: 3px;
+}
+.nav-links { display: flex; gap: 2px; justify-content: center; flex-wrap: wrap; }
+.nav-link {
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 800; font-size: 14px; letter-spacing: 0.18em;
+  text-transform: uppercase; color: rgba(239, 229, 207, 0.6);
+  padding: 10px 14px; border-bottom: 3px solid transparent;
+  cursor: pointer;
+}
+.nav-link:hover { color: var(--cardstock); }
+.nav-link.active { color: var(--cardstock); border-bottom-color: var(--safety); }
+
+/* ── VERIFIED CREATOR RIBBON ─────────────────── */
+.standing-ribbon {
+  background: repeating-linear-gradient(135deg, #2c9d66 0 18px, #1f7049 18px 36px);
+  padding: 8px 0;
+  position: relative; z-index: 5;
+}
+.standing-inner {
+  max-width: 1560px; margin: 0 auto; padding: 0 28px;
+  display: flex; justify-content: space-between; align-items: center;
+  background: var(--concrete); color: var(--phosphor);
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 900; font-size: 13px; letter-spacing: 0.22em;
+  padding: 10px 20px; text-transform: uppercase;
+  border: 2px solid var(--ink);
+  flex-wrap: wrap; gap: 12px;
+}
+.standing-inner .lbl { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.seal-check {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; background: var(--verified); color: #fff;
+  border-radius: 50%; font-family: sans-serif; font-weight: 700;
+  font-size: 13px; border: 2px solid var(--ink);
+}
+.standing-inner .sep {
+  display: inline-block; width: 6px; height: 6px;
+  background: var(--phosphor); border-radius: 50%;
+}
+.standing-inner .meta {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  letter-spacing: 0.2em; color: var(--weld); font-weight: 400;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   HERO — creator card (portrait is the art) + identity
+   ═══════════════════════════════════════════════════════════ */
+.hero {
+  max-width: 1560px; margin: 20px auto 0; padding: 0 28px;
+}
+.hero-grid {
+  display: grid;
+  grid-template-columns: 340px 1fr auto;
+  gap: 48px;
+  align-items: center;
+  padding-bottom: 40px;
+  border-bottom: 2px solid rgba(239, 229, 207, 0.2);
+}
+@media (max-width: 1100px) { .hero-grid { grid-template-columns: 1fr; gap: 28px; } }
+
+.v-card {
+  width: 316px; height: 440px;
+  position: relative;
+  background: var(--paper);
+  border-radius: 6px;
+  border: 3px solid var(--tier-legendary);
+  box-shadow:
+    0 0 0 1px rgba(217, 164, 0, 0.7) inset,
+    0 0 30px rgba(255, 192, 30, 0.35),
+    0 20px 40px -10px rgba(0, 0, 0, 0.85);
+  display: grid;
+  grid-template-rows: 54px 1fr 96px 44px;
+  overflow: hidden;
+  color: var(--ink);
+  margin: 0 auto;
+}
+.pc-band {
+  background: linear-gradient(90deg, #d9a400 0%, #ffd95e 20%, #b87400 40%, #ffe98a 60%, #d9a400 80%, #ffd95e 100%);
+  background-size: 300% 100%; animation: foilshift 8s linear infinite;
+  color: var(--ink);
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 0 14px; border-bottom: 3px solid var(--ink);
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 800; font-size: 22px;
+  letter-spacing: 0.06em; text-transform: uppercase;
+}
+@keyframes foilshift { 0%{background-position:0% 50%} 100%{background-position:300% 50%} }
+.pc-band .tag {
+  font-family: 'JetBrains Mono', monospace; font-size: 9px;
+  letter-spacing: 0.2em; font-weight: 500;
+  padding: 3px 7px; border: 1px solid rgba(15, 13, 9, 0.5);
+}
+
+/* Creator-specific: portrait IS a piece of their work */
+.pc-portrait.is-art {
+  background:
+    conic-gradient(from 45deg at 50% 50%,
+      #ff5718 0 22%,
+      #1a1a1a 22% 38%,
+      #ff9630 38% 58%,
+      #2544a3 58% 78%,
+      #ffc01e 78% 100%);
+  position: relative;
+  display: flex; align-items: center; justify-content: center;
+}
+.pc-portrait.is-art::before {
+  content: ''; position: absolute; inset: 0;
+  background-image:
+    repeating-linear-gradient(45deg, transparent 0 16px, rgba(0,0,0,0.25) 16px 17px),
+    repeating-linear-gradient(-45deg, transparent 0 16px, rgba(0,0,0,0.25) 16px 17px);
+  mix-blend-mode: overlay;
+}
+.pc-portrait.is-art::after {
+  content: 'FOUNDRY';
+  position: absolute;
+  bottom: 10px; left: 12px;
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 900; font-size: 36px;
+  color: var(--cardstock); letter-spacing: 0.04em;
+  text-shadow: 3px 3px 0 var(--ink), -1px -1px 0 var(--ink), 1px -1px 0 var(--ink), -1px 1px 0 var(--ink);
+}
+.pc-edition {
+  position: absolute; top: 12px; right: 12px; z-index: 3;
+  background: var(--ink); color: var(--weld);
+  font-family: 'JetBrains Mono', monospace; font-size: 9px;
+  letter-spacing: 0.18em; padding: 3px 7px;
+  border: 1px solid var(--weld); text-transform: uppercase;
+}
+.pc-name {
+  background: var(--cardstock); border-top: 3px solid var(--ink);
+  padding: 10px 14px 6px; position: relative;
+  display: flex; flex-direction: column; justify-content: center;
+}
+.pc-name::before {
+  content: ''; position: absolute; left: 0; right: 0; top: -6px;
+  height: 3px; background: var(--tier-legendary);
+}
+.pc-role {
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 900; font-size: 28px; line-height: 0.95;
+  color: var(--ink); text-transform: uppercase;
+}
+.pc-handle {
+  font-family: 'Fraunces', serif; font-style: italic; font-size: 12px;
+  color: var(--ink-soft); margin-top: 2px;
+}
+.pc-stats {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  background: var(--cardstock-deep); border-top: 1px solid var(--ink);
+}
+.pc-stat {
+  padding: 6px 8px; border-right: 1px solid rgba(15,13,9,0.3);
+  font-family: 'JetBrains Mono', monospace; text-align: center;
+}
+.pc-stat:last-child { border-right: 0; }
+.pc-stat .k { font-size: 8px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink-soft); }
+.pc-stat .v { font-size: 18px; font-weight: 700; color: var(--ink); line-height: 1.2; display: block; }
+.pc-tier {
+  position: absolute; top: 66px; left: -6px; z-index: 6;
+  background: var(--tier-legendary); color: var(--ink);
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 900; font-size: 11px; letter-spacing: 0.2em;
+  padding: 5px 10px 5px 12px; text-transform: uppercase;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%, 6px 50%);
+}
+.creator-stamp {
+  position: absolute; bottom: 110px; right: 8px; z-index: 6;
+  background: var(--verified); color: #fff;
+  padding: 5px 9px;
+  font-family: 'JetBrains Mono', monospace; font-size: 8px;
+  letter-spacing: 0.22em; line-height: 1.2; text-align: center;
+  border: 1px solid var(--ink); text-transform: uppercase;
+  transform: rotate(4deg); box-shadow: 0 2px 4px rgba(0,0,0,0.4);
+}
+.creator-stamp strong { display: block; font-size: 12px; }
+
+/* Identity */
+.v-ident .kicker {
+  display: flex; align-items: center; gap: 14px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; letter-spacing: 0.28em;
+  text-transform: uppercase; color: var(--safety); margin-bottom: 18px;
+}
+.v-ident .kicker .tag {
+  background: var(--verified); color: #fff;
+  padding: 2px 7px; font-weight: 700; letter-spacing: 0.18em;
+}
+.v-ident .kicker .tag.weld {
+  background: var(--weld); color: var(--ink);
+}
+.v-name {
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 900; font-size: clamp(64px, 8vw, 136px);
+  line-height: 0.86; letter-spacing: -0.02em;
+  color: var(--cardstock); text-transform: uppercase;
+}
+.v-name em {
+  font-style: italic; font-family: 'Fraunces', serif;
+  font-weight: 600; color: var(--arc);
+  text-transform: none; font-size: 0.68em; letter-spacing: -0.01em;
+}
+.v-sub {
+  font-family: 'Fraunces', serif; font-style: italic;
+  font-size: 18px; line-height: 1.45;
+  color: rgba(239, 229, 207, 0.8);
+  max-width: 680px; margin-top: 12px;
+}
+.v-meta {
+  display: flex; flex-wrap: wrap; gap: 20px; margin-top: 18px;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  letter-spacing: 0.14em; color: rgba(239, 229, 207, 0.65);
+  text-transform: uppercase;
+}
+.v-meta strong { color: var(--cardstock); font-weight: 500; }
+.v-actions { display: flex; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
+.btn {
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 900; font-size: 13px; letter-spacing: 0.2em;
+  text-transform: uppercase; padding: 10px 18px;
+  border: 2px solid var(--ink); cursor: pointer;
+  transition: transform .1s, box-shadow .1s;
+}
+.btn-primary { background: var(--arc); color: var(--cardstock); box-shadow: 3px 3px 0 var(--ink); border-color: var(--ink); }
+.btn-primary:hover { transform: translate(-1px,-1px); box-shadow: 4px 4px 0 var(--ink); }
+.btn-ghost {
+  background: transparent; color: var(--cardstock);
+  border-color: rgba(239,229,207,0.5); box-shadow: 3px 3px 0 rgba(239,229,207,0.15);
+}
+.btn-ghost:hover { background: var(--cardstock); color: var(--ink); border-color: var(--cardstock); }
+
+/* Live signals column */
+.v-live {
+  width: 260px;
+  background: var(--concrete-low);
+  border: 1px solid rgba(255, 87, 24, 0.3);
+  padding: 14px 16px;
+}
+.v-live-head {
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 900; font-size: 13px;
+  letter-spacing: 0.2em; text-transform: uppercase;
+  color: var(--arc);
+  text-shadow: 0 0 6px rgba(255, 87, 24, 0.4);
+  padding-bottom: 8px; margin-bottom: 10px;
+  border-bottom: 1px dashed rgba(255, 87, 24, 0.4);
+  display: flex; justify-content: space-between; align-items: center;
+}
+.v-live-head .p-dot {
+  width: 8px; height: 8px; background: var(--arc);
+  border-radius: 50%; box-shadow: 0 0 8px var(--arc);
+  animation: pulse 1.6s infinite;
+}
+.v-live-row {
+  display: grid; grid-template-columns: 1fr auto;
+  padding: 5px 0;
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  color: rgba(239, 229, 207, 0.8); letter-spacing: 0.08em;
+  border-bottom: 1px dotted rgba(239, 229, 207, 0.12);
+}
+.v-live-row:last-child { border-bottom: 0; }
+.v-live-row strong { color: var(--weld); font-weight: 500; }
+.v-live-row em { font-style: normal; color: rgba(239,229,207,0.45); margin-left: 8px; }
+
+/* ═══════════════════════════════════════════════════════════
+   BIO / ARTIST STATEMENT
+   ═══════════════════════════════════════════════════════════ */
+.bio-wrap {
+  max-width: 1560px; margin: 32px auto 0; padding: 0 28px;
+}
+.bio {
+  background: var(--paper); color: var(--ink);
+  padding: 36px 44px; border: 1px solid rgba(15, 13, 9, 0.18);
+  position: relative; overflow: hidden;
+  box-shadow: 0 14px 28px -14px rgba(0,0,0,0.6), 0 4px 8px -2px rgba(0,0,0,0.3);
+}
+.bio::before {
+  content: ''; position: absolute; inset: 0;
+  background-image:
+    radial-gradient(circle at 12% 14%, rgba(176,152,119,0.18), transparent 45%),
+    radial-gradient(circle at 88% 82%, rgba(176,152,119,0.22), transparent 50%);
+  mix-blend-mode: multiply; pointer-events: none;
+}
+.bio::after {
+  content: ''; position: absolute; inset: 0;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='1.3' numOctaves='2' stitchTiles='stitch'/></filter><rect width='200' height='200' filter='url(%23n)' opacity='0.35'/></svg>");
+  mix-blend-mode: multiply; opacity: 0.16; pointer-events: none;
+}
+.bio > * { position: relative; z-index: 2; }
+.bio-kicker {
+  display: flex; align-items: center; gap: 14px;
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  letter-spacing: 0.24em; color: var(--arc);
+  text-transform: uppercase; margin-bottom: 14px;
+}
+.bio-kicker::after { content: ''; flex: 1; height: 1px; background: rgba(255, 87, 24, 0.4); }
+.bio-head {
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 900; font-size: 34px; line-height: 0.98;
+  color: var(--ink); text-transform: uppercase; margin-bottom: 16px;
+}
+.bio-body {
+  font-family: 'Fraunces', serif;
+  font-size: 17px; line-height: 1.58;
+  color: var(--ink); max-width: 780px;
+}
+.bio-body p + p { margin-top: 12px; text-indent: 1em; }
+.bio-body em { color: var(--ink-soft); font-style: italic; }
+.bio-foot {
+  margin-top: 22px; padding-top: 16px;
+  border-top: 1px dashed rgba(15, 13, 9, 0.25);
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+}
+.bio-sig {
+  font-family: 'Homemade Apple', cursive;
+  font-size: 22px; color: var(--ink);
+}
+.bio-sig-sub {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  letter-spacing: 0.18em; color: var(--ink-ghost);
+  text-transform: uppercase;
+}
+.bio-sig-sub strong { color: var(--verified); }
+
+/* ═══════════════════════════════════════════════════════════
+   STATS STRIP
+   ═══════════════════════════════════════════════════════════ */
+.stats-strip {
+  max-width: 1560px; margin: 40px auto 0; padding: 0 28px;
+  display: grid; grid-template-columns: repeat(6, 1fr); gap: 0;
+  border-top: 1px dashed rgba(239, 229, 207, 0.22);
+  border-bottom: 1px dashed rgba(239, 229, 207, 0.22);
+}
+@media (max-width: 1100px) { .stats-strip { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 600px)  { .stats-strip { grid-template-columns: repeat(2, 1fr); } }
+.stats-strip .s {
+  padding: 20px 18px;
+  border-right: 1px dashed rgba(239, 229, 207, 0.18);
+}
+.stats-strip .s:last-child { border-right: 0; }
+.stats-strip .s .k {
+  font-family: 'JetBrains Mono', monospace; font-size: 9.5px;
+  letter-spacing: 0.22em; color: rgba(239, 229, 207, 0.55);
+  text-transform: uppercase;
+}
+.onchain-tag {
+  display: inline-block; background: rgba(125, 255, 154, 0.12);
+  color: var(--phosphor);
+  font-family: 'JetBrains Mono', monospace; font-size: 7.5px;
+  letter-spacing: 0.2em; padding: 1px 5px;
+  border: 1px solid rgba(125, 255, 154, 0.3);
+  text-transform: uppercase; margin-left: 6px;
+  vertical-align: middle;
+}
+.stats-strip .s .v {
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 900; font-size: 40px; line-height: 1;
+  color: var(--cardstock); letter-spacing: -0.015em;
+  font-feature-settings: 'tnum' 1; margin-top: 8px;
+  display: flex; align-items: baseline; gap: 8px;
+}
+.stats-strip .s .v small {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; font-weight: 500; letter-spacing: 0.08em;
+  color: var(--phosphor);
+}
+.stats-strip .s .v small.dim { color: rgba(239,229,207,0.5); }
+.stats-strip .s .v small.arc { color: var(--arc); }
+
+/* ═══════════════════════════════════════════════════════════
+   SECTION HEADER
+   ═══════════════════════════════════════════════════════════ */
+.section-head {
+  max-width: 1560px; margin: 56px auto 20px; padding: 0 28px;
+  display: flex; align-items: baseline; gap: 20px;
+}
+.section-head h2 {
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 900; font-size: clamp(36px, 4.5vw, 60px);
+  line-height: 0.92; letter-spacing: -0.015em;
+  color: var(--cardstock); text-transform: uppercase;
+}
+.section-head .rule { flex: 1; height: 2px; background: var(--arc); }
+.section-head .counter {
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  letter-spacing: 0.24em; color: var(--weld); text-transform: uppercase;
+}
+.section-sub {
+  max-width: 900px; margin: 0 auto 0 0; padding: 0 28px;
+  font-family: 'Fraunces', serif; font-style: italic;
+  font-size: 17px; line-height: 1.45;
+  color: rgba(239, 229, 207, 0.7); padding-left: 28px;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   FEATURED DROP — big art + gallery poster meta
+   ═══════════════════════════════════════════════════════════ */
+.drop {
+  max-width: 1560px; margin: 18px auto 0; padding: 0 28px;
+  display: grid; grid-template-columns: 1.3fr 1fr; gap: 32px;
+  align-items: stretch;
+}
+@media (max-width: 1100px) { .drop { grid-template-columns: 1fr; } }
+
+.drop-art {
+  position: relative;
+  min-height: 560px;
+  border: 3px solid var(--ink);
+  box-shadow: 6px 6px 0 var(--arc), 10px 10px 0 var(--ink);
+  overflow: hidden;
+}
+.drop-art::before {
+  content: ''; position: absolute; inset: 0;
+  background-image:
+    radial-gradient(circle at 30% 25%, rgba(255,255,255,0.25), transparent 35%),
+    repeating-linear-gradient(45deg, transparent 0 22px, rgba(15,13,9,0.15) 22px 23px),
+    repeating-linear-gradient(-45deg, transparent 0 22px, rgba(15,13,9,0.15) 22px 23px);
+  mix-blend-mode: overlay;
+  z-index: 2; pointer-events: none;
+}
+.drop-art .art-bg {
+  position: absolute; inset: 0; z-index: 1;
+  background:
+    conic-gradient(from 45deg at 55% 45%,
+      #ff5718 0 22%,
+      #0f0d09 22% 36%,
+      #ff9630 36% 52%,
+      #2544a3 52% 72%,
+      #ffc01e 72% 88%,
+      #ff5718 88% 100%);
+}
+.drop-art .art-caption {
+  position: absolute; bottom: 0; left: 0; right: 0; z-index: 3;
+  padding: 16px 24px;
+  background: linear-gradient(0deg, rgba(15,13,9,0.92), transparent);
+  color: var(--cardstock);
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  letter-spacing: 0.2em; text-transform: uppercase;
+  display: flex; justify-content: space-between; align-items: center;
+  flex-wrap: wrap; gap: 10px;
+}
+.drop-art .art-caption .title {
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 900; font-size: 48px; letter-spacing: 0.02em;
+  color: var(--cardstock);
+  text-shadow: 3px 3px 0 var(--ink);
+  line-height: 0.9;
+}
+.drop-art .art-tag {
+  position: absolute; top: 16px; left: 16px; z-index: 3;
+  background: var(--ink); color: var(--weld);
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 900; font-size: 11px;
+  padding: 4px 9px; letter-spacing: 0.22em; text-transform: uppercase;
+  border: 2px solid var(--weld);
+}
+.drop-art .art-number {
+  position: absolute; top: 16px; right: 16px; z-index: 3;
+  background: var(--cardstock); color: var(--ink);
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  padding: 4px 10px; letter-spacing: 0.2em; font-weight: 700;
+  border: 2px solid var(--ink);
+}
+
+/* Drop info panel — exhibition poster */
+.drop-info {
+  background: var(--paper);
+  border: 3px solid var(--ink);
+  padding: 34px 32px;
+  position: relative; overflow: hidden;
+  box-shadow: 6px 6px 0 var(--weld), 10px 10px 0 var(--ink);
+  color: var(--ink);
+}
+.drop-info::before {
+  content: ''; position: absolute; inset: 0;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='1.3' numOctaves='2' stitchTiles='stitch'/></filter><rect width='200' height='200' filter='url(%23n)' opacity='0.35'/></svg>");
+  mix-blend-mode: multiply; opacity: 0.16; pointer-events: none;
+}
+.drop-info > * { position: relative; z-index: 2; }
+.drop-kicker {
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  letter-spacing: 0.3em; color: var(--arc);
+  text-transform: uppercase; margin-bottom: 14px;
+  display: flex; align-items: center; gap: 10px;
+}
+.drop-kicker::after { content: ''; flex: 1; height: 1px; background: var(--arc); }
+.drop-title {
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 900; font-size: 64px; line-height: 0.86;
+  letter-spacing: -0.015em; color: var(--ink); text-transform: uppercase;
+}
+.drop-title em {
+  display: block;
+  font-family: 'Fraunces', serif; font-style: italic;
+  font-weight: 600; color: var(--arc);
+  font-size: 0.5em; text-transform: none; letter-spacing: -0.01em;
+  margin-top: 6px;
+}
+.drop-desc {
+  font-family: 'Fraunces', serif; font-size: 16px;
+  line-height: 1.5; color: var(--ink); margin-top: 16px; max-width: 520px;
+}
+.drop-stats {
+  display: grid; grid-template-columns: repeat(2, 1fr);
+  gap: 0; margin-top: 22px;
+  border-top: 2px solid var(--ink); border-bottom: 2px solid var(--ink);
+}
+.drop-stat {
+  padding: 14px 18px 14px 0;
+  border-right: 1px dashed rgba(15,13,9,0.3);
+  border-bottom: 1px dashed rgba(15,13,9,0.3);
+}
+.drop-stat:nth-child(2n) { border-right: 0; padding-left: 18px; padding-right: 0; }
+.drop-stat:nth-last-child(-n+2) { border-bottom: 0; }
+.drop-stat .k {
+  font-family: 'JetBrains Mono', monospace; font-size: 9px;
+  letter-spacing: 0.22em; color: var(--ink-ghost); text-transform: uppercase;
+}
+.drop-stat .v {
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 900; font-size: 28px; line-height: 1;
+  color: var(--ink); margin-top: 4px;
+}
+.drop-stat .v small {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  color: var(--ink-ghost); letter-spacing: 0.1em;
+  font-weight: 400; margin-left: 4px;
+}
+.drop-progress {
+  margin-top: 16px; display: grid; gap: 6px;
+}
+.drop-progress-bar {
+  height: 10px; background: var(--cardstock-deep);
+  border: 1px solid var(--ink); position: relative;
+}
+.drop-progress-bar span {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  background: repeating-linear-gradient(45deg, var(--arc) 0 8px, #c94614 8px 16px);
+}
+.drop-progress-label {
+  display: flex; justify-content: space-between;
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  letter-spacing: 0.14em; color: var(--ink-soft); text-transform: uppercase;
+}
+.drop-actions { display: flex; gap: 10px; margin-top: 20px; flex-wrap: wrap; }
+.btn-mint {
+  background: var(--ink); color: var(--weld);
+  border: 2px solid var(--ink); box-shadow: 3px 3px 0 var(--arc);
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 900; font-size: 13px; letter-spacing: 0.2em;
+  padding: 12px 20px; text-transform: uppercase; cursor: pointer;
+}
+.btn-mint:hover { background: var(--arc); color: var(--cardstock); transform: translate(-1px,-1px); box-shadow: 4px 4px 0 var(--ink); }
+
+/* ═══════════════════════════════════════════════════════════
+   GALLERY GRID — the heart of the page
+   ═══════════════════════════════════════════════════════════ */
+.gallery {
+  max-width: 1560px; margin: 18px auto 0; padding: 0 28px;
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  grid-auto-rows: 220px;
+  gap: 20px;
+}
+@media (max-width: 1100px) { .gallery { grid-template-columns: repeat(4, 1fr); } }
+@media (max-width: 700px)  { .gallery { grid-template-columns: repeat(2, 1fr); } }
+
+.piece {
+  position: relative;
+  grid-column: span 2;
+  background: var(--ink);
+  border: 2px solid var(--ink);
+  overflow: hidden;
+  cursor: pointer;
+  box-shadow: 4px 4px 0 rgba(15, 13, 9, 0.25);
+  transition: transform .2s, box-shadow .2s;
+  display: flex; flex-direction: column;
+}
+.piece:hover { transform: translate(-2px, -2px); box-shadow: 6px 6px 0 var(--arc); }
+.piece.feat { grid-column: span 3; grid-row: span 2; }
+.piece.wide { grid-column: span 4; }
+@media (max-width: 1100px) {
+  .piece.feat { grid-column: span 4; grid-row: span 2; }
+  .piece.wide { grid-column: span 4; }
+}
+@media (max-width: 700px) {
+  .piece, .piece.feat, .piece.wide { grid-column: span 2; grid-row: auto; }
+}
+
+.piece-art {
+  flex: 1;
+  position: relative; overflow: hidden;
+}
+.piece-art::before {
+  content: ''; position: absolute; inset: 0;
+  background-image:
+    radial-gradient(circle at 30% 25%, rgba(255,255,255,0.18), transparent 40%),
+    repeating-linear-gradient(45deg, transparent 0 18px, rgba(0,0,0,0.15) 18px 19px);
+  mix-blend-mode: overlay;
+  z-index: 2; pointer-events: none;
+}
+
+/* ART VARIANTS — CSS-only */
+.art-foundry-1 { background: conic-gradient(from 45deg at 55% 45%, #ff5718 0 22%, #0f0d09 22% 36%, #ff9630 36% 52%, #2544a3 52% 72%, #ffc01e 72% 88%, #ff5718 88% 100%); }
+.art-foundry-2 {
+  background:
+    radial-gradient(circle at 30% 40%, #ff5718, transparent 55%),
+    radial-gradient(circle at 70% 70%, #ffc01e, transparent 55%),
+    linear-gradient(180deg, #1a0d00, #0f0d09);
+}
+.art-foundry-3 {
+  background:
+    repeating-linear-gradient(90deg, #1a2640 0 24px, #0f1a30 24px 50px),
+    #0f1a30;
+  position: relative;
+}
+.art-foundry-3::after {
+  content: ''; position: absolute; inset: 0;
+  background:
+    radial-gradient(circle at 20% 30%, #ff5718, transparent 6%),
+    radial-gradient(circle at 50% 55%, #ffc01e, transparent 5%),
+    radial-gradient(circle at 78% 38%, #ff9630, transparent 7%),
+    radial-gradient(circle at 35% 70%, #ff5718, transparent 4%);
+}
+.art-overtime-1 {
+  background:
+    linear-gradient(135deg, var(--cobalt) 0%, var(--cobalt) 50%, #0a1847 50%, #0a1847 100%),
+    #0a1847;
+  position: relative;
+}
+.art-overtime-1::after {
+  content: ''; position: absolute; inset: 20%;
+  background: radial-gradient(circle, rgba(255, 192, 30, 0.6), transparent 70%);
+  filter: blur(24px);
+}
+.art-overtime-2 {
+  background:
+    repeating-linear-gradient(45deg, #e62c3f 0 36px, #0f0d09 36px 72px);
+}
+.art-torch-1 {
+  background:
+    radial-gradient(ellipse at 50% 80%, #ff9630 0%, #ff5718 25%, #4a0a00 70%, #0f0d09 100%);
+  position: relative;
+}
+.art-torch-1::after {
+  content: ''; position: absolute; inset: 0;
+  background:
+    radial-gradient(circle at 50% 85%, rgba(255, 255, 255, 0.55), transparent 10%),
+    radial-gradient(circle at 45% 75%, rgba(255, 255, 255, 0.3), transparent 8%),
+    radial-gradient(circle at 55% 70%, rgba(255, 255, 255, 0.25), transparent 6%);
+}
+.art-torch-2 {
+  background:
+    linear-gradient(90deg, #00cfdb 0% 50%, #ff5718 50% 100%);
+  position: relative;
+}
+.art-torch-2::after {
+  content: ''; position: absolute; top: 0; bottom: 0; left: 48%; width: 4%;
+  background: var(--ink); box-shadow: 0 0 20px rgba(0, 0, 0, 0.8);
+}
+.art-rebar {
+  background:
+    repeating-linear-gradient(0deg, transparent 0 18px, rgba(176, 152, 119, 0.15) 18px 19px),
+    repeating-linear-gradient(90deg, transparent 0 18px, rgba(176, 152, 119, 0.15) 18px 19px),
+    var(--paper);
+}
+.art-rebar::after {
+  content: ''; position: absolute; inset: 20% 20%;
+  border: 3px dashed rgba(15, 13, 9, 0.4);
+}
+
+.piece-title-on-art {
+  position: absolute; bottom: 14px; left: 18px; z-index: 3;
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 900; letter-spacing: 0.02em;
+  color: var(--cardstock);
+  text-shadow: 3px 3px 0 var(--ink), -1px -1px 0 var(--ink), 1px -1px 0 var(--ink), -1px 1px 0 var(--ink);
+  line-height: 0.9;
+}
+.piece-title-on-art.lg { font-size: 56px; }
+.piece-title-on-art.md { font-size: 32px; }
+.piece-title-on-art.sm { font-size: 24px; }
+
+.piece-edition-tag {
+  position: absolute; top: 12px; left: 12px; z-index: 3;
+  background: var(--ink); color: var(--weld);
+  font-family: 'JetBrains Mono', monospace; font-size: 9px;
+  letter-spacing: 0.18em; padding: 3px 7px;
+  border: 1px solid var(--weld); text-transform: uppercase; font-weight: 700;
+}
+.piece-chain-tag {
+  position: absolute; top: 12px; right: 12px; z-index: 3;
+  background: var(--cardstock); color: var(--ink);
+  font-family: 'JetBrains Mono', monospace; font-size: 8.5px;
+  letter-spacing: 0.18em; padding: 3px 6px; font-weight: 700;
+  text-transform: uppercase;
+}
+
+.piece-foot {
+  background: var(--cardstock);
+  color: var(--ink);
+  padding: 10px 14px;
+  border-top: 2px solid var(--ink);
+  display: grid; grid-template-columns: 1fr auto;
+  gap: 8px; align-items: center;
+}
+.piece-title-foot {
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 900; font-size: 15px; line-height: 1;
+  letter-spacing: 0.02em; text-transform: uppercase; color: var(--ink);
+}
+.piece-sub {
+  font-family: 'JetBrains Mono', monospace; font-size: 8.5px;
+  letter-spacing: 0.15em; color: var(--ink-ghost);
+  text-transform: uppercase; margin-top: 3px;
+}
+.piece-price {
+  font-family: 'JetBrains Mono', monospace; font-size: 12px;
+  font-weight: 700; color: var(--ink); letter-spacing: 0.05em;
+  text-align: right; line-height: 1;
+}
+.piece-price em {
+  display: block; font-family: 'JetBrains Mono', monospace;
+  font-size: 8px; letter-spacing: 0.15em;
+  color: var(--verified); font-style: normal; margin-top: 3px; font-weight: 500;
+}
+.piece-price em.sold { color: var(--arc); }
+
+/* piece rarity markers */
+.piece[data-tier="legendary"] { border-color: var(--tier-legendary); box-shadow: 4px 4px 0 rgba(217, 164, 0, 0.5); }
+.piece[data-tier="rare"]      { border-color: var(--tier-rare); box-shadow: 4px 4px 0 rgba(29, 79, 187, 0.5); }
+
+/* ═══════════════════════════════════════════════════════════
+   COLLECTIONS — series breakdown
+   ═══════════════════════════════════════════════════════════ */
+.collections {
+  max-width: 1560px; margin: 18px auto 0; padding: 0 28px;
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px;
+}
+@media (max-width: 1100px) { .collections { grid-template-columns: 1fr; } }
+
+.coll {
+  background: var(--paper); color: var(--ink);
+  border: 2px solid var(--ink);
+  position: relative; overflow: hidden;
+  box-shadow: 4px 4px 0 rgba(15,13,9,0.25);
+}
+.coll-cover {
+  height: 140px; position: relative; overflow: hidden;
+  border-bottom: 2px solid var(--ink);
+}
+.coll-cover::after {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(180deg, transparent 50%, rgba(15,13,9,0.35));
+}
+.coll-cover .ctitle {
+  position: absolute; bottom: 10px; left: 14px; z-index: 2;
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 900; font-size: 36px; line-height: 0.9;
+  color: var(--cardstock); letter-spacing: 0.02em;
+  text-shadow: 2px 2px 0 var(--ink);
+}
+.coll-body { padding: 16px 18px; position: relative; z-index: 1; }
+.coll-sub {
+  font-family: 'JetBrains Mono', monospace; font-size: 9.5px;
+  letter-spacing: 0.22em; color: var(--ink-ghost);
+  text-transform: uppercase; margin-bottom: 8px;
+}
+.coll-desc {
+  font-family: 'Fraunces', serif; font-size: 13.5px;
+  font-style: italic; line-height: 1.45;
+  color: var(--ink); margin-bottom: 12px;
+}
+.coll-stats {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  border-top: 1px dashed rgba(15,13,9,0.3); padding-top: 12px;
+  gap: 6px;
+}
+.cs-k {
+  font-family: 'JetBrains Mono', monospace; font-size: 8px;
+  letter-spacing: 0.2em; color: var(--ink-ghost); text-transform: uppercase;
+}
+.cs-v {
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 900; font-size: 18px; line-height: 1;
+  color: var(--ink); margin-top: 3px;
+}
+.coll-mini-bar {
+  height: 4px; background: var(--cardstock-deep);
+  border: 1px solid var(--ink); margin-top: 14px; position: relative;
+}
+.coll-mini-bar span {
+  position: absolute; inset: 0 auto 0 0;
+  background: var(--arc);
+}
+
+.cv-foundry  { background: conic-gradient(from 30deg, #ff5718 0 30%, #0f0d09 30% 55%, #ffc01e 55% 80%, #ff5718 80% 100%); }
+.cv-overtime { background: linear-gradient(135deg, var(--cobalt), #0a0a2a 50%, #1a0d2a); }
+.cv-torch    { background: radial-gradient(ellipse at 50% 80%, #ff9630, #4a0a00 70%, #0f0d09); }
+
+/* ═══════════════════════════════════════════════════════════
+   STUDIO LOG (stream)
+   ═══════════════════════════════════════════════════════════ */
+.stream-wrap { max-width: 1560px; margin: 18px auto 0; padding: 0 28px; }
+.stream-box {
+  background: var(--paper); color: var(--ink);
+  border: 1px solid rgba(15,13,9,0.18);
+  box-shadow: 0 14px 28px -14px rgba(0,0,0,0.6), 0 4px 8px -2px rgba(0,0,0,0.3);
+  overflow: hidden; position: relative;
+}
+.stream-box::before {
+  content: ''; position: absolute; inset: 0;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='1.3' numOctaves='2' stitchTiles='stitch'/></filter><rect width='200' height='200' filter='url(%23n)' opacity='0.35'/></svg>");
+  mix-blend-mode: multiply; opacity: 0.14; pointer-events: none;
+}
+.stream-box > * { position: relative; z-index: 2; }
+.stream-head {
+  background: var(--ink); color: var(--cardstock);
+  padding: 12px 18px; border-bottom: 3px solid var(--arc);
+  display: flex; justify-content: space-between; align-items: center;
+}
+.stream-head-title {
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 900; font-size: 16px;
+  letter-spacing: 0.18em; text-transform: uppercase;
+}
+.stream-head-meta {
+  font-family: 'JetBrains Mono', monospace; font-size: 9px;
+  letter-spacing: 0.18em; color: var(--weld); font-weight: 400;
+}
+.stream-post {
+  padding: 18px 22px; border-bottom: 1px dashed rgba(15, 13, 9, 0.25);
+}
+.stream-post:last-child { border-bottom: 0; }
+.sp-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.sp-av {
+  width: 34px; height: 34px; border-radius: 4px;
+  background: var(--arc); color: var(--ink);
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 900; font-size: 13px;
+  border: 2px solid var(--ink); box-shadow: 2px 2px 0 rgba(15,13,9,0.25);
+}
+.sp-meta .sp-name {
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 800; font-size: 13px;
+  letter-spacing: 0.04em; color: var(--ink); text-transform: uppercase;
+}
+.sp-meta .sp-name .creator-badge {
+  display: inline-block; margin-left: 8px;
+  background: var(--verified); color: #fff;
+  font-family: 'JetBrains Mono', monospace; font-size: 8px;
+  padding: 1px 6px; letter-spacing: 0.18em; font-weight: 700;
+  vertical-align: middle;
+}
+.sp-meta .sp-time {
+  font-family: 'JetBrains Mono', monospace; font-size: 9.5px;
+  letter-spacing: 0.12em; color: var(--ink-ghost); margin-top: 1px;
+}
+.sp-kind {
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 900; font-size: 10px; letter-spacing: 0.22em;
+  padding: 2px 7px; background: var(--arc); color: var(--ink);
+  text-transform: uppercase; margin-left: auto; align-self: flex-start;
+}
+.sp-kind.drop   { background: var(--weld); color: var(--ink); }
+.sp-kind.studio { background: var(--ink); color: var(--weld); }
+.sp-kind.mint   { background: var(--verified); color: #fff; }
+.sp-body {
+  font-family: 'Fraunces', serif;
+  font-size: 15px; line-height: 1.5; color: var(--ink);
+}
+.sp-body strong { font-weight: 600; }
+.sp-body em { font-style: italic; color: var(--ink-soft); }
+.sp-react {
+  margin-top: 10px; display: flex; gap: 14px;
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  letter-spacing: 0.12em; color: var(--ink-ghost); text-transform: uppercase;
+}
+
+/* Studio inline image */
+.sp-thumb {
+  margin-top: 12px;
+  height: 160px;
+  border: 2px solid var(--ink);
+  box-shadow: 3px 3px 0 rgba(15, 13, 9, 0.3);
+  background: conic-gradient(from 110deg at 50% 40%, #ff5718 0 30%, #ffc01e 30% 55%, #0f0d09 55% 80%, #ff5718 80% 100%);
+  position: relative;
+  display: flex; align-items: end; justify-content: flex-start;
+  padding: 10px 14px;
+}
+.sp-thumb::before {
+  content: ''; position: absolute; inset: 0;
+  background-image: repeating-linear-gradient(45deg, transparent 0 16px, rgba(0,0,0,0.14) 16px 17px);
+  mix-blend-mode: overlay;
+}
+.sp-thumb span {
+  position: relative; z-index: 1;
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 900; font-size: 20px;
+  color: var(--cardstock); letter-spacing: 0.04em;
+  text-shadow: 2px 2px 0 var(--ink);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   COLLECTORS (mirror of delegator network)
+   ═══════════════════════════════════════════════════════════ */
+.collectors-wrap {
+  max-width: 1560px; margin: 18px auto 0; padding: 0 28px;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 24px;
+}
+@media (max-width: 900px) { .collectors-wrap { grid-template-columns: 1fr; } }
+.deleg-panel {
+  background: var(--paper); color: var(--ink);
+  border: 1px solid rgba(15, 13, 9, 0.18);
+  box-shadow: 0 14px 28px -14px rgba(0,0,0,0.6), 0 4px 8px -2px rgba(0,0,0,0.3);
+  position: relative; overflow: hidden;
+}
+.deleg-panel::before {
+  content: ''; position: absolute; inset: 0;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='1.3' numOctaves='2' stitchTiles='stitch'/></filter><rect width='200' height='200' filter='url(%23n)' opacity='0.35'/></svg>");
+  mix-blend-mode: multiply; opacity: 0.14; pointer-events: none;
+}
+.deleg-panel > * { position: relative; z-index: 2; }
+.deleg-head {
+  background: var(--ink); color: var(--cardstock);
+  padding: 12px 18px; border-bottom: 3px solid var(--arc);
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 900; font-size: 16px;
+  letter-spacing: 0.18em; text-transform: uppercase;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.deleg-head .meta {
+  font-family: 'JetBrains Mono', monospace; font-size: 9px;
+  letter-spacing: 0.18em; color: var(--weld); font-weight: 400;
+}
+.deleg-row {
+  display: grid; grid-template-columns: 30px 1fr auto auto;
+  gap: 12px; align-items: center;
+  padding: 10px 18px;
+  border-bottom: 1px dashed rgba(15, 13, 9, 0.22);
+}
+.deleg-row:last-child { border-bottom: 0; }
+.deleg-rank {
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 900; font-size: 22px; line-height: 1;
+  color: var(--arc); letter-spacing: -0.02em;
+}
+.deleg-who {
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 800; font-size: 14px;
+  color: var(--ink); text-transform: uppercase; letter-spacing: 0.04em;
+  line-height: 1;
+}
+.deleg-who em {
+  display: block; font-family: 'JetBrains Mono', monospace;
+  font-size: 9px; letter-spacing: 0.12em; color: var(--ink-ghost);
+  font-style: normal; text-transform: uppercase; margin-top: 3px;
+}
+.deleg-amt {
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  font-weight: 700; color: var(--ink); letter-spacing: 0.05em;
+  text-align: right;
+}
+.deleg-amt em {
+  display: block; font-family: 'JetBrains Mono', monospace;
+  font-size: 8px; letter-spacing: 0.14em; color: var(--ink-ghost);
+  font-style: normal; margin-top: 2px; text-transform: uppercase;
+}
+.deleg-tier {
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 900; font-size: 9px; letter-spacing: 0.18em;
+  color: var(--ink); padding: 3px 6px; text-transform: uppercase;
+  background: var(--cardstock-deep);
+}
+.deleg-tier.l { background: var(--tier-legendary); }
+.deleg-tier.r { background: var(--tier-rare); color: #fff; }
+
+.portfolio-summary { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0; }
+.p-cell {
+  padding: 18px 20px;
+  border-right: 1px dashed rgba(15, 13, 9, 0.22);
+  border-bottom: 1px dashed rgba(15, 13, 9, 0.22);
+}
+.p-cell:nth-child(2n) { border-right: 0; }
+.p-cell:nth-last-child(-n+2) { border-bottom: 0; }
+.p-k {
+  font-family: 'JetBrains Mono', monospace; font-size: 9px;
+  letter-spacing: 0.2em; color: var(--ink-ghost); text-transform: uppercase;
+}
+.p-v {
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 900; font-size: 30px; line-height: 1;
+  color: var(--ink); margin-top: 6px;
+}
+.p-v small {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  color: var(--verified); letter-spacing: 0.1em; margin-left: 4px; font-weight: 500;
+}
+.p-desc {
+  font-family: 'Fraunces', serif; font-style: italic;
+  font-size: 12.5px; line-height: 1.4; color: var(--ink-soft); margin-top: 6px;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   LETTERS FROM COLLECTORS
+   ═══════════════════════════════════════════════════════════ */
+.letters {
+  max-width: 1560px; margin: 18px auto 0; padding: 0 28px;
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px;
+}
+@media (max-width: 1100px) { .letters { grid-template-columns: 1fr; } }
+.letter {
+  background: var(--paper); color: var(--ink);
+  padding: 26px 28px 28px; position: relative;
+  border: 1px solid rgba(15,13,9,0.15);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.5) inset,
+    0 14px 28px -14px rgba(0, 0, 0, 0.6),
+    0 4px 8px -2px rgba(0, 0, 0, 0.3);
+  transform: rotate(var(--lr, 0deg));
+}
+.letter:nth-child(1) { --lr: -0.6deg; }
+.letter:nth-child(2) { --lr: 0.4deg; }
+.letter:nth-child(3) { --lr: -0.3deg; }
+.letter::before {
+  content: ''; position: absolute; inset: 0;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='1.3' numOctaves='2' stitchTiles='stitch'/></filter><rect width='200' height='200' filter='url(%23n)' opacity='0.35'/></svg>");
+  mix-blend-mode: multiply; opacity: 0.14; pointer-events: none;
+}
+.letter > * { position: relative; z-index: 2; }
+.letter-re {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  letter-spacing: 0.22em; color: var(--arc); text-transform: uppercase;
+  padding-bottom: 10px; margin-bottom: 14px;
+  border-bottom: 1px dashed rgba(15, 13, 9, 0.25);
+  display: flex; justify-content: space-between; gap: 12px;
+}
+.letter-body {
+  font-family: 'Fraunces', serif;
+  font-size: 15px; line-height: 1.55; color: var(--ink);
+  font-style: italic;
+}
+.letter-body::before {
+  content: '"'; font-family: 'Fraunces', serif;
+  font-size: 56px; line-height: 0.9;
+  color: rgba(255, 87, 24, 0.4); font-style: normal;
+  display: block; margin-bottom: -14px; margin-left: -4px; font-weight: 600;
+}
+.letter-sig {
+  margin-top: 18px; padding-top: 14px;
+  border-top: 1px solid rgba(15, 13, 9, 0.3);
+  display: grid; grid-template-columns: auto 1fr;
+  gap: 12px; align-items: center;
+}
+.letter-av {
+  width: 42px; height: 42px; border-radius: 4px;
+  background: var(--ink); color: var(--cardstock);
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 900; font-size: 16px; text-transform: uppercase;
+  border: 2px solid var(--ink); box-shadow: 2px 2px 0 rgba(15,13,9,0.25);
+}
+.letter-who {
+  font-family: 'Big Shoulders Stencil Display', sans-serif;
+  font-weight: 800; font-size: 14px; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--ink);
+}
+.letter-who em {
+  display: block; font-family: 'Fraunces', serif;
+  font-style: italic; font-weight: 400;
+  font-size: 11px; color: var(--ink-ghost);
+  text-transform: none; letter-spacing: 0; margin-top: 2px;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   FOOTER
+   ═══════════════════════════════════════════════════════════ */
+.footer {
+  max-width: 1560px; margin: 56px auto 0;
+  padding: 24px 28px 36px;
+  display: flex; justify-content: space-between; align-items: center;
+  border-top: 1px dashed rgba(239, 229, 207, 0.2);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase;
+  color: rgba(239, 229, 207, 0.45); gap: 16px; flex-wrap: wrap;
+}
+.footer .stamp {
+  border: 1px solid var(--arc); color: var(--arc);
+  padding: 4px 8px; letter-spacing: 0.22em; transform: rotate(-1.5deg);
+}
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+
+<!-- TOP RAIL -->
+<div class="rail">
+  <div><span class="dot"></span>BCC // CREATOR PROFILE</div>
+  <div class="rail-right">
+    <span>NET · MAINNET</span>
+    <span>VIEWING · @welder</span>
+    <span id="clock">--:--:-- UTC</span>
+  </div>
+</div>
+
+<!-- NAV -->
+<div class="nav">
+  <div class="brand">
+    BLUE<span class="brand-accent">·</span>COLLAR<br />CRYPTO
+    <span class="brand-sub">Signed on-chain · Graded by the floor</span>
+  </div>
+  <div class="nav-links">
+    <a class="nav-link">The Floor</a>
+    <a class="nav-link">Binder</a>
+    <a class="nav-link">Broadcast</a>
+    <a class="nav-link">Validators</a>
+    <a class="nav-link active">Creators</a>
+    <a class="nav-link">Disputes</a>
+  </div>
+  <div></div>
+</div>
+
+<!-- RIBBON -->
+<div class="standing-ribbon">
+  <div class="standing-inner">
+    <div class="lbl">
+      <span class="seal-check">✓</span>
+      <span>Verified Creator · Hand-signed on-chain</span>
+      <span class="sep"></span>
+      <span class="meta">Active since Feb 2024 · 3 collections released · $142k lifetime volume</span>
+    </div>
+    <div class="meta">Studio Nº 0342</div>
+  </div>
+</div>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-grid">
+
+    <!-- Creator card (portrait IS their art) -->
+    <div class="v-card">
+      <span class="pc-tier">Legendary</span>
+      <div class="creator-stamp">VERIFIED<strong>CREATOR</strong></div>
+
+      <div class="pc-band">
+        <span>Creator · Studio</span>
+        <span class="tag">Est. 2024</span>
+      </div>
+      <div class="pc-portrait is-art">
+        <span class="pc-edition">№ 001 / 050</span>
+      </div>
+      <div class="pc-name">
+        <div class="pc-role">Welder</div>
+        <div class="pc-handle">@welder · industrial abstract / editions</div>
+      </div>
+      <div class="pc-stats">
+        <div class="pc-stat"><span class="k">Works</span><span class="v">81</span></div>
+        <div class="pc-stat"><span class="k">Holders</span><span class="v">112</span></div>
+        <div class="pc-stat"><span class="k">Since</span><span class="v">'24</span></div>
+      </div>
+    </div>
+
+    <!-- Identity -->
+    <div class="v-ident">
+      <div class="kicker">
+        Creator Profile · Studio 0342
+        <span class="tag">✓ Verified</span>
+        <span class="tag weld">Drop Live</span>
+      </div>
+      <h1 class="v-name">Welder <em>— hand-<br/>welded on-chain</em></h1>
+      <p class="v-sub">
+        Industrial abstract in editions. Hand-welded color fields, arc-light seams, steel grain.
+        Small-run, generously signed, priced like it was made.
+      </p>
+      <div class="v-meta">
+        <span><strong>Studio</strong> · Eastern Ohio</span>
+        <span><strong>Chains</strong> · ETH · Injective · Solana</span>
+        <span><strong>Represented by</strong> · Foundry Gallery</span>
+        <span><strong>Last shift</strong> · 2h ago</span>
+      </div>
+      <div class="v-actions">
+        <button class="btn btn-primary">+ Follow</button>
+        <button class="btn btn-ghost">Commission</button>
+        <button class="btn btn-ghost">Share Studio</button>
+      </div>
+    </div>
+
+    <!-- Live signals -->
+    <div class="v-live">
+      <div class="v-live-head">
+        Studio Signals
+        <span class="p-dot"></span>
+      </div>
+      <div class="v-live-row"><span>Mint · FDR #042</span><strong>2h</strong></div>
+      <div class="v-live-row"><span>Mint · FDR #041</span><strong>4h</strong></div>
+      <div class="v-live-row"><span>+ 2 followers</span><strong>6h</strong></div>
+      <div class="v-live-row"><span>Secondary sale · TRCH #003</span><strong>1d</strong></div>
+      <div class="v-live-row"><span>Featured · Hot on the Floor</span><strong>2d</strong></div>
+      <div class="v-live-row"><span>Current floor</span><em>0.12 ETH</em></div>
+    </div>
+  </div>
+</section>
+
+<!-- BIO / ARTIST STATEMENT -->
+<section class="bio-wrap">
+  <div class="bio">
+    <div class="bio-kicker">Artist Statement · Written by @welder</div>
+    <h2 class="bio-head">A few words from the studio</h2>
+    <div class="bio-body">
+      <p>
+        I weld for a living — forty hours a week in a shop in eastern Ohio. The work on this page started as
+        warm-up drawings of the seams I was laying that day. Arc light on steel, cooling metal, the bead you leave
+        behind when you do it right.
+      </p>
+      <p>
+        <em>Editions are small, prices are fair, every piece is signed from the shop wallet.</em> If you hold one, you
+        held something I made with my hands. I respond to every message from a collector, usually on my lunch break.
+      </p>
+    </div>
+    <div class="bio-foot">
+      <div class="bio-sig">— J. Welder, studio</div>
+      <div class="bio-sig-sub">
+        <strong>Wallet-verified</strong> · studio address 0xw3ld3…9f21 · last updated 2026-03-02
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- STATS STRIP -->
+<section class="stats-strip">
+  <div class="s">
+    <div class="k">Works Minted <span class="onchain-tag">on-chain</span></div>
+    <div class="v">81 <small>+2 / 24h</small></div>
+  </div>
+  <div class="s">
+    <div class="k">Editions Sold <span class="onchain-tag">on-chain</span></div>
+    <div class="v">312 <small>+14 / 30d</small></div>
+  </div>
+  <div class="s">
+    <div class="k">Unique Holders <span class="onchain-tag">on-chain</span></div>
+    <div class="v">112 <small>+4 / 30d</small></div>
+  </div>
+  <div class="s">
+    <div class="k">Lifetime Volume <span class="onchain-tag">on-chain</span></div>
+    <div class="v">$142k <small>38 ETH-eq</small></div>
+  </div>
+  <div class="s">
+    <div class="k">Floor Price <span class="onchain-tag">on-chain</span></div>
+    <div class="v">0.12 <small class="arc">ETH · + 18%</small></div>
+  </div>
+  <div class="s">
+    <div class="k">Avg Hold</div>
+    <div class="v">11m <small class="dim">of 14m active</small></div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     FEATURED DROP
+     ═══════════════════════════════════════════════════════════ -->
+<div class="section-head">
+  <h2>Latest drop</h2>
+  <span class="rule"></span>
+  <span class="counter">Foundry · Series 01 · April 2026</span>
+</div>
+
+<section class="drop">
+  <div class="drop-art">
+    <div class="art-bg"></div>
+    <span class="art-tag">LIVE · MINTING</span>
+    <span class="art-number">№ 001 / 050</span>
+    <div class="art-caption">
+      <span class="title">FOUNDRY</span>
+      <span>FIRST SHIFT · ETH · HAND-SIGNED</span>
+    </div>
+  </div>
+
+  <div class="drop-info">
+    <div class="drop-kicker">Now minting · Editions open</div>
+    <h3 class="drop-title">Foundry<em>— first shift, hot metal, honest seams.</em></h3>
+    <p class="drop-desc">
+      Fifty editions. Each one signed from the shop wallet. Hand-welded colour fields under cooled seam lines —
+      made in batches of five during the last hour of the shift, when the arc is steady and the shop is quiet.
+    </p>
+    <div class="drop-stats">
+      <div class="drop-stat"><div class="k">Mint price</div><div class="v">0.08 <small>ETH</small></div></div>
+      <div class="drop-stat"><div class="k">Edition</div><div class="v">50 <small>1/1 each</small></div></div>
+      <div class="drop-stat"><div class="k">Minted</div><div class="v">42 <small>8 remain</small></div></div>
+      <div class="drop-stat"><div class="k">Secondary floor</div><div class="v">0.12 <small>ETH</small></div></div>
+    </div>
+    <div class="drop-progress">
+      <div class="drop-progress-bar"><span style="width:84%"></span></div>
+      <div class="drop-progress-label">
+        <span>MINTED · 42 / 50</span><span>84 %</span>
+      </div>
+    </div>
+    <div class="drop-actions">
+      <button class="btn-mint">✎ Mint an edition</button>
+      <button class="btn btn-ghost" style="color:var(--ink);border-color:var(--ink);box-shadow:3px 3px 0 rgba(15,13,9,0.15)">View on-chain</button>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     GALLERY
+     ═══════════════════════════════════════════════════════════ -->
+<div class="section-head">
+  <h2>The gallery</h2>
+  <span class="rule"></span>
+  <span class="counter">81 works · 3 collections · 5 chains</span>
+</div>
+<p class="section-sub">
+  Every piece signed from the shop wallet. Hover a card for details · click to open.
+</p>
+
+<section class="gallery">
+
+  <div class="piece feat" data-tier="legendary">
+    <div class="piece-art art-foundry-1">
+      <span class="piece-edition-tag">№ 001 / 050</span>
+      <span class="piece-chain-tag">ETH</span>
+      <span class="piece-title-on-art lg">FOUNDRY</span>
+    </div>
+    <div class="piece-foot">
+      <div>
+        <div class="piece-title-foot">Foundry · First Shift</div>
+        <div class="piece-sub">April 2026 · Series 01</div>
+      </div>
+      <div class="piece-price">0.08 ETH<em>42 / 50 MINTED</em></div>
+    </div>
+  </div>
+
+  <div class="piece" data-tier="rare">
+    <div class="piece-art art-foundry-2">
+      <span class="piece-edition-tag">№ 008 / 050</span>
+      <span class="piece-chain-tag">ETH</span>
+      <span class="piece-title-on-art md">FDR·08</span>
+    </div>
+    <div class="piece-foot">
+      <div>
+        <div class="piece-title-foot">Foundry №008</div>
+        <div class="piece-sub">April 2026</div>
+      </div>
+      <div class="piece-price">0.08<em>MINTED</em></div>
+    </div>
+  </div>
+
+  <div class="piece">
+    <div class="piece-art art-foundry-3">
+      <span class="piece-edition-tag">№ 022 / 050</span>
+      <span class="piece-chain-tag">ETH</span>
+      <span class="piece-title-on-art md">FDR·22</span>
+    </div>
+    <div class="piece-foot">
+      <div>
+        <div class="piece-title-foot">Foundry №022</div>
+        <div class="piece-sub">April 2026 · Steel grain</div>
+      </div>
+      <div class="piece-price">0.08<em>MINTED</em></div>
+    </div>
+  </div>
+
+  <div class="piece">
+    <div class="piece-art art-overtime-1">
+      <span class="piece-edition-tag">№ 003 / 021</span>
+      <span class="piece-chain-tag">INJ</span>
+      <span class="piece-title-on-art md">OVT·03</span>
+    </div>
+    <div class="piece-foot">
+      <div>
+        <div class="piece-title-foot">Overtime №003</div>
+        <div class="piece-sub">Feb 2026 · Injective</div>
+      </div>
+      <div class="piece-price">35 INJ<em>HELD</em></div>
+    </div>
+  </div>
+
+  <div class="piece wide">
+    <div class="piece-art art-overtime-2">
+      <span class="piece-edition-tag">№ 014 / 021</span>
+      <span class="piece-chain-tag">INJ</span>
+      <span class="piece-title-on-art md">OVERTIME</span>
+    </div>
+    <div class="piece-foot">
+      <div>
+        <div class="piece-title-foot">Overtime №014</div>
+        <div class="piece-sub">Feb 2026 · Injective · Red seam series</div>
+      </div>
+      <div class="piece-price">35 INJ<em>HELD</em></div>
+    </div>
+  </div>
+
+  <div class="piece" data-tier="legendary">
+    <div class="piece-art art-torch-1">
+      <span class="piece-edition-tag">1 / 1</span>
+      <span class="piece-chain-tag">SOL</span>
+      <span class="piece-title-on-art md">TORCH·01</span>
+    </div>
+    <div class="piece-foot">
+      <div>
+        <div class="piece-title-foot">Torch №001</div>
+        <div class="piece-sub">Nov 2025 · 1/1</div>
+      </div>
+      <div class="piece-price">2.4 SOL<em class="sold">SOLD</em></div>
+    </div>
+  </div>
+
+  <div class="piece" data-tier="rare">
+    <div class="piece-art art-torch-2">
+      <span class="piece-edition-tag">1 / 1</span>
+      <span class="piece-chain-tag">SOL</span>
+      <span class="piece-title-on-art md">TRCH·03</span>
+    </div>
+    <div class="piece-foot">
+      <div>
+        <div class="piece-title-foot">Torch №003</div>
+        <div class="piece-sub">Nov 2025 · 1/1 · Split composition</div>
+      </div>
+      <div class="piece-price">1.8 SOL<em class="sold">SOLD</em></div>
+    </div>
+  </div>
+
+  <div class="piece">
+    <div class="piece-art art-foundry-2">
+      <span class="piece-edition-tag">№ 035 / 050</span>
+      <span class="piece-chain-tag">ETH</span>
+      <span class="piece-title-on-art md">FDR·35</span>
+    </div>
+    <div class="piece-foot">
+      <div>
+        <div class="piece-title-foot">Foundry №035</div>
+        <div class="piece-sub">April 2026 · Twin flares</div>
+      </div>
+      <div class="piece-price">0.08<em>MINTED</em></div>
+    </div>
+  </div>
+
+  <div class="piece" data-tier="rare">
+    <div class="piece-art art-rebar">
+      <span class="piece-edition-tag">PREVIEW</span>
+      <span class="piece-chain-tag">? ? ?</span>
+      <span class="piece-title-on-art md" style="color:var(--ink);text-shadow:none;border-bottom:2px dashed var(--ink);padding-bottom:4px">REBAR · Q3</span>
+    </div>
+    <div class="piece-foot">
+      <div>
+        <div class="piece-title-foot">Rebar · Sketch</div>
+        <div class="piece-sub">Upcoming · Q3 2026</div>
+      </div>
+      <div class="piece-price">TBD<em>WAITLIST</em></div>
+    </div>
+  </div>
+
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     COLLECTIONS
+     ═══════════════════════════════════════════════════════════ -->
+<div class="section-head">
+  <h2>Collections</h2>
+  <span class="rule"></span>
+  <span class="counter">3 released · 1 on deck</span>
+</div>
+
+<section class="collections">
+  <div class="coll">
+    <div class="coll-cover cv-foundry"><span class="ctitle">FOUNDRY</span></div>
+    <div class="coll-body">
+      <div class="coll-sub">Series 01 · Apr 2026 · Ethereum</div>
+      <div class="coll-desc">
+        "First Shift." Fifty editions of hot-metal colour fields under cooling seam lines. Signed from the shop wallet, mint price 0.08 ETH each.
+      </div>
+      <div class="coll-stats">
+        <div><div class="cs-k">Editions</div><div class="cs-v">50</div></div>
+        <div><div class="cs-k">Minted</div><div class="cs-v">42</div></div>
+        <div><div class="cs-k">Holders</div><div class="cs-v">31</div></div>
+      </div>
+      <div class="coll-mini-bar"><span style="width:84%"></span></div>
+    </div>
+  </div>
+
+  <div class="coll">
+    <div class="coll-cover cv-overtime"><span class="ctitle">OVERTIME</span></div>
+    <div class="coll-body">
+      <div class="coll-sub">Series 02 · Feb 2026 · Injective</div>
+      <div class="coll-desc">
+        "Red seam." Twenty-one pieces minted during a single week of overtime shifts. Cobalt and red only, mint price 35 INJ.
+      </div>
+      <div class="coll-stats">
+        <div><div class="cs-k">Editions</div><div class="cs-v">21</div></div>
+        <div><div class="cs-k">Sold out</div><div class="cs-v">21</div></div>
+        <div><div class="cs-k">Holders</div><div class="cs-v">18</div></div>
+      </div>
+      <div class="coll-mini-bar"><span style="width:100%"></span></div>
+    </div>
+  </div>
+
+  <div class="coll">
+    <div class="coll-cover cv-torch"><span class="ctitle">TORCH</span></div>
+    <div class="coll-body">
+      <div class="coll-sub">Series 03 · Nov 2025 · Solana</div>
+      <div class="coll-desc">
+        Ten 1/1 pieces. Each one a single long exposure of the shop torch. No second print, ever. Secondary floor currently 0.9 SOL.
+      </div>
+      <div class="coll-stats">
+        <div><div class="cs-k">Editions</div><div class="cs-v">10</div></div>
+        <div><div class="cs-k">Sold</div><div class="cs-v">10</div></div>
+        <div><div class="cs-k">Holders</div><div class="cs-v">9</div></div>
+      </div>
+      <div class="coll-mini-bar"><span style="width:100%"></span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     STUDIO LOG (stream)
+     ═══════════════════════════════════════════════════════════ -->
+<div class="section-head">
+  <h2>Studio Log</h2>
+  <span class="rule"></span>
+  <span class="counter">Process · Drops · Mints</span>
+</div>
+<p class="section-sub">
+  Posts from the shop — release notes, process, and behind-the-scenes.
+</p>
+
+<section class="stream-wrap">
+  <div class="stream-box">
+    <div class="stream-head">
+      <div class="stream-head-title">Posts from @welder</div>
+      <div class="stream-head-meta">Signed from studio wallet</div>
+    </div>
+
+    <article class="stream-post">
+      <div class="sp-head">
+        <div class="sp-av">WD</div>
+        <div class="sp-meta">
+          <div class="sp-name">Welder <span class="creator-badge">CREATOR</span></div>
+          <div class="sp-time">Pinned · 2026-04-23 · 14:02 UTC</div>
+        </div>
+        <span class="sp-kind drop">Drop</span>
+      </div>
+      <div class="sp-body">
+        <strong>FOUNDRY is live.</strong> Fifty editions, 0.08 ETH each, signed from the shop wallet. Eight left at time of post.
+        Minting stays open until 42 / 50 — then I'll mint the remaining eight myself and hold them for next year's dispute fund.
+      </div>
+      <div class="sp-thumb"><span>FOUNDRY · SERIES 01 · APR 2026</span></div>
+      <div class="sp-react"><span>◆ 284 SOLID</span><span>◆ 98 VOUCH</span><span>◆ 41 COMMENTS</span></div>
+    </article>
+
+    <article class="stream-post">
+      <div class="sp-head">
+        <div class="sp-av">WD</div>
+        <div class="sp-meta">
+          <div class="sp-name">Welder <span class="creator-badge">CREATOR</span></div>
+          <div class="sp-time">2026-04-21 · 20:48 UTC</div>
+        </div>
+        <span class="sp-kind studio">Studio</span>
+      </div>
+      <div class="sp-body">
+        Process note on FOUNDRY — the conic colour fields aren't generative. Each one is laid out by hand against a photograph I
+        took of a seam I welded that day. <em>If it looks random, it's because the shop floor is.</em> The seam lines are always
+        true to the original. Nothing synthesized.
+      </div>
+      <div class="sp-react"><span>◆ 142 SOLID</span><span>◆ 48 VOUCH</span><span>◆ 22 COMMENTS</span></div>
+    </article>
+
+    <article class="stream-post">
+      <div class="sp-head">
+        <div class="sp-av">WD</div>
+        <div class="sp-meta">
+          <div class="sp-name">Welder <span class="creator-badge">CREATOR</span></div>
+          <div class="sp-time">2026-04-19 · 11:30 UTC</div>
+        </div>
+        <span class="sp-kind mint">Mint</span>
+      </div>
+      <div class="sp-body">
+        Shop wallet minted FOUNDRY #001 — keeping it. It's the first edition. Feels right.
+        The other 49 open publicly on Thursday at 9 AM ET. If you're on the waitlist, you're already allowlisted.
+      </div>
+      <div class="sp-react"><span>◆ 98 SOLID</span><span>◆ 34 VOUCH</span><span>◆ 12 COMMENTS</span></div>
+    </article>
+
+    <article class="stream-post">
+      <div class="sp-head">
+        <div class="sp-av">WD</div>
+        <div class="sp-meta">
+          <div class="sp-name">Welder <span class="creator-badge">CREATOR</span></div>
+          <div class="sp-time">2026-03-02 · 19:08 UTC</div>
+        </div>
+        <span class="sp-kind">Post</span>
+      </div>
+      <div class="sp-body">
+        <strong>Pricing manifesto, short version:</strong>
+        I price like it was made. I don't chase floors. If you bought in early, I'll never price you underwater on primary.
+        That's the promise. Don't overthink it.
+      </div>
+      <div class="sp-react"><span>◆ 214 SOLID</span><span>◆ 76 VOUCH</span><span>◆ 38 COMMENTS</span></div>
+    </article>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     COLLECTORS
+     ═══════════════════════════════════════════════════════════ -->
+<div class="section-head">
+  <h2>Collectors</h2>
+  <span class="rule"></span>
+  <span class="counter">112 unique · Top holders</span>
+</div>
+
+<section class="collectors-wrap">
+  <div class="deleg-panel">
+    <div class="deleg-head">
+      <span>Top holders on BCC</span>
+      <span class="meta">5 of 112</span>
+    </div>
+    <div class="deleg-row">
+      <span class="deleg-rank">01</span>
+      <div class="deleg-who">Simon X<em>@simontx · collector since 2024</em></div>
+      <div class="deleg-amt">9<em>FDR · TRCH · OVT</em></div>
+      <span class="deleg-tier l">Lgd</span>
+    </div>
+    <div class="deleg-row">
+      <span class="deleg-rank">02</span>
+      <div class="deleg-who">Foundry Gallery<em>@foundry-gallery · rep since 2025</em></div>
+      <div class="deleg-amt">6<em>FDR × 6</em></div>
+      <span class="deleg-tier r">Rare</span>
+    </div>
+    <div class="deleg-row">
+      <span class="deleg-rank">03</span>
+      <div class="deleg-who">Delegator Dan<em>@delegatordan · since 2025</em></div>
+      <div class="deleg-amt">4<em>FDR × 4</em></div>
+      <span class="deleg-tier r">Rare</span>
+    </div>
+    <div class="deleg-row">
+      <span class="deleg-rank">04</span>
+      <div class="deleg-who">Akashi<em>@akashi · since 2025</em></div>
+      <div class="deleg-amt">3<em>TRCH · OVT × 2</em></div>
+      <span class="deleg-tier">Unc</span>
+    </div>
+    <div class="deleg-row">
+      <span class="deleg-rank">05</span>
+      <div class="deleg-who">Iron Local 342<em>@ironlocal342 · since 2026</em></div>
+      <div class="deleg-amt">2<em>FDR × 2</em></div>
+      <span class="deleg-tier">Unc</span>
+    </div>
+  </div>
+
+  <div class="deleg-panel">
+    <div class="deleg-head">
+      <span>Collector Profile</span>
+      <span class="meta">Weighted</span>
+    </div>
+    <div class="portfolio-summary">
+      <div class="p-cell">
+        <div class="p-k">Collector trust</div>
+        <div class="p-v">88 <small>Top 12%</small></div>
+        <div class="p-desc">Weighted reputation of the wallets that hold Welder's work.</div>
+      </div>
+      <div class="p-cell">
+        <div class="p-k">Avg hold</div>
+        <div class="p-v">11m</div>
+        <div class="p-desc">Holders keep pieces, on average, 11 months. Network median: 3.</div>
+      </div>
+      <div class="p-cell">
+        <div class="p-k">Paper hands</div>
+        <div class="p-v">4%</div>
+        <div class="p-desc">Only 4% of minted pieces were listed within 30 days.</div>
+      </div>
+      <div class="p-cell">
+        <div class="p-k">Commissions</div>
+        <div class="p-v">0</div>
+        <div class="p-desc">No commissions filed. All work is self-initiated.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     LETTERS FROM COLLECTORS
+     ═══════════════════════════════════════════════════════════ -->
+<div class="section-head">
+  <h2>Letters from collectors</h2>
+  <span class="rule"></span>
+  <span class="counter">3 of 64 endorsements</span>
+</div>
+<p class="section-sub">
+  What the people who hold Welder's work say about it.
+</p>
+
+<section class="letters">
+  <article class="letter">
+    <div class="letter-re">
+      <span>RE: @welder · FOUNDRY</span>
+      <span>2026-04-22</span>
+    </div>
+    <p class="letter-body">
+      Picked up FOUNDRY #014 the hour it dropped. It's the third piece of Welder's I've put in the binder and I still
+      haven't flipped one. The process notes alone are worth the mint price — most creators won't show you the picture
+      they welded. This one sends you the picture and the seam.
+    </p>
+    <div class="letter-sig">
+      <div class="letter-av">SX</div>
+      <div class="letter-who">
+        Simon X
+        <em>@simontx · collector since 2024 · holds 9 pieces</em>
+      </div>
+    </div>
+  </article>
+
+  <article class="letter">
+    <div class="letter-re">
+      <span>RE: @welder · OVERTIME</span>
+      <span>2026-03-18</span>
+    </div>
+    <p class="letter-body">
+      I bought OVERTIME #003 on the primary and #007 secondary two weeks later. Welder's pricing policy means you never
+      feel like a mark. That's rarer than the art. I recommend him to every new collector who asks me where to start.
+    </p>
+    <div class="letter-sig">
+      <div class="letter-av">DD</div>
+      <div class="letter-who">
+        Delegator Dan
+        <em>@delegatordan · collector since 2025 · holds 4</em>
+      </div>
+    </div>
+  </article>
+
+  <article class="letter">
+    <div class="letter-re">
+      <span>RE: @welder · TORCH</span>
+      <span>2025-12-06</span>
+    </div>
+    <p class="letter-body">
+      TORCH #004 is the only 1/1 I own. I asked Welder about it on his lunch break and he sent back two paragraphs
+      and a photo of the actual torch. <em>That's what I'm paying for.</em> The picture's a bonus.
+    </p>
+    <div class="letter-sig">
+      <div class="letter-av">AK</div>
+      <div class="letter-who">
+        Akashi
+        <em>@akashi · collector since 2025 · holds 3</em>
+      </div>
+    </div>
+  </article>
+</section>
+
+<!-- FOOTER -->
+<footer class="footer">
+  <span>© 2026 Blue Collar Crypto · Creator Profile · @welder · Studio Nº 0342</span>
+  <span class="stamp">Signed from the shop</span>
+  <span>Prototype · The Creator · 06 / 06</span>
+</footer>
+
+<script>
+(function () {
+  const clock = document.getElementById('clock');
+  function tick() {
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    clock.textContent = `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())} UTC`;
+  }
+  tick(); setInterval(tick, 1000);
+
+  document.querySelectorAll('.nav-link').forEach((n) =>
+    n.addEventListener('click', () => {
+      document.querySelectorAll('.nav-link').forEach((x) => x.classList.remove('active'));
+      n.classList.add('active');
+    }));
+})();
+</script>
+</body>
+</html>
