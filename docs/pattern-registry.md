@@ -26,6 +26,48 @@ should point at exactly one source-of-truth class or method per concept.
   with the egress safety net `enforceWalletPrivacyAtEgress`
   ([app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/UserViewService.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/UserViewService.php))
 
+## Profile + account (V2 Phase 2)
+
+- **Self-edit endpoint** (bio + avatar + cover + cover position) →
+  `BCC\Trust\Core\REST\MyProfileEndpoint`
+  ([app/public/wp-content/plugins/bcc-trust/app/Domain/Core/REST/MyProfileEndpoint.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/REST/MyProfileEndpoint.php))
+- **Avatar / cover storage** is owned by PeepSo; we wrap the public
+  methods on `\PeepSoUser` (`move_avatar_file` + `finalize_move_avatar_file`,
+  `move_cover_file`, `delete_avatar`, `delete_cover_photo`). Do NOT
+  reimplement image processing — PeepSo handles resize, multi-size,
+  hash-named storage.
+- **Cover photo URL resolver** →
+  `BCC\Trust\Core\Services\UserViewService::resolveCoverPhotoUrl`
+  ([app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/UserViewService.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/UserViewService.php))
+- **Cover position** (crop x/y) reads/writes
+  `peepso_cover_position_x` + `peepso_cover_position_y` user_meta;
+  resolver `UserViewService::resolveCoverPhotoPosition` defaults to
+  `{x: 50, y: 50}` when not set.
+- **Bio storage** is `wp_users.description`; sanitize with
+  `sanitize_textarea_field`, cap at 500 chars (matches PeepSo's typical).
+
+## Messaging preferences (V2 Phase 2)
+
+- **Self-edit endpoint** →
+  `BCC\Trust\Core\REST\MyMessagesPrefsEndpoint`
+  ([app/public/wp-content/plugins/bcc-trust/app/Domain/Core/REST/MyMessagesPrefsEndpoint.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/REST/MyMessagesPrefsEndpoint.php))
+- **Storage**: PeepSo's `peepso_chat_enabled` + `peepso_chat_friends_only`
+  user_meta keys, read by
+  [peepso-messages/classes/chatmodel.php](../app/public/wp-content/plugins/peepso-messages/classes/chatmodel.php)
+  to gate direct-message delivery. Do NOT invent parallel keys —
+  PeepSo's chat surfaces won't read them.
+
+## PeepSo email pipeline (silenced)
+
+- **PeepSo's mail queue cron** (`peepso_mailqueue_send_event`) is
+  unscheduled at runtime by [bcc-trust.php](../app/public/wp-content/plugins/bcc-trust/bcc-trust.php) §"PeepSo email
+  pipeline — silenced". BCC's `DigestService` + `NotificationDispatcher`
+  are the canonical email surfaces; PeepSo's parallel pipeline reads
+  `peepso_email_intensity` / `peepso_notifications` keys our settings
+  don't write, which would have caused double emails / opt-out drift.
+- If a future requirement reinstates PeepSo emails, also wire our
+  `/settings/notifications` writes to mirror to those keys.
+
 ## Cards
 
 - **Crest building** (`background_kind` / `background_value` / `image_url`

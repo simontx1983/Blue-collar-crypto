@@ -551,6 +551,8 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
   "handle": "simontx",
   "display_name": "Simon TX",
   "avatar_url": "https://bluecollar.crypto/wp-content/uploads/2026/04/simontx-avatar.jpg",
+  "cover_photo_url": "https://bluecollar.crypto/wp-content/uploads/peepso/users/42/abc123-cover.jpg",
+  "cover_photo_position": { "x": 50, "y": 50 },
   "joined_at": "2026-01-12T00:00:00Z",
   "is_self": true,
   "trust_score": 78,
@@ -646,6 +648,8 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
 - `card_tier` follows §C1 mapping: `elite → legendary`, `trusted → rare`, `neutral → uncommon`, `caution → common`, `risky → null` (hidden from card UI per §C1).
 - `flags` is an array of short slugs; if non-empty, the frontend may render moderation chips. V1 codes: `suspended`, `shadow_limited`, `hidden`, `under_review`.
 - Hidden privacy fields (per `privacy.*_hidden: true`) cause the corresponding sections in `counts`, `wallets`, etc. to either be omitted or zeroed depending on the viewer's relationship — server decides, client doesn't.
+- `cover_photo_url` is `null` when no custom cover photo is set; the frontend renders a default treatment in that case. URL is absolute (per §1.7) and points at PeepSo's stored cover image. Self-edits go through `PATCH /me/profile/cover` (multipart upload) — see §V2 Phase 2 endpoints.
+- `cover_photo_position` is `{x, y}` percentages (0–100) for the CSS `object-position` of the cover crop. Defaults to `{x: 50, y: 50}` (center). Self-edits go through `PATCH /me/profile/cover/position`.
 
 ### 3.2 `Card` (polymorphic)
 
