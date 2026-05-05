@@ -805,6 +805,11 @@ Feed items share an envelope and vary by `post_kind`.
   "links": {
     "self":   "/p/feed_98712",
     "author": "/u/simontx"
+  },
+  "group": {
+    "id": 4231,
+    "type": "nft",
+    "verification": { "kind": "on_chain", "label": "On-Chain Verified" }
   }
 }
 ```
@@ -814,6 +819,12 @@ Feed items share an envelope and vary by `post_kind`.
 - `id` is a string in the form `feed_<int>` (the underlying activity ID is opaque to the client — using a string lets us migrate if needed).
 - `external_id` is the module-specific FK (e.g. `wp_posts.ID` for status / blog / review backings, `bcc_pull_batches.id` for `pull_batch`, `bcc_onchain_claims.id` for `page_claim`, `0` for system-authored signals). Used by server-side hydrators and by the client as a stable React key. Treat as opaque.
 - `scope_tags` lists which feed-mode tabs (§N6) this post is eligible for. Used for client-side optimistic filtering when switching tabs without refetching.
+- `group` is **omitted** (not `null`) when the post does NOT come from a PeepSo group. When present, the post is a wall post inside a group:
+  - `id` — group_id (matches `group_id` in §4.7.x endpoints).
+  - `type` ∈ `nft` | `local` | `user` | `system` — matches §4.7.2 group `type`.
+  - `verification` is `null` for non-NFT groups; for NFT-gated groups it carries `{kind: 'on_chain', label: 'On-Chain Verified'}`. Frontend MUST render `label` verbatim — never abbreviate to "Verified" alone.
+  - **No server-side ranking is applied based on this field in v1.** The Floor feed continues to order strictly by recency. The `group` block is metadata for badge rendering and (optional) client-side prioritization. A scored ranking layer is deferred until usage telemetry exists to tune it honestly.
+  - **Mapping:** `peepso_group_id` post-meta on the activity's wp_post (PeepSo writes this when a status post is created inside a group) → `GroupContextResolver::forManyGroups`. Batched per page; no N+1.
 - V1 author block is **user-only** — every post in V1 is authored by a WP user (status, review, pull_batch, page_claim, dispute_signed, blog). System-emitted signals (§3.3.5) currently ride the same shape with the system actor's user_id; their `post_kind` discriminates them, not the author block.
 - `author.is_operator` — true when the author holds a verified operator/creator claim on any entity (per §N8). Drives the OPERATOR chip next to the author name.
 - `attached_card` is omitted (not `null`) when no card is attached.
@@ -1436,6 +1447,238 @@ Mark a Local as the user's primary.
 - **Errors:** `bcc_unauthorized`, `bcc_not_found` (not a member of this Local)
 - **Mapping:** Updates `bcc_user_locals.is_primary` (singleton — exactly one row per user has `is_primary: true`). Emits `bcc_local_primary_changed`.
 
+### 4.7.1 Holder Groups (NFT-gated)
+
+NFT-gated PeepSo groups: one closed group per admin-verified collection. Holders see suggestions and join explicitly (suggest-don't-auto-join). Auto-join is opt-in via a per-user preference. Privacy is `closed` (defense in depth) — non-members see the group exists but content is gated by both PeepSo and our server-side eligibility check.
+
+**Shared shapes (apply across all 4.7.x endpoints):**
+
+`verification` block — present on holder groups, `null` elsewhere:
+```json
+{ "kind": "on_chain", "label": "On-Chain Verified" }
+```
+Server-authoritative copy. The frontend MUST render `label` verbatim — never abbreviate to "Verified" alone.
+
+`activity` block — present on every holder-group item:
+```json
+{
+  "posts_last_7d": 14,
+  "active_members_last_7d": 0,
+  "last_activity_at": "2026-05-04T14:22:00+00:00",
+  "heat": "warm"
+}
+```
+- `heat` ∈ `cold` | `warm` | `hot`. Server-bucketed (default thresholds: cold ≤ 2 posts/7d, warm 3–9, hot ≥ 10). Filterable via `bcc_group_heat_thresholds`.
+- `last_activity_at` is `null` when no posts in window or when the underlying timestamp is invalid.
+- `active_members_last_7d` is reserved for v2.5; emit `0` until then.
+
+#### `GET /bcc/v1/me/holder-groups`
+
+The user's holder-groups state — joined groups, eligible-to-join suggestions, and previously opted-out groups.
+
+- **Auth:** Bearer (401 anonymous)
+- **Response 200:**
+  ```json
+  {
+    "joined": [
+      {
+        "group_id": 4231,
+        "slug": "holders-bored-apes",
+        "name": "Holders: Bored Apes",
+        "member_count": 87,
+        "collection": {
+          "chain": "ethereum",
+          "contract": "0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d",
+          "name": "Bored Apes",
+          "image_url": "https://bluecollar.crypto/wp-content/uploads/.../bayc.png"
+        },
+        "verification": { "kind": "on_chain", "label": "On-Chain Verified" },
+        "activity": {
+          "posts_last_7d": 14,
+          "active_members_last_7d": 0,
+          "last_activity_at": "2026-05-04T14:22:00+00:00",
+          "heat": "warm"
+        }
+      }
+    ],
+    "eligible_to_join": [ /* same item shape; user qualifies but isn't a member */ ],
+    "opted_out": [ /* same item shape; user explicitly left or was mod-removed */ ]
+  }
+  ```
+- **Cache:** `private, no-store` (per-viewer membership state).
+- **Mapping:** `peepso-group` posts where `_bcc_group_kind = 'holders'`, joined with `peepso_group_members` for membership and `wp_bcc_onchain_collections` for collection display. Eligibility uses `HoldingsService::ownsAnyMany` (one batched holdings call per chain). Opt-out is read from `bcc_gated_groups_optout` user_meta with TTL applied.
+- **Cold-start protection:** the `activity.heat` field is the user's escape hatch from ghost-town suggestions — frontend may sort `eligible_to_join[]` by heat to surface active rooms first.
+
+#### `POST /bcc/v1/me/holder-groups/:id/join`
+
+Explicit user-initiated join. Verifies eligibility server-side, clears any active opt-out for this group, and lands the user as a full member regardless of the group's `closed` privacy flag.
+
+- **Auth:** Bearer (401 anonymous)
+- **Response 200:**
+  ```json
+  { "joined": true, "group_id": 4231, "code": "ok" }
+  ```
+  `code` ∈ `ok` | `already_member` (idempotent re-join). Both are 200; the code distinguishes the side effect.
+- **Errors:**
+  - `bcc_invalid_request` (400) — group is not a holder group
+  - `bcc_permission_denied` (403) with `unlock_hint`:
+    - opt-out cooldown active: "You opted out of this community recently. Try again later or rejoin from the discovery page."
+    - holder check failed: "Hold a `<CollectionName>` NFT to join this community." (or "Hold at least N NFTs from this collection..." for `min_balance > 1`)
+  - `bcc_internal_error` (503) — chain unsupported (transient infra issue)
+- **Mapping:** `NftGroupGateService::joinIfEligible` → `PeepSoGroupWriter::join` (which fires `peepso_action_group_user_join` and recomputes `peepso_group_members_count`).
+
+#### `POST /bcc/v1/me/holder-groups/:id/leave`
+
+Leave a holder group and record a TTL'd opt-out so the reconcile sweep doesn't re-add the user (default 90 days; filterable via `bcc_gated_group_optout_ttl`).
+
+- **Auth:** Bearer (401 anonymous)
+- **Response 200:** `{ "left": true, "group_id": 4231 }`
+- **Errors:**
+  - `bcc_invalid_request` (400) — group is not a holder group
+  - `bcc_permission_denied` (403) — caller is the group owner ("Owners cannot leave their own community...")
+- **Mapping:** `PeepSoGroupWriter::leave` (refuses owners, fires `peepso_action_group_user_delete`) → opt-out timestamp written to `bcc_gated_groups_optout` user_meta. Mod-initiated removals (PeepSo's UI) record the opt-out as **permanent** (timestamp `0`) so banned users aren't re-added by the reconcile sweep.
+
+#### `GET /bcc/v1/me/holder-groups/preferences`
+
+Read the user's holder-group preferences.
+
+- **Auth:** Bearer (401 anonymous)
+- **Response 200:** `{ "auto_join": false }`
+- **Cache:** `private, no-store`
+
+#### `PATCH /bcc/v1/me/holder-groups/preferences`
+
+Toggle `auto_join`. Default is `false` (suggest-don't-auto-join). Setting to `true` runs reconcile **synchronously** and the response includes the immediate join count — the user doesn't wait for the next cron tick.
+
+- **Auth:** Bearer (401 anonymous)
+- **Body:** `{ "auto_join": true }`
+- **Response 200:**
+  ```json
+  {
+    "auto_join": true,
+    "reconciled": { "joined": 3, "skipped": 0 }
+  }
+  ```
+  `reconciled.joined` is `0` when toggling OFF (no work to do).
+- **Errors:** `bcc_invalid_request` (422) when no `auto_join` field is provided.
+- **Mapping:** Writes `bcc_auto_join_eligible_groups` user_meta. The reconcile sweep cron (`bcc_gated_group_reconcile_sweep`, twicedaily, 20 users/tick) only iterates users with this meta set.
+
+### 4.7.2 Profile Groups Tab
+
+#### `GET /bcc/v1/users/:slug/groups`
+
+Cross-kind list of all PeepSo groups a target user is an active member of: holder groups, Locals, plain user groups, and system groups all flow through the same shape via `GroupContextResolver`.
+
+- **Auth:** Anonymous OR Bearer
+- **Path:** `slug` matches the canonical `[a-z0-9][a-z0-9-]{1,18}[a-z0-9]` handle pattern (lowercase alphanumeric + hyphens, 3–20 chars). 404 with `bcc_not_found` for invalid or unknown handles.
+- **Privacy filtering (server-authoritative):**
+  - `secret` groups → included **only if the viewer is also a member**
+  - `closed` groups → always included; non-members see name + member_count, content stays private at PeepSo's layer
+  - `open` groups → always included
+- **Response 200:**
+  ```json
+  {
+    "items": [
+      {
+        "group_id": 4231,
+        "slug": "holders-bored-apes",
+        "name": "Holders: Bored Apes",
+        "type": "nft",
+        "member_count": 87,
+        "privacy": "closed",
+        "verification": { "kind": "on_chain", "label": "On-Chain Verified" },
+        "actions": {
+          "join":  { "url": "/wp-json/bcc/v1/me/holder-groups/4231/join" },
+          "leave": { "url": "/wp-json/bcc/v1/me/holder-groups/4231/leave" }
+        },
+        "permissions": {
+          "can_join":  { "allowed": false, "unlock_hint": null, "reason_code": "already_member" },
+          "can_leave": { "allowed": true,  "unlock_hint": null, "reason_code": null }
+        }
+      }
+    ]
+  }
+  ```
+- **Cache:** `private, max-age=30` (per-viewer privacy + permissions; short TTL is enough for tab navigation).
+- **Field shapes:**
+  - `type` ∈ `nft` | `local` | `user` | `system`. The frontend uses this to pick action URL + render verification badge.
+  - `privacy` ∈ `open` | `closed` | `secret`. Mirrors PeepSo's privacy flag.
+  - `verification` is `null` for non-NFT types. Future verification kinds (e.g. `creator_verified`) will appear here without API shape changes.
+  - `actions.join.url` / `actions.leave.url` vary by `type`: `/me/holder-groups/{id}/{action}` for `nft`, `/me/locals/{id}/{action}` for `local`, `/me/groups/{id}/{action}` for `user`/`system`. Frontend follows whatever URL the server returns.
+- **Permission shape (per §A4 / §N7 — gated actions always visible):**
+  - **Self profile** (viewer is the target): `can_leave.allowed = true` for every group; `can_join.allowed = false` with `reason_code: "already_member"`.
+  - **Other profile**:
+    - `can_leave.allowed = false` always (`reason_code: "not_self"`).
+    - `can_join.allowed` reflects **the viewer's** eligibility for that group:
+      - `nft` group: `true` if the viewer holds the gated NFT, otherwise `false` with `unlock_hint: "Hold an NFT from this collection to join."`
+      - `closed` group: `false` with `unlock_hint: "Visit the group page to request to join."`, `reason_code: "requires_approval"`
+      - `secret` group: `false` with `reason_code: "invite_only"`
+      - `open` group: `true`
+- **Mapping:** `PeepSoGroupRepository::getUserMemberGroupIds` → `GroupContextResolver::forManyGroups` for type/verification/privacy → `PeepSoGroupRepository::findManyByIds` for display fields. Holder eligibility for the viewer is computed via a single batched `HoldingsService::ownsAnyMany` call (no N+1 across NFT groups in the result).
+
+### 4.7.3 Plain Group Membership
+
+For non-gated, non-Local PeepSo groups (the residual case: user/system groups created via PeepSo's UI). Holder groups use §4.7.1; Locals use §4.7.
+
+#### `POST /bcc/v1/me/groups/:id/join`
+
+- **Auth:** Bearer (401 anonymous)
+- **Response 200:** `{ "joined": true, "group_id": 4231 }`
+- **Errors:**
+  - `bcc_invalid_request` (404) — group not found
+  - `bcc_invalid_request` (400) — group is a holder group or Local; use the dedicated endpoint
+  - `bcc_permission_denied` (403):
+    - `closed` group: "This community requires admin approval. Visit the group page to request access."
+    - `secret` group: "This community is invite-only."
+- **Mapping:** Resolves `GroupContext`; if `type` is `nft` or `local` rejects (use the dedicated endpoint); for `open` groups calls `PeepSoGroupWriter::join`. Closed/secret are not joined here — PeepSo's request-flow / invitation machinery is not replicated by this endpoint.
+
+#### `POST /bcc/v1/me/groups/:id/leave`
+
+- **Auth:** Bearer (401 anonymous)
+- **Response 200:** `{ "left": true, "group_id": 4231 }`
+- **Errors:**
+  - `bcc_invalid_request` (404) — group not found
+  - `bcc_invalid_request` (400) — group is a holder group or Local
+  - `bcc_permission_denied` (403) — caller is the group owner
+- **Mapping:** `PeepSoGroupWriter::leave` (refuses owners; PeepSo's `member_leave` recomputes `peepso_group_members_count` internally).
+
+### 4.7.4 Groups Discovery
+
+#### `GET /bcc/v1/groups`
+
+Cross-kind discovery list. Sort key: `verified DESC, heat_score DESC, member_count DESC`. Verified groups rank above non-verified, but active verified beats sleepy verified — so a "verified but dead" community doesn't dominate the discovery surface.
+
+- **Auth:** Anonymous OR Bearer
+- **Query:** `verified` (0/1; default 0), `page` (default 1), `page_size` (default 20, max 50)
+- **Response 200:**
+  ```json
+  {
+    "items": [
+      {
+        "group_id": 4231,
+        "slug": "holders-bored-apes",
+        "name": "Holders: Bored Apes",
+        "type": "nft",
+        "member_count": 87,
+        "privacy": "closed",
+        "verification": { "kind": "on_chain", "label": "On-Chain Verified" },
+        "activity": {
+          "posts_last_7d": 14,
+          "active_members_last_7d": 0,
+          "last_activity_at": "2026-05-04T14:22:00+00:00",
+          "heat": "warm"
+        }
+      }
+    ],
+    "pagination": { "page": 1, "page_size": 20, "total": 142, "total_pages": 8 }
+  }
+  ```
+- **Cache:** `Cache-Control: public, max-age=60` (60s window keeps newly-warming groups discoverable quickly).
+- **Privacy:** `secret` groups never appear here regardless of viewer. `closed` groups appear with name + member_count visible; content stays private at PeepSo's layer.
+- **Filter `verified=1`:** restricts to groups with `_bcc_group_kind = 'holders'`. Use this to render an "On-Chain Verified only" filter chip on the discovery page.
+- **Sort approximation note:** the candidate pool is fetched + sorted in PHP before pagination (limit 500). The cross-page sort is exact within the candidate pool; deep pagination beyond ~500 groups would require SQL-side sort. v1 scale is well under this.
+- **Mapping:** `PeepSoGroupRepository::listBrowsableGroupIds` (excludes secret) → `GroupContextResolver::forManyGroups` → `GroupActivityHeatService::forGroups` for heat → in-memory sort by (`is_verified`, `posts_last_7d`, `member_count`) all DESC.
+
 ### 4.8 Ranks
 
 #### `GET /bcc/v1/ranks`
@@ -1717,6 +1960,103 @@ Clear the stash after the toast renders.
 
 `RankProgressionListener` is the only producer in V1. It seeds quietly on a user's first event so users who are already Journeyman at rollout don't get a phantom celebration on their next activity.
 
+### 4.12 Self-edit (V2 Phase 2 + 2.5)
+
+All self-edit endpoints under `/bcc/v1/me/*` operate on `get_current_user_id()` only — there is no admin-override surface in V1/V2. Anonymous requests return `bcc_unauthorized` with a 401. Every successful response sets `Cache-Control: no-store`.
+
+#### `GET /bcc/v1/me/profile/fields` (V2 Phase 2.5)
+
+Schema + values + per-field visibility for the admin-configured PeepSo profile-fields catalogue.
+
+- **Auth:** Bearer (required, self-only)
+- **Response 200 data shape:**
+  ```json
+  {
+    "fields": [
+      {
+        "key": "first_name",
+        "label": "First Name",
+        "help_text": null,
+        "type": "text" | "textarea" | "date" | "url" | "email" | "select_single" | "select_multi" | "select_bool" | "country" | "location",
+        "value": "<scalar string>" | ["<for select_multi>"],
+        "visibility": "public" | "members" | "private",
+        "visibility_locked": false,
+        "editable": true,
+        "required": false,
+        "max_length": 250,
+        "options": [{"value": "us", "label": "United States"}],
+        "order": 100
+      }
+    ],
+    "stats": { "filled": 4, "total": 7, "completeness": 57 }
+  }
+  ```
+- **Errors:** `bcc_unauthorized` (401), `bcc_peepso_unavailable` (503).
+
+#### `PATCH /bcc/v1/me/profile/fields/{key}` (V2 Phase 2.5)
+
+Update one field's value. Body `{ "value": <typed> }`. Sanitization is type-aware (text → `sanitize_text_field`, textarea → `sanitize_textarea_field`, url → `esc_url_raw`, date → strict `^\d{4}(-\d{2}(-\d{2})?)?$`, email → `sanitize_email`, select_multi → array of sanitized strings). Returns the updated field item (single-item shape, identical to one entry in the GET list).
+
+- **Errors:** `bcc_invalid_request` (422 — validation error; message is the first PeepSo validation message when present), `bcc_not_found` (404 — unknown key), `bcc_forbidden` (403 — field is read-only via PeepSo's `user_disable_edit` / `user_admin_editable_only`).
+
+#### `PATCH /bcc/v1/me/profile/fields/{key}/visibility` (V2 Phase 2.5)
+
+Update one field's per-field privacy. Body `{ "visibility": "public" | "members" | "private" }`. Stored as integer `peepso_user_field_{key}_acc` user_meta (10 / 20 / 40, matching `PeepSo::ACCESS_*`). Rejected with `bcc_forbidden` when PeepSo's `user_disable_acc` flag is set on the field. Returns the updated field item.
+
+#### `GET /bcc/v1/me/profile-prefs` and `PATCH` (V2 Phase 2.5)
+
+Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
+
+- **Response 200 data shape:**
+  ```json
+  {
+    "profile_visibility": "public" | "members" | "private",
+    "post_visibility":    "members" | "private",
+    "hide_birthday_year": false
+  }
+  ```
+- **Storage:**
+  - `profile_visibility` → `peepso_users.usr_profile_acc` column (PeepSo's user-search and feed gate join against this — writing through this endpoint keeps gating coherent).
+  - `post_visibility` → `peepso_profile_post_acc` user_meta. PUBLIC is intentionally absent (matches PeepSo's `access-profile-post` UI which strips it).
+  - `hide_birthday_year` → `peepso_hide_birthday_year` user_meta, "1"/"0".
+- **PATCH** is partial — missing keys are untouched.
+
+#### `PATCH /bcc/v1/me/account/email` (V2 Phase 2.5)
+
+Change the user's WordPress email. Body `{ "current_password": "...", "email": "..." }`. Server re-verifies the current password via `wp_check_password` on every call — there is no session-elevation flag.
+
+- **Response 200:** `{ "email": "<new>" }`
+- **Errors:** `bcc_invalid_request` (422 — bad email or wrong current password; message disambiguates), `bcc_conflict` (409 — email already taken by another user).
+
+#### `PATCH /bcc/v1/me/account/password` (V2 Phase 2.5)
+
+Change password. Body `{ "current_password": "...", "password": "..." }`. New password ≥ 10 chars (server-enforced). Server calls `wp_set_password` (which destroys all session tokens) and immediately re-issues the current session's auth cookie so the user is not kicked out mid-flow.
+
+- **Response 200:** `{ "ok": true }`
+
+#### `DELETE /bcc/v1/me/account` (V2 Phase 2.5)
+
+Permanently delete the user. Body `{ "current_password": "...", "confirm": "DELETE" }`. Gated by PeepSo's `site_registration_allowdelete` site option — when the admin has disabled self-deletion, returns `bcc_forbidden` (403). On success: `wp_delete_user` runs (PeepSo's hooks fan out to its activity / friends / messages cleanup), then `wp_logout`. The auth cookie is gone before the response returns; clients should redirect to `logout_url` rather than make another authenticated call.
+
+- **Response 200:** `{ "deleted": true, "logout_url": "..." }`
+
+#### Earlier V2 Phase 2 endpoints
+
+Already shipped, summarized for completeness:
+
+| Endpoint | Body | Purpose |
+|---|---|---|
+| `PATCH /me/profile` | `{ bio }` | Update bio (`wp_users.description`, max 500 chars). |
+| `POST /me/profile/avatar` | multipart `avatar` | Upload avatar (≤ 2 MB, JPEG/PNG/WebP). Wraps `PeepSoUser::move_avatar_file`. |
+| `DELETE /me/profile/avatar` | — | Revert to default avatar. |
+| `POST /me/profile/cover` | multipart `cover` | Upload cover (≤ 5 MB). Wraps `PeepSoUser::move_cover_file`. |
+| `DELETE /me/profile/cover` | — | Remove cover. |
+| `PATCH /me/profile/cover/position` | `{ x, y }` (0–100 each) | Drag-to-position cover crop. Stores `peepso_cover_position_x/y`. |
+| `GET / PATCH /me/messages-prefs` | `{ chat_enabled, chat_friends_only }` | PeepSo-backed messaging gates (read by `peepso-messages/classes/chatmodel.php`). |
+| `GET / PATCH /me/notification-prefs` | bell + email-digest + push toggles | §I1 + V2 Phase 1. |
+
+These all return `Cache-Control: no-store` and respect `bcc_unauthorized` (401), `bcc_invalid_request` (422), `bcc_internal_error` (500), and (for image routes) `bcc_upload_failed` (422) / `bcc_peepso_unavailable` (503).
+
 ---
 
 ## 5. Encoded rules — quick reference
@@ -1952,6 +2292,82 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.5 — 2026-05-05
+
+- **§3.3 FeedItem — `group` block (Path A: verification metadata, no
+  server-side ranking change).** Feed items from PeepSo group wall
+  posts now carry `group: { id, type, verification }` so the frontend
+  can render an "On-Chain Verified" badge per item. Field is **omitted**
+  for non-group posts. Ranking remains recency-only; a scored layer is
+  deferred until usage telemetry justifies the tuning. Hydrated via
+  `peepso_group_id` post-meta → `GroupContextResolver::forManyGroups`
+  in `FeedRankingService::hydrateGroupContexts`. Applies to
+  `/feed/hot`, `/feed`, and `/users/:handle/activity`.
+- **§4.7.1 Holder Groups** — new section. NFT-gated PeepSo groups
+  (closed privacy + server-side eligibility gate; defense in depth):
+  - `GET /me/holder-groups` — joined / eligible_to_join / opted_out
+    buckets, each item carrying `verification` + `activity` blocks
+    (heat / posts_last_7d / last_activity_at) so the frontend can
+    render heat indicators and avoid ghost-town suggestions.
+  - `POST /me/holder-groups/{id}/join` — explicit user-initiated join.
+    Verifies eligibility server-side (HoldingsService), clears any
+    active opt-out, lands the user as `member` regardless of the
+    group's closed flag.
+  - `POST /me/holder-groups/{id}/leave` — records a TTL'd opt-out
+    (default 90d) so the reconcile sweep doesn't re-add the user.
+    Refuses owners with `bcc_permission_denied`. Mod-driven removals
+    (PeepSo UI ban) record permanent opt-out (timestamp 0).
+  - `GET / PATCH /me/holder-groups/preferences` — `auto_join` toggle.
+    Default `false`. PATCH-to-true reconciles synchronously and
+    returns the immediate join count; the user doesn't wait for the
+    next cron tick.
+- **§4.7.2 Profile Groups Tab** — `GET /users/{slug}/groups`. Cross-
+  kind list (holder + Local + plain user + system) via
+  `GroupContextResolver`. Viewer-aware `permissions.can_join` /
+  `can_leave` per §A4 / §N7 — secret groups filter server-side,
+  closed groups visible with content gated at PeepSo's layer. Action
+  URLs vary by `type`.
+- **§4.7.3 Plain Group Membership** — `POST /me/groups/{id}/{join|leave}`
+  for the residual case (non-gated, non-Local user/system groups).
+  Closed/secret writes are rejected with hints — PeepSo's
+  request-flow / invitation machinery is not replicated.
+- **§4.7.4 Groups Discovery** — `GET /groups`. Sort key
+  `verified DESC, heat DESC, member_count DESC`. `?verified=1` filters
+  to On-Chain Verified groups for the discovery filter chip. Privacy
+  excludes secret groups.
+- **Shared shapes** locked: the `verification` block (server pins
+  copy as "On-Chain Verified" — frontend MUST NOT abbreviate to
+  "Verified"), the `activity` block (heat thresholds filterable via
+  `bcc_group_heat_thresholds`), and the `actions` / `permissions`
+  pattern for cross-kind group items.
+- **Mapping notes** call out canonical seams: `GroupContextResolver`,
+  `GatedGroupRepository`, `NftGroupGateService`, `GatedGroupProvisioningService`,
+  `HoldingsService::ownsAnyMany`, `PeepSoGroupRepository::getActivityHeat`.
+  See [docs/pattern-registry.md](pattern-registry.md) for the full
+  list.
+- **Cold-start design** documented inline: suggest-don't-auto-join
+  is the default model, the `activity.heat` field is the user's
+  escape hatch from ghost-town suggestions, discovery sort is
+  verified-first-but-active-beats-sleepy.
+
+### v1.4 — 2026-05-03
+
+- **§4.12 Self-edit (V2 Phase 2 + 2.5)** — new section. Locks the
+  /settings/profile mirror surface introduced in V2 Phase 2.5:
+  - `GET / PATCH /me/profile/fields[/{key}[/visibility]]` — admin-configured
+    PeepSo profile-fields catalogue with per-field value + visibility
+    editing. Delegates to `PeepSoField::save` / `save_acc` so PeepSo's
+    own search index and profile-completeness counter stay coherent.
+  - `GET / PATCH /me/profile-prefs` — profile-wide `usr_profile_acc`
+    (PeepSo's user-search join key), wall-post default, hide-birthday-year.
+  - `PATCH /me/account/email`, `PATCH /me/account/password`,
+    `DELETE /me/account` — every route re-verifies `current_password`;
+    no session-elevation flag. Account deletion mirrors PeepSo's
+    `site_registration_allowdelete` toggle.
+- **§4.12 also backfills** the V2 Phase 2 endpoints that shipped earlier
+  but weren't in the contract doc (`PATCH /me/profile`, avatar/cover
+  routes, `/me/messages-prefs`, `/me/notification-prefs`) for symmetry.
 
 ### v1.3 — 2026-04-29
 

@@ -26,11 +26,31 @@ should point at exactly one source-of-truth class or method per concept.
   with the egress safety net `enforceWalletPrivacyAtEgress`
   ([app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/UserViewService.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/UserViewService.php))
 
-## Profile + account (V2 Phase 2)
+## Profile + account (V2 Phase 2 / 2.5)
 
 - **Self-edit endpoint** (bio + avatar + cover + cover position) →
   `BCC\Trust\Core\REST\MyProfileEndpoint`
   ([app/public/wp-content/plugins/bcc-trust/app/Domain/Core/REST/MyProfileEndpoint.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/REST/MyProfileEndpoint.php))
+- **Profile-fields catalogue** (admin-configured PeepSo profile fields,
+  per-field value + visibility) →
+  `BCC\Trust\Core\REST\MyProfileFieldsEndpoint`
+  ([app/public/wp-content/plugins/bcc-trust/app/Domain/Core/REST/MyProfileFieldsEndpoint.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/REST/MyProfileFieldsEndpoint.php)).
+  Delegates to `PeepSoField::save` / `save_acc` so PeepSo's search index
+  and profile-completeness counter stay coherent. Do NOT bypass
+  PeepSoField for direct user_meta writes — you'll desync those surfaces.
+- **Profile-wide visibility** (`usr_profile_acc` in `peepso_users`) +
+  post-on-wall default + hide-birthday-year →
+  `BCC\Trust\Core\REST\MyProfilePrefsEndpoint`
+  ([app/public/wp-content/plugins/bcc-trust/app/Domain/Core/REST/MyProfilePrefsEndpoint.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/REST/MyProfilePrefsEndpoint.php)).
+  Reads/writes through `PeepSoUser::get_profile_accessibility` /
+  `update_peepso_user(['usr_profile_acc'])` — PeepSo's user-search joins
+  on this column.
+- **Account changes** (email + password + delete) →
+  `BCC\Trust\Core\REST\MyAccountEndpoint`
+  ([app/public/wp-content/plugins/bcc-trust/app/Domain/Core/REST/MyAccountEndpoint.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/REST/MyAccountEndpoint.php)).
+  Every route re-verifies `current_password`; no session-elevation flag.
+  Account deletion is gated by PeepSo's `site_registration_allowdelete`
+  option.
 - **Avatar / cover storage** is owned by PeepSo; we wrap the public
   methods on `\PeepSoUser` (`move_avatar_file` + `finalize_move_avatar_file`,
   `move_cover_file`, `delete_avatar`, `delete_cover_photo`). Do NOT
@@ -107,6 +127,50 @@ should point at exactly one source-of-truth class or method per concept.
 - **ServiceLocator** (12 contracts; cross-plugin DI seam) →
   `BCC\Core\ServiceLocator`
   ([app/public/wp-content/plugins/bcc-core/src/ServiceLocator.php](../app/public/wp-content/plugins/bcc-core/src/ServiceLocator.php))
+
+## Groups (cross-kind: NFT / Local / system / user)
+
+- **Group identity** (type / source / verification / privacy / gate)
+  → `BCC\Trust\Core\ValueObjects\GroupContext` resolved via
+  `BCC\Trust\Core\Services\GroupContextResolver`. **Canonical shape
+  for any BCC code that reasons about a group; do not read
+  `peepso-group` post meta directly.**
+  ([app/public/wp-content/plugins/bcc-trust/app/Domain/Core/ValueObjects/GroupContext.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/ValueObjects/GroupContext.php),
+  [app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/GroupContextResolver.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/GroupContextResolver.php))
+- **Verification badge copy** (server-authoritative — frontend renders
+  `label` verbatim) → `BCC\Trust\Core\ValueObjects\GroupVerification::onChain()`
+  emits `{kind: 'on_chain', label: 'On-Chain Verified'}`. The label
+  must NOT be abbreviated to "Verified" alone.
+- **Activity heat** (post counts → `cold` / `warm` / `hot` bucket) →
+  `BCC\Trust\Core\Services\GroupActivityHeatService`. Thresholds
+  filterable via `bcc_group_heat_thresholds`.
+- **PeepSo group reads** (membership ledger, member counts, listing,
+  activity heat raw counts) →
+  `BCC\Core\Repositories\PeepSoGroupRepository`. **All BCC code that
+  needs PeepSo group data goes through this repository — do NOT read
+  `peepso_group_members` or `peepso_activities` directly.**
+  ([app/public/wp-content/plugins/bcc-core/src/Repositories/PeepSoGroupRepository.php](../app/public/wp-content/plugins/bcc-core/src/Repositories/PeepSoGroupRepository.php))
+- **PeepSo group writes** (join / leave + counter sync) →
+  `BCC\Core\PeepSo\PeepSoGroupWriter`. Auto-fires
+  `peepso_action_group_user_join` / `_delete` and recomputes
+  `peepso_group_members_count` so PeepSo's frontend stays in sync.
+  Single-graph rule (§E3): never write to `peepso_group_members`
+  directly.
+
+## NFT-gated holder groups
+
+- **Gate config storage** (post-meta on `peepso-group`: kind / chain
+  / contract / min_balance / collection_id) →
+  `BCC\Trust\Onchain\Repositories\GatedGroupRepository`
+- **Gate enforcement & opt-out** (TTL'd voluntary opt-out, permanent
+  on mod removal) →
+  `BCC\Trust\Onchain\Services\NftGroupGateService`
+- **Provisioning** (admin-approved auto-creation of closed PeepSo
+  groups for verified collections) →
+  `BCC\Trust\Onchain\Services\GatedGroupProvisioningService`
+- **Holdings** (single + batched multi-pair) →
+  `BCC\Trust\Onchain\Services\HoldingsService::ownsAny` /
+  `HoldingsService::ownsAnyMany`
 
 ---
 
