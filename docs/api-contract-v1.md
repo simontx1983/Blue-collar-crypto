@@ -1586,6 +1586,7 @@ Cross-kind list of all PeepSo groups a target user is an active member of: holde
         "slug": "holders-bored-apes",
         "name": "Holders: Bored Apes",
         "type": "nft",
+        "type_label": "On-Chain Holders",
         "member_count": 87,
         "privacy": "closed",
         "verification": { "kind": "on_chain", "label": "On-Chain Verified" },
@@ -1603,7 +1604,8 @@ Cross-kind list of all PeepSo groups a target user is an active member of: holde
   ```
 - **Cache:** `private, max-age=30` (per-viewer privacy + permissions; short TTL is enough for tab navigation).
 - **Field shapes:**
-  - `type` ∈ `nft` | `local` | `user` | `system`. The frontend uses this to pick action URL + render verification badge.
+  - `type` ∈ `nft` | `local` | `user` | `system`. The frontend uses this to pick the action URL and to dispatch the right mutation hook (holder / local / plain).
+  - `type_label` is the server-authoritative display string for the kind (defaults: `On-Chain Holders` / `Local` / `System` / `Group`). Frontend renders verbatim per §A2 — no client-side enum→label mapping. Filterable via `bcc_group_type_label`.
   - `privacy` ∈ `open` | `closed` | `secret`. Mirrors PeepSo's privacy flag.
   - `verification` is `null` for non-NFT types. Future verification kinds (e.g. `creator_verified`) will appear here without API shape changes.
   - `actions.join.url` / `actions.leave.url` vary by `type`: `/me/holder-groups/{id}/{action}` for `nft`, `/me/locals/{id}/{action}` for `local`, `/me/groups/{id}/{action}` for `user`/`system`. Frontend follows whatever URL the server returns.
