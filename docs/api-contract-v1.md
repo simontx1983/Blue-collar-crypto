@@ -1945,6 +1945,140 @@ Notifications are dispatched by `NotificationDispatcher` (sync subscribers, try/
 | `bcc_card_pulled` | the followee user | viewer === followee (impossible from the binder UI, defensive) |
 | `bcc_rank_awarded` | the recipient (self-notification) | rank label not in catalog |
 
+#### Notification preferences (§I1 + V2 Phase 1)
+
+Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delivery channels: bell, email digest, and web push. Bell + email-digest land in V1; the `push` sub-object is V2 Phase 1.
+
+**Shape — both routes return the full state:**
+
+```json
+{
+  "email_digest": false,
+  "bell": {
+    "bcc_reaction":    true,
+    "bcc_review":      true,
+    "bcc_card_pulled": true,
+    "bcc_rank_up":     true,
+    "bcc_endorse":     true
+  },
+  "push": {
+    "enabled": false,
+    "events": {
+      "review":            true,
+      "endorse":           true,
+      "dispute_outcome":   true,
+      "panelist_selected": true
+    }
+  }
+}
+```
+
+- `bell.*` keys mirror the bell `type` taxonomy (matches §4.10's notification-shape `type` field). Defaults are all-on per §I1 baseline.
+- `email_digest` defaults `false` (opt-in).
+- `push.enabled` is the master toggle. Defaults `false` until the user explicitly enables it (a browser permission prompt fires on enable; no silent dispatch).
+- `push.events.*` defaults are all-on per V2 Phase 1 §P1.C3 — anti-noise carries the load via debounce + 5-min aggregation in `PushDispatcher`. The push event taxonomy is intentionally narrower than the bell ("bell shows everything; push is 'you really need to know'"). Adding a new push event requires extending `NotificationPrefs::PUSH_TYPES` server-side and the corresponding subscriber wiring.
+
+#### `GET /bcc/v1/me/notification-prefs`
+
+Read every flag for the signed-in viewer. Returns the full shape above (defaults filled in for any unwritten flag).
+
+- **Auth:** Bearer (required)
+- **Response 200:** the full shape above
+- **Errors:** `bcc_unauthorized` (401)
+- **Cache:** `Cache-Control: no-store`
+- **Mapping:** `NotificationPrefs::readAll($userId)` reads each flag from `wp_usermeta` under the `bcc_notif_pref_*` key prefix; defaults from `NotificationPrefs::DEFAULTS` fill in unwritten flags.
+
+#### `PATCH /bcc/v1/me/notification-prefs`
+
+Partial update — every key optional. Missing types are left untouched.
+
+- **Auth:** Bearer (required)
+- **Body:** any subset of `email_digest`, `bell.*`, `push.enabled`, `push.events.*`. Unknown keys are silently dropped server-side; type coercion via `FILTER_VALIDATE_BOOLEAN`.
+- **Response 200:** the full post-write shape (same as GET) so the frontend can re-seed cache without a second round trip.
+- **Errors:**
+  - `bcc_unauthorized` (401) — no session
+  - `bcc_invalid_request` (422) — body did not contain any recognized notification keys
+- **Cache:** `Cache-Control: no-store`
+- **Cascade — `push.enabled = false`:** When the master toggle is patched OFF, the server **deletes every `bcc_push_subscriptions` row for this user** in the same request. The frontend should ALSO call `PushManager.unsubscribe()` on the browser side; the server-side cascade is the safety net so a stale browser subscription can never resurrect deliveries when the user has explicitly opted out.
+- **Mapping:** `NotificationPrefs::writePartial` walks the partial body and writes `wp_usermeta` per key; `PushSubscriptionRepository::deleteAllForUser` runs when `push.enabled = false` is in the partial.
+
+#### Push subscriptions (V2 Phase 1)
+
+Per-device VAPID subscriptions storage. One row per (user, browser endpoint) pair — a single user can have multiple devices registered. Storage table: `wp_bcc_push_subscriptions` (uniqueness via SHA-256 of the endpoint URL — the URL itself is too long for a unique-key prefix on older InnoDB row formats; see [`schema-push-subscriptions.php`](../app/public/wp-content/plugins/bcc-trust/includes/database/schema-push-subscriptions.php)).
+
+VAPID config is read from `wp-config.php` constants — `BCC_PUSH_VAPID_PUBLIC_KEY`, `BCC_PUSH_VAPID_PRIVATE_KEY`, `BCC_PUSH_VAPID_SUBJECT`. When any are missing, every push-subscription route returns `bcc_push_not_configured` (503) so the frontend can surface "push isn't configured yet" UX instead of looking like a generic auth failure.
+
+#### `GET /bcc/v1/me/push-subscriptions/vapid-public-key`
+
+Returns the public key the service worker needs to call `PushManager.subscribe()`. Public keys are non-secret by design but the route is auth-gated to keep it from being a casual scraping target.
+
+- **Auth:** Bearer (required)
+- **Response 200:**
+  ```json
+  { "public_key": "BD…Q" }
+  ```
+- **Errors:**
+  - `bcc_unauthorized` (401)
+  - `bcc_push_not_configured` (503) — VAPID constants missing in `wp-config.php`
+- **Cache:** `Cache-Control: no-store`
+
+#### `POST /bcc/v1/me/push-subscriptions`
+
+Register a fresh browser subscription. Body matches the standard browser `PushSubscription.toJSON()` shape plus an optional `user_agent` for observability.
+
+- **Auth:** Bearer (required)
+- **Body:**
+  ```json
+  {
+    "endpoint": "https://fcm.googleapis.com/fcm/send/…",
+    "keys": { "p256dh": "BD…", "auth": "…" },
+    "user_agent": "Mozilla/5.0 …"
+  }
+  ```
+- **Response 200:**
+  ```json
+  { "id": 17, "master_enabled": true }
+  ```
+  `id` is the subscription row's primary key — the frontend keeps it for the per-device DELETE call. `master_enabled: true` reflects the side effect (see below).
+- **Side effect — push master flips ON:** the first successful registration for a user flips `push.enabled` to `true`. Subsequent device registrations are no-ops on the master flag. This is what the service worker registration path relies on: enabling push from the frontend = subscribe + POST + master flips, atomically.
+- **Idempotency:** same (user_id, endpoint) replaces the existing row in place (upsert keyed by `endpoint_hash`); `last_used_at` is bumped. Re-registering the same browser does not create a duplicate row.
+- **Errors:**
+  - `bcc_unauthorized` (401)
+  - `bcc_invalid_request` (422) — missing `endpoint`/`keys.p256dh`/`keys.auth`, malformed URL, or endpoint > 500 characters
+  - `bcc_push_not_configured` (503) — VAPID constants missing
+  - `bcc_internal_error` (500) — DB write failure
+- **Cache:** `Cache-Control: no-store`
+- **Mapping:** `PushSubscriptionRepository::upsert` → `NotificationPrefs::setPushMaster(true)` (only on first registration when master was previously false).
+
+#### `DELETE /bcc/v1/me/push-subscriptions/:id`
+
+Revoke a single device. Auth: the subscription row's `user_id` must match the caller. Idempotent — deleting an already-gone subscription returns 200 OK (treats "already revoked" the same as "just revoked"). Master `push.enabled` is **not** flipped by this route — that's the prefs PATCH cascade's job.
+
+- **Auth:** Bearer (required)
+- **Path:** `id` is the subscription row's primary key from the POST response.
+- **Response 200:** `{ "ok": true }`
+- **Errors:**
+  - `bcc_unauthorized` (401)
+  - `bcc_invalid_request` (422) — id missing or non-numeric
+  - `bcc_forbidden` (403) — subscription belongs to a different user
+- **Cache:** `Cache-Control: no-store`
+- **Mapping:** `PushSubscriptionRepository::find` (auth check) → `delete` (no-op if already gone).
+
+#### Push subscriber catalogue
+
+Push deliveries fan out via `PushDispatcher::enqueue` (5-minute debounce + count aggregation) → Action Scheduler `bcc_push_flush` worker → `PushDispatcher::flush` (atomic queue pop, render via `PushPayload`, fan out via `minishlink/web-push`, tombstone 404/410 subscriptions). Sources:
+
+| Push event       | Source hook                              | Wired in                                                                                                  |
+|---|---|---|
+| `review`         | `bcc_review_published`                   | [`NotificationDispatcher::dispatch`](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/NotificationDispatcher.php) — alongside the bell write |
+| `endorse`        | `bcc_trust_endorsement_added`            | [`NotificationDispatcher::dispatch`](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/NotificationDispatcher.php) — alongside the bell write |
+| `dispute_outcome`| `bcc_disputes_email_reporter_result`     | [`bcc-trust.php`](../app/public/wp-content/plugins/bcc-trust/bcc-trust.php) — additive subscriber alongside the existing email handler |
+| `panelist_selected` | `bcc_disputes_notify_panelist`        | [`bcc-trust.php`](../app/public/wp-content/plugins/bcc-trust/bcc-trust.php) — additive subscriber alongside the existing email handler |
+
+**Self-suppression:** push inherits `NotificationDispatcher::dispatch`'s actor-vs-recipient guard for free (review + endorse). Disputes pushes always fire to a different recipient than the actor by construction.
+
+**Anti-noise rules (P1.E):** debounce + count aggregation at the queue boundary mean rapid-fire events on the same (recipient, event_type) become exactly one push ("3 new reviews on Blacksmith Node") rather than three buzzes. Tombstoned subscriptions (404/410 from the push service) are deleted on the next flush — no retry storms.
+
 ### 4.11 Celebrations (§O1.2 out-of-band path)
 
 Heavy celebrations whose trigger runs through an async §A3 subscriber (today: rank-up; reserved: level-up, tier-upgrade) can't ship inline on the originating request — the listener hasn't run yet. These two endpoints provide the out-of-band delivery path.
