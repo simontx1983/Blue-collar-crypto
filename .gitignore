@@ -23,6 +23,12 @@
 !/CLAUDE.md
 !/docs/
 !/bcc-global-library/
+!/.claude/
+!/.mcp.json
+
+# Inside .claude/, drop user-local overrides — they belong to the dev,
+# not the team.
+/.claude/settings.local.json
 
 # Common junk that may appear inside allowed directories
 .DS_Store

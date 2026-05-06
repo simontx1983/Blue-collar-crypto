@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/block-protected-files.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/php-lint.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/ts-check.sh"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/section-11-reminder.sh"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(php -l:*)",
+      "Bash(bash scripts/arch-guardrails.sh:*)",
+      "Bash(bash scripts/phpstan-all.sh:*)",
+      "Bash(bash scripts/intent-guard.sh:*)",
+      "Bash(bash scripts/api-contract-check.sh:*)",
+      "Bash(composer dump-autoload:*)",
+      "Bash(npx --no-install tsc:*)",
+      "Bash(npx tsc:*)",
+      "Bash(cd bcc-frontend && npx:*)",
+      "Bash(npm --prefix bcc-frontend:*)"
+    ]
+  }
+}

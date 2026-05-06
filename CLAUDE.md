@@ -54,3 +54,54 @@ until the duplicate scan is complete.
 - [bcc-trust/CLAUDE.md](app/public/wp-content/plugins/bcc-trust/CLAUDE.md) —
   the merged trust + disputes + onchain plugin (Domain/Core, Domain/Disputes,
   Domain/Onchain). Has §1–§9 architecture conventions plus §11.
+
+## Available automation
+
+Skills, subagents, and hooks live under `.claude/`. Use them — they
+encode the rules above so you don't have to re-derive them every time.
+
+### Skills (invoke with `/<name>`)
+
+- `/duplicate-scan` — runs the §11 mandatory cross-codebase scan.
+  Use **before** any new code. Wraps the `duplicate-scanner` subagent.
+- `/new-repository` — scaffolds a Repository class in bcc-trust that
+  complies with §1–§5 (no `SELECT *`, bounded queries, generation-counter
+  cache invalidation).
+- `/api-contract-guard` — verifies REST endpoint or view-model changes
+  still conform to [docs/api-contract-v1.md](docs/api-contract-v1.md).
+  Run **before** declaring a §9 change "done." A contract break is P0.
+- `/frontend-feature` — scaffolds a Next.js feature in `bcc-frontend/`
+  the way this codebase actually does it (typed API client, React Query
+  hook shape, no business logic, reduced-motion respect).
+
+### Subagents (invoke via the Agent tool)
+
+- `duplicate-scanner` — the §11 search engine. Owned by `/duplicate-scan`.
+- `arch-guardrails-reviewer` — reviews PHP changes against §1–§9.
+  Run after non-trivial PHP edits, before declaring "done."
+- `frontend-reviewer` — reviews `bcc-frontend/` changes against the
+  "no business logic / no raw fetch / no `as any`" rules.
+- `holder-groups-reviewer` — feature-scoped reviewer for the in-flight
+  Holder Groups work (NFT-holder → PeepSo group token-gating). Catches
+  the PeepSoGroupWriter approval-bypass and related footguns. Retire
+  this agent once the feature ships.
+
+### Hooks (configured in [.claude/settings.json](.claude/settings.json))
+
+- **PreToolUse** — `block-protected-files.sh` refuses edits to
+  `vendor/`, `node_modules/`, lock files, `.env*`, and TypeScript build
+  artifacts. Bypass means editing those files outside Claude.
+- **PostToolUse** — `php-lint.sh` runs `php -l` on PHP edits;
+  `ts-check.sh` runs `tsc --noEmit` on `bcc-frontend/` TypeScript edits.
+- **UserPromptSubmit** — `section-11-reminder.sh` injects a §11 reminder
+  when the prompt looks like new-code work.
+
+### MCP servers ([.mcp.json](.mcp.json))
+
+- `context7` — live docs for libraries the codebase imports.
+- `playwright` — browser automation for Next.js smoke tests
+  (see [docs/v1-smoke-test-checklist.md](docs/v1-smoke-test-checklist.md)).
+- `mysql` — read-only queries against the Local-by-Flywheel database.
+  Useful for read-model debugging, schema inspection, fingerprint
+  resolver checks. **Never widen to write access casually.**
+- `github` — issue/PR ops via the Copilot endpoint (auth required).
