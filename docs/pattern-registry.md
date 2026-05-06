@@ -157,6 +157,60 @@ should point at exactly one source-of-truth class or method per concept.
   Single-graph rule (§E3): never write to `peepso_group_members`
   directly.
 
+## Follow terminology overrides ("Keep Tabs" rebrand)
+
+The Floor uses a three-axis vocabulary for what PeepSo calls follow:
+**Keep Tabs** (verb / CTA), **Watching** (state), **Watcher / Watchers**
+(noun). The two surfaces below are co-maintained — when you change one,
+update the other in the same commit, or the legacy WP screens drift away
+from the Next.js app.
+
+- **PHP — gettext / ngettext overrides** (PeepSo + peepso-pages +
+  peepso-groups text domains) →
+  `BCC\PeepSo\Services\PeepSoLabelOverrides`
+  ([app/public/wp-content/plugins/blue-collar-crypto-peepso-integration/app/Services/PeepSoLabelOverrides.php](../app/public/wp-content/plugins/blue-collar-crypto-peepso-integration/app/Services/PeepSoLabelOverrides.php)).
+  Exact-string match on purpose — substring replacement would corrupt
+  generic English uses ("the following services", "they will follow
+  their default order"). Filters all four flavors: `gettext`,
+  `gettext_with_context`, `ngettext`, `ngettext_with_context`.
+- **Frontend — display constants** →
+  `FOLLOW_COPY` in
+  [bcc-frontend/src/lib/copy.ts](../bcc-frontend/src/lib/copy.ts).
+  Exposes the desktop / mobile pair for the active CTA
+  (`Keeping Tabs ✓` desktop, `Watching ✓` <sm) because the verb form
+  overflows the CardFactory `grid-cols-3` button at 320–375px viewports.
+- **API contract is untouched.** `follow_id`, `followers`, `following`,
+  `can_follow`, `followed_by_in_network`, `follower_count_hidden`,
+  `pull_batch`, `pulled_at`, `card_tier_at_pull`, `bcc_card_pulled` and
+  the `following` feed scope value are stable per §9. Only display
+  labels changed.
+
+### Verb axis vs. place noun (post-Tier-1 cohesion)
+
+A lifecycle moment that used to be split between two verbs is now
+unified:
+
+- **Verb axis** = "Keep Tabs" / "Watching" / "Watchers". Used for every
+  CTA, state, and narrative invitation across both PeepSo and the
+  frontend (e.g., `BinderGrid` empty-state invite, `FeedView` empty
+  state, `OnboardingWizard` step 2, profile counts, feed tabs).
+- **Place noun** = `Binder`. Preserve forever. Cards live in the
+  Binder. Onboarding step 2 is "Start your binder."
+- **Lore-only "pull"** survives in three narrow seams that earned their
+  keep — do **not** broaden them, but don't migrate them either:
+  1. `LivingHeader` activity counter — `pluralize(n, "pull", "pulls")`
+     for `today.pulls` (domain-specific count noun).
+  2. `Composer.tsx` and `ReviewCallout.tsx` one-line motivational unlock
+     hints ("keep pulling and posting") — idiomatic flavor, not action
+     vocabulary.
+  3. Cultural / brand-voice writing outside the product chrome (marketing,
+     announcements). The Binder ritual still exists — it's just not the
+     primary product verb anymore.
+
+Feed item past-tense narration uses the binder noun:
+`Added ${n} cards to their binder.` Category badge for `pull_batch` is
+`WATCHED` (single-word, parallel to `POSTED`/`REVIEWED`/`DISPUTED`).
+
 ## NFT-gated holder groups
 
 - **Gate config storage** (post-meta on `peepso-group`: kind / chain
