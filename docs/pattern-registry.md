@@ -277,6 +277,41 @@ Feed item past-tense narration uses the binder noun:
   There is no `?$includeSpam` flag to forget. Bypassing the split
   in a public read path is a P1 bug.
 
+### V2 Phase 1c — landed canonical classes (2026-05-06)
+
+- **NFT enrichment scheduler** →
+  `BCC\Trust\Onchain\Services\NftEnrichmentService`
+  ([app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Services/NftEnrichmentService.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Services/NftEnrichmentService.php)).
+  Cron-driven (`bcc_nft_enrichment_tick`, every 5min). Per-chain
+  dispatch via `FetcherFactory`. Per-row failures retry next tick.
+- **Per-chain metadata fetchers** →
+  `EvmFetcher::fetchMetadataForToken` (Alchemy `getNFTMetadata`),
+  `SolanaFetcher::fetchMetadataForMint` (Helius `getAsset` DAS).
+- **Generation-counter cache invalidation** →
+  `NftHoldingsRepository::bumpWalletGeneration` /
+  `getWalletGeneration`. Every write path
+  (`upsertMany`, `deleteByWalletAndToken`, `markStatus`,
+  `applyEnrichment`) bumps; read-side consumers in `HoldingsService`
+  key per-request transients on the post-bump value.
+- **Per-chain advisory lock on the indexer worker** →
+  `BCC\Core\DB\AdvisoryLock::acquire('bcc_nft_indexer_chain_<id>', 0)`
+  wrapped around `NftEthIndexerWorker::runForChain`. Non-blocking;
+  contended ticks silently skip. Prevents CU double-spend across
+  wp-cron + admin "Run now" + future Helius-triggered runs.
+- **Read-path swap (HoldingsService)** —
+  per-wallet-per-chain decision: persistent path requires
+  (a) chain checkpoint state == `healthy`,
+  (b) `walletHasAnyEnriched` returns true (non-NULL `enriched_at`
+  on at least one visible row),
+  (c) caller did not pass `$force = true`.
+  Any failure → V1 transient fallback. The `meta.indexer_state` +
+  server-pre-formatted `meta.indexer_state_label` block reports
+  per-chain status to the frontend (per §S, label rendered verbatim).
+- **`IndexerState` shared embed type** — documented in
+  `docs/api-contract-v1.md` §3.6. New endpoints that surface
+  user-scoped holdings reads MUST forward this block from
+  `HoldingsService` rather than reconstruct it locally.
+
 ### V2 Phase 1a — landed canonical classes (2026-05-06)
 
 - **Persistent NFT-holdings repository** →

@@ -997,6 +997,59 @@ V1.5 transition rules: clients tolerant of unknown fields ride forward without c
 - The server MAY omit `full_text` from Floor-context responses to save bytes; a Blog-context response MUST include it.
 - `is_blog_excerpt: true` is the marker the frontend uses to render the "Read full post" affordance in Floor contexts.
 
+**3.3.9 `photo`** — v1.5 photo post. Single image per post, optional caption. Underlying storage is PeepSo's photo module (act_module_id = 4), so multi-photo / album / GIF backgrounds inherit any future PeepSo capability without a contract change.
+
+**Body shape:**
+
+```json
+{
+  "post_kind": "photo",
+  "body": {
+    "caption":   "morning at the conference floor.",
+    "photo_url": "https://bluecollar.crypto/wp-content/peepso/users/42/photos/3a7c…b9.jpg",
+    "alt":       null
+  }
+}
+```
+
+**Rules:**
+
+- `caption` is `string | null`. `null` when the user posted photo-only (no text). Server-sanitized identically to status post bodies (PeepSo's `htmlspecialchars + strip_content`). Cap: 500 chars after trim.
+- `photo_url` is the canonical full image URL. Empty string `""` on degraded reads (S3-only photos with no fallback URL, or a race where the activity row landed before `save_images` finished); the frontend gracefully omits the image when the URL is empty.
+- `alt: null` is **deferred a11y debt** — V1 does not collect alt text from the composer. Tracked as a Phase 2 a11y follow-up; the field is present so the contract is forward-stable. Frontend MUST render `<img alt="">` when `alt` is `null` (treats the photo as decorative until alt text is collected).
+- Allowed mime types at upload time: `image/jpeg`, `image/png`, `image/webp`, `image/gif`. The hard size cap is 5 MB (matches the avatar/cover validator).
+- **V1 deferred** (separate from a11y): multi-photo posts (`files: string[]`), photo-edit, lightbox/zoom render, S3-stored photo URLs. The body shape is stable; future fields will be additive.
+
+**3.3.10 `gif`** — v1.5 GIF post. The user picked a GIF from the composer's Giphy picker; PeepSo's existing giphy plugin owns the API key + content rating + post_meta storage. `act_module_id` is `1` (status) at the activity layer; the `gif` post_kind is resolved by **metadata semantic override** in the feed body hydrator (see §3.3.11 below).
+
+**Body shape:**
+
+```json
+{
+  "post_kind": "gif",
+  "body": {
+    "caption":  "this is the energy.",
+    "gif_url":  "https://media.giphy.com/media/3oEjI6SIIHBdRxXI40/giphy.gif",
+    "provider": "giphy"
+  }
+}
+```
+
+**Rules:**
+
+- `caption` is `string | null`. `null` when GIF-only (no text). Same shape as photo caption — 500-char cap, server-sanitized.
+- `gif_url` is the canonical Giphy CDN URL. The GIF lives on Giphy's infrastructure; BCC stores only the URL via PeepSo's `peepso_giphy` post_meta. Frontend renders `<img src={gif_url}>` directly.
+- `provider` is `"giphy"` in V1. Field is forward-stable; future providers (Tenor, custom sticker packs) will extend this enum. Frontend MAY use this for "Powered by …" attribution if it surfaces provider branding on the rendered card (V1 does NOT — attribution lives only inside the picker).
+- The GIF post_kind is **enabled-gated** — PeepSo admin's `giphy_posts_enable` toggle controls whether the composer surfaces a GIF picker affordance at all. The integration config is exposed at §4.16 `GET /integrations/giphy`.
+- **V1 deferred:** GIF in comments (`/posts/:feed_id/comments` would need its own giphy support — separate slice), GIF stickers in chat, multi-GIF posts, GIF-on-photo overlays. All deliberately out of scope.
+
+**3.3.11 — post_kind precedence rules.** A FeedItem's `post_kind` is resolved in two layers:
+
+1. **Module-default mapping** — `FeedItemNormalizer::MODULE_TO_KIND[act_module_id]` assigns the base kind from the stored PeepSo module ID (status=1, photo=4, etc.).
+2. **Metadata semantic override** — the body hydrator may *promote* a base kind to a more specific semantic kind when discriminating post_meta is present. Example: a status post (kind=1, base=`status`) with `peepso_giphy` post_meta is promoted to `gif`.
+
+**Metadata overrides take precedence over module defaults.** This is the canonical rule for future kinds (poll, mood, celebration, scheduled-state overlays) that need similar semantic discrimination — they extend the override layer rather than inventing parallel pipelines or polluting `MODULE_TO_KIND` with meta-aware entries.
+
 ### 3.4 `HighlightStrip`
 
 Encodes §O2 + §O2.1. Strict slot ordering: negative → positive → external.
@@ -1083,6 +1136,43 @@ The `Comment` view-model used by §4.13 endpoints. One row per visible comment o
 - **Threading.** PeepSo's storage is flat at the (act_comment_object_id) index; replies-in-replies in PeepSo's UI surface as @-mentions in body. V1 lists comments flat; surfacing reply-context is V1.5+ work.
 - **Per-comment reactions.** No reaction rail on individual comments. Reactions remain on the parent post only. V2.
 - **Edit.** No edit endpoint. Delete + recreate is the V1 model.
+
+### 3.6 `IndexerState` (V2 Phase 1c)
+
+A `meta.indexer_state` + `meta.indexer_state_label` pair appears on any response whose data is sourced from the V2 confirmation-gated NFT indexer (Phase 1a/1b). Frontends use it to render a "Syncing…" affordance when the persistent path was bypassed for an indexer reason — never invent the chip copy client-side; render the server-pre-formatted label verbatim.
+
+**Shape:**
+
+```json
+{
+  "meta": {
+    "indexer_state": {
+      "ethereum": "healthy",
+      "solana":   "syncing"
+    },
+    "indexer_state_label": {
+      "ethereum": "",
+      "solana":   "Syncing on-chain holdings…"
+    }
+  }
+}
+```
+
+**Field rules:**
+
+- `indexer_state[chainSlug]` is one of `"healthy" | "syncing" | "degraded"`.
+  - `healthy` — persistent rows for at least one wallet on this chain were used. No chip.
+  - `syncing` — checkpoint was healthy but the wallet has no enriched rows yet (cold-start), OR the chain checkpoint is in `disabled` / not-yet-initialised state. Soft chip.
+  - `degraded` — the chain checkpoint is in `degraded` or `breaker_open` state. Show chip with the "showing cached holdings" copy so users know the data is older than usual.
+- A chain whose state escalates monotonically across the user's wallets (one wallet healthy, another syncing) reports the worst state. Per-wallet drilldown is not exposed in v1; operator surfaces in wp-admin show the full per-wallet detail.
+- `indexer_state_label[chainSlug]` is the rendered chip copy. Empty string = "do not render a chip." Filterable server-side via the `bcc_holdings_indexer_state_label` WP filter so copy can be tuned without a redeploy.
+- A response whose data did not pass through the indexer (e.g., a per-creator `/creators/:slug/gallery` reading `bcc_onchain_collections` directly) does NOT carry these fields. The block is per-endpoint, not global.
+
+**Endpoints surfacing `meta.indexer_state` (V2 Phase 1c):**
+
+- `GET /bcc/v1/nft-selections/picker` — through `NftSelectionService::buildPickerData → HoldingsService::getForUser`.
+
+When future endpoints surface user-scoped holdings reads, they MUST forward this block from `HoldingsService` rather than reconstruct it locally.
 
 ---
 
@@ -1279,6 +1369,58 @@ Full User view-model.
 - **Rate limit:** 30/min/viewer
 - **Cache:** `Cache-Control: public, max-age=300, stale-while-revalidate=600`
 - **Mapping:** `peepso_activities` aggregated by day, server-side bucketed; `intensity` computed server-side (`none`, `low`, `med`, `high`, `peak`) — frontend just renders the class.
+
+#### `GET /bcc/v1/members`
+
+Paginated directory of human members. Sibling to §4.9 `/cards` (entity-card directory). Slim list-shape — drops the heavy blocks `/users/:handle` carries (counts, locals, wallets, permissions, privacy, viewer_blocking, plus self-only `living`/`progression`/`feature_access`/`ux_helpers` bundles). Click-through navigates to `/u/:handle` for the full profile.
+
+- **Auth:** Anonymous OR Bearer (privacy-filtered — `real_name_hidden` honored)
+- **Query:** `page` (1-indexed, default 1), `per_page` (default 20, max 50), `q` (optional — bounded to 64 chars, matched against `user_login` + `display_name` + `user_nicename`)
+- **Response 200:**
+  ```json
+  {
+    "items": [
+      {
+        "id": 42,
+        "handle": "phillips",
+        "display_name": "u_phillips",
+        "avatar_url": "https://bluecollar.crypto/wp-content/uploads/peepso/users/42/abc123-avatar.jpg",
+        "joined_at": "2026-04-12T18:30:00Z",
+        "card_tier": "uncommon",
+        "tier_label": "Uncommon",
+        "rank_label": "Journeyman",
+        "is_in_good_standing": true,
+        "flags": [],
+        "trust_score": 78,
+        "followers_count": 42,
+        "primary_local": {
+          "id": 1138,
+          "slug": "local-34-brooklyn",
+          "name": "Local 34 — Brooklyn",
+          "number": 34
+        },
+        "owned_pages_count": 2,
+        "owned_pages_by_type": {
+          "validator": 1,
+          "project": 1,
+          "nft": 0,
+          "dao": 0
+        }
+      }
+    ],
+    "pagination": { "page": 1, "per_page": 20, "total": 124, "total_pages": 7 }
+  }
+  ```
+- **Errors:** `bcc_validation` (invalid `page` / `per_page`)
+- **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
+- **Pagination envelope:** offset (`OffsetPagination` per §1.5) — `total_pages` is the canonical field; clients derive "has more" as `page < total_pages`.
+- **Mapping:** `WP_User_Query` ordered by `user_registered DESC`; results composed via `UserViewService::getSummary` (one call per user, but `UsersEndpoint::members` prefetches three batched maps — followers count, primary-Local resolution, owned-page count — before the per-row loop, so the total query budget is bounded regardless of `per_page`). `card_tier` mirrors the §C1 slug (`legendary|rare|uncommon|common|null`); null only for risky-tier users (entity hidden from card UI per §C1). `tier_label` is the pre-rendered §A2 display string. Frontends should encode the tier as a color/border treatment on the rank chip rather than rendering `tier_label` as a duplicate word next to `rank_label`.
+- **Field rules:**
+    - `trust_score` ∈ [0, 100] per §D5. Augmented score = base reputation_score + clamped lifetime participation bonus (`DisputeParticipationRepository::getEarnedLifetimeTrust`). Clamped at the boundary; clients render as a stencil number, never derive.
+    - `followers_count` is the passive side of `peepso_follower` (people who follow this user). The full /users/:handle response carries both `followers` and `following`; the directory ships the followers count only — `following` isn't a meaningful directory signal and the second SQL isn't worth the cost.
+    - `primary_local` shape matches `MemberProfile.primary_local`. `number` is parsed from `name` via the `^Local\s+(\d+)\b` convention; null when the title doesn't follow the pattern. Frontends render display strings client-side from `name`/`number`.
+    - `owned_pages_count` counts rows where `peepso_page_members.pm_user_status = 'member_owner'`. `> 0` indicates a builder/operator.
+    - `owned_pages_by_type` is a per-canonical-type count of `member_owner` pages, derived from the PeepSo page-categories taxonomy (`peepso_page_categories` joined to the `peepso-page-cat` CPT). The four type keys (`validator`, `project`, `nft`, `dao`) are stable wire identifiers — decoupled from the underlying PeepSo category slugs (which are admin-controlled and may include legacy typos like `vaildators`). PeepSo pages are tag-shaped, not type-shaped: a single page can carry multiple categories, so the sum across the four buckets MAY exceed `owned_pages_count` for a multi-categorized portfolio. Conversely, pages with no recognized category contribute to `owned_pages_count` but to none of the typed buckets. Frontends should render one badge per non-zero bucket (`6 PROJECTS`, `5 NFT COLLECTIONS`, `1 VALIDATOR`) — `owned_pages_count` is informational. New canonical types require a contract amendment + a new key in the response shape; we don't fall back to an "OTHER" bucket for unrecognized categories.
 
 ### 4.5 Binder
 
@@ -2275,6 +2417,113 @@ Delete the viewer's own comment. Cross-author + admin moderation deletes are NOT
   - The comment's `wp_post.post_status` transitions to `trash`. Subsequent `GET` lists exclude it (filtered on `post_status='publish'`).
   - `bcc_comment_deleted` event emitted on the §A3 bus.
 - **Cache:** `no-store`.
+
+### 4.14 Photo posts (v1.5)
+
+Multipart counterpart to the existing `POST /bcc/v1/posts` (which handles status / review / blog under JSON content-type). Separate route because multipart vs JSON request shapes don't share validation cleanly.
+
+#### `POST /bcc/v1/posts/photo`
+
+Create a photo post on the viewer's own wall. Single photo per post; optional caption.
+
+- **Auth:** required. Anonymous → `bcc_unauthorized 401`.
+- **Content-Type:** `multipart/form-data`.
+- **Form fields:**
+  - `photo` (file, required) — single image. Allowed mime types: `image/jpeg`, `image/png`, `image/webp`, `image/gif`. Hard size cap: 5 MB. Mime is sniffed via `wp_check_filetype_and_ext` (the browser-supplied Content-Type is not trusted).
+  - `caption` (string, optional, 0–500 chars after trim) — accompanying text. Empty/missing → photo-only post.
+- **Rate limit:** burst seatbelt — `BCC_TRUST_RATE_LIMIT_STATUS_POST` (5) per `BCC_TRUST_RATE_WINDOW_STATUS_POST` (120s) per author. Same as status / blog.
+- **Storage:** PeepSo owns the photo plumbing under the hood — wp_post (peepso-post CPT), peepso_activities row stamped with `act_module_id = 4` (PeepSoSharePhotos::MODULE_ID), peepso_photos row + thumbnail variants + Imagick metadata strip + JPEG compression. BCC's `PeepSoPhotoWriter` drives this via PeepSo's documented filter+hook surface; no parallel image pipeline.
+- **Response 200 data shape:**
+  ```json
+  {
+    "ok":       true,
+    "feed_id":  "feed_2210184",
+    "post_id":  4012,
+    "act_id":   2210184,
+    "photo_id": 312
+  }
+  ```
+- **Errors:**
+  - `bcc_unauthorized 401` — anonymous.
+  - `bcc_invalid_request 400` — missing `photo` field, multi-photo upload (V1 single-photo only), upload error, oversized file, unsupported mime.
+  - `bcc_forbidden 403` — PeepSo's `PERM_POST` permission check refused (rare; pseudo-banned accounts).
+  - `bcc_rate_limited 429` — burst seatbelt fired.
+  - `bcc_unavailable 503` — PeepSo deactivated, tmp dir un-creatable, persist failure.
+- **Side effects:**
+  - `bcc_post_created` event emitted on the §A3 bus (subscribers: rank progression, future analytics) — uniform with status / blog paths.
+  - PeepSo's notification fan-out (followers, mentions if PeepSo's text processor finds any in the caption).
+- **Cache:** `no-store`.
+
+**V1 deferred:**
+- Multi-photo posts (would require extending the form to accept `photo[]` and the writer's `$_POST['files']` array to carry multiple hashes).
+- Alt text collection from the composer (Phase 2 a11y; the contract field `alt` is present in the body shape per §3.3.9 but always `null` in V1).
+- S3-stored photo URLs (Phase 2; v1 falls back to local-storage URL convention, which 404s on S3-only deployments).
+- Photo edit / replace.
+
+### 4.15 GIF posts (v1.5)
+
+JSON counterpart to `POST /posts/photo`. Wraps PeepSo's existing giphy plugin — BCC owns the picker UI + activity surface; PeepSo owns the API key, content-rating policy, and `peepso_giphy` post_meta storage (single-graph rule, mirrors the photo + comment + reaction integrations).
+
+#### `POST /bcc/v1/posts/gif`
+
+Create a GIF post on the viewer's own wall. Single GIF per post; optional caption.
+
+- **Auth:** required. Anonymous → `bcc_unauthorized 401`.
+- **Content-Type:** `application/json`.
+- **JSON body:**
+  - `url` (string, required) — Giphy CDN URL. Server-side validation requires the URL contain the substring `giphy.com` (matches PeepSo's own check at `peepso/classes/giphy.php`).
+  - `caption` (string, optional, 0–500 chars after trim) — accompanying text.
+- **Rate limit:** burst seatbelt — `BCC_TRUST_RATE_LIMIT_STATUS_POST` (5) per `BCC_TRUST_RATE_WINDOW_STATUS_POST` (120s) per author. Same as status / photo.
+- **Storage:** PeepSo handles the post_meta write under the hood. BCC's `PeepSoGifWriter` drives PeepSo's `PeepSoGiphy::after_add_post` hook by setting `$_POST['type'] = 'giphy'` + `$_POST['giphy'] = <url>` before calling `PeepSoActivity::add_post`. The activity row gets `act_module_id = 1` (status); the `peepso_giphy` post_meta on the wp_post is what discriminates this as a GIF post at hydration time (see §3.3.11).
+- **Response 200 data shape:**
+  ```json
+  {
+    "ok":      true,
+    "feed_id": "feed_2210184",
+    "post_id": 4012,
+    "act_id":  2210184
+  }
+  ```
+- **Errors:**
+  - `bcc_unauthorized 401` — anonymous.
+  - `bcc_invalid_request 400` — empty URL, URL doesn't contain `giphy.com`, caption over 500 chars.
+  - `bcc_forbidden 403` — PeepSo's `PERM_POST` permission check refused.
+  - `bcc_rate_limited 429` — burst seatbelt fired.
+  - `bcc_unavailable 503` — PeepSo deactivated, persist failure.
+- **Side effects:**
+  - `bcc_post_created` event emitted on the §A3 bus (uniform with status / photo paths).
+  - PeepSo's notification fan-out via the standard `peepso_after_add_post` action.
+- **Cache:** `no-store`.
+
+**V1 deferred:** GIF in comments, multi-GIF posts, GIF stickers in chat, custom emoji / sticker providers (Tenor etc).
+
+### 4.16 Integrations config (v1.5)
+
+Surfaces PeepSo admin-configured integration toggles + keys to the BCC frontend. Architecturally, the `/integrations/*` namespace is the seam where "PeepSo owns operational state" meets "BCC owns presentation" — admin configures a feature once in PeepSo, all surfaces (PeepSo-native + BCC-frontend) honor the same setting.
+
+#### `GET /bcc/v1/integrations/giphy`
+
+Returns the Giphy integration config the composer's GIF picker needs.
+
+- **Auth:** required. Anonymous → `bcc_unauthorized 401`.
+- **Response 200 data shape:**
+  ```json
+  {
+    "enabled":       true,
+    "api_key":       "abc123…",
+    "rating":        "pg-13",
+    "display_limit": 25
+  }
+  ```
+- **Field rules:**
+  - `enabled` — `true` only when BOTH PeepSo's `giphy_posts_enable` toggle is on AND `giphy_api_key` is non-empty. When `false`, the BCC frontend MUST hide the GIF button in the composer entirely. `api_key` is `""` on disabled responses.
+  - `api_key` — Giphy public/browser key. Designed for client-side use, rate-limited per-IP. Authed-only access limits scrape surface but is not strictly secret.
+  - `rating` — Giphy content rating: `g`, `pg`, `pg-13`, or `r`. Default `pg-13`. Picker passes this verbatim to Giphy's API.
+  - `display_limit` — max GIFs per page in the picker grid. Default 25; bounds the picker visual weight per Phase 1c UX call.
+- **Cache:** `private, max-age=300`. Config doesn't change mid-session; 5-minute window lets the frontend skip refetching across navigations.
+- **Errors:**
+  - `bcc_unauthorized 401` — anonymous.
+- **Behavior when PeepSo isn't installed:** returns the disabled config (`enabled: false`, empty `api_key`, default rating + display_limit). The frontend never errors; the GIF button just doesn't render.
 
 ### 4.12 Self-edit (V2 Phase 2 + 2.5)
 
