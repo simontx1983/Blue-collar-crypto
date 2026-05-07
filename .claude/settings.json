@@ -49,7 +49,8 @@
       "Bash(npx --no-install tsc:*)",
       "Bash(npx tsc:*)",
       "Bash(cd bcc-frontend && npx:*)",
-      "Bash(npm --prefix bcc-frontend:*)"
+      "Bash(npm --prefix bcc-frontend:*)",
+      "mcp__mysql__mysql_query"
     ]
   }
 }

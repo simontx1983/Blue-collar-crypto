@@ -108,6 +108,49 @@ should point at exactly one source-of-truth class or method per concept.
   `BCC\Core\Feed\ActivityFeedService`
   ([app/public/wp-content/plugins/bcc-core/src/Feed/ActivityFeedService.php](../app/public/wp-content/plugins/bcc-core/src/Feed/ActivityFeedService.php))
 
+## Search
+
+Search is split into a **canonical engine** (the `bcc-search` plugin) and a
+**§A2 view-model adapter** (in `bcc-trust`). The frontend speaks only to
+the adapter; nothing in `bcc-frontend/` calls `bcc-search` routes directly.
+This keeps ranking / throttling / caching / query-quality / LKG / circuit-
+breaker centralized in one plugin while honoring §A2 (no reputation-tier
+or permalink semantics on the wire to the headless app).
+
+- **Canonical search engine** (FULLTEXT + trust enrichment + cache + rate
+  limit + LKG + circuit breaker + query-quality gate) →
+  `BCC\Search\Controllers\SearchController` at `GET /bcc/v1/search`
+  ([app/public/wp-content/plugins/bcc-search/app/Controllers/SearchController.php](../app/public/wp-content/plugins/bcc-search/app/Controllers/SearchController.php)).
+  Returns flat `category_slug` (legacy page_type) + `tier` (reputation
+  tier) + WordPress permalinks. Not safe for the headless frontend on its
+  own — those identifiers are ineligible per §A2 / §C1.
+- **Frontend-safe semantic adapter** (maps reputation_tier → `card_tier`,
+  category_slug → `card_kind`, WP permalink → headless route prefix
+  `/v/`/`/p/`/`/c/`) → `BCC\Trust\Core\REST\CardsSearchEndpoint` at
+  `GET /bcc/v1/cards/search`
+  ([app/public/wp-content/plugins/bcc-trust/app/Domain/Core/REST/CardsSearchEndpoint.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/REST/CardsSearchEndpoint.php)).
+  Calls the engine via `rest_do_request('/bcc/v1/search')` — in-process,
+  no HTTP round-trip, the engine's throttle/cache/breaker still run.
+- **Frontend consumer** → `getSearchSuggestions` →
+  [bcc-frontend/src/lib/api/cards-search-endpoints.ts](../bcc-frontend/src/lib/api/cards-search-endpoints.ts).
+  Returns `SearchSuggestionsResponse` (a `SearchSuggestion[]` shape that's
+  intentionally smaller than the full Card view-model). The frontend never
+  imports anything that knows the wrapper exists — it just sees one
+  contract and one endpoint.
+
+**Dormant collaborators** (built, not yet wired):
+
+- `BCC\Search\Controllers\UserSearchController` at `GET /bcc/v1/search/users`
+- `BCC\Search\Controllers\GroupSearchController` at `GET /bcc/v1/search/groups`
+
+These verticals exist for the future multi-vertical autocomplete (People /
+Groups / Pages sections) but are not consumed by any current frontend
+surface. **When that UX lands, the orchestration MUST happen inside the
+canonical `/bcc/v1/search` path** (let it fan out to user/group services
+internally and return one normalized envelope) — do NOT have the frontend
+call all three endpoints in parallel. Frontend search is a single
+contract, regardless of how many backends back it.
+
 ## REST envelope
 
 - **Response wrapping** (`{data, _meta}` success / `{error: {code, message,

@@ -1375,7 +1375,7 @@ Full User view-model.
 Paginated directory of human members. Sibling to §4.9 `/cards` (entity-card directory). Slim list-shape — drops the heavy blocks `/users/:handle` carries (counts, locals, wallets, permissions, privacy, viewer_blocking, plus self-only `living`/`progression`/`feature_access`/`ux_helpers` bundles). Click-through navigates to `/u/:handle` for the full profile.
 
 - **Auth:** Anonymous OR Bearer (privacy-filtered — `real_name_hidden` honored)
-- **Query:** `page` (1-indexed, default 1), `per_page` (default 20, max 50), `q` (optional — bounded to 64 chars, matched against `user_login` + `display_name` + `user_nicename`)
+- **Query:** `page` (1-indexed, default 1), `per_page` (default 20, max 50), `q` (optional — bounded to 64 chars, matched against `user_login` + `display_name` + `user_nicename`), `type` (optional — one of `validator | project | nft | dao`; restricts results to users with ≥1 owned page of that canonical type, intersecting with `q` when both are present)
 - **Response 200:**
   ```json
   {
@@ -1408,7 +1408,8 @@ Paginated directory of human members. Sibling to §4.9 `/cards` (entity-card dir
         }
       }
     ],
-    "pagination": { "page": 1, "per_page": 20, "total": 124, "total_pages": 7 }
+    "pagination": { "page": 1, "per_page": 20, "total": 124, "total_pages": 7 },
+    "type_counts": { "validator": 5, "project": 5, "nft": 5, "dao": 2 }
   }
   ```
 - **Errors:** `bcc_validation` (invalid `page` / `per_page`)
@@ -1421,6 +1422,7 @@ Paginated directory of human members. Sibling to §4.9 `/cards` (entity-card dir
     - `primary_local` shape matches `MemberProfile.primary_local`. `number` is parsed from `name` via the `^Local\s+(\d+)\b` convention; null when the title doesn't follow the pattern. Frontends render display strings client-side from `name`/`number`.
     - `owned_pages_count` counts rows where `peepso_page_members.pm_user_status = 'member_owner'`. `> 0` indicates a builder/operator.
     - `owned_pages_by_type` is a per-canonical-type count of `member_owner` pages, derived from the PeepSo page-categories taxonomy (`peepso_page_categories` joined to the `peepso-page-cat` CPT). The four type keys (`validator`, `project`, `nft`, `dao`) are stable wire identifiers — decoupled from the underlying PeepSo category slugs (which are admin-controlled and may include legacy typos like `vaildators`). PeepSo pages are tag-shaped, not type-shaped: a single page can carry multiple categories, so the sum across the four buckets MAY exceed `owned_pages_count` for a multi-categorized portfolio. Conversely, pages with no recognized category contribute to `owned_pages_count` but to none of the typed buckets. Frontends should render one badge per non-zero bucket (`6 PROJECTS`, `5 NFT COLLECTIONS`, `1 VALIDATOR`) — `owned_pages_count` is informational. New canonical types require a contract amendment + a new key in the response shape; we don't fall back to an "OTHER" bucket for unrecognized categories.
+    - `type_counts` is the **global** count of distinct users with ≥1 owned page per canonical type. Independent of the active `q` and `type` filters by design — the chip-strip's `VALIDATORS · 5` numbers shouldn't shift around as a viewer types in the search box. Same four keys as `owned_pages_by_type`. Always emitted (even on the type-empty short-circuit) so a filter-specific empty state can suggest alternative chips with non-zero counts.
 
 ### 4.5 Binder
 
