@@ -509,27 +509,57 @@ All values are root-relative paths. Keys vary by view-model.
 
 Appears on Feed item view-models and on Card view-models that support reactions.
 
-**Shape:**
+**Layered grammar (v1.5):** every `reactions` block carries a `kind_grammar` discriminator that tells the renderer which interaction grammar applies. The kinds in `counts` and the allowed values for `viewer_reaction` are determined by the grammar:
+
+| `kind_grammar` | Applies to `post_kind` | Reaction kinds | Visual grammar |
+|---|---|---|---|
+| `"trust"`  | `review`, `dispute_signed`, `page_claim`, `project_drop`, `nft_drop`, `signal` | `solid`, `vouch`, `stand_behind` | restrained, intentional |
+| `"social"` | `status`, `pull_batch`, `blog_excerpt` | `like`, `love`, `haha`, `wow`, `fire` | expressive, emoji-forward |
+| `"tribal"` | _(reserved — V2)_ | _(reserved — e.g. `same_wallet`, `onchain_confirm`)_ | identity-forward |
+
+`counts` always carries all kinds for the active grammar with zero-fill. The frontend never derives the kind set from `post_kind` — it reads `kind_grammar`.
+
+**Shape (trust grammar):**
 
 ```json
 {
   "reactions": {
+    "kind_grammar": "trust",
     "counts": {
       "solid":        14,
       "vouch":         3,
       "stand_behind":  1
     },
-    "my_reactions": ["solid"],
-    "totals": 18
+    "viewer_reaction": "solid"
+  }
+}
+```
+
+**Shape (social grammar):**
+
+```json
+{
+  "reactions": {
+    "kind_grammar": "social",
+    "counts": {
+      "like":  9,
+      "love":  4,
+      "haha":  2,
+      "wow":   0,
+      "fire":  6
+    },
+    "viewer_reaction": null
   }
 }
 ```
 
 **Rules:**
 
-- `counts` always has all three keys, even if zero. Eliminates `undefined` checks on the client.
-- `my_reactions` is empty array `[]` when the viewer is anonymous or hasn't reacted.
-- `totals` is the sum (server-computed; the frontend never sums).
+- `kind_grammar` is **required** on every `reactions` block. Frontend MUST branch on it; deriving the rail from `post_kind` is forbidden (a future grammar change must not require a frontend rebuild).
+- `counts` always has all kinds for the active grammar, even if zero. Eliminates `undefined` checks on the client.
+- `viewer_reaction` is `null` when the viewer is anonymous or hasn't reacted; otherwise the kind name (a string belonging to the active grammar).
+- A reaction kind from one grammar MUST NOT appear on a `reactions` block of another grammar. The server rejects cross-grammar set-reaction requests with `bcc_invalid_request`.
+- _(Legacy fields `my_reactions` and `totals` shown in earlier drafts of this section were never emitted by the V1 implementation; the canonical shape has always been `viewer_reaction: string | null`.)_
 
 ### 2.12 Pagination envelopes
 
@@ -795,6 +825,7 @@ Feed items share an envelope and vary by `post_kind`.
   "body": { "...": "kind-specific" },
   "attached_card": { "...": "summary Card view-model, optional" },
   "reactions": { "...": "see §2.11" },
+  "comment_count": 7,
   "social_proof": { "...": "see §2.2 — applies to feed posts per §O4" },
   "permissions": {
     "can_react":  { "allowed": true, "unlock_hint": null },
@@ -819,6 +850,7 @@ Feed items share an envelope and vary by `post_kind`.
 - `id` is a string in the form `feed_<int>` (the underlying activity ID is opaque to the client — using a string lets us migrate if needed).
 - `external_id` is the module-specific FK (e.g. `wp_posts.ID` for status / blog / review backings, `bcc_pull_batches.id` for `pull_batch`, `bcc_onchain_claims.id` for `page_claim`, `0` for system-authored signals). Used by server-side hydrators and by the client as a stable React key. Treat as opaque.
 - `scope_tags` lists which feed-mode tabs (§N6) this post is eligible for. Used for client-side optimistic filtering when switching tabs without refetching.
+- `comment_count` is the number of visible (non-trashed) comments on the post at response-time. Server-computed via one batched COUNT(*) GROUP BY across the page. Clients MUST treat this as a count badge — the actual list is fetched separately via §4.13. Always present; `0` when there are no comments.
 - `group` is **omitted** (not `null`) when the post does NOT come from a PeepSo group. When present, the post is a wall post inside a group:
   - `id` — group_id (matches `group_id` in §4.7.x endpoints).
   - `type` ∈ `nft` | `local` | `user` | `system` — matches §4.7.2 group `type`.
@@ -1012,6 +1044,45 @@ Encodes §O2 + §O2.1. Strict slot ordering: negative → positive → external.
 - `score` is the float (0.0–1.0) the per-category scorer assigned this item before it was selected as the slot winner. Surfaced for ranking visibility and debugging — the frontend MUST NOT use it for sort/filter logic (the server already chose the winner). Useful in `_debug` views and as telemetry input.
 - `dismiss_kind` ∈ {`state_bound`, `ttl_24h`}. State-bound (§O2 negative TTL rule) means the highlight reappears when `source_event_id` updates (e.g., uptime drops further). The frontend doesn't enforce TTL — it just calls `POST /me/highlights/:id/dismiss`, and the server applies the right TTL based on category.
 - Anonymous viewers receive **`401 bcc_unauthorized`** from `GET /me/highlights` — the strip is authenticated-only by design. The frontend hides the entire HighlightStrip component for unauthenticated viewers; nothing is rendered.
+
+### 3.5 `Comment` (v1.5)
+
+The `Comment` view-model used by §4.13 endpoints. One row per visible comment on a `FeedItem`.
+
+**Shape:**
+
+```json
+{
+  "id":         "comment_2210184",
+  "comment_id": "comment_2210184",
+  "feed_id":    "feed_2210184",
+  "author": {
+    "id":           42,
+    "handle":       "simontx",
+    "display_name": "Simon TX",
+    "avatar_url":   "https://bluecollar.crypto/wp-content/uploads/2026/05/simontx-avatar.jpg"
+  },
+  "body":      "love this — finally a binder that respects pulls.",
+  "posted_at": "2026-05-06T14:09:33Z",
+  "permissions": {
+    "can_delete": { "allowed": true, "unlock_hint": null }
+  }
+}
+```
+
+**Field rules:**
+
+- `id` and `comment_id` are the same opaque identifier (the duplicate `comment_id` is for symmetry with §4.13 DELETE which takes the id as a path param). Form: `comment_<int>`. Treat as opaque.
+- `feed_id` echoes the **parent post's** feed_id, not the comment's own — useful for re-resolving the parent if the drawer was deep-linked. Form: `feed_<int>`.
+- `body` is server-sanitized (PeepSo's `htmlspecialchars` + `strip_content`); the frontend SHOULD render plain text only and respect newlines but NOT trust HTML entities. PeepSo's text processor handles `@username` mentions at write-time (notification fan-out) — the body itself stays as plain text.
+- `posted_at` is ISO-8601 UTC.
+- `permissions.can_delete.allowed` is `true` only when the viewer is the comment's author. V1 does not support cross-author or admin moderation deletes through this endpoint.
+
+**V1 deferred:**
+
+- **Threading.** PeepSo's storage is flat at the (act_comment_object_id) index; replies-in-replies in PeepSo's UI surface as @-mentions in body. V1 lists comments flat; surfacing reply-context is V1.5+ work.
+- **Per-comment reactions.** No reaction rail on individual comments. Reactions remain on the parent post only. V2.
+- **Edit.** No edit endpoint. Delete + recreate is the V1 model.
 
 ---
 
@@ -2127,6 +2198,83 @@ Clear the stash after the toast renders.
 | (reserved) `bcc_card_tier_upgraded` | `tier_upgrade` | TBD when the tier-upgrade listener lands |
 
 `RankProgressionListener` is the only producer in V1. It seeds quietly on a user's first event so users who are already Journeyman at rollout don't get a phantom celebration on their next activity.
+
+### 4.13 Comments (v1.5)
+
+Three endpoints under `/bcc/v1/posts/:feed_id/comments`. Comments are a hybrid PeepSo-proxy: BCC reads `peepso_activities` directly via a join to `wp_posts` + `wp_users`; BCC writes route through PeepSo's `add_comment` so moderation, notification fan-out, and the `peepso_disable_comments` gate apply automatically.
+
+#### `GET /bcc/v1/posts/:feed_id/comments`
+
+Paginated list of visible comments on the parent post.
+
+- **Auth:** optional. Anonymous viewers get the same list on non-gated posts.
+- **Holder-Groups gate:** when the parent post is in a PeepSo group (post-meta `peepso_group_id` set), the viewer MUST be a member (`gm_user_status` ∈ `member`, `member_owner`, `member_manager`, `member_moderator`, `member_readonly`). Non-members get `bcc_forbidden 403`.
+- **Query params:**
+  - `limit` (int, optional, default 20, max 50)
+  - `cursor` (string, optional) — base64url-encoded JSON `{t: ISO-8601, id: act_id}`. Same encoding as `/feed`.
+- **Response 200 data shape:**
+  ```json
+  {
+    "items":       [ "...Comment view-model per §3.5..." ],
+    "next_cursor": "eyJ0IjoiMjAyNi0wNS0wNlQxMzo1OToxMVoiLCJpZCI6MjIxMDE4MX0"
+  }
+  ```
+- **Errors:**
+  - `bcc_invalid_request 400` — malformed `feed_id`.
+  - `bcc_not_found 404` — feed_id resolves to no activity.
+  - `bcc_forbidden 403` — viewer fails the holder-groups gate.
+- **Cache:** `private, no-store`. Per-viewer (delete permission depends on identity).
+
+#### `POST /bcc/v1/posts/:feed_id/comments`
+
+Create a comment on the parent post.
+
+- **Auth:** required. Anonymous → `bcc_unauthorized 401`.
+- **Request body:**
+  ```json
+  { "body": "love this — finally a binder that respects pulls." }
+  ```
+  - `body` (string, required, 1–2000 chars after trim). PeepSo applies its own sanitization on top (`htmlspecialchars` + `strip_content`).
+- **Holder-Groups gate:** writes require write-grade membership (`gm_user_status` ∈ `member`, `member_owner`, `member_manager`, `member_moderator`). `member_readonly` can read but not create. Non-members get `bcc_forbidden 403`.
+- **Rate limit:** burst seatbelt — `BCC_TRUST_RATE_LIMIT_COMMENT` (20) per `BCC_TRUST_RATE_WINDOW_COMMENT` (300s) per author.
+- **Response 200 data shape:**
+  ```json
+  {
+    "comment": { "...Comment view-model per §3.5..." }
+  }
+  ```
+- **Errors:**
+  - `bcc_invalid_request 400` — malformed `feed_id`, empty body, body over cap.
+  - `bcc_unauthorized 401` — anonymous.
+  - `bcc_forbidden 403` — gate fails OR PeepSo refused (parent has `peepso_disable_comments`, parent owner blocked the commenter).
+  - `bcc_rate_limited 429` — burst seatbelt fired.
+  - `bcc_not_found 404` — feed_id resolves to no activity.
+  - `bcc_unavailable 503` — PeepSo `add_comment` returned a falsey result for any other reason.
+- **Side effects:**
+  - PeepSo notifications fire to the parent post author + post followers.
+  - `bcc_comment_created` event emitted on the §A3 bus (subscribers: NotificationDispatcher, future analytics).
+- **Cache:** `no-store`.
+
+#### `DELETE /bcc/v1/posts/:feed_id/comments/:comment_id`
+
+Delete the viewer's own comment. Cross-author + admin moderation deletes are NOT supported in V1 — they continue to flow through PeepSo's existing UI.
+
+- **Auth:** required. Anonymous → `bcc_unauthorized 401`.
+- **Authorization:** viewer MUST be the comment's author. Otherwise `bcc_forbidden 403`.
+- **Response 200 data shape:**
+  ```json
+  { "comment_id": "comment_2210184" }
+  ```
+- **Errors:**
+  - `bcc_invalid_request 400` — malformed feed_id or comment_id.
+  - `bcc_unauthorized 401` — anonymous.
+  - `bcc_forbidden 403` — viewer is not the author.
+  - `bcc_not_found 404` — comment doesn't exist or already trashed.
+  - `bcc_internal_error 500` — `wp_trash_post` returned false.
+- **Side effects:**
+  - The comment's `wp_post.post_status` transitions to `trash`. Subsequent `GET` lists exclude it (filtered on `post_status='publish'`).
+  - `bcc_comment_deleted` event emitted on the §A3 bus.
+- **Cache:** `no-store`.
 
 ### 4.12 Self-edit (V2 Phase 2 + 2.5)
 
