@@ -25,6 +25,10 @@
         "ALLOW_UPDATE_OPERATION": "false",
         "ALLOW_DELETE_OPERATION": "false"
       }
+    },
+    "sentry": {
+      "type": "http",
+      "url": "https://mcp.sentry.dev/mcp/blue-collar-crypto/javascript-nextjs"
     }
   }
 }

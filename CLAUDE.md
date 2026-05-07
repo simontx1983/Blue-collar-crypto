@@ -73,6 +73,12 @@ encode the rules above so you don't have to re-derive them every time.
 - `/frontend-feature` — scaffolds a Next.js feature in `bcc-frontend/`
   the way this codebase actually does it (typed API client, React Query
   hook shape, no business logic, reduced-motion respect).
+- `/security-review` — runs a security review of pending changes on the
+  current branch (auth, authz, input validation, secrets, injection,
+  unsafe deserialization, SSRF). Run **before merging** any branch that
+  touches REST endpoints, auth, wallet linking, on-chain signal writers,
+  cron, or anything handling user input. Treat findings the same as
+  arch-guardrails violations — fix or get explicit sign-off before merge.
 
 ### Subagents (invoke via the Agent tool)
 
