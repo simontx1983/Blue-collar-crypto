@@ -226,6 +226,86 @@ Feed item past-tense narration uses the binder noun:
   `BCC\Trust\Onchain\Services\HoldingsService::ownsAny` /
   `HoldingsService::ownsAnyMany`
 
+## Operational patterns
+
+- **Production-cron staleness detection** (admin notice + degraded
+  banner when `DISABLE_WP_CRON !== true` AND a critical hook is
+  overdue) →
+  `BCC\Trust\Core\Services\CronService::admin_notices` lines 690–705
+  ([app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/CronService.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/CronService.php#L690-L705)).
+  Mirrored at [`bcc-trust.php#L1175-L1180`](../app/public/wp-content/plugins/bcc-trust/bcc-trust.php#L1175)
+  and [`DisputeScheduler.php#L857-L870`](../app/public/wp-content/plugins/bcc-trust/app/Domain/Disputes/Services/DisputeScheduler.php#L857).
+  Pattern: detect `DISABLE_WP_CRON`, check `wp_next_scheduled($hook)
+  < time() - $threshold`, render notice with `*/N * * * * curl -s
+  {site_url}/wp-cron.php?doing_wp_cron >/dev/null 2>&1`. Threshold
+  matches the criticality of the cron (5 min for chain indexing,
+  15 min for score recalc, 24 h for daily refresh).
+- **System-health endpoint** (cron disabled flag + per-subsystem
+  health surfaced to a single response) →
+  `bcc-core/bcc-core.php` lines 385–402
+  ([app/public/wp-content/plugins/bcc-core/bcc-core.php](../app/public/wp-content/plugins/bcc-core/bcc-core.php#L385-L402)).
+  New subsystems extend the response object — do not invent
+  parallel health endpoints.
+
+## Confirmation-gated chain indexing (V2 Phase 1)
+
+- **Read facade** — `HoldingsService::getForUser` /
+  `HoldingsService::ownsAny` keep V1 signatures; persistent-first
+  read with transient fallback is internal. Never expose the
+  persistent table to a service that bypasses the facade.
+- **Resilience** — reuse `Onchain\Support\CircuitBreaker`
+  ([app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Support/CircuitBreaker.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Support/CircuitBreaker.php))
+  per chain — do not invent per-indexer breakers.
+- **Alchemy CU budgeting** — `alchemy_getAssetTransfers` = 120 CU
+  flat (verified May 2026). Track per-chain CU/day in
+  `wp_bcc_chain_checkpoints.cu_used_today`; circuit-break at
+  `BCC_ETH_DAILY_RPC_BUDGET` (default 50 000 CU/day).
+- **Helius webhook auth** — Helius does NOT use HMAC. Customer-set
+  `Authorization` header is echoed back per delivery; verify with
+  `hash_equals($_SERVER['HTTP_AUTHORIZATION'], BCC_HELIUS_WEBHOOK_SECRET)`.
+  Replay protection via `tx_signature` LRU dedupe, not timestamp
+  drift (no in-payload timestamp to verify).
+- **Helius address ceiling** — single shared webhook handles up to
+  100 000 addresses. Manage inclusion via `PATCH /v0/webhooks/:id`
+  + `helius_managed BOOLEAN` on `wp_bcc_wallet_links`. Do not
+  provision per-wallet webhooks.
+- **`metadata_status` filter rule (structural)** — `NftHoldingsRepository`
+  splits the API: visible reads (`findVisibleForWallet`,
+  `countVisibleByContract`, `walletHasAnyForChain`) hard-code
+  `metadata_status IN (0, 1)`. Admin/recovery reads
+  (`findAllIncludingSpam`, `findByStatus`) are separate methods.
+  There is no `?$includeSpam` flag to forget. Bypassing the split
+  in a public read path is a P1 bug.
+
+### V2 Phase 1a — landed canonical classes (2026-05-06)
+
+- **Persistent NFT-holdings repository** →
+  `BCC\Trust\Onchain\Repositories\NftHoldingsRepository`
+  ([app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Repositories/NftHoldingsRepository.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Repositories/NftHoldingsRepository.php))
+- **Per-chain progress checkpoints** →
+  `BCC\Trust\Onchain\Repositories\ChainCheckpointRepository`
+  ([app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Repositories/ChainCheckpointRepository.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Repositories/ChainCheckpointRepository.php))
+- **NFT spam allow/deny rules** →
+  `BCC\Trust\Onchain\Repositories\NftSpamContractRepository`
+  ([app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Repositories/NftSpamContractRepository.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Repositories/NftSpamContractRepository.php))
+- **Helius signature replay-protection LRU** →
+  `BCC\Trust\Onchain\Repositories\HeliusSeenSignaturesRepository`
+  ([app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Repositories/HeliusSeenSignaturesRepository.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Repositories/HeliusSeenSignaturesRepository.php))
+- **Spam filter (write-path)** →
+  `BCC\Trust\Onchain\Services\NftSpamFilter`
+  ([app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Services/NftSpamFilter.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Services/NftSpamFilter.php))
+- **Indexer write-side orchestrator** →
+  `BCC\Trust\Onchain\Services\NftHoldingsIndexer`
+  ([app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Services/NftHoldingsIndexer.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Services/NftHoldingsIndexer.php))
+- **Cron worker (every-minute, N=12 confs)** →
+  `BCC\Trust\Onchain\Workers\NftEthIndexerWorker`
+  ([app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Workers/NftEthIndexerWorker.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Workers/NftEthIndexerWorker.php))
+- **Health endpoint contributor** →
+  `BCC\Trust\Onchain\Services\NftIndexerHealthSnapshot`
+  ([app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Services/NftIndexerHealthSnapshot.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Services/NftIndexerHealthSnapshot.php))
+  — hooks `bcc_system_health` filter; do not invent
+  `/health/indexer`.
+
 ---
 
 This file will be updated over time as new canonical logic is introduced.
