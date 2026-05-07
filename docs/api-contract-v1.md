@@ -888,9 +888,12 @@ V1.5 transition rules: clients tolerant of unknown fields ride forward without c
 ```json
 "body": {
   "text": "Just claimed my page. Going to write up uptime numbers tonight.",
-  "embeds": []
+  "embeds": [],
+  "mentions": []
 }
 ```
+
+`mentions` is the §3.3.12 `Mention[]` overlay — array of `{user_id, handle, display_name, avatar_url, range: [start, end]}` extracted from the raw `text` at write-time. Always present (`[]` when no mentions).
 
 **3.3.2 `review`** — D2 review of an attached entity:
 
@@ -1007,7 +1010,8 @@ V1.5 transition rules: clients tolerant of unknown fields ride forward without c
   "body": {
     "caption":   "morning at the conference floor.",
     "photo_url": "https://bluecollar.crypto/wp-content/peepso/users/42/photos/3a7c…b9.jpg",
-    "alt":       null
+    "alt":       null,
+    "mentions":  []
   }
 }
 ```
@@ -1017,6 +1021,7 @@ V1.5 transition rules: clients tolerant of unknown fields ride forward without c
 - `caption` is `string | null`. `null` when the user posted photo-only (no text). Server-sanitized identically to status post bodies (PeepSo's `htmlspecialchars + strip_content`). Cap: 500 chars after trim.
 - `photo_url` is the canonical full image URL. Empty string `""` on degraded reads (S3-only photos with no fallback URL, or a race where the activity row landed before `save_images` finished); the frontend gracefully omits the image when the URL is empty.
 - `alt: null` is **deferred a11y debt** — V1 does not collect alt text from the composer. Tracked as a Phase 2 a11y follow-up; the field is present so the contract is forward-stable. Frontend MUST render `<img alt="">` when `alt` is `null` (treats the photo as decorative until alt text is collected).
+- `mentions` is the §3.3.12 `Mention[]` overlay extracted from `caption`. Range offsets reference the raw stored caption, not post-render content (§3.3.12 invariant). Always present (`[]` when no mentions, including photo-only posts where caption is `null`).
 - Allowed mime types at upload time: `image/jpeg`, `image/png`, `image/webp`, `image/gif`. The hard size cap is 5 MB (matches the avatar/cover validator).
 - **V1 deferred** (separate from a11y): multi-photo posts (`files: string[]`), photo-edit, lightbox/zoom render, S3-stored photo URLs. The body shape is stable; future fields will be additive.
 
@@ -1030,7 +1035,8 @@ V1.5 transition rules: clients tolerant of unknown fields ride forward without c
   "body": {
     "caption":  "this is the energy.",
     "gif_url":  "https://media.giphy.com/media/3oEjI6SIIHBdRxXI40/giphy.gif",
-    "provider": "giphy"
+    "provider": "giphy",
+    "mentions": []
   }
 }
 ```
@@ -1040,6 +1046,7 @@ V1.5 transition rules: clients tolerant of unknown fields ride forward without c
 - `caption` is `string | null`. `null` when GIF-only (no text). Same shape as photo caption — 500-char cap, server-sanitized.
 - `gif_url` is the canonical Giphy CDN URL. The GIF lives on Giphy's infrastructure; BCC stores only the URL via PeepSo's `peepso_giphy` post_meta. Frontend renders `<img src={gif_url}>` directly.
 - `provider` is `"giphy"` in V1. Field is forward-stable; future providers (Tenor, custom sticker packs) will extend this enum. Frontend MAY use this for "Powered by …" attribution if it surfaces provider branding on the rendered card (V1 does NOT — attribution lives only inside the picker).
+- `mentions` is the §3.3.12 `Mention[]` overlay extracted from `caption`. Range offsets reference the raw stored caption, not post-render content (§3.3.12 invariant). Always present (`[]` when GIF-only or no mentions in caption).
 - The GIF post_kind is **enabled-gated** — PeepSo admin's `giphy_posts_enable` toggle controls whether the composer surfaces a GIF picker affordance at all. The integration config is exposed at §4.16 `GET /integrations/giphy`.
 - **V1 deferred:** GIF in comments (`/posts/:feed_id/comments` would need its own giphy support — separate slice), GIF stickers in chat, multi-GIF posts, GIF-on-photo overlays. All deliberately out of scope.
 
@@ -1049,6 +1056,50 @@ V1.5 transition rules: clients tolerant of unknown fields ride forward without c
 2. **Metadata semantic override** — the body hydrator may *promote* a base kind to a more specific semantic kind when discriminating post_meta is present. Example: a status post (kind=1, base=`status`) with `peepso_giphy` post_meta is promoted to `gif`.
 
 **Metadata overrides take precedence over module defaults.** This is the canonical rule for future kinds (poll, mood, celebration, scheduled-state overlays) that need similar semantic discrimination — they extend the override layer rather than inventing parallel pipelines or polluting `MODULE_TO_KIND` with meta-aware entries.
+
+**3.3.12 `Mention` (v1.5)** — semantic overlay used by `status.body.mentions`, `photo.body.mentions`, `gif.body.mentions`, and `Comment.mentions` (§3.5). One entry per resolved `@user` reference embedded in the post's raw text/caption.
+
+```json
+{
+  "user_id":      42,
+  "handle":       "simontx",
+  "display_name": "Simon TX",
+  "avatar_url":   "https://bluecollar.crypto/wp-content/uploads/peepso/users/42/abc-avatar.jpg",
+  "range":        [12, 38]
+}
+```
+
+**Field rules:**
+
+- `user_id` — the resolved WP user_id of the mentionee. Stable across handle changes.
+- `handle` — the mentionee's BCC handle at *response time*. Frontends route to `/u/:handle` for the link target. Re-resolved per-response so a handle change shows up after the mention was emitted.
+- `display_name` — the mentionee's display name at *response time*. Re-rendered (not the literal `(<name>)` token captured at write-time) so a renamed user reads correctly in old posts.
+- `avatar_url` — for hovercard / popover usage. Frontends MAY display.
+- `range` — `[start, end]` byte offsets into the **raw stored body text** (`status.body.text`, `photo.body.caption`, `gif.body.caption`, or `Comment.body`). End-exclusive (`text.substring(start, end)` == the wire-format token `@peepso_user_<id>(name)`).
+
+**§3.3.12 INVARIANT — range offsets are authoritative against RAW stored content, never post-render content.**
+
+The wire format on disk is PeepSo's mention shortcode `@peepso_user_<id>(<name>)`. Frontends overlay `mentions[]` on top of the raw text — they MUST NOT first apply markdown/emoji/embed/contentEditable transforms before slicing on `range`. Future formatting layers (markdown post-processing, emoji shortcode replacement, rich embed insertion, link autodetection, contentEditable upgrades) MUST not shift these offsets — they apply *around* the mention spans, not through them. If a future layer needs offsets-against-rendered-content, it MUST emit a separate `rendered_mentions[]` block; the canonical `mentions[]` always references raw stored offsets.
+
+**Render contract:**
+
+- A frontend rendering raw text + `mentions[]` walks the text, slices at each `range`, and replaces the slice with `<Link href="/u/${handle}">@${display_name}</Link>` (or equivalent platform-specific affordance — native iOS/Android tap targets, hovercard popovers, etc.).
+- The `@peepso_user_<id>(name)` wire token MUST NOT be rendered as-is; it is a server-side write-format only. A response missing `mentions[]` for content that contains the token is a server bug — clients MAY render the literal token rather than parse it themselves.
+- Mentions outside the body's text field (e.g., a photo post with no caption) MUST emit `mentions: []` for shape stability.
+
+**Server-side enforcement (write-time):**
+
+- Mentions are extracted via the canonical regex `@peepso_user_([a-z]*\d+)(?:\(([^\)]+)\))?` ([peepso/classes/tags.php#L77](app/public/wp-content/plugins/peepso/classes/tags.php) — same regex PeepSo's notification dispatcher uses).
+- Each candidate user_id is validated against the `MentionPolicy` privacy filter (PeepSo's ban filter + `profile_acc != PRIVATE` + bidirectional `peepso_user_blocked` + `allow_hide_user_from_user_listing` + BCC's `bcc_privacy_discovery_optout`).
+- Failing the policy returns `bcc_invalid_mention_target` (with the offending `user_id` echoed in the error payload, but NOT the reason — privacy posture preserved). The post is rejected; nothing is written. Strict reject, not silent strip.
+- Cap: **10 mentions per post**. Over-cap returns `bcc_too_many_mentions` (echoes the cap as `max`).
+
+**Notification semantics — V1d ships a single mention notification type.** PeepSo's existing `Tags::after_save_post` dispatcher fires `tagged` notifications for every surviving (post-policy) mention in a status/photo/gif body. The post-V1 layered grammar (status vs dispute vs review distinct mention semantics) is **deferred** — when `kind_grammar` (§reactions) generalizes to mentions, this section grows a `kind_grammar` discriminator on `Mention`. V1d clients ride forward on additive fields.
+
+**V1d scope:**
+
+- Composer-only. Comments inherit the wire format (PeepSo's `Tags::after_save_comment` runs on the same regex) but the V1d comment composer does NOT ship the autocomplete picker UI — typing the wire token by hand still works because the server validation runs identically. The `Mention[]` overlay is emitted for comments per §3.5.
+- Pre-type "recent contacts" candidates, follow-bias ranking, and contentEditable token highlighting are deferred. V1d ships a prefix-search dropdown only (no candidates surfaced when the query is empty).
 
 ### 3.4 `HighlightStrip`
 
@@ -1116,6 +1167,7 @@ The `Comment` view-model used by §4.13 endpoints. One row per visible comment o
     "avatar_url":   "https://bluecollar.crypto/wp-content/uploads/2026/05/simontx-avatar.jpg"
   },
   "body":      "love this — finally a binder that respects pulls.",
+  "mentions":  [],
   "posted_at": "2026-05-06T14:09:33Z",
   "permissions": {
     "can_delete": { "allowed": true, "unlock_hint": null }
@@ -1127,7 +1179,8 @@ The `Comment` view-model used by §4.13 endpoints. One row per visible comment o
 
 - `id` and `comment_id` are the same opaque identifier (the duplicate `comment_id` is for symmetry with §4.13 DELETE which takes the id as a path param). Form: `comment_<int>`. Treat as opaque.
 - `feed_id` echoes the **parent post's** feed_id, not the comment's own — useful for re-resolving the parent if the drawer was deep-linked. Form: `feed_<int>`.
-- `body` is server-sanitized (PeepSo's `htmlspecialchars` + `strip_content`); the frontend SHOULD render plain text only and respect newlines but NOT trust HTML entities. PeepSo's text processor handles `@username` mentions at write-time (notification fan-out) — the body itself stays as plain text.
+- `body` is server-sanitized (PeepSo's `htmlspecialchars` + `strip_content`); the frontend SHOULD render plain text only and respect newlines but NOT trust HTML entities. The raw wire format `@peepso_user_<id>(name)` may appear in `body`; clients MUST overlay `mentions[]` to render those tokens as `<Link href="/u/:handle">@displayName</Link>` — see §3.3.12 invariant.
+- `mentions` is the §3.3.12 `Mention[]` overlay extracted from the raw `body`. Range offsets reference raw stored content. Always present (`[]` when no mentions). V1d does NOT ship the comment-composer autocomplete picker — the array is still populated for any wire tokens authored via PeepSo's native UI or hand-typed by power users.
 - `posted_at` is ISO-8601 UTC.
 - `permissions.can_delete.allowed` is `true` only when the viewer is the comment's author. V1 does not support cross-author or admin moderation deletes through this endpoint.
 
@@ -1405,6 +1458,20 @@ Paginated directory of human members. Sibling to §4.9 `/cards` (entity-card dir
           "project": 1,
           "nft": 0,
           "dao": 0
+        },
+        "cover_photo_url": "https://bluecollar.crypto/wp-content/uploads/peepso/users/42/abc123-cover.jpg",
+        "verifications": {
+          "x_verified": true,
+          "x_username": "phillips_eth",
+          "github_verified": true,
+          "github_username": "phillips",
+          "wallets_verified": 2
+        },
+        "engagement": {
+          "endorsements_received": 17,
+          "solids_received": 38,
+          "reviews_written": 12,
+          "disputes_signed": 3
         }
       }
     ],
@@ -1415,7 +1482,7 @@ Paginated directory of human members. Sibling to §4.9 `/cards` (entity-card dir
 - **Errors:** `bcc_validation` (invalid `page` / `per_page`)
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - **Pagination envelope:** offset (`OffsetPagination` per §1.5) — `total_pages` is the canonical field; clients derive "has more" as `page < total_pages`.
-- **Mapping:** `WP_User_Query` ordered by `user_registered DESC`; results composed via `UserViewService::getSummary` (one call per user, but `UsersEndpoint::members` prefetches three batched maps — followers count, primary-Local resolution, owned-page count — before the per-row loop, so the total query budget is bounded regardless of `per_page`). `card_tier` mirrors the §C1 slug (`legendary|rare|uncommon|common|null`); null only for risky-tier users (entity hidden from card UI per §C1). `tier_label` is the pre-rendered §A2 display string. Frontends should encode the tier as a color/border treatment on the rank chip rather than rendering `tier_label` as a duplicate word next to `rank_label`.
+- **Mapping:** `WP_User_Query` ordered by `user_registered DESC`; results composed via `UserViewService::getSummary` (one call per user, but `UsersEndpoint::members` prefetches eleven batched maps — followers count, primary-Local resolution, owned-page count, owned-page typed counts, endorsements received, solids received, reviews written, disputes signed, verified-wallet count, X connections, GitHub connections — before the per-row loop, so the total query budget is bounded regardless of `per_page`). `card_tier` mirrors the §C1 slug (`legendary|rare|uncommon|common|null`); null only for risky-tier users (entity hidden from card UI per §C1). `tier_label` is the pre-rendered §A2 display string. Frontends should encode the tier as a color/border treatment on the rank chip rather than rendering `tier_label` as a duplicate word next to `rank_label`.
 - **Field rules:**
     - `trust_score` ∈ [0, 100] per §D5. Augmented score = base reputation_score + clamped lifetime participation bonus (`DisputeParticipationRepository::getEarnedLifetimeTrust`). Clamped at the boundary; clients render as a stencil number, never derive.
     - `followers_count` is the passive side of `peepso_follower` (people who follow this user). The full /users/:handle response carries both `followers` and `following`; the directory ships the followers count only — `following` isn't a meaningful directory signal and the second SQL isn't worth the cost.
@@ -1423,6 +1490,40 @@ Paginated directory of human members. Sibling to §4.9 `/cards` (entity-card dir
     - `owned_pages_count` counts rows where `peepso_page_members.pm_user_status = 'member_owner'`. `> 0` indicates a builder/operator.
     - `owned_pages_by_type` is a per-canonical-type count of `member_owner` pages, derived from the PeepSo page-categories taxonomy (`peepso_page_categories` joined to the `peepso-page-cat` CPT). The four type keys (`validator`, `project`, `nft`, `dao`) are stable wire identifiers — decoupled from the underlying PeepSo category slugs (which are admin-controlled and may include legacy typos like `vaildators`). PeepSo pages are tag-shaped, not type-shaped: a single page can carry multiple categories, so the sum across the four buckets MAY exceed `owned_pages_count` for a multi-categorized portfolio. Conversely, pages with no recognized category contribute to `owned_pages_count` but to none of the typed buckets. Frontends should render one badge per non-zero bucket (`6 PROJECTS`, `5 NFT COLLECTIONS`, `1 VALIDATOR`) — `owned_pages_count` is informational. New canonical types require a contract amendment + a new key in the response shape; we don't fall back to an "OTHER" bucket for unrecognized categories.
     - `type_counts` is the **global** count of distinct users with ≥1 owned page per canonical type. Independent of the active `q` and `type` filters by design — the chip-strip's `VALIDATORS · 5` numbers shouldn't shift around as a viewer types in the search box. Same four keys as `owned_pages_by_type`. Always emitted (even on the type-empty short-circuit) so a filter-specific empty state can suggest alternative chips with non-zero counts.
+    - `cover_photo_url` mirrors `MemberProfile.cover_photo_url` (PeepSo cover photo, absolute URL, `null` when no custom cover set). Drives the directory card's flippable front-face cover area. Frontends render a tier-tinted gradient fallback when `null` so cold-start accounts still get a presentable card.
+    - `verifications` carries connection presence + provider username for the social-proof panel on the back of the directory card. `x_verified` / `github_verified` are `true` only when an active row exists in `bcc_trust_user_verifications` AND `verified_at` is non-null — token presence alone does not count. `x_username` / `github_username` are the public handles for click-through display (`@phillips` etc.); never decrypt tokens into this payload. `wallets_verified` is the count of `bcc_wallet_links` rows where `verified_at IS NOT NULL` — the per-wallet detail (chain, address) lives on `MemberProfile.wallets`.
+    - `engagement` carries lifetime activity counts for the back-of-card "ON THE FLOOR" panel. `endorsements_received` is summed across every page the user owns (`peepso_page_members.pm_user_status = 'member_owner'` JOINed to `bcc_trust_endorsements` on `page_id`); a multi-page operator's endorsement count is the union of endorsements on all their pages. `solids_received` counts `peepso_reactions` rows of kind `KIND_SOLID` on activities the user owns; returns 0 when the reaction set isn't seeded yet (`ReactionTypeRegistry::solidId() === null`). `reviews_written` mirrors `MemberCounts.reviews_written` (count via `VoteRepository::countByVoter`). `disputes_signed` mirrors `MemberCounts.disputes_signed` (count via `FlagsRepository::countByFlagger`).
+
+#### `GET /bcc/v1/users/mention-search` (v1.5)
+
+Slim prefix-search endpoint backing the composer's `@`-mention autocomplete (§3.3.12). Distinct from `/members` because keystroke autocomplete needs a tiny payload and tighter privacy filtering than the directory grid — the dropdown MUST NOT leak hidden / banned / blocked users that the directory might surface to peers via different code paths.
+
+- **Auth:** Bearer required. Anonymous → `bcc_unauthorized 401`. The mention picker is composer-only and the composer is auth-gated, so the endpoint is too.
+- **Query:**
+  - `q` (string, **required**, 1–32 chars after trim) — handle/display-name prefix. Empty/missing returns `400 bcc_invalid_request` (V1d does not ship empty-query candidate sets — see §3.3.12 deferred).
+  - `limit` (int, optional, default `8`, max `8`) — hard cap to bound enumeration surface. Server clamps; values above the cap silently clamp without erroring.
+- **Response 200:**
+  ```json
+  {
+    "items": [
+      {
+        "user_id":      42,
+        "handle":       "simontx",
+        "display_name": "Simon TX",
+        "avatar_url":   "https://bluecollar.crypto/wp-content/uploads/peepso/users/42/abc-avatar.jpg"
+      }
+    ]
+  }
+  ```
+- **Errors:**
+  - `bcc_unauthorized 401` — anonymous.
+  - `bcc_invalid_request 400` — `q` missing, empty after trim, or > 32 chars.
+  - `bcc_rate_limited 429` — per-viewer throttle (60 keystrokes / 60s rolling window).
+- **Cache:** `Cache-Control: private, max-age=10`; `Vary: Authorization, Cookie`. Short TTL deliberate — the typical autocomplete burst (3-6 keystrokes typed in succession) hits the cache for the steady-state prefix; a 10s window is long enough to absorb the burst, short enough that a recent join/ban/block updates within a session.
+- **Privacy / mapping:** routed through `PeepSoUserSearch` ([peepso/classes/usersearch.php](app/public/wp-content/plugins/peepso/classes/usersearch.php)) which applies the canonical filter set: ban filter, `profile_acc != PRIVATE`, bidirectional `peepso_user_blocked` (viewer→target AND target→viewer), `allow_hide_user_from_user_listing`, plus the `peepso_user_search_args` hook BCC's [PrivacySettings::filterPeepSoSearchArgs](app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Support/PrivacySettings.php) attaches for `bcc_privacy_discovery_optout`. **Do NOT route this through the dormant `bcc-search` `UserSearchRepository`** — that one runs raw `wp_users` LIKE and bypasses every filter above; it would leak hidden users into the dropdown.
+- **Ranking:** prefix match on `user_login` + `display_name` + `bcc_handle` user-meta, ordered by handle ASC. V1d does NOT bias by follower edges (deferred — see §3.3.12 deferred). When two candidates share a prefix, alphabetical order wins; ties broken by `ID ASC`.
+- **Side effects:** none. Pure read; no notification, no logging beyond the rate-limit counter.
+- **Sister endpoints:** the composer's full-name → user_id resolution at submit time is **not** exposed as a separate endpoint — the picker emits the wire-format token `@peepso_user_<id>(name)` directly into the post body using `user_id` from this response, and the server's `MentionPolicy` re-validates on `POST /posts*` (§3.3.12 server-side enforcement). A user picked from the dropdown but who turns hidden between picker-select and submit gets rejected at write-time with `bcc_invalid_mention_target` — picker results are advisory, not authoritative.
 
 ### 4.5 Binder
 
@@ -2391,11 +2492,13 @@ Create a comment on the parent post.
   - `bcc_invalid_request 400` — malformed `feed_id`, empty body, body over cap.
   - `bcc_unauthorized 401` — anonymous.
   - `bcc_forbidden 403` — gate fails OR PeepSo refused (parent has `peepso_disable_comments`, parent owner blocked the commenter).
+  - `bcc_invalid_mention_target 400` — body contains `@peepso_user_<id>(name)` token for a user_id that fails the §3.3.12 `MentionPolicy` privacy filter. Error payload echoes `{user_id: <int>}` but does NOT leak the failure reason (privacy posture).
+  - `bcc_too_many_mentions 400` — body contains more than `max` mention tokens. Error payload echoes `{max: 10}`.
   - `bcc_rate_limited 429` — burst seatbelt fired.
   - `bcc_not_found 404` — feed_id resolves to no activity.
   - `bcc_unavailable 503` — PeepSo `add_comment` returned a falsey result for any other reason.
 - **Side effects:**
-  - PeepSo notifications fire to the parent post author + post followers.
+  - PeepSo notifications fire to the parent post author + post followers + every surviving (post-policy) mention via `Tags::after_save_comment`.
   - `bcc_comment_created` event emitted on the §A3 bus (subscribers: NotificationDispatcher, future analytics).
 - **Cache:** `no-store`.
 
@@ -2448,12 +2551,14 @@ Create a photo post on the viewer's own wall. Single photo per post; optional ca
 - **Errors:**
   - `bcc_unauthorized 401` — anonymous.
   - `bcc_invalid_request 400` — missing `photo` field, multi-photo upload (V1 single-photo only), upload error, oversized file, unsupported mime.
+  - `bcc_invalid_mention_target 400` — caption contains `@peepso_user_<id>(name)` token for a user_id that fails the §3.3.12 `MentionPolicy`. Error payload echoes `{user_id: <int>}`, no reason.
+  - `bcc_too_many_mentions 400` — caption contains more than `max` mention tokens. Error payload echoes `{max: 10}`.
   - `bcc_forbidden 403` — PeepSo's `PERM_POST` permission check refused (rare; pseudo-banned accounts).
   - `bcc_rate_limited 429` — burst seatbelt fired.
   - `bcc_unavailable 503` — PeepSo deactivated, tmp dir un-creatable, persist failure.
 - **Side effects:**
   - `bcc_post_created` event emitted on the §A3 bus (subscribers: rank progression, future analytics) — uniform with status / blog paths.
-  - PeepSo's notification fan-out (followers, mentions if PeepSo's text processor finds any in the caption).
+  - PeepSo's notification fan-out (followers, plus every surviving mention via `Tags::after_save_post`).
 - **Cache:** `no-store`.
 
 **V1 deferred:**
@@ -2489,12 +2594,14 @@ Create a GIF post on the viewer's own wall. Single GIF per post; optional captio
 - **Errors:**
   - `bcc_unauthorized 401` — anonymous.
   - `bcc_invalid_request 400` — empty URL, URL doesn't contain `giphy.com`, caption over 500 chars.
+  - `bcc_invalid_mention_target 400` — caption contains `@peepso_user_<id>(name)` token for a user_id that fails the §3.3.12 `MentionPolicy`. Error payload echoes `{user_id: <int>}`, no reason.
+  - `bcc_too_many_mentions 400` — caption contains more than `max` mention tokens. Error payload echoes `{max: 10}`.
   - `bcc_forbidden 403` — PeepSo's `PERM_POST` permission check refused.
   - `bcc_rate_limited 429` — burst seatbelt fired.
   - `bcc_unavailable 503` — PeepSo deactivated, persist failure.
 - **Side effects:**
   - `bcc_post_created` event emitted on the §A3 bus (uniform with status / photo paths).
-  - PeepSo's notification fan-out via the standard `peepso_after_add_post` action.
+  - PeepSo's notification fan-out via the standard `peepso_after_add_post` action — including every surviving (post-policy) mention via `Tags::after_save_post`.
 - **Cache:** `no-store`.
 
 **V1 deferred:** GIF in comments, multi-GIF posts, GIF stickers in chat, custom emoji / sticker providers (Tenor etc).
@@ -2825,7 +2932,7 @@ These routes ARE registered in V1 and return contract-compliant envelopes today,
 These routes ARE shipped in V1 with real data — earlier drafts of this doc listed them as Phase 2 / Phase 5 deferrals, but implementation has caught up and they're now first-class V1 surfaces. Documented here so the contract matches reality.
 
 - **Composer endpoints** — both fully wired:
-  - `POST /posts` accepts `kind: 'status' | 'review'` (V1 set; disputes / blog / post-as-entity remain V1.5/V2 per §P1). Routes through `PostsService::createStatus` / `createReview` which write via PeepSo's canonical `add_post` path. Auth-required; rejects unknown kinds with `bcc_invalid_request`/400. Reviews are gated on Level 2 + reputation tier ≥ neutral via `FeatureAccessService`.
+  - `POST /posts` accepts `kind: 'status' | 'review'` (V1 set; disputes / blog / post-as-entity remain V1.5/V2 per §P1). Routes through `PostsService::createStatus` / `createReview` which write via PeepSo's canonical `add_post` path. Auth-required; rejects unknown kinds with `bcc_invalid_request`/400. Reviews are gated on Level 2 + reputation tier ≥ neutral via `FeatureAccessService`. v1.5: status bodies are run through `MentionPolicy` (§3.3.12) — bodies containing `@peepso_user_<id>(name)` tokens for hidden/blocked/banned/private users are rejected with `bcc_invalid_mention_target`; bodies with > 10 mention tokens get `bcc_too_many_mentions`.
   - `POST /reactions` accepts §D5 kinds `'solid' | 'vouch' | 'stand_behind'` (locked). Routes through bcc-core's `PeepSoReactionWriter` (single-graph rule). Throttled at 60/minute per viewer. Returns the post-mutation `{counts, viewer_reaction}` shape so the frontend patches its cache without a feed refetch. `DELETE /reactions/:feed_id` also registered.
   - Bonus: `DELETE /me/reviews/:id` is also live and routes through `PostsService::removeReview`.
 - **Onboarding endpoints** — all four fully wired:

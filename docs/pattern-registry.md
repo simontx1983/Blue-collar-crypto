@@ -320,6 +320,61 @@ Feed item past-tense narration uses the binder noun:
   There is no `?$includeSpam` flag to forget. Bypassing the split
   in a public read path is a P1 bug.
 
+### V2 NFT Scaling Phase 2 — Cosmos CW-721 (read-time, 2026-05-07)
+
+The Cosmos NFT path is INTENTIONALLY ASYMMETRIC with the ETH/SOL
+continuous-indexed persistence model. No public WebSocket / event-
+stream feed exists for any Cosmos chain in our scope, so the Phase
+1a/1b architecture doesn't translate. Cosmos runs read-time +
+transient (24h TTL) — same UX as V1 ETH/SOL pre-Phase-1. Asymmetric
+internals, symmetric public API: `HoldingsService::getForUser` /
+`ownsAny` consumers don't see the difference. **Don't try to force
+symmetry by building a Cosmos persistence layer prematurely.**
+
+Active NFT-chain set (CW-721 contracts deployed + public CosmWasm
+exposed): **Stargaze, Injective, Kujira, Dungeon**. Other Cosmos
+chains seeded for validator/delegation paths but excluded from NFT
+work — curated-only posture self-cleans them (no `is_verified`
+collections → zero LCD calls per refresh).
+
+Crypto.org is permanently out-of-scope at the protocol level until
+a future chain upgrade enables CosmWasm (`/cosmwasm/wasm/v1/code`
+returns 501 Not Implemented as of 2026-05-07).
+
+- **Curated-collection scope reader** —
+  `BCC\Trust\Onchain\Repositories\CollectionRepository::listVerifiedByChain(int $chainId, int $limit)`
+  ([app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Repositories/CollectionRepository.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Repositories/CollectionRepository.php)).
+  Sibling of `listVerified` — same JOIN + columns, scoped to one
+  chain, ordered by `unique_holders DESC` so the cap (default 30
+  via `BCC_COSMOS_HOLDINGS_CONTRACT_CAP` env) prefers popular
+  collections.
+- **Generic CosmWasm smart-query helper** —
+  `CosmosFetcher::wasmSmartQuery(string $contract, array $queryArr)`.
+  Threads through the existing `lcdGet` so it inherits `ApiRetry` +
+  per-chain `CircuitBreaker`. Wire format mirrors
+  `BlockchainQueryService::isCosmosNftHolder` (different domain;
+  do NOT call from the fetcher — that path bypasses the breaker).
+- **CW-721-specific helpers** —
+  `CosmosFetcher::cw721Tokens(contract, owner, startAfter, limit)`,
+  `cw721NftInfo(contract, tokenId)`. Prefixed so future
+  `cw20Balance` / `cw404Tokens` read clearly alongside.
+- **Public CW-721 admin probe** —
+  `CosmosFetcher::testCw721ContractInfo(string $contract)`. Used by
+  the admin "Test CW-721" button on `VerifyCollectionsPage`
+  (extends the existing `handlePost` multi-action dispatcher with a
+  `testquery_<id>` action — no new admin page).
+- **Cache-key readability rule (locked)** — Cosmos transient cache
+  keys are explicit + readable for debugging:
+  - `cw721_tokens_<chain_id>_<contract>_<wallet>_<startAfterOrEmpty>` (24h)
+  - `cw721_nft_info_<chain_id>_<contract>_<token_id>` (7 days; metadata is static)
+  Reuses the existing wp_cache group `bcc_onchain` — do NOT register
+  parallel groups (`bcc_nft`, `nft_metadata`, etc.).
+- **Read-time + transient cache** — Phase 2 plugs into
+  `HoldingsService` at the per-wallet `count_holdings` /
+  `list_holdings` seam; inherits the V1 24h transient + truncation +
+  per-wallet-page cap. `HoldingsService` itself is contract-stable —
+  Phase 2 does not edit it.
+
 ### V2 Phase 1c — landed canonical classes (2026-05-06)
 
 - **NFT enrichment scheduler** →
