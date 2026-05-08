@@ -1276,7 +1276,8 @@ Per-piece detail view-model used by §4.17. One row per uniquely-identified NFT,
   "meta": {
     "read_time":           false,
     "indexer_state":       { "ethereum": "healthy" },
-    "indexer_state_label": { "ethereum": "" }
+    "indexer_state_label": { "ethereum": "" },
+    "owners_summary_label": null
   }
 }
 ```
@@ -1285,7 +1286,7 @@ Per-piece detail view-model used by §4.17. One row per uniquely-identified NFT,
 
 - `id` is opaque, prefixed `nft_piece_<chain>_<short-contract>_<tokenId>`. Frontend treats it as a string; routing uses the `(chain_slug, contract_address, token_id)` triple from `collection` + `token_id`.
 - `collection` is an embed, NOT the full §3.2 Card. It carries only the fields the piece-detail view needs to render breadcrumbs and link back to the creator. For the full creator card the frontend resolves `/c/{collection.creator_handle}` via §4.2.
-- `collection.token_standard` ∈ {`ERC-721`, `ERC-1155`, `SPL`, `CW-721`}. Frontend uses this to decide whether to surface `owners[]` and `owners_count` (only meaningful for ERC-1155 multi-holder tokens).
+- `collection.token_standard` ∈ {`ERC-721`, `ERC-1155`, `SPL`, `CW-721`}. Surfaced for breadcrumb labelling only — the frontend MUST NOT branch presentation on this raw enum (use `meta.owners_summary_label` for the multi-holder render branch instead).
 - `collection.is_verified` mirrors the admin-managed flag. Unverified pieces are still served — the field is rendered as a tier hint, not a hard gate.
 - `token_id` is a STRING, not a number. CW-721 token IDs are arbitrary strings; ERC-1155 token IDs are uint256 and exceed JS `Number.MAX_SAFE_INTEGER`. Always render verbatim; never coerce to Number.
 - `image_url` is the full asset URL; `image_url_thumb` is a CDN-resized thumbnail (≤ 512 px on the long edge). Both are absolute URLs per §1.7. `image_url_thumb` falls back to `image_url` when no resize is available.
@@ -1303,6 +1304,7 @@ Per-piece detail view-model used by §4.17. One row per uniquely-identified NFT,
 - `permissions` is reserved for future viewer-aware actions (favorite, hide-from-binder, etc.) — V2 Phase 6 ships with `{}`. Frontend renders no per-piece actions.
 - `meta.read_time` is `true` for chains with no persistent indexer (CW-721 / Cosmos as of V2 Phase 2 — read-time + V1-transient per pattern-registry). Frontend MAY surface a "Live data — may take a moment" affordance when this is true and the piece is a thumbnail in a list, though for the detail view itself the latency is acceptable without explicit copy.
 - `meta.indexer_state` + `meta.indexer_state_label` follow the §3.6 contract verbatim — frontend renders the server-pre-formatted label, never invents copy.
+- `meta.owners_summary_label` is the server-pre-formatted multi-holder summary string (e.g., `"Held by 8 collectors"`). `null` for ERC-721 / CW-721 / SPL (single-holder standards) and for ERC-1155 with `owners_count <= 1`. Non-null for ERC-1155 with multiple holders. **Frontend renders the value verbatim**; the FE MUST NOT compose its own count-with-noun string from `owners_count`. The server uses `_n('Held by %d collector', 'Held by %d collectors', $count)` so the locale-correct plural lands in `meta.owners_summary_label` when i18n ships. Frontend rendering rule: when `meta.owners_summary_label !== null`, also render the `owners[]` co-owner tiles; when null, render only the dominant `owner` block. This single field drives both the count copy and the multi-holder render branch (§S "no business logic on client").
 
 **V2 Phase 6 deferred:**
 
