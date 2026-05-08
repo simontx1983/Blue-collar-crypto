@@ -2646,9 +2646,10 @@ Create a photo post on the viewer's own wall. Single photo per post; optional ca
 
 **V1 deferred:**
 - Multi-photo posts (would require extending the form to accept `photo[]` and the writer's `$_POST['files']` array to carry multiple hashes).
-- Alt text collection from the composer (Phase 2 a11y; the contract field `alt` is present in the body shape per §3.3.9 but always `null` in V1).
 - S3-stored photo URLs (Phase 2; v1 falls back to local-storage URL convention, which 404s on S3-only deployments).
 - Photo edit / replace.
+
+**Alt text:** the §3.3.9 `alt` field is now author-supplied, not a deferred-debt null. Composer-time collection rides on this same multipart `POST /posts/photo` (no extra round-trip): the response includes `photo_id`, and the frontend chains a §4.18 `PATCH /photos/:photo_id/alt` after the upload returns. Direct upload-time inclusion (an `alt` form field on this multipart) is intentionally not part of this endpoint — keeping creation atomic on PeepSo's side and alt as a follow-up write means alt edits after the fact use the same code path as initial submission.
 
 ### 4.15 GIF posts (v1.5)
 
@@ -2852,6 +2853,45 @@ Returns an `NftPiece` view-model (§3.7) for one specific NFT.
   - `bcc_not_found` returns within 100 ms on the indexed-collection / unknown-token path (single index lookup). Cosmos read-time path may take up to 2 s on cold cache.
   - The endpoint is a single read; concurrent requests for the same `(chain, contract, token_id)` are coalesced server-side via the existing onchain SWR helper. Burst traffic from a freshly-promoted gallery does not multiply upstream LCD calls.
 
+### 4.18 Photo alt text (v1.5 a11y)
+
+Author-supplied alt-text writer for `post_kind = "photo"` posts. The body field `alt` (§3.3.9) is populated through this endpoint; the canonical writer for the §3.3.9 `string | null` shape.
+
+#### `PATCH /bcc/v1/photos/{pho_id}/alt`
+
+Set or clear the alt text on one of the viewer's own photos.
+
+- **Auth:** required. Anonymous → `bcc_unauthorized 401`.
+- **Path:**
+  - `pho_id` (integer, required) — `peepso_photos.pho_id` of the photo to annotate. The `POST /posts/photo` response (§4.14) returns this id as `photo_id`; the composer chains this PATCH after the post submission.
+- **JSON body:**
+  - `alt` (string, required) — 0–500 chars after server-side sanitisation. Empty string `""` clears any prior alt (deletes the row). Server applies: `wp_strip_all_tags` (HTML stripped, no inline-script smuggling), `trim`, then internal whitespace collapsed to single spaces. The 500-char cap is measured **after** sanitisation so a 1000-char HTML payload that strips to 200 visible chars is accepted.
+- **Storage:** BCC-owned `bcc_photo_alts` sidecar (PK = `pho_id`, 1:1 with `peepso_photos`). PeepSo updates can't clobber the alt because the table is BCC-owned. See §6.5.
+- **Response 200 data shape:**
+  ```json
+  {
+    "pho_id": 312,
+    "alt":    "Phillip standing under the BCC banner holding the v1.5 demo board."
+  }
+  ```
+  When the alt was cleared (`""` body), `alt` is `null` in the response.
+- **Errors:**
+  - `bcc_unauthorized 401` — anonymous.
+  - `bcc_not_found 404` — `pho_id` does not exist in `peepso_photos`. Returned BEFORE the ownership check so a deleted-photo write doesn't leak ownership info.
+  - `bcc_forbidden 403` — `pho_id` exists but the viewer is not its owner (`peepso_photos.pho_owner_id !== current_user_id`).
+  - `bcc_invalid_request 400` — non-string `alt`, post-sanitisation length exceeds 500 chars, malformed `pho_id`.
+  - `bcc_unavailable 503` — DB write failure.
+- **Side effects:**
+  - Bumps the per-photo alt-cache generation counter (`photo_alt_gen:{pho_id}` in cache group `bcc_photo_alts`). Subsequent feed reads (§4.3) pick up the new value.
+  - No `peepso_photos` write; PeepSo's update mechanism is untouched.
+  - No bus event in V1 (alt edits don't ladder into reputation, notification, or moderation flows yet — flagged as a moderation follow-up if abuse emerges).
+- **Cache:** `no-store`.
+- **Authoring lifecycle:**
+  - Composer (§D1) chains `POST /posts/photo` → `PATCH /photos/:photo_id/alt` so per-upload alt-text collection rides on the existing photo-post flow.
+  - Edit-after-publish: same endpoint; idempotent upsert. Empty body deletes.
+
+**V1.5 deferred:** alt-text moderation queue surfacing (current `FlagEndpoint` photo-report payload doesn't yet show alt; one-line follow-up), AI-generated alt suggestions, alt-text translation per locale.
+
 ---
 
 ## 5. Encoded rules — quick reference
@@ -2998,6 +3038,7 @@ For each view-model field, the table below names the existing BCC system that ow
 The following schema additions are **referenced but not implemented** by Phase 1 (per the user's "stop at contract" rule):
 
 - `bcc_onchain_claims.recovery_pending` — new column on the EXISTING `bcc_onchain_claims` table for §B5 page-claim recovery (no new table; entity_type='page' for page claims, single-claim-wins via existing `ClaimRepository::createExclusiveClaim()` advisory lock)
+- `bcc_photo_alts` — `(pho_id, owner_id, alt_text, updated_at)` (v1.5 §3.3.9 / §4.18; sidecar to `peepso_photos`, PK = `pho_id`, BCC-owned so PeepSo updates can't clobber)
 - `bcc_pull_meta` — `(follow_id, tier_at_pull, batch_id, pulled_at)` (§C2)
 - `bcc_user_ranks` — `(user_id, rank_key, awarded_by, awarded_at, revoked_at, revoke_reason)` (§E2)
 - `wp_usermeta.bcc_handle` (§B6)

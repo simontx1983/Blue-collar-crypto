@@ -165,6 +165,51 @@ contract, regardless of how many backends back it.
 - **Card-kind → URL prefix** → `BCC\Trust\Core\Support\CardUrlMap`
 - **Rank slug → display label** → `BCC\Trust\Core\Support\RankCatalog`
 
+## Sidecar tables for third-party-owned data
+
+When BCC needs to attach metadata to a row owned by another plugin
+(PeepSo, primarily) and that plugin's table has no native column for
+the field, the canonical answer is a **BCC-owned sidecar table**
+keyed by the third-party row's id. PeepSo updates can't clobber it;
+the sidecar repository owns its own `$wpdb` access; the source-of-
+truth ownership check still goes through the third-party reader.
+
+**Pattern shape:**
+
+- New table `bcc_<thing>_<noun>` declared in
+  `BCC\Trust\Core\Database\TableRegistry` (one accessor per table) and
+  installed via `wp-content/plugins/bcc-trust/includes/database/schema-*.php`
+  (one file per table; `bcc_trust_create_<thing>_table()` function;
+  `dbDelta`; logger).
+- PK = the third-party row id (no autoincrement) — 1:1 mapping; cascading
+  deletes on the parent row remove exactly one sidecar row.
+- BCC-side denormalised fields (e.g. cached `owner_id`) are advisory;
+  the write endpoint always re-checks against the third-party source-of-
+  truth before upsert.
+- Repository at `app/Domain/<Domain>/Repositories/<Thing><Noun>Repository`:
+  `findManyBy<Pk>Ids(int[]): array<int, T>` (bounded `IN()` + `LIMIT`),
+  `upsert()` (`INSERT … ON DUPLICATE KEY UPDATE`), `delete()`. Generation-
+  counter cache invalidation on every write per §5.
+
+**Canonical instances:**
+
+- `bcc_pull_meta` — sidecar for `peepso_follower` (BCC card pulls per §C2)
+  → [PullMetaRepository](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Repositories/PullMetaRepository.php)
+- `bcc_photo_alts` — sidecar for `peepso_photos` (author-supplied alt
+  text per §3.3.9 / §4.18, v1.5 a11y)
+  → [PhotoAltRepository](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Repositories/PhotoAltRepository.php),
+  [PhotoAltEndpoint](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/REST/PhotoAltEndpoint.php),
+  [schema-photo-alts.php](../app/public/wp-content/plugins/bcc-trust/includes/database/schema-photo-alts.php)
+
+**When to use vs not:**
+
+- Use a sidecar when the metadata is **BCC-owned semantics** that
+  PeepSo doesn't model (alt text, pull-tier-at-time, batch ids) AND
+  the third-party row id is stable.
+- Don't use a sidecar to denormalise data the third-party already
+  owns — read it through the third-party reader. The single-graph
+  rule still applies: PeepSo rows go through PeepSo readers/writers.
+
 ## Cross-plugin contracts
 
 - **ServiceLocator** (12 contracts; cross-plugin DI seam) →

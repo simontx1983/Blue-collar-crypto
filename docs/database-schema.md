@@ -16,6 +16,7 @@
 | `bcc_trust_rings` | Vote ring (collusion) detection |
 | `bcc_trust_activity` | Audit/activity log |
 | `bcc_pull_meta` | Sidecar metadata for PeepSo follows (card pulls) — V1 |
+| `bcc_photo_alts` | Sidecar alt-text metadata for PeepSo photos (§3.3.9 / §4.18) — V1.5 |
 | `bcc_user_ranks` | Rank assignments (Apprentice / Journeyman auto, Foreman+ admin) — V1 |
 | `bcc_onchain_claims` (extended) | Now also stores page claims (`entity_type='page'`); `recovery_pending` column added for §B5 lost-wallet rule — V1 |
 
@@ -267,6 +268,27 @@ Sidecar metadata for PeepSo follows that represent BCC card pulls. Per §C2 of t
 **Primary Key:** `(follow_id)` — single row per follow
 
 **Indexes:** `batch_id`, `pulled_at`, `tier_at_pull`
+
+---
+
+## bcc_photo_alts
+
+Sidecar alt-text metadata for PeepSo photos. PeepSo's `peepso_photos` has no native `alt` column, and adding one would be brittle under PeepSo updates — so the alt lives BCC-side. Rows are 1:1 with `peepso_photos.pho_id`. The author-supplied string surfaces in the §3.3.9 photo body via `FeedRankingService::loadPhotoBodies` and is written via §4.18 `PATCH /photos/:pho_id/alt`.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `pho_id` | BIGINT UNSIGNED | `peepso_photos.pho_id` — PRIMARY KEY (1:1 with photo row) |
+| `owner_id` | BIGINT UNSIGNED | Cached `peepso_photos.pho_owner_id` snapshot at write time. Lets the write endpoint authorise via a single PK read on this table without joining peepso_photos. Authoritative ownership remains `peepso_photos.pho_owner_id` (re-checked on every write). |
+| `alt_text` | VARCHAR(500) | Author-supplied alt text (post-sanitise: HTML stripped, whitespace collapsed). Hard cap 500 chars; A11y best practice is 125–150 — the cap blocks alt-stuffing without truncating descriptions of complex images. |
+| `updated_at` | DATETIME | Server-set on every upsert (default `CURRENT_TIMESTAMP`). Lets future moderation queues sort by recency. |
+
+**Primary Key:** `(pho_id)` — single row per photo
+
+**Indexes:** `owner_id`, `updated_at`
+
+**Invariants:**
+- A row exists IFF the photo's author has set a non-empty alt. Clearing alt (PATCH with `""`) DELETEs the row so subsequent feed reads return `alt: null` (the §3.3.9 "decorative" fallback).
+- `owner_id` is denormalised from PeepSo and not the source of truth — `peepso_photos.pho_owner_id` is. The write endpoint always re-checks against PeepSo before upserting to prevent a stale `owner_id` from being trusted across photo-ownership transfers (none in V1, but the check is cheap).
 
 ---
 
