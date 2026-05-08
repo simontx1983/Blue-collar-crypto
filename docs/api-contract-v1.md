@@ -1010,7 +1010,7 @@ V1.5 transition rules: clients tolerant of unknown fields ride forward without c
   "body": {
     "caption":   "morning at the conference floor.",
     "photo_url": "https://bluecollar.crypto/wp-content/peepso/users/42/photos/3a7c…b9.jpg",
-    "alt":       null,
+    "alt":       "Phillip standing under the BCC banner holding the v1.5 demo board.",
     "mentions":  []
   }
 }
@@ -1020,10 +1020,10 @@ V1.5 transition rules: clients tolerant of unknown fields ride forward without c
 
 - `caption` is `string | null`. `null` when the user posted photo-only (no text). Server-sanitized identically to status post bodies (PeepSo's `htmlspecialchars + strip_content`). Cap: 500 chars after trim.
 - `photo_url` is the canonical full image URL. Empty string `""` on degraded reads (S3-only photos with no fallback URL, or a race where the activity row landed before `save_images` finished); the frontend gracefully omits the image when the URL is empty.
-- `alt: null` is **deferred a11y debt** — V1 does not collect alt text from the composer. Tracked as a Phase 2 a11y follow-up; the field is present so the contract is forward-stable. Frontend MUST render `<img alt="">` when `alt` is `null` (treats the photo as decorative until alt text is collected).
+- `alt` is `string | null`. The author-supplied screen-reader description for the photo, written in the composer at upload time and editable via §4.18 `PATCH /photos/:pho_id/alt` after the fact. Stored in BCC's `bcc_photo_alts` sidecar (PeepSo's `peepso_photos` has no native alt column). Server-sanitised: HTML stripped, whitespace trimmed and collapsed, hard length cap of 500 chars. `null` when the photo has no alt row (legacy uploads pre-§3.3.9 alt write, or a user who didn't fill the field). **Frontend MUST render `<img alt="">`** when `alt` is `null` so the photo is treated as decorative; when `alt` is a non-empty string, render `<img alt={alt}>` — that string IS the photo's accessible name.
 - `mentions` is the §3.3.12 `Mention[]` overlay extracted from `caption`. Range offsets reference the raw stored caption, not post-render content (§3.3.12 invariant). Always present (`[]` when no mentions, including photo-only posts where caption is `null`).
 - Allowed mime types at upload time: `image/jpeg`, `image/png`, `image/webp`, `image/gif`. The hard size cap is 5 MB (matches the avatar/cover validator).
-- **V1 deferred** (separate from a11y): multi-photo posts (`files: string[]`), photo-edit, lightbox/zoom render, S3-stored photo URLs. The body shape is stable; future fields will be additive.
+- **V1 deferred** (separate from now-shipped alt): multi-photo posts (`files: string[]`), photo-edit, lightbox/zoom render, S3-stored photo URLs. The body shape is stable; future fields will be additive.
 
 **3.3.10 `gif`** — v1.5 GIF post. The user picked a GIF from the composer's Giphy picker; PeepSo's existing giphy plugin owns the API key + content rating + post_meta storage. `act_module_id` is `1` (status) at the activity layer; the `gif` post_kind is resolved by **metadata semantic override** in the feed body hydrator (see §3.3.11 below).
 
@@ -1226,6 +1226,89 @@ A `meta.indexer_state` + `meta.indexer_state_label` pair appears on any response
 - `GET /bcc/v1/nft-selections/picker` — through `NftSelectionService::buildPickerData → HoldingsService::getForUser`.
 
 When future endpoints surface user-scoped holdings reads, they MUST forward this block from `HoldingsService` rather than reconstruct it locally.
+
+### 3.7 `NftPiece` (V2 Phase 6 / §H1)
+
+Per-piece detail view-model used by §4.17. One row per uniquely-identified NFT, addressed by `(chain_slug, contract_address, token_id)`. Promotes the §8 deferred `GET /collections/:id/pieces` Phase-6 placeholder to a real V2 surface now that the on-chain indexer (Phase 1a/b/c) is online.
+
+**Shape:**
+
+```json
+{
+  "id":           "nft_piece_eth_0x1a2b3c_042",
+  "collection": {
+    "id":               187,
+    "name":             "Welder Genesis",
+    "creator_handle":   "welder",
+    "chain_slug":       "ethereum",
+    "contract_address": "0x1a2b3c4d5e6f7890abcdef1234567890abcdef12",
+    "token_standard":   "ERC-721",
+    "is_verified":      true
+  },
+  "token_id":     "042",
+  "name":         "Welder Genesis #042",
+  "description":  "The forty-second piece in the Welder Genesis drop.",
+  "image_url":    "https://cdn.bluecollar.crypto/nft/eth/0x1a2b3c.../042.png",
+  "image_url_thumb": "https://cdn.bluecollar.crypto/nft/eth/0x1a2b3c.../042_thumb.png",
+  "attributes": [
+    { "trait_type": "Background", "value": "Workshop",   "rarity_pct": 12.5 },
+    { "trait_type": "Tool",       "value": "MIG Welder", "rarity_pct": 4.2  }
+  ],
+  "owner": {
+    "wallet_address": "0xabcdef0123456789abcdef0123456789abcdef01",
+    "address_short":  "0xabcd…ef01",
+    "balance":        1,
+    "is_linked":      true,
+    "user": {
+      "id":           42,
+      "handle":       "simontx",
+      "display_name": "Simon TX",
+      "avatar_url":   "https://bluecollar.crypto/wp-content/uploads/2026/05/simontx-avatar.jpg"
+    }
+  },
+  "owners_count":      1,
+  "owners":            [],
+  "marketplace_links": [
+    { "name": "OpenSea", "url": "https://opensea.io/assets/ethereum/0x1a2b3c.../42" }
+  ],
+  "mint_link":   "/c/welder?mint=042",
+  "permissions": {},
+  "meta": {
+    "read_time":           false,
+    "indexer_state":       { "ethereum": "healthy" },
+    "indexer_state_label": { "ethereum": "" }
+  }
+}
+```
+
+**Field rules:**
+
+- `id` is opaque, prefixed `nft_piece_<chain>_<short-contract>_<tokenId>`. Frontend treats it as a string; routing uses the `(chain_slug, contract_address, token_id)` triple from `collection` + `token_id`.
+- `collection` is an embed, NOT the full §3.2 Card. It carries only the fields the piece-detail view needs to render breadcrumbs and link back to the creator. For the full creator card the frontend resolves `/c/{collection.creator_handle}` via §4.2.
+- `collection.token_standard` ∈ {`ERC-721`, `ERC-1155`, `SPL`, `CW-721`}. Frontend uses this to decide whether to surface `owners[]` and `owners_count` (only meaningful for ERC-1155 multi-holder tokens).
+- `collection.is_verified` mirrors the admin-managed flag. Unverified pieces are still served — the field is rendered as a tier hint, not a hard gate.
+- `token_id` is a STRING, not a number. CW-721 token IDs are arbitrary strings; ERC-1155 token IDs are uint256 and exceed JS `Number.MAX_SAFE_INTEGER`. Always render verbatim; never coerce to Number.
+- `image_url` is the full asset URL; `image_url_thumb` is a CDN-resized thumbnail (≤ 512 px on the long edge). Both are absolute URLs per §1.7. `image_url_thumb` falls back to `image_url` when no resize is available.
+- `attributes[]` is the standard NFT trait array (OpenSea convention). `rarity_pct` is OPTIONAL — present only when the indexer has computed the trait's frequency across the collection. Empty array `[]` when the piece has no metadata; never `null`.
+- `owner` is the single dominant holder:
+  - **ERC-721 / CW-721** — the unique holder. `null` when no on-chain holder is known (cold-cache, freshly minted, indexer behind).
+  - **ERC-1155** — the top-balance holder, ties broken by lowest `wallet_address` lexicographic. Always non-null when at least one holder exists.
+  - `owner.balance` is `1` for ERC-721 / CW-721, the actual SUM(balance) for ERC-1155.
+  - `owner.is_linked` is `true` when the wallet is connected to a BCC user; `owner.user` is non-null IFF `is_linked` is true.
+  - `owner.address_short` follows the §1.7 wallet pattern (`<first-6>…<last-4>`).
+- `owners_count` is the total distinct holder count. Always `1` for ERC-721 / CW-721 with a known holder; `0` when no holder is known. For ERC-1155 it is the count of wallets with `balance > 0`.
+- `owners[]` is empty (`[]`) for ERC-721 / CW-721 (the single holder lives on `owner` only). For ERC-1155 it is the top-N holders by balance, capped server-side at **N = 10**. Each item has the same shape as `owner` minus `is_linked` / `user` enrichment (privacy: only the dominant `owner` gets handle resolution; the rest stay wallet-only). Future expansion to a paginated full-holder list is a separate endpoint.
+- `marketplace_links[]` is per-chain. Empty array when no marketplace is configured for the chain. The list is server-curated from `bcc_onchain_chains.marketplace_template` (existing field per §4.7.4) and is stable across requests.
+- `mint_link` mirrors the §3.2 Card pattern; relative path within the BCC site, points to the creator's mint surface with the token pre-selected.
+- `permissions` is reserved for future viewer-aware actions (favorite, hide-from-binder, etc.) — V2 Phase 6 ships with `{}`. Frontend renders no per-piece actions.
+- `meta.read_time` is `true` for chains with no persistent indexer (CW-721 / Cosmos as of V2 Phase 2 — read-time + V1-transient per pattern-registry). Frontend MAY surface a "Live data — may take a moment" affordance when this is true and the piece is a thumbnail in a list, though for the detail view itself the latency is acceptable without explicit copy.
+- `meta.indexer_state` + `meta.indexer_state_label` follow the §3.6 contract verbatim — frontend renders the server-pre-formatted label, never invents copy.
+
+**V2 Phase 6 deferred:**
+
+- **Per-piece reactions / comments** — `FeedItem` is the reactive surface for content; pieces are passive read-only views in V2. V2.5+ may introduce a `nft_piece_pulled` event but it is not part of this view-model.
+- **Provenance / transfer history** — Phase 7. The persistent index already stores transfers but exposing them requires a paginated history sub-endpoint with privacy redaction for non-linked wallets.
+- **Floor / last-sale** — collection-level only today (§4.7.4 `collection_stats`). Per-piece price history is a marketplace integration, deferred until at least one chain has a stable price oracle.
 
 ---
 
@@ -2731,6 +2814,44 @@ Already shipped, summarized for completeness:
 
 These all return `Cache-Control: no-store` and respect `bcc_unauthorized` (401), `bcc_invalid_request` (422), `bcc_internal_error` (500), and (for image routes) `bcc_upload_failed` (422) / `bcc_peepso_unavailable` (503).
 
+### 4.17 NFT pieces (V2 Phase 6 / §H1)
+
+Promotes the §8 deferred `GET /collections/:id/pieces` placeholder to a real per-piece detail surface. The list-form gallery endpoint (`GET /creators/:slug/gallery`) remains deferred — V2 Phase 6 ships the detail view only.
+
+#### `GET /bcc/v1/nft-pieces/{chainSlug}/{contractAddress}/{tokenId}`
+
+Returns an `NftPiece` view-model (§3.7) for one specific NFT.
+
+- **Auth:** Anonymous OR Bearer (response shape is identical for both; no viewer-aware fields in V2 Phase 6 — `permissions` is `{}` for everyone).
+- **Path:**
+  - `chainSlug` — required, ∈ {`ethereum`, `solana`, `cosmos`}. Other chains return `bcc_invalid_chain` (422). New chain support lands by extending `bcc_onchain_chains` and is automatic without a contract bump.
+  - `contractAddress` — required. EVM: lowercased `0x`-prefixed 20-byte hex. Solana: base58 mint address. Cosmos: bech32 contract address. The server normalizes case before lookup; the client SHOULD pass the canonical form but case-mismatches resolve correctly.
+  - `tokenId` — required, STRING. May contain `/`-unsafe characters for some chains; the client MUST URL-encode (`encodeURIComponent`). The server URL-decodes once.
+- **Response 200 data shape:** `NftPiece` view-model (§3.7).
+- **Errors:**
+  - `bcc_invalid_chain` (422) — unsupported `chainSlug`.
+  - `bcc_invalid_request` (422) — malformed `contractAddress` (wrong format for the chain) or empty `tokenId`.
+  - `bcc_not_found` (404) — collection unknown to the indexer AND the read-time fetch failed (Cosmos), OR the token ID does not exist on-chain. Distinguished at the application layer by whether the COLLECTION row exists; the wire response is the same `bcc_not_found` shape.
+  - `bcc_unsupported_standard` (422) — the contract resolves but its `token_standard` is not in {`ERC-721`, `ERC-1155`, `SPL`, `CW-721`} (e.g., a fungible ERC-20 contract). Frontend should never reach this if it follows the gallery; included for defense-in-depth.
+  - `bcc_upstream_unavailable` (503) — Cosmos read-time fetch failed (LCD endpoint timeout / 5xx) AND no cached metadata is available. Retry with backoff.
+- **Rate limit:** 60/min/user (anonymous: 60/min/IP). Indexed chains hit local DB; Cosmos read-time path hits the LCD endpoint which is the actual capacity bottleneck.
+- **Cache:**
+  - **EVM / Solana (indexed):** `Cache-Control: max-age=300, stale-while-revalidate=1800` — 5m fresh, 30m stale per §1.6 NFT-gallery row.
+  - **Cosmos (read-time):** `Cache-Control: max-age=60, stale-while-revalidate=600` — shorter window because there is no persistent backing store and we don't want stale-while-revalidate to mask a chain outage for too long.
+  - Response includes `X-BCC-Cache: FRESH | STALE | MISS`. `STALE` triggers a server-side background refresh; the client never blocks.
+  - React Query: `staleTime: 60_000` for indexed chains, `30_000` for Cosmos.
+- **Mapping:**
+  - `collection.*` ← `bcc_onchain_collections` row (joined on `chain_id` + `contract_address`). For Cosmos cold-cache, fetched read-time via `CosmosFetcher::fetchContractInfo` and not persisted.
+  - `name`, `description`, `image_url`, `attributes[]` ← per-token metadata. EVM/SOL: cached in `bcc_onchain_collection_pieces` (new helper table; populated by indexer on first sight, refreshed via SWR). Cosmos: fetched read-time via `CosmosFetcher::fetchTokenMetadata` and not persisted.
+  - `owner` + `owners_count` + `owners[]` ← `NftHoldingsRepository::countVisibleByContract` filtered by `token_id` (uses the existing index on `(chain_id, contract_address, token_id, balance)` — confirmed bounded). For Cosmos: read-time `cw721::OwnerOf` query.
+  - `owner.user` enrichment ← join over `bcc_onchain_wallets` → `wp_users` → `peepso_users.usr_handle`. Only the dominant `owner` is enriched; `owners[]` items stay wallet-only for privacy.
+  - `marketplace_links[]` ← `bcc_onchain_chains.marketplace_template` (existing per §4.7.4) interpolated with `contract_address` and `token_id`.
+  - `meta.indexer_state` + `meta.indexer_state_label` ← forwarded from `HoldingsService` per §3.6.
+  - `meta.read_time` is `true` IFF `chainSlug === "cosmos"` for V2 Phase 6 (extends if/when other read-time chains land).
+- **Notes:**
+  - `bcc_not_found` returns within 100 ms on the indexed-collection / unknown-token path (single index lookup). Cosmos read-time path may take up to 2 s on cold cache.
+  - The endpoint is a single read; concurrent requests for the same `(chain, contract, token_id)` are coalesced server-side via the existing onchain SWR helper. Burst traffic from a freshly-promoted gallery does not multiply upstream LCD calls.
+
 ---
 
 ## 5. Encoded rules — quick reference
@@ -2915,7 +3036,7 @@ All ten open items locked **2026-04-27**. Phase 1 implementation may begin.
 Logged here so re-readers don't expect them in V1's contract.
 
 - **Real-time signal SSE endpoint** (`GET /signals/live`) — Phase 3 deliverable.
-- **NFT gallery endpoints** (`GET /creators/:slug/gallery`, `GET /collections/:id/pieces`) — Phase 6.
+- **NFT gallery list endpoints** (`GET /creators/:slug/gallery`, `GET /collections/:id/pieces`) — still deferred. The per-piece DETAIL endpoint (`GET /nft-pieces/{chain}/{contract}/{tokenId}`) ships in V2 Phase 6 — see §4.17. The list-form gallery is a follow-on phase that still needs cursor pagination + collection-level filters.
 - **Binder summary endpoint** (`GET /me/binder/summary`) — Phase 6.
 - **Email digest endpoints** — opt-in only per §I1; deferred to V1.5.
 - **Per-event notification preferences endpoints** — deferred to V1.5 per §I1.
