@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.1 · 2026-04-29 · Phase 1 deliverable
+**Status:** Draft v1.7 · 2026-05-08 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1447,6 +1447,14 @@ Anonymous-friendly trending feed (§F2 zero-follow fallback).
 - **Cache:** `Cache-Control: public, max-age=15, stale-while-revalidate=30`
 - **Mapping:** `BccFeedRankingService` with global trending profile. The same service serves all feed surfaces (§F3) — no separate hot-feed code path.
 
+#### Server-side group-privacy filter (applies to both `/feed` and `/feed/hot`)
+
+Posts authored inside non-open PeepSo groups (`peepso_group_privacy ∈ {1, 2}` — closed or secret, including NFT-gated holder groups, which are closed + sidecar-marked) the viewer is NOT a member of are dropped from the candidate set at the SQL layer. Anonymous viewers see no posts from any non-open group. Members of a non-open group continue to see that group's posts in their main feed.
+
+The filter mirrors the existing `excludedAuthorIds` (§O4.1 caution/risky shadow-limit) and `excludedActIds` (§K1-C moderation hide) channels: `FeedRankingService` computes `excludedGroupIds = (non-open group ids) - (viewer membership ids)` and forwards it to `bcc-core`'s `PeepSoActivityRepository::getActivities`, which appends a `LEFT JOIN postmeta gx_pm ON gx_pm.post_id = p.ID AND gx_pm.meta_key = 'peepso_group_id'` plus `WHERE (gx_pm.meta_value IS NULL OR gx_pm.meta_value NOT IN (...))`. Non-group posts pass through (the LEFT JOIN preserves them with NULL); only posts inside excluded groups drop. The IN list is bounded at 500 (matching the candidate-pool cap on `getNonOpenGroupIds`).
+
+Defense-in-depth: the per-row `hydrateCommentCounts` membership gate is retained — a single bad caller path that bypasses the SQL exclusion would still see comment counts zeroed for gated-group items. The two layers compose; neither is sufficient alone.
+
 ### 4.4 Users
 
 #### `GET /bcc/v1/users/:handle`
@@ -2621,6 +2629,7 @@ Create a photo post on the viewer's own wall. Single photo per post; optional ca
 - **Form fields:**
   - `photo` (file, required) — single image. Allowed mime types: `image/jpeg`, `image/png`, `image/webp`, `image/gif`. Hard size cap: 5 MB. Mime is sniffed via `wp_check_filetype_and_ext` (the browser-supplied Content-Type is not trusted).
   - `caption` (string, optional, 0–500 chars after trim) — accompanying text. Empty/missing → photo-only post.
+  - `group_id` (integer, optional, > 0) — §4.7.6 group-scope. When present, the post lands inside that PeepSo group's wall (server stamps `peepso_group_id` post-meta on the new wp_post + fires `peepso_groups_new_post`). Viewer MUST be an active member: server returns `bcc_not_found 404` when the group is missing OR `secret` and the viewer isn't a member (defense-in-depth — never leaks existence), `bcc_permission_denied 403` when the viewer is not a member of an open/closed group (`error.message` is the server-pinned unlock hint, filterable via `bcc_group_post_membership_required`). Omit/0 → posts to viewer's own wall (existing behavior).
 - **Rate limit:** burst seatbelt — `BCC_TRUST_RATE_LIMIT_STATUS_POST` (5) per `BCC_TRUST_RATE_WINDOW_STATUS_POST` (120s) per author. Same as status / blog.
 - **Storage:** PeepSo owns the photo plumbing under the hood — wp_post (peepso-post CPT), peepso_activities row stamped with `act_module_id = 4` (PeepSoSharePhotos::MODULE_ID), peepso_photos row + thumbnail variants + Imagick metadata strip + JPEG compression. BCC's `PeepSoPhotoWriter` drives this via PeepSo's documented filter+hook surface; no parallel image pipeline.
 - **Response 200 data shape:**
@@ -2666,6 +2675,7 @@ Create a GIF post on the viewer's own wall. Single GIF per post; optional captio
 - **JSON body:**
   - `url` (string, required) — Giphy CDN URL. Server-side validation requires the URL contain the substring `giphy.com` (matches PeepSo's own check at `peepso/classes/giphy.php`).
   - `caption` (string, optional, 0–500 chars after trim) — accompanying text.
+  - `group_id` (integer, optional, > 0) — §4.7.6 group-scope. Same gate matrix as `POST /posts/photo` (404 missing-or-secret, 403 non-member, server-pinned unlock hint in `error.message`). Omit/0 → viewer's own wall.
 - **Rate limit:** burst seatbelt — `BCC_TRUST_RATE_LIMIT_STATUS_POST` (5) per `BCC_TRUST_RATE_WINDOW_STATUS_POST` (120s) per author. Same as status / photo.
 - **Storage:** PeepSo handles the post_meta write under the hood. BCC's `PeepSoGifWriter` drives PeepSo's `PeepSoGiphy::after_add_post` hook by setting `$_POST['type'] = 'giphy'` + `$_POST['giphy'] = <url>` before calling `PeepSoActivity::add_post`. The activity row gets `act_module_id = 1` (status); the `peepso_giphy` post_meta on the wp_post is what discriminates this as a GIF post at hydration time (see §3.3.11).
 - **Response 200 data shape:**
@@ -2893,6 +2903,150 @@ Set or clear the alt text on one of the viewer's own photos.
   - Edit-after-publish: same endpoint; idempotent upsert. Empty body deletes.
 
 **V1.5 deferred:** alt-text moderation queue surfacing (current `FlagEndpoint` photo-report payload doesn't yet show alt; one-line follow-up), AI-generated alt suggestions, alt-text translation per locale.
+
+### 4.19 Direct Messages (v1.5)
+
+BCC's direct-message surface is a thin adapter on top of PeepSo's existing conversation graph (`peepso_message_participants`, `peepso_message_recipients`, the `peepso-message` CPT). Single-graph rule: BCC reads through `PeepSoMessageRepository` (bcc-core) and writes exclusively through `PeepSoMessageWriter` (bcc-core), which delegates to `PeepSoMessagesModel::create_new_conversation` / `add_to_conversation`. PeepSo's existing email-notification pipeline + SSE chat-pulse still fire — BCC owns presentation only.
+
+**Privacy gates** (server-enforced; frontend never decides):
+1. **Sender chat enabled** — `peepso_chat_enabled` user_meta on the sender. False → `bcc_forbidden 403`.
+2. **Recipient chat enabled** — same flag on the recipient. False → `bcc_forbidden 403`.
+3. **Friends-only override** — recipient's `peepso_chat_friends_only` user_meta. True AND `PeepSoFriendsModel::are_friends(sender, recipient) === false` → `bcc_forbidden 403`.
+4. **Mutual block shield** — `PeepSoBlockRepository::isMutuallyBlocked` returns true → `bcc_not_found 404` (not 403; never reveals the block to either side).
+
+The same gate set runs on `POST /me/conversations/:id/messages` so that a recipient flipping their chat_friends_only mid-thread blocks subsequent sends.
+
+**Rate limit:** 30 messages per 5 minutes per sender across all conversations (`bcc_rate_limited 429`). Bounded SQL via the `(post_author, post_date_gmt)` index on `wp_posts`.
+
+**Length cap:** 5000 chars after trim. Cap is enforced in three layers (client `maxLength`, server `mb_strlen` check, `wp_posts.post_content` LONGTEXT bound).
+
+#### `GET /bcc/v1/me/conversations`
+
+Paginated list of the viewer's conversations, ordered by `mpart_last_activity DESC`.
+
+- **Auth:** required. Anonymous → `bcc_unauthorized 401`.
+- **Query:** `page` (1-indexed, default 1), `per_page` (default 20, max 50).
+- **Response 200:**
+  ```json
+  {
+    "items": [
+      {
+        "id": 4031,
+        "is_group": false,
+        "participants": [
+          { "id": 132, "handle": "phillips", "display_name": "Phillip", "avatar_url": "..." },
+          { "id": 25,  "handle": "admin",    "display_name": "admin",   "avatar_url": "..." }
+        ],
+        "peer": { "id": 25, "handle": "admin", "display_name": "admin", "avatar_url": "..." },
+        "last_message": {
+          "id": 4032,
+          "author": { "id": 25, "handle": "admin", "display_name": "admin", "avatar_url": "..." },
+          "preview": "first 200 chars of the last message…",
+          "posted_at": "2026-05-08T14:12:00Z"
+        },
+        "unread_count": 3,
+        "last_activity": "2026-05-08T14:12:00Z"
+      }
+    ],
+    "pagination": { "page": 1, "per_page": 20, "total": 7, "total_pages": 1 }
+  }
+  ```
+- `peer` is the OTHER participant for 1-on-1 conversations and `null` for groups (where `is_group === true`); the frontend uses `peer` for the inbox-row title and falls back to a participant list when null.
+- **Errors:** `bcc_unauthorized 401`.
+- **Cache:** `private, no-store`. DM state mutates per-viewer on every read.
+
+#### `POST /bcc/v1/me/conversations`
+
+Start a new 1-on-1 conversation OR append to an existing 1-on-1 with the same recipient. Idempotent — backend find-or-creates via `PeepSoMessagesModel`.
+
+- **Auth:** required.
+- **Body:** `{ "recipient_id": 25, "body": "hey, what's up?" }`
+- **Response 200:**
+  ```json
+  { "conversation_id": 4031, "message_id": 4051, "is_new_conversation": false }
+  ```
+- **Errors:**
+  - `bcc_unauthorized 401`.
+  - `bcc_invalid_request 400` — empty body, body > 5000 chars, missing/zero `recipient_id`, `recipient_id === sender`.
+  - `bcc_not_found 404` — recipient doesn't exist OR mutual block (info-leak shield).
+  - `bcc_forbidden 403` — sender's chat_enabled false, recipient's chat_enabled false, friends-only + not friends.
+  - `bcc_rate_limited 429` — 30/5min cap exceeded.
+  - `bcc_unavailable 503` — PeepSo write failure.
+- **Side effects:** PeepSo's `peepso_messages_new_conversation` action fires; email notification queued; `peepso_should_get_chats` SSE event triggered for every participant (powers PeepSo-native UIs that share the database).
+- **Cache:** `no-store`.
+
+#### `GET /bcc/v1/me/conversations/{id}/messages`
+
+Paginated message history. `{id}` is either the conversation root msg id OR any message id within it — server normalises via `get_root_conversation`.
+
+- **Auth:** required + viewer must be a participant. Non-participant → `bcc_not_found 404` (info-leak shield).
+- **Query:** `page` (1-indexed, default 1), `per_page` (default 30, max 100). `offset` walks BACKWARD through history: page 1 returns the most-recent N messages, page 2 returns the next-older window. Within each page, items are `posted_at ASC` for chat-style rendering.
+- **Response 200:**
+  ```json
+  {
+    "conversation": {
+      "id": 4031,
+      "is_group": false,
+      "participants": [...UserMini[]],
+      "peer": {...UserMini}
+    },
+    "items": [
+      {
+        "id": 4051,
+        "author": { "id": 132, "handle": "phillips", "display_name": "Phillip", "avatar_url": "..." },
+        "body": "hey, what's up?",
+        "posted_at": "2026-05-08T14:00:00Z",
+        "is_inline_notice": false
+      }
+    ],
+    "pagination": { "page": 1, "per_page": 30, "total": null, "has_more": true }
+  }
+  ```
+- `is_inline_notice` is `true` for system rows (`peepso-message-notic` post_type) — "Phillip joined the conversation," "Admin left." Frontend renders these with an austere centered treatment (no avatar, no bubble).
+- **Side effect:** marks every unread message in the conversation as viewed for the viewer (`mrec_viewed = 1`). Equivalent to a `POST /me/conversations/{id}/read` riding on the same request — keeps the typical "open thread → mark read" flow to one round-trip.
+- **Errors:** `bcc_unauthorized 401`, `bcc_not_found 404`.
+- **Cache:** `private, no-store`.
+
+#### `POST /bcc/v1/me/conversations/{id}/messages`
+
+Append a message to an existing conversation.
+
+- **Auth:** required + viewer must be a participant.
+- **Body:** `{ "body": "..." }`
+- **Response 200:**
+  ```json
+  { "conversation_id": 4031, "message_id": 4052, "is_new_conversation": false }
+  ```
+- **Errors:** as for `POST /me/conversations`, plus `bcc_not_found 404` when the conversation is missing or the viewer isn't a participant. The privacy gates (chat_enabled, friends_only, blocks) also re-run against the OTHER participant of a 1-on-1 — so a recipient who flipped their chat_friends_only mid-thread blocks subsequent replies even though the conversation already exists.
+- **Cache:** `no-store`.
+
+#### `POST /bcc/v1/me/conversations/{id}/read`
+
+Explicitly mark a conversation viewed without fetching the thread. Used by the inbox "mark read" affordance and as the idempotent receipt for clients that scroll past unread without opening.
+
+- **Auth:** required + viewer must be a participant.
+- **Body:** none.
+- **Response 200:** `{ "ok": true }`
+- **Errors:** `bcc_unauthorized 401`, `bcc_not_found 404`.
+- **Cache:** `no-store`.
+
+#### `GET /bcc/v1/me/messages/unread-count`
+
+Slim header-badge endpoint — returns the total count of conversations with unread messages for the viewer (mirrors PeepSo's own header-badge logic, which excludes muted conversations and conversations involving deleted users).
+
+- **Auth:** required.
+- **Response 200:** `{ "count": 3 }`
+- **Cache:** `private, no-store`. Polled by the frontend's `useUnreadMessageCount` hook with adaptive cadence (5s active / 30s idle, mirroring PeepSo's `peepsomessages.js`).
+
+**V1 deferred** (none of these block ship):
+- Group-conversation creation UI (read-only support: existing group convos surface in the inbox + thread renders all participants).
+- Mute / unmute conversation (PeepSo data model already supports it via `mpart_muted`).
+- Typing indicators (PeepSo uses Mayfly transients; mirrorable later).
+- Bulk actions (delete-all, mark-all-read).
+- Per-message edit / delete.
+- Attachments (photo / file / GIF in DMs).
+- In-DM full-text search.
+- SSE / WebSocket realtime — V1 polls.
 
 ---
 
@@ -3130,6 +3284,64 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.7 — 2026-05-09
+
+- **Security fix — closed/secret/NFT-gated PeepSo group post bodies no
+  longer leak into `/feed`, `/feed/hot`, or `/users/{slug}/activity`
+  for non-members.** The §F3 single-brain feed pipeline now applies a
+  SQL-level group-exclusion filter mirroring the existing
+  `excludedAuthorIds` (§O4.1 caution/risky shadow-limit) and
+  `excludedActIds` (§K1-C moderation hide) channels. `FeedRankingService`
+  computes `excludedGroupIds = (non-open group ids) - (viewer
+  membership ids)` and forwards it to bcc-core's
+  `PeepSoActivityRepository::getActivities`, which appends a
+  `LEFT JOIN postmeta gx_pm ON gx_pm.post_id = p.ID AND gx_pm.meta_key
+  = 'peepso_group_id'` plus `WHERE (gx_pm.meta_value IS NULL OR
+  gx_pm.meta_value NOT IN (...))`. Non-group posts pass through (LEFT
+  JOIN preserves them with NULL); only posts inside excluded groups
+  drop. The IN list is bounded at 500. Anonymous viewers see no posts
+  from any non-open group; authed viewers see their own group posts.
+  `bcc_core:groups` cache group, generation key `non_open_gen`, busted
+  on any `peepso_group_privacy` post-meta write (added/updated/deleted
+  hooks). The per-row `hydrateCommentCounts` membership gate is
+  retained as defense-in-depth (a single bad caller path that
+  bypasses the SQL exclusion would still see comment counts zeroed).
+- **§4.14 Photo posts + §4.15 GIF posts — new optional `group_id`
+  field.** When present and > 0, the post lands inside that PeepSo
+  group's wall (server stamps `peepso_group_id` post-meta on the new
+  wp_post + fires `peepso_groups_new_post` for PeepSo's group-followers
+  notification fan-out + popular-posts cache invalidation). Viewer MUST
+  be an active member: missing-or-secret-non-member returns 404
+  `bcc_not_found` (defense-in-depth — never leaks existence),
+  open-or-closed-non-member returns 403 `bcc_permission_denied` with
+  the server-pinned unlock hint in `error.message` (filterable via
+  `bcc_group_post_membership_required`). Omit/0 → posts to viewer's
+  own wall (existing behavior). Same field added implicitly to
+  `POST /bcc/v1/posts` (status JSON body) — covered by the same
+  validation matrix; `kind=blog + group_id > 0` returns 400
+  `bcc_invalid_request` (V1 scope-fence: long-form blogs target the
+  author's own wall only). Implementation: `PostsService::gateGroupPost`
+  reuses `GroupsService::resolveGroupAccess` (single source of truth
+  for the group-existence + active-membership decision across §4.7.5,
+  §4.7.6, §4.7.7, and now write paths); `PeepSoStatusWriter::attachToGroup`
+  is the canonical post-meta + action seam for all three writers
+  (status, photo, GIF).
+- **`PeepSoGroupRepository::getActivityHeat` JOIN/module-id fix.** The
+  prior implementation joined `p.ID = a.act_id` (wrong column —
+  `act_id` is the activity PK, not a wp_posts.ID) and filtered
+  `act_module_id = 8` (PeepSoGroups system events: banner-changed /
+  group-created — NOT user content posts). Both bugs together meant
+  the query returned zero rows for every group, so every surface
+  silently emitted `heat: cold` / "Quiet" regardless of real activity.
+  Fixed to mirror the postmeta-JOIN pattern from
+  `PeepSoActivityRepository::getActivities` `$onlyForGroupId` branch:
+  `INNER JOIN wp_posts p ON p.ID = a.act_external_id` plus
+  `INNER JOIN wp_postmeta pm ON pm.post_id = p.ID AND pm.meta_key =
+  'peepso_group_id' AND pm.meta_value IN (...)`, GROUP BY
+  `pm.meta_value`. Single source of truth for "activities inside a
+  PeepSo group" across discovery sort, holder-groups suggestion, and
+  group detail/feed surfaces.
 
 ### v1.5 — 2026-05-05
 
