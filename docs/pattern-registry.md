@@ -381,7 +381,20 @@ The platform is intentionally resilient — fail-closed throttles, fail-open cac
 
 - **System-health snapshot extension seam** — `apply_filters('bcc_system_health', [])`
   ([app/public/wp-content/plugins/bcc-core/bcc-core.php](../app/public/wp-content/plugins/bcc-core/bcc-core.php) line 373; producer).
-  The single canonical filter for runtime health surfacing. Plugins extend by `add_filter('bcc_system_health', ...)` returning their subsystem's health block. **Do not invent parallel /health endpoints.** Currently 2 consumers; future Phase 3 (post-Phase-1-observability) work will broaden coverage by projecting `DegradationMetrics::readSnapshot()` results into this filter for each instrumented subsystem.
+  The single canonical filter for runtime health surfacing. Plugins extend by `add_filter('bcc_system_health', ...)` returning their subsystem's health block. **Do not invent parallel /health endpoints.**
+
+  **Currently registered contributors** (Phase 3 observability initiative, 2026-05-09):
+
+  | Plugin | Block key | Source | Surfaces |
+  |---|---|---|---|
+  | bcc-core | `throttle` | `Throttle::health()` | `rate_limiter_ready`, `backend` (trust_engine / object_cache / none), `degraded`, `last_success_ts` |
+  | bcc-core | `degradation_metrics` | `DegradationMetrics::healthSnapshot()` | `any_active` triage flag + per-subsystem current/previous-hour counts for the canonical 5 wired subsystems (`throttle`, `null_trust_read`, `peepso_absence`, `search_lkg`, `read_model_fallback`). The canonical-subsystem map lives in bcc-core/bcc-core.php — new subsystems wired into `DegradationMetrics::record()` should add their `(subsystem, events)` tuple there. |
+  | bcc-search | `search` | bcc-search/bcc-search.php | `ft_index_installed` flag + `persistent_cache` prerequisite |
+  | bcc-trust | `trust_engine` | `Plugin.php:1743` | `recalc_queue_depth`, `read_model_drift`, `read_model_coverage` |
+  | bcc-trust | `cron_status` | `Plugin.php:1743` | per-canonical-cron `next_run_ts` + `in_seconds`. `null` means "not currently scheduled" — alarm signal that a hook fell out of the activation registry. Covers: `bcc_disputes_reconcile`, `bcc_gated_group_provision`, `bcc_gated_group_reconcile_sweep`, `bcc_nft_eth_indexer_tick`, `bcc_nft_enrichment_tick`, `bcc_helius_dedupe_sweep`, `bcc_trust_daily_graph_update`, `bcc_trust_process_recalculations`. |
+  | bcc-trust onchain | `nft_indexer` | `NftIndexerHealthSnapshot::contribute` | NFT indexer state, last successful run, breaker state |
+
+  **Adding a new contributor**: `add_filter('bcc_system_health', function (array $health): array { $health['my_subsystem'] = [...]; return $health; })`. Add the subsystem's row to the table above when the contribution lands. Use a top-level key unique to your subsystem; nested blocks within a key are fine.
 
 The two-counter-class split is intentional and not a §V.17–§V.21 violation — `PushMetrics` and `DegradationMetrics` operate at different layers (push-event taxonomy vs cross-plugin subsystem fallback) and recording into one would not satisfy the other's consumer (admin "Push delivery stats" tab vs unified health envelope).
 
