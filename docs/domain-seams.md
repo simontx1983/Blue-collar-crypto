@@ -122,17 +122,25 @@ Disputes implements **none** of these — it consumes 1 (`TrustReadServiceInterf
 
 ## §3. Intra-plugin direct-call shortcuts
 
-These are calls of the form `Plugin::instance()->someService()` (or
-`use BCC\Trust\OtherDomain\X`) that cross Domain boundaries **without**
-going through `bcc-core/src/Contracts/`. Each is an honest engineering
-choice today — the contract pattern is heavyweight and not every
-cross-Domain call justifies it.
+These are runtime cross-Domain couplings that **don't** go through
+`bcc-core/src/Contracts/*`. Three shapes count as shortcuts:
+
+1. `Plugin::instance()->someService()` direct getter call into another Domain.
+2. `new \BCC\Trust\OtherDomain\X(...)` direct instantiation.
+3. **Static method calls on another Domain's Repositories or Services** (e.g., `WalletRepository::exists(...)`).
+
+Each is an honest engineering choice today — the contract pattern is
+heavyweight and not every cross-Domain call justifies it.
 
 But each one also:
 
 - Compounds `Plugin.php`'s God-object surface (one more service-getter the boot wiring has to know about).
-- Creates a coupling that's invisible until a constructor change cascades — the audit's specific concern.
+- Creates a coupling that's invisible until a constructor change or static-method signature change cascades — the audit's specific concern.
 - Should be **promoted to an interface when the access pattern grows** beyond a single caller.
+
+> **Type-only imports** (a `use` statement consumed only for a
+> return-type hint, parameter type, or PHPDoc reference) do NOT count
+> as shortcuts and don't need a §3 entry. See §5.
 
 ### Known shortcuts (append-only as new ones land)
 
@@ -140,12 +148,24 @@ But each one also:
 |---|---|---|---|---|
 | Onchain — `HolderGroupsEndpoint` ([`:150`,`:166`,`:227`,`:275`,`:298`,`:323`](../app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/REST/HolderGroupsEndpoint.php#L150)) | `groupActivityHeatService()`, `nftGroupGateService()` | Core (heat) + Onchain (gate) | Heat lookup is presentation-tier (badge `cold/warm/hot`); gate service is owned by Onchain. Bundling the call site through `Plugin::instance()` keeps the endpoint thin. | A second consumer of `groupActivityHeatService` outside Onchain (e.g., a future communities admin tab) — promote to `GroupHeatReadInterface`. |
 | Disputes — `DisputeParticipationService` ([`:112`](../app/public/wp-content/plugins/bcc-trust/app/Domain/Disputes/Services/DisputeParticipationService.php#L112)) | `userInfoRepository()` | Core | Read-only access to one column on an existing per-user row, on the dispute participation hot path. A full `UserInfoReadInterface` would need a Null fallback that materialises a sane "user info unavailable" shape — overkill for one column. | Disputes adds a write to user_info, OR a second non-Core caller appears — promote to `UserInfoReadInterface`. |
-| Core — `UserViewService` (line 58 import: `BCC\Trust\Onchain\Repositories\WalletRepository`) | `WalletRepository` direct construction | Onchain | Aggregate wallet display data for the profile card (count + first cosmos addr label). Read-side; doesn't bypass the canonical `WalletLinkReadInterface` for identity decisions. | Investigate. The canonical `WalletLinkReadInterface` should already cover this; this direct import may be a Phase B leftover that wasn't migrated. **Flag for review.** |
+| **Domain/Core (~10 services + REST endpoints) → Onchain Repositories/Services via static method calls** | `WalletRepository::*`, `ChainRepository::*`, `ClaimRepository::*`, `ValidatorRepository::*`, `CollectionRepository::*`, `GatedGroupRepository::*`, `CollectionService::*`, `ClaimService::*`, `HoldingsService::*` | Onchain | The Onchain repositories are stateless static utilities (no DI registration). Domain/Core needs to read wallet identity, chain config, NFT claims, validator membership, gated-group config, and holdings on hot paths (auth flow, card view, feed ranking, group discovery, creator gallery). Each static call is small; collectively they're a dense coupling. | **The largest cross-Domain seam in the platform.** Promotion is Phase D shape: introduce 4–6 read-only interfaces in `bcc-core/src/Contracts/*` (`WalletReadInterface`, `ChainReadInterface`, `ClaimReadInterface`, `ValidatorReadInterface`, `CollectionReadInterface`, `GatedGroupConfigReadInterface`) backed by Null fallbacks, and migrate the static call sites incrementally. Trigger: when a static method signature change in Onchain breaks a Domain/Core caller silently (the audit's specific failure mode), OR when an external plugin needs to consume any of these reads. See §3 audit notes below. |
 
-### Other suspected shortcuts (not yet audited)
+### §3 audit notes (Phase 2.5 — 2026-05-09)
 
-- 13 files in `Domain/Core/` import `BCC\Trust\Onchain\*` directly (per Phase 2 grep). Most are likely Onchain-owned types being consumed for signature/shape only, not as service dependencies. **Audit in a follow-up Phase 2.5 sweep**; promote any that are repeated patterns.
-- `Domain/Core/Repositories/WalletSignalRepository` references `WalletSignalWriteInterface` — possibly a fan-in (Core writes through the same contract Onchain implements). **Verify whether this is a documented dual-implementer or a drift.**
+A read-only audit of every `BCC\Trust\Onchain\*` import / FQCN reference inside `Domain/Core/*` produced this picture:
+
+- **24 `use BCC\Trust\Onchain\*` statements across 13 Domain/Core files** plus 8 additional files with fully-qualified `\BCC\Trust\Onchain\*` references. After de-duplication, ~15 files in Domain/Core are coupled to Onchain.
+- **Zero `new \BCC\Trust\Onchain\X(...)` instantiations** in Domain/Core. All cross-Domain access is either type-only or static method.
+- **Zero `Plugin::instance()->onchainXService()` getter calls** from Domain/Core for the imported repositories/services. Coupling is direct, not via the wiring root.
+- The dominant pattern (~30+ call sites) is **static method calls on Onchain Repository / Service classes** — `WalletRepository::exists`, `ChainRepository::getById`, `ClaimRepository::getForEntity`, `ValidatorRepository::findFirstByPageId`, `CollectionService::getForProject`, etc.
+- **Exception-legitimate exemptions confirmed**:
+  - 1 ValueObject import (`UserGroupsEndpoint` line 39 — `BCC\Trust\Onchain\ValueObjects\GatedGroupConfig`). Used as a value-shape type only.
+  - 2 Plugin.php Onchain Service imports (`GatedGroupProvisioningService`, `NftGroupGateService`) — wiring-root concerns; Plugin.php's job IS to know about all Domains.
+  - Plugin.php's own internal static calls on Onchain repos during boot wiring (e.g., `WalletRepository::getForProject` inside the boot-time chain-refresh flow). Same exception bucket: wiring-root coupling.
+- The previous speculative "Core `UserViewService` → `WalletRepository` direct import — flag for review" entry was a worked example of the broader cluster, not a one-off Phase B leftover. Resolved into the collective row above.
+- The previous "WalletSignalRepository in Core/ implements `WalletSignalWriteInterface`" suspicion turned out to be a documented dual-write fan-in: Core's repository writes signals into bcc_onchain_signals through the same contract Onchain's `WalletSignalWriteService` implements. Not a drift; the fan-in is intentional and bounded. No §3 entry needed.
+
+The audit confirmed the cross-Domain coupling exists but bounded — it's exclusively read-side static utility access, not stateful service composition. Phase D work to consolidate these into 4–6 read-only interfaces is well-scoped but not urgent: trigger conditions are (a) a signature-change breakage incident, (b) cross-plugin demand for any of these reads, or (c) post-MVP cleanup window. Until then, this row is the registry entry.
 
 ---
 
