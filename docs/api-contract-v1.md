@@ -2353,6 +2353,7 @@ Notifications are dispatched by `NotificationDispatcher` (sync subscribers, try/
 | `bcc_review_published` | page owner via `PageOwnerResolver` | author === page owner |
 | `bcc_card_pulled` | the followee user | viewer === followee (impossible from the binder UI, defensive) |
 | `bcc_rank_awarded` | the recipient (self-notification) | rank label not in catalog |
+| `user_register` (WordPress core) | the new user (self-notification, type `bcc_welcome`) | `bcc_welcomed` user_meta already set (idempotency guard — once welcomed, never re-welcome) |
 
 #### Notification preferences (§I1 + V2 Phase 1)
 
@@ -2368,7 +2369,8 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
     "bcc_review":      true,
     "bcc_card_pulled": true,
     "bcc_rank_up":     true,
-    "bcc_endorse":     true
+    "bcc_endorse":     true,
+    "bcc_welcome":     true
   },
   "push": {
     "enabled": false,
