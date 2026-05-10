@@ -238,9 +238,16 @@ truth ownership check still goes through the third-party reader.
 
 ## Cross-plugin contracts
 
-- **ServiceLocator** (12 contracts; cross-plugin DI seam) →
+- **ServiceLocator** (11 interfaces in `bcc-core/src/Contracts/*`,
+  cross-plugin AND intra-plugin DI seam) →
   `BCC\Core\ServiceLocator`
   ([app/public/wp-content/plugins/bcc-core/src/ServiceLocator.php](../app/public/wp-content/plugins/bcc-core/src/ServiceLocator.php))
+- **Domain-seam map** (which Domain owns what; canonical interface
+  seams; known intra-plugin direct-call shortcuts; maintenance rule
+  for new cross-Domain calls) → [docs/domain-seams.md](domain-seams.md).
+  When the audit's "alarm bell" question fires (*which Domain actually
+  owns this behavior?*), the answer lives there. Append to §3 of that
+  doc whenever a new cross-Domain call lands.
 
 ## Groups (cross-kind: NFT / Local / system / user)
 
