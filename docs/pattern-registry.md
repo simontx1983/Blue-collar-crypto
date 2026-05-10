@@ -371,6 +371,12 @@ The platform is intentionally resilient — fail-closed throttles, fail-open cac
   - `search_lkg` / `served`, `search_lkg` / `unavailable_503` — bcc-search breaker-tripped responses (`SearchController::breakerTrippedResponse`).
   - `read_model_fallback` / `legacy_aggregation` — bcc-trust `PageDiscoveryService` taking the legacy-aggregation path because the read model has no data.
   - `audit_log_swallow` / `score_mutation_before_snapshot` — bcc-trust `ScoreMutationLogger::readCurrentScore` silent-catch on the score-mutation hot path (Constitution §VIII.30 alignment: audit-log writes must never break mutations, but sustained activation = the read path is unhealthy on what's supposed to be a hot read).
+  - **`legacy_ajax` / 9 events** — Phase 1.7 (2026-05-09) instrumentation of 9 suspected-dead AJAX handlers (V-08 candidates that the in-repo audit found no caller for):
+    - From [`WalletController.php`](../app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Controllers/WalletController.php) (6): `wallet_challenge`, `wallet_verify`, `wallet_disconnect`, `wallet_set_primary`, `wallet_list`, `collection_toggle_profile`.
+    - From [`UserLifecycleService.php`](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/UserLifecycleService.php) (3): `trust_sync_user`, `trust_bulk_sync_users`, `trust_init_page_score`.
+    - **Decision rule**: 30-day zero-hit window in production = safe to retire per Stabilization Plan V-08 Phase D. Counter is recorded *before* the nonce check so failed-nonce hits are also captured (catches attackers / cached pre-deploy pages / external scripts that the audit can't see).
+    - **Sustained nonzero activation** = an external consumer exists that the in-repo audit missed (cron / wp-cli / partner script / cached browser tab) — investigate before retire. The hit pattern (which specific event fires) tells you which surface still has a consumer.
+    - **NOT instrumented** here: the 4 *live* admin-only AJAX handlers (`bcc_chain_refresh`, `bcc_collection_refresh`, `bcc_trust_debug_fraud`, `bcc_trust_debug_votes`) — they have confirmed inline-JS callers in admin pages (ChainsPage.php + debug.php) and are not V-08 candidates. They were originally bundled into V-08 by the Stabilization Plan but the Phase 1.7 audit reclassified them as healthy admin tooling.
 
   **Pending wirings** (subsequent batches):
   - Other audit-log swallow paths (`EndorsementLeaderboardEndpoint:100`, `PageDiscoveryService:377`).
