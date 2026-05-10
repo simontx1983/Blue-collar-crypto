@@ -340,6 +340,44 @@ Feed item past-tense narration uses the binder noun:
   `BCC\Trust\Onchain\Services\HoldingsService::ownsAny` /
   `HoldingsService::ownsAnyMany`
 
+## Observability
+
+The platform is intentionally resilient — fail-closed throttles, fail-open caches, queue fallbacks, NullService default-deny shims, LKG cache serving, swallowed audit-log writes. Each is a deliberate engineering decision; collectively they create a class of bug where the platform becomes partially incorrect while appearing healthy. The two canonical observability primitives both bucket counters per UTC hour with `wp_cache_add` + `wp_cache_incr` (atomic) and a transient fallback for sites without persistent caching:
+
+- **Cross-plugin degradation counters** — `BCC\Core\Observability\DegradationMetrics`
+  ([app/public/wp-content/plugins/bcc-core/src/Observability/DegradationMetrics.php](../app/public/wp-content/plugins/bcc-core/src/Observability/DegradationMetrics.php)).
+  Subsystem-keyed counters for silent fallback paths. **Use this from any plugin's fallback / fail-closed / silent-continuation branches** so operators can detect "we were degraded for N minutes last hour" before users notice. API:
+  ```php
+  DegradationMetrics::record(string $subsystem, string $event = 'activation'): void;
+  DegradationMetrics::readEvent(string $subsystem, string $event, int $timestamp): int;
+  DegradationMetrics::readSnapshot(string $subsystem, list<string> $events, int $timestamp): array;
+  ```
+  Subsystem and event names are sanitized to `[a-z0-9_]+` for cache-key portability. Stable string identifiers — renaming resets the rolling counters.
+
+  **Currently wired** (Phase 1 observability initiative, 2026-05-09):
+  - `throttle` / `activation` — every transition into rate-limit fail-closed mode (bcc-core `Throttle::markSharedDegraded`).
+  - `null_trust_read` / `is_suspended` — every fail-closed deny when bcc-trust is unavailable (bcc-core `NullTrustReadService::isSuspended`).
+  - `peepso_absence` / `group_writer_join` — silent no-op when PeepSo classes missing on the holder-group join writer (bcc-core `PeepSoGroupWriter::join`). Canonical pattern for the rest of the V-11 PeepSo guards (one site instrumented; ~18 follow-ups in subsequent batches).
+  - `search_lkg` / `served`, `search_lkg` / `unavailable_503` — bcc-search breaker-tripped responses (`SearchController::breakerTrippedResponse`).
+  - `read_model_fallback` / `legacy_aggregation` — bcc-trust `PageDiscoveryService` taking the legacy-aggregation path because the read model has no data.
+
+  **Pending wirings** (subsequent batches):
+  - The other 18 V-11 PeepSo absence guards co-located with their Phase C `Logger::warning` lines.
+  - Other NullService methods (`NullTrustReadService::lockActiveVoteForDispute`, `NullTrustReadService::getEligiblePanelistUserIds`, `NullWalletLinkRead`, `NullScoreReadService`, etc.).
+  - Audit-log swallow paths (`ScoreMutationLogger:198`, `EndorsementLeaderboardEndpoint:100`, `PageDiscoveryService:377`).
+  - Holder-group provisioning sweep retries / dispute reconcile sweep catch-up activations.
+  - Helius webhook dedup-skipped events.
+
+- **Push-event-specific observability** — `BCC\Trust\Core\Support\PushMetrics`
+  ([app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Support/PushMetrics.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Support/PushMetrics.php)).
+  `(outcome, event_type)` × UTC-hour buckets with fixed outcome set: `attempt` / `success` / `tombstone` / `failure`. Reads from `NotificationPrefs::PUSH_TYPES`. **Push-domain-specific by design** — push delivery has unique outcome shapes (a 410 Gone is qualitatively different from a 5xx) that don't generalize. Lives in bcc-trust because push is bcc-trust-owned; cross-plugin observability uses `DegradationMetrics` instead.
+
+- **System-health snapshot extension seam** — `apply_filters('bcc_system_health', [])`
+  ([app/public/wp-content/plugins/bcc-core/bcc-core.php](../app/public/wp-content/plugins/bcc-core/bcc-core.php) line 373; producer).
+  The single canonical filter for runtime health surfacing. Plugins extend by `add_filter('bcc_system_health', ...)` returning their subsystem's health block. **Do not invent parallel /health endpoints.** Currently 2 consumers; future Phase 3 (post-Phase-1-observability) work will broaden coverage by projecting `DegradationMetrics::readSnapshot()` results into this filter for each instrumented subsystem.
+
+The two-counter-class split is intentional and not a §V.17–§V.21 violation — `PushMetrics` and `DegradationMetrics` operate at different layers (push-event taxonomy vs cross-plugin subsystem fallback) and recording into one would not satisfy the other's consumer (admin "Push delivery stats" tab vs unified health envelope).
+
 ## Operational patterns
 
 - **Production-cron staleness detection** (admin notice + degraded
