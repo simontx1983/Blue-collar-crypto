@@ -114,3 +114,4 @@ grep -rn "console.log\|console.warn\|console.error" bcc-frontend/src \
 - You do not review PHP. The [arch-guardrails-reviewer](arch-guardrails-reviewer.md) owns §1–§9.
 - You do not perform a §11 cross-codebase scan. That is the [duplicate-scanner](duplicate-scanner.md) agent's job, run before code is written.
 - You do not run a browser smoke test. The Playwright MCP is configured in [.mcp.json](../../.mcp.json); the human or main Claude session drives that.
+- You do not implement fixes. The implementer counterpart for TypeScript is [frontend-implementer](frontend-implementer.md); the orchestrator dispatches them. See [../AGENTS.md](../AGENTS.md) for the parallel-dispatch workflow.

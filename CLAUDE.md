@@ -60,6 +60,10 @@ until the duplicate scan is complete.
 Skills, subagents, and hooks live under `.claude/`. Use them — they
 encode the rules above so you don't have to re-derive them every time.
 
+For multi-agent and parallel-dispatch workflows (BE+FE in parallel,
+background audits, worktree-based parallelism), see
+[.claude/AGENTS.md](.claude/AGENTS.md).
+
 ### Skills (invoke with `/<name>`)
 
 - `/duplicate-scan` — runs the §11 mandatory cross-codebase scan.
@@ -82,15 +86,21 @@ encode the rules above so you don't have to re-derive them every time.
 
 ### Subagents (invoke via the Agent tool)
 
+**Reviewers** (verify, never edit):
+
 - `duplicate-scanner` — the §11 search engine. Owned by `/duplicate-scan`.
 - `arch-guardrails-reviewer` — reviews PHP changes against §1–§9.
-  Run after non-trivial PHP edits, before declaring "done."
-- `frontend-reviewer` — reviews `bcc-frontend/` changes against the
-  "no business logic / no raw fetch / no `as any`" rules.
-- `holder-groups-reviewer` — feature-scoped reviewer for the in-flight
-  Holder Groups work (NFT-holder → PeepSo group token-gating). Catches
-  the PeepSoGroupWriter approval-bypass and related footguns. Retire
-  this agent once the feature ships.
+- `frontend-reviewer` — reviews `bcc-frontend/` against the "no business
+  logic / no raw fetch / no `as any`" rules.
+- `holder-groups-reviewer` — feature-scoped to NFT→PeepSo group-gating;
+  retire when that feature ships.
+
+**Implementers** (build, run their own checks):
+
+- `backend-implementer` — PHP under `app/public/wp-content/plugins/bcc-*/`.
+  Pair with `arch-guardrails-reviewer`.
+- `frontend-implementer` — TypeScript under `bcc-frontend/`. Pair with
+  `frontend-reviewer`.
 
 ### Hooks (configured in [.claude/settings.json](.claude/settings.json))
 

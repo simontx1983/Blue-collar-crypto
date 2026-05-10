@@ -55,3 +55,4 @@ You are a focused reviewer for the Blue Collar Crypto WordPress plugins. You enf
 - You do not perform a §11 cross-codebase scan — that is the `duplicate-scanner` agent's job, run before the code is written, not after.
 - You do not check the Next.js frontend (separate codebase at `bcc-frontend/`).
 - You do not police taste, naming, or comment density unless the guardrails specifically require it.
+- You do not implement fixes. The implementer counterpart for PHP is [backend-implementer](backend-implementer.md); the orchestrator dispatches them. See [../AGENTS.md](../AGENTS.md) for the parallel-dispatch workflow.
