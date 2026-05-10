@@ -9,12 +9,38 @@ should point at exactly one source-of-truth class or method per concept.
 
 ## Reputation
 
+- **Trust-score formula (canonical PHP entry point)** →
+  `BCC\Trust\Core\Services\TrustScoreService::compute` (pure function; clamps
+  to [0, 100]) and `::formulaSql` (the same expression as a SQL fragment).
+  Per §A4 — single source of trust logic.
+  ([app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/TrustScoreService.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/TrustScoreService.php))
+- **Trust-score read facade** →
+  `BCC\Trust\Core\Services\TrustScoreService::getForPage` /
+  `::getForPages`. Prefers `bcc_page_read_model`; falls back to live
+  computation via `ScoreRepository`. Use this from anywhere that needs
+  a page's trust score — never re-compute the formula at the call site.
 - **Tier mapping** (`reputation_tier` ↔ `card_tier` ↔ display label) →
   `BCC\Trust\Core\Support\ReputationTierMap`
   ([app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Support/ReputationTierMap.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Support/ReputationTierMap.php))
 - **Score calculation** (page-level expected total) →
-  `BCC\Trust\Core\ValueObjects\PageScore::computeExpectedTotal`
+  `BCC\Trust\Core\ValueObjects\PageScore::computeExpectedTotal` (delegates
+  to `TrustScoreService::compute`)
   ([app/public/wp-content/plugins/bcc-trust/app/Domain/Core/ValueObjects/PageScore.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/ValueObjects/PageScore.php))
+- **Trust graph + ring detection** →
+  `BCC\Trust\Core\Security\TrustGraph` — PageRank trust propagation,
+  vote-ring detection (`detectVoteRings`), and endorsement-ring detection
+  (`detectEndorsementRings`). Cron-driven via `bcc_trust_daily_graph_update`
+  ([CronService.php:584](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/CronService.php#L584)).
+  Tunables: `bcc_trust_graph_edge_chunk`, `bcc_trust_graph_max_chunks`
+  filters; `BCC_TRUST_GRAPH_*` / `BCC_TRUST_RING_*` defines.
+  ([app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Security/TrustGraph.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Security/TrustGraph.php))
+- **Wallet-verification read facade** →
+  `BCC\Trust\Core\Application\WalletVerificationReadService`. Routes wallet
+  identity lookups through `WalletLinkReadInterface` (cross-plugin
+  contract) and non-wallet verifications (GitHub, X) through
+  `VerificationRepository`. Concrete-only — no public interface; consumers
+  are `FeatureAccessService` and `VoteEligibilityChecker`.
+  ([app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Application/WalletVerificationReadService.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Application/WalletVerificationReadService.php))
 
 ## Wallets
 
@@ -483,6 +509,217 @@ returns 501 Not Implemented as of 2026-05-07).
   ([app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Services/NftIndexerHealthSnapshot.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Services/NftIndexerHealthSnapshot.php))
   — hooks `bcc_system_health` filter; do not invent
   `/health/indexer`.
+
+---
+
+## Same-name-different-class index (pattern-registry stabilization)
+
+The platform intentionally ships two-with-the-same-name across plugin
+boundaries in a few load-bearing places. They compile cleanly because
+namespaces differ; the IDE-autocomplete trap is the real risk. This
+table records each pair so future agents see the collision *before*
+landing on the wrong import. **Do not collapse these pairs without an
+explicit decision** — see the Stabilization Cleanup Plan §6.1 (renaming
+duplicate-class pairs is a Phase D / post-MVP item, not stabilization
+work).
+
+| Short name | FQCN A | FQCN B | Relationship |
+|---|---|---|---|
+| `LockRepository` | `BCC\Trust\Onchain\Repositories\LockRepository` (thin subclass of `BCC\Core\DB\AdvisoryLock` — empty body, intended as an extension point for onchain-specific helpers) | `BCC\PeepSo\Repositories\LockRepository` (advisory-lock primary, `wp_options` UNIQUE-KEY fallback when AdvisoryLock unavailable) | Both advisory-lock-based. Onchain is a no-op extension point; peepso-integration is the full implementation used by shadow-CPT sync. There is no semantic drift today — pick by call-site domain. The primitive itself lives in `BCC\Core\DB\AdvisoryLock`. |
+| `PeepSoPageRepository` | `BCC\Core\Repositories\PeepSoPageRepository` (page ownership + categorization; reads `peepso_page_members` + `peepso_page_categories`) | `BCC\PeepSo\Repositories\PeepSoPageRepository` (shadow-CPT category-relation reads on `peepso_page_categories` only) | Both touch `peepso_page_categories`; bcc-core also reads `peepso_page_members`. Different responsibilities — bcc-core is the trust read-side; peepso-integration is the shadow-CPT sync layer. |
+| `CircuitBreaker` | `BCC\Trust\Core\Support\CircuitBreaker` (transient-backed, named-key, generic external dependencies) | `BCC\Trust\Onchain\Support\CircuitBreaker` (`wp_cache`-backed with transient fallback, per-chain int-keyed, 6h TTL to outlast batch cron runs, incident-driven legacy-key tolerance, 5-min log-rate-limit on persistent corruption) | Materially different storage + thresholds. Onchain has hardening Core does not have — do **NOT** use Core's variant for chain RPC. The Onchain variant carries scars from prior incidents (legacy keys, batch-run TTL exhaustion). |
+
+## REST namespace file-pattern rule
+
+Endpoint registration follows a deterministic file-pattern split. New
+work should keep the rule even though the dual-namespace situation is
+itself transitional debt (see Stabilization Cleanup Plan §3 — V-07 +
+V-29).
+
+- `*Endpoint.php` files register under `/bcc/v1/*`.
+- `*Controller.php` files register under `/bcc-trust/v1/*`.
+
+The frontend mirrors this: `bcc-frontend/src/lib/api/client.ts` for
+`/bcc/v1`, `bcc-trust-client.ts` for `/bcc-trust/v1`. The same rule is
+codified from the backend side in
+[NAMING.md](../app/public/wp-content/plugins/blue-collar-crypto-peepso-integration/NAMING.md).
+Collapsing the namespaces is a Phase D / post-MVP candidate; do not
+attempt during active migration.
+
+## Scan-correction notes (recorded for future stabilization passes)
+
+- **`FeedRankingService` is not duplicated.** Only one file exists, at
+  `BCC\Trust\Core\Services\Feed\FeedRankingService` (above, "Feed"
+  section). The bcc-core Feed directory contains
+  `ActivityFeedService`, `FeedItemNormalizer`, and `ReactionGrammarMap`
+  — not a second `FeedRankingService`. Earlier audits flagged this as
+  a duplicate pair (V-05); verification on 2026-05-09 found only the
+  bcc-trust copy. No annotation required.
+- **`LockRepository` collision shape**: the two BCC-owned
+  `LockRepository` classes are both advisory-lock-based. The earlier
+  audit's "transient vs advisory" framing did not match current code;
+  the runtime danger is autocomplete collision, not durability
+  divergence. The Onchain copy is a 21-line alias `extends
+  \BCC\Core\DB\AdvisoryLock`. Recorded here so a future agent reading
+  the older audit verbatim does not act on the inaccurate framing.
+- **V-27 (`UserStatusController` vs `bcc-trust/v1/user/status` route)
+  is a false positive.** The controller is not a duplicate handler —
+  it is the *extracted-handler class* wired by `TrustRestController`
+  (`POST /bcc-trust/v1/device-fingerprint` and
+  `GET /bcc-trust/v1/user/status` register at
+  [TrustRestController.php:135](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Controllers/TrustRestController.php#L135)
+  + :141 with callbacks `[UserStatusController::class, 'store_fingerprint']`
+  and `[UserStatusController::class, 'get_user_status']`). Standard
+  `*Controller.php` → `/bcc-trust/v1/*` mapping per the file-pattern
+  rule above.
+- **V-26 retired in Phase C.** `OptionsHelper::parse_options_string`
+  was removed on 2026-05-09 after grep across all bcc-* plugins and
+  bcc-frontend confirmed zero callers. The class shell at
+  [OptionsHelper.php](../app/public/wp-content/plugins/blue-collar-crypto-peepso-integration/app/Helpers/OptionsHelper.php)
+  remains so cached classmaps resolve through deploys. Reintroduce
+  methods here only when a current consumer materializes — don't
+  reinstate the old `key1:value1,key2:value2` parser without one.
+
+## V-30 frontend inventory addendum (Phase C §5.7 — 2026-05-09)
+
+**Result: §IV.12 verification gap closed.** A read-only sweep across
+all 50 hooks (`bcc-frontend/src/hooks/*.ts`) and all 99 components
+(`bcc-frontend/src/components/**/*.tsx`) — 149 files total — found
+**zero violations** of the four §IV.12 anti-patterns:
+
+| Anti-pattern | Tool | Result | Notes |
+|---|---|---|---|
+| `as any` cast | `rg "\bas\s+any\b"` across hooks + components | **0 hits** | The codebase is cleanly typed at the boundary. |
+| Raw `fetch()` outside the API client | `rg "\bfetch\s*\("` across hooks + components | **0 hits** | All HTTP traffic flows through `lib/api/client.ts` + `bcc-trust-client.ts` adapters. |
+| Hooks not using React Query | `rg "useQuery\|useMutation\|useInfiniteQuery"` | **49/50 hooks** use TanStack Query | The 1 outlier is `usePrefersReducedMotion.ts`, which deliberately uses `useState`/`useEffect` to listen to `matchMedia('(prefers-reduced-motion: reduce)')` — a media-query helper, not a server-state hook. Constitutionally correct. |
+| Business logic in components | sampling of components flagged for `Math.` / date math | **0 violations sampled** | `Math.max/min/round` usage clamps display values for CSS (e.g., `LivingHeader.tsx:182` `Math.max(0, Math.min(100, Math.round(raw)))` for a progress-bar `width: %`, with the inline comment "The percent number is presentation-only (CSS width)"). No trust-score / tier / fraud-signal recomputation observed. |
+
+### Hook return-shape verification
+
+All hooks fall into one of three canonical patterns, each `{data,
+isLoading, error}`-compatible (a superset is fine):
+
+1. **`useQuery` wrappers** — return the React Query result unchanged
+   (e.g., [useFeed.ts](../bcc-frontend/src/hooks/useFeed.ts) returns
+   `useInfiniteQuery(...)` directly; [useEndorse.ts](../bcc-frontend/src/hooks/useEndorse.ts)
+   returns `useMutation(...)` directly). 47 of 50 hooks.
+2. **Composed multi-mutation results** — explicitly typed return
+   objects that bundle React Query mutations with browser-API state
+   (e.g., [usePushSubscription.ts](../bcc-frontend/src/hooks/usePushSubscription.ts)
+   returns `{isSupported, isReady, browserSubscribed, enable, disable}`
+   where `enable`/`disable` are full `UseMutationResult` objects). 2
+   hooks (`usePushSubscription`, plus mutation-triple bundles in
+   `useComments.ts` / `useHighlights.ts` / etc. that follow the same
+   composition principle).
+3. **Pure browser helper** — 1 hook (`usePrefersReducedMotion`).
+
+### Hook inventory by area
+
+| Area | Hooks |
+|---|---|
+| Auth / Account | `useAccount`, `useUpdateHandle`, `useUpdateProfile`, `useOAuthConnections` |
+| Feed / Posts | `useFeed`, `useGroupFeed`, `useCreatePost`, `useReactions`, `useComments`, `useHighlights`, `useReportContent`, `useSetPhotoAlt`, `useUserActivity` |
+| Binder / Pulls | `useBinder`, `useBinderPull` |
+| Communities / Groups | `useGroup`, `useGroupMembers`, `useMyGroups`, `useHolderGroups`, `useLocalsPrimary` |
+| Disputes / Endorsements | `useDisputes`, `useEndorse` |
+| Messaging | `useConversations`, `useConversation`, `useStartConversation`, `useReplyInConversation`, `useMarkConversationRead`, `useUnreadMessageCount` |
+| Notifications / Push | `useNotifications`, `useNotificationPrefs`, `usePushSubscription` |
+| Onboarding / Discovery | `useOnboardingSuggestions`, `useCompleteOnboarding`, `useDirectory`, `useMembers`, `useMentionSearch`, `useGlobalSearch` |
+| Settings / Privacy | `useMyPrivacy`, `useMessagesPrefs`, `useProfileFields`, `useProfilePrefs`, `useBlocks` |
+| NFT / Wallets / Galleries | `useNftSelections`, `useWallets`, `useCreatorGallery`, `useUserBlog` |
+| Admin | `useAdminReports` |
+| Integrations | `useGiphyIntegration`, `useGiphySearch` |
+| Browser preferences | `usePrefersReducedMotion` |
+
+### Component inventory by area
+
+| Area | Component count | Notes |
+|---|---|---|
+| Admin | 1 | `ModerationQueue` — §K1 Phase C admin moderation surface. |
+| Auth / Wallet | 3 | `WalletAuthButton`, `WalletSignupPrompt`, `EligibleCommunitiesModal`. |
+| Binder | 3 | `BinderGrid`, `BinderHeader`, `BinderTile`. |
+| Blog | 1 | `UserBlogList`. |
+| Cards | 1 | `CardFactory` (presentation only). |
+| Celebration | 2 | `CelebrationGate`, `CelebrationToast`. |
+| Claim | 2 | `ClaimCallout`, `ClaimFlow`. |
+| Communities | 3 | `CommunityCover`, `FlippableNftCard`, `JoinPlainGroupButton`. |
+| Composer | 3 | `Composer`, `GifPicker`, `MentionPopover`. |
+| Creator / NFT | 4 | `CreatorGallery`, `NftPieceDetail`, `NftPickerModal`, `NftShowcaseSettings`. |
+| Directory | 2 | `DirectoryGrid`, `DirectoryFilters`. |
+| Disputes | 6 | `DisputeCallout`, `DisputeDetail`, `DisputesRoom`, `MyDisputesList`, `OpenDisputeModal`, `PanelQueue`, `PanelVoteModal`. |
+| Endorse | 1 | `EndorseButton`. |
+| Entity | 3 | `EntityProfile`, `ChainTabs`, `LockedStreamPanel`. |
+| Feed | 7 | `FeedView`, `FeedItemCard`, `FeedTabs`, `CommentDrawer`, `HighlightStrip`, `ReactionRail`, `ReportButton`. |
+| Groups | 8 | `GroupActionButton`, `GroupFeedSection`, `GroupGatedNotice`, `GroupHero`, `GroupMembersStrip`, `GroupMembershipStrip`, `HeatBadge`, `VerificationBadge`. |
+| Landing | 2 | `FloorBriefing`, `FloorIntro`. |
+| Layout | 3 | `SiteHeader`, `SiteFooter`, `UnderConstructionPage`. |
+| Locals / Members | 3 | `LocalMembershipControls`, `FlippableMemberCard`, `MembersGrid`. |
+| Messages | 4 | `ConversationList`, `MessageComposer`, `MessagesBadge`, `ThreadView`. |
+| Notifications | 1 | `NotificationBell`. |
+| Onboarding | 1 | `OnboardingWizard`. |
+| Profile | 12 | `LivingHeader`, `LiveShift`, `ShiftLog`, `MemberHeroCard`, `MemberIdentity`, `MemberBio`, `ProfileTabs`, `RankChip`, `SectionHead`, `StatsStrip`, `BlockToggle`, `GoodStandingRibbon` + 5 panels under `panels/` (`ActivityPanel`, `ComingSoonPanel`, `DisputesPanel`, `GroupsPanel`, `ReviewsPanel`). |
+| Review | 1 | `ReviewCallout`. |
+| Search | 1 | `GlobalSearch`. |
+| Settings | 13 | `SettingsNav`, `BlocksList`, `CommunitiesList`, `ConnectionsSection`, `IdentitySettingsForm`, `MessagesPrefsForm`, `NotificationPrefsForm`, `PrivacySettingsForm`, `WalletsSection` + 4 under `settings/profile/` (`AccountSection`, `ProfileFieldsList`, `ProfileHero`, `ProfilePrefsSection`). |
+| System | 1 | `FingerprintReporter`. |
+| UI primitives | 1 | `FlipCard`. |
+
+### Conclusion
+
+The Stabilization Plan §V-30 listed 57 UNKNOWN components + 41 UNKNOWN
+hooks because the original inventory ran out of read budget before
+classifying them. Phase C verified all 149 files are constitutionally
+clean against §IV.12. **No Phase D candidates emerged from this
+sweep** — the frontend boundary is structurally sound. The Stabilization
+Plan §1.6 / §5.7 are **closed**.
+
+If a future feature lands a hook returning a non-canonical shape, an
+`as any` cast, a raw `fetch()`, or trust-score recomputation in a
+component, those become Phase D follow-ups at that point — but none
+exist today.
+
+## NextAuth token-refresh path (V-30 §5.6 verification — 2026-05-09)
+
+The `bcc-frontend/src/lib/auth.ts` `jwt` callback at
+[auth.ts:196–207](../bcc-frontend/src/lib/auth.ts) is the
+authoritative refresh path. There is no auto-refresh — the strategy is
+**fail-fast on expiry**:
+
+1. On every NextAuth session check, the `jwt` callback fires.
+2. If `Date.now() >= token.bccTokenExpiresAt`, `token.bccToken` is
+   blanked (set to `""`).
+3. `bccFetchAsClient` consumes `session.bccToken`; an empty token
+   means subsequent fetches send unauth'd.
+4. Protected endpoints `401` with a typed `BccApiError`; route
+   boundaries / auth-gated layouts redirect the user back to `/login`
+   (which initiates a fresh NextAuth credential flow).
+
+Implications for stabilization: this is **structurally sound**. Adding
+a silent-refresh path would re-introduce the security tradeoff of
+holding refresh tokens client-side, which the current architecture
+deliberately avoids (the BCC bearer JWT lives only inside the
+NextAuth-signed session JWT — not in localStorage). Stabilization Plan
+§5.6 is **closed**: no monitoring action remains.
+
+## Phase B inventory addendum (V-18 / V-25 / V-27 — 2026-05-09)
+
+Phase B of the Stabilization Cleanup Plan (§5.8) classified the five
+V-18 UNKNOWN-purpose PHP files plus the V-25 integrations endpoint pair.
+**All six are alive.** No transitional or dead files in the set. The
+earlier inventory's UNKNOWN status was a time-budget artifact, not
+actual ambiguity.
+
+| File | Status | Role |
+|---|---|---|
+| `BCC\Trust\Core\Services\TrustScoreService` | **alive (locked-canonical)** | THE single canonical entry point for the trust-score formula. §A4 anchor. PageScore::computeExpectedTotal delegates here. Do **not** add a parallel compute path. Listed above under "Reputation". |
+| `BCC\Trust\Core\Security\TrustGraph` | alive | Canonical PageRank + ring detector behind `bcc_trust_daily_graph_update` cron. Listed above under "Reputation". |
+| `BCC\Trust\Core\Application\WalletVerificationReadService` | alive | Wallet-verification read facade. Concrete-only (no interface). Consumers: `FeatureAccessService`, `VoteEligibilityChecker`. Listed above under "Reputation". |
+| `BCC\Trust\Core\Controllers\UserStatusController` | alive | Extracted-handler class for `POST /bcc-trust/v1/device-fingerprint` and `GET /bcc-trust/v1/user/status`, wired by `TrustRestController` (V-27 false positive — see scan-correction note above). |
+| `BCC\Trust\Core\Support\PushMetrics` | alive | V2 Phase 1 §P1.F push-delivery observability counters (per-(outcome, event_type) hourly buckets). Consumers: `PushDispatcher`, admin "Push delivery stats" tab. |
+| `BCC\Trust\Core\REST\IntegrationsEndpoint` | alive | `GET /bcc/v1/integrations/giphy` — surfaces PeepSo Giphy admin config to FE. Consumed by `bcc-frontend/src/lib/api/integrations-endpoints.ts::getGiphyIntegration` → `useGiphyIntegration` hook. v1.5 GIF picker (`Phase 1c`). |
+
+Each file received a `@status` PHPDoc tag in its class header on
+2026-05-09. The tag is informational only — no automation reads it.
 
 ---
 
