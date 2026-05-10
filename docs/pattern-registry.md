@@ -361,16 +361,19 @@ The platform is intentionally resilient — fail-closed throttles, fail-open cac
   ```
   Subsystem and event names are sanitized to `[a-z0-9_]+` for cache-key portability. Stable string identifiers — renaming resets the rolling counters.
 
-  **Currently wired** (Phase 1 + Phase 1.5 observability initiative, 2026-05-09):
+  **Currently wired** (Phases 1 + 1.5 + 1.6 observability initiative, 2026-05-09):
+
   - `throttle` / `activation` — every transition into rate-limit fail-closed mode (bcc-core `Throttle::markSharedDegraded`).
-  - `null_trust_read` / `is_suspended` — every fail-closed deny when bcc-trust is unavailable (bcc-core `NullTrustReadService::isSuspended`).
+  - **NullService activations** — every fallback NullObject in `bcc-core/src/NullServices/*` records when bcc-trust isn't bound. 10 of 11 NullServices instrumented (the 11th, `NullRecalcQueueRead`, returns null which the inline health endpoint already detects as `recalcSource: 'unavailable'`):
+    - `null_trust_read` / `activation` (4 read methods) + `is_suspended` (fail-closed) + `lock_active_vote_for_dispute` (fail-closed) + `eligible_panelists` (fail-open). Per-method events because security postures differ.
+    - `null_dispute_adjudication`, `null_score_read`, `null_score_contributor`, `null_page_owner`, `null_wallet_link_read`, `null_wallet_link_write`, `null_wallet_signal_write`, `null_onchain_data_read`, `null_trending_data` — all use a single `activation` event per service. The "is this NullService active?" signal is operationally useful; per-method breakdown is recoverable from logs.
   - `peepso_absence` / 18 events — every BCC writer/repo on the PeepSo boundary contributes a unique event name. Phase 1.5 (2026-05-09) expanded coverage to all 18 V-11 guards across `bcc-core/src/PeepSo/*` + `bcc-core/src/Repositories/PeepSoMessageRepository`. Events: `status_writer_create`, `comment_writer_add`, `gif_writer_create`, `photo_writer_create`, `follow_writer_follow`, `follow_writer_unfollow`, `group_writer_join`, `group_writer_leave`, `notification_writer_send`, `reaction_writer_set`, `reaction_writer_remove`, `message_writer_send_new`, `message_writer_send_in_conversation`, `message_repo_unread_count`, `message_repo_is_participant`, `message_repo_root_conversation_id`, `message_repo_participants`, `message_repo_mark_viewed`. Counter is per-call (not dedup'd) so `/system/health` shows "the comment writer silently no-opped 1247 times in the last hour" not "we logged it once."
   - `search_lkg` / `served`, `search_lkg` / `unavailable_503` — bcc-search breaker-tripped responses (`SearchController::breakerTrippedResponse`).
   - `read_model_fallback` / `legacy_aggregation` — bcc-trust `PageDiscoveryService` taking the legacy-aggregation path because the read model has no data.
+  - `audit_log_swallow` / `score_mutation_before_snapshot` — bcc-trust `ScoreMutationLogger::readCurrentScore` silent-catch on the score-mutation hot path (Constitution §VIII.30 alignment: audit-log writes must never break mutations, but sustained activation = the read path is unhealthy on what's supposed to be a hot read).
 
   **Pending wirings** (subsequent batches):
-  - Other NullService methods (`NullTrustReadService::lockActiveVoteForDispute`, `NullTrustReadService::getEligiblePanelistUserIds`, `NullWalletLinkRead`, `NullScoreReadService`, etc.).
-  - Audit-log swallow paths (`ScoreMutationLogger:198`, `EndorsementLeaderboardEndpoint:100`, `PageDiscoveryService:377`).
+  - Other audit-log swallow paths (`EndorsementLeaderboardEndpoint:100`, `PageDiscoveryService:377`).
   - Holder-group provisioning sweep retries / dispute reconcile sweep catch-up activations.
   - Helius webhook dedup-skipped events.
 
