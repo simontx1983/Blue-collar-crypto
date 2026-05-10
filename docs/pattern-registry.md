@@ -361,15 +361,14 @@ The platform is intentionally resilient — fail-closed throttles, fail-open cac
   ```
   Subsystem and event names are sanitized to `[a-z0-9_]+` for cache-key portability. Stable string identifiers — renaming resets the rolling counters.
 
-  **Currently wired** (Phase 1 observability initiative, 2026-05-09):
+  **Currently wired** (Phase 1 + Phase 1.5 observability initiative, 2026-05-09):
   - `throttle` / `activation` — every transition into rate-limit fail-closed mode (bcc-core `Throttle::markSharedDegraded`).
   - `null_trust_read` / `is_suspended` — every fail-closed deny when bcc-trust is unavailable (bcc-core `NullTrustReadService::isSuspended`).
-  - `peepso_absence` / `group_writer_join` — silent no-op when PeepSo classes missing on the holder-group join writer (bcc-core `PeepSoGroupWriter::join`). Canonical pattern for the rest of the V-11 PeepSo guards (one site instrumented; ~18 follow-ups in subsequent batches).
+  - `peepso_absence` / 18 events — every BCC writer/repo on the PeepSo boundary contributes a unique event name. Phase 1.5 (2026-05-09) expanded coverage to all 18 V-11 guards across `bcc-core/src/PeepSo/*` + `bcc-core/src/Repositories/PeepSoMessageRepository`. Events: `status_writer_create`, `comment_writer_add`, `gif_writer_create`, `photo_writer_create`, `follow_writer_follow`, `follow_writer_unfollow`, `group_writer_join`, `group_writer_leave`, `notification_writer_send`, `reaction_writer_set`, `reaction_writer_remove`, `message_writer_send_new`, `message_writer_send_in_conversation`, `message_repo_unread_count`, `message_repo_is_participant`, `message_repo_root_conversation_id`, `message_repo_participants`, `message_repo_mark_viewed`. Counter is per-call (not dedup'd) so `/system/health` shows "the comment writer silently no-opped 1247 times in the last hour" not "we logged it once."
   - `search_lkg` / `served`, `search_lkg` / `unavailable_503` — bcc-search breaker-tripped responses (`SearchController::breakerTrippedResponse`).
   - `read_model_fallback` / `legacy_aggregation` — bcc-trust `PageDiscoveryService` taking the legacy-aggregation path because the read model has no data.
 
   **Pending wirings** (subsequent batches):
-  - The other 18 V-11 PeepSo absence guards co-located with their Phase C `Logger::warning` lines.
   - Other NullService methods (`NullTrustReadService::lockActiveVoteForDispute`, `NullTrustReadService::getEligiblePanelistUserIds`, `NullWalletLinkRead`, `NullScoreReadService`, etc.).
   - Audit-log swallow paths (`ScoreMutationLogger:198`, `EndorsementLeaderboardEndpoint:100`, `PageDiscoveryService:377`).
   - Holder-group provisioning sweep retries / dispute reconcile sweep catch-up activations.
