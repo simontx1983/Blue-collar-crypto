@@ -2296,7 +2296,7 @@ PeepSo's `peepso_notifications` table is the storage layer (§I1 "extend, don't 
 }
 ```
 
-- `type` ∈ {`bcc_reaction`, `bcc_review`, `bcc_card_pulled`, `bcc_rank_up`}. V1 catalogue per §I2; @mentions / follow-posts / comments deferred to V1.5.
+- `type` ∈ {`bcc_reaction`, `bcc_review`, `bcc_card_pulled`, `bcc_rank_up`, `bcc_endorse`, `bcc_welcome`, `bcc_mention`}. V1 catalogue per §I2; follow-posts deferred.
 - `message` is server-rendered per §A2 — frontend renders verbatim. Plain English, capped at 200 chars (PeepSo's column width).
 - `actor.handle` may be empty when the originating user has been deleted; the frontend renders the message verbatim regardless.
 - `link` is a server-built relative path. Per type:
@@ -2304,7 +2304,10 @@ PeepSo's `peepso_notifications` table is the storage layer (§I1 "extend, don't 
   - `bcc_review` → `/v/<page-handle>` etc. (the reviewed page, route prefix per kind)
   - `bcc_card_pulled` → `/u/<actor-handle>` (the puller's profile)
   - `bcc_rank_up` → `/u/<recipient-handle>` (your own profile — progression strip lives there)
-- Self-notifications are emitted only for `bcc_rank_up` (audit trail beyond the §O1.2 Heavy toast). Other types skip the dispatch when actor === recipient.
+  - `bcc_endorse` → `/v/<page-handle>` etc. (the endorsed page)
+  - `bcc_welcome` → `/` (the floor — the user is probably already there when they see it)
+  - `bcc_mention` → `/?focus=<act_id>` (jump to the floor focused on the post containing the @-tag; for comment mentions `act_id` is the **parent post's** act_id — the FE has no comment-anchor consumer in V1)
+- Self-notifications are emitted only for `bcc_rank_up` + `bcc_welcome` (audit trail beyond the §O1.2 Heavy toast / first-touch retention). Other types skip the dispatch when actor === recipient.
 
 #### `GET /bcc/v1/me/notifications`
 
@@ -2363,7 +2366,20 @@ Notifications are dispatched by `NotificationDispatcher` (sync subscribers, try/
 | `bcc_review_published` | page owner via `PageOwnerResolver` | author === page owner |
 | `bcc_card_pulled` | the followee user | viewer === followee (impossible from the binder UI, defensive) |
 | `bcc_rank_awarded` | the recipient (self-notification) | rank label not in catalog |
+| `bcc_trust_endorsement_added` | endorsed page owner | endorser === page owner |
 | `user_register` (WordPress core) | the new user (self-notification, type `bcc_welcome`) | `bcc_welcomed` user_meta already set (idempotency guard — once welcomed, never re-welcome) |
+| `bcc_post_created` | every user @-tagged in the post body (after `MentionPolicy::filterMentionable`) | author === mentionee (self-mention skip); banned / blocked / private mentionees stripped at validation time |
+| `bcc_comment_created` | every user @-tagged in the comment body | same skip rules as post mention; `act_id` passed is the **parent post's** act_id so the bell deep-links to the post on the floor |
+
+##### @-mention dispatch — policy locks (V2 retention slice, 2026-05-11)
+
+Three behaviours are intentional and load-bearing — do not relitigate without explicit re-planning:
+
+1. **Original-write only.** Mentions fire ONLY on initial create. No `bcc_post_edited` / `bcc_comment_edited` action emission exists in bcc-trust — the dispatcher subscribes to `*_created` exclusively, so an edit-as-ping abuse vector cannot fire. Even if such an edit action lands later, it would need to be wired explicitly.
+2. **Structural dedup per (post, mentioner, mentionee).** Three `@bob` tokens in one post produce exactly one bell row for Bob. The dedup is at `MentionExtractor::extractUserIds`, which returns unique-by-first-occurrence ids; the dispatcher never sees duplicates.
+3. **Bell + push from day one.** `bcc_mention` is in both `BELL_TYPES` and `PUSH_TYPES`. Push aggregation via the existing 5-min `(recipient, eventType)` debounce coalesces rapid-fire mention floods into a single "N new mentions" push body — bell still fires per-post for the in-app row count.
+
+The `MentionPolicy::filterMentionable` gate is applied a SECOND time at dispatch (write-time validation already filtered) as defense in depth: a future write path that bypasses validation still cannot dispatch to banned / blocked / private mentionees.
 
 #### Notification preferences (§I1 + V2 Phase 1)
 
@@ -2380,7 +2396,8 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
     "bcc_card_pulled": true,
     "bcc_rank_up":     true,
     "bcc_endorse":     true,
-    "bcc_welcome":     true
+    "bcc_welcome":     true,
+    "bcc_mention":     true
   },
   "push": {
     "enabled": false,
@@ -2388,7 +2405,8 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
       "review":            true,
       "endorse":           true,
       "dispute_outcome":   true,
-      "panelist_selected": true
+      "panelist_selected": true,
+      "mention":           true
     }
   }
 }
