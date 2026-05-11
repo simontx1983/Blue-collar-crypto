@@ -39,10 +39,10 @@ Small-surface retention work. Most items are 1–10 days each.
 | Rich-text status composer | Format expression for status posts | Conflicts with §D2 500-char rule; long-form is what the §D6 blog tab is for | WON'T SHIP |
 | "Friend comparison" Living Header line (§O3.1) | Third comparison kind | Network percentile + Local peer already cover the slot | WON'T SHIP |
 | Always-on reaction helper labels | Persistent clarity | Overrides §N1 familiarity drop-off (the whole point of §N5 was one flag, one drop) | WON'T SHIP |
-| `@mention` parsing + notifications | Inline reference of users/pages in posts; powers a "you were mentioned" push | Server-side parser + event emission + composer affordance + render layer — nontrivial spread across backend and frontend | OPEN — dropped from V2 Phase 1 push (DC2 confirmed not modeled today); ships as its own scoped phase |
+| `@mention` parsing + notifications | Inline reference of users/pages in posts; powers a "you were mentioned" push | Server-side parser + event emission + composer affordance + render layer — nontrivial spread across backend and frontend | SHIPPED 2026-05-11 — parsing/overlay/picker landed earlier; bell + push dispatch completed via `bcc_post_created` / `bcc_comment_created` subscribers. Three locked policy decisions (original-write only, structural dedup, bell+push). See docs/api-contract-v1.md §4.10. |
 | Per-category highlight muting (§O2.1) | A control surface that becomes a churn-prevention lever as content density grows | Undermines §O2.1 strict ordering — needs careful design (slot 1 negative signals must remain non-mutable) | OPEN — future retention lever, not now |
 
-**Open subtotal:** 6 items. ~3 weeks of work clustered (mention is its own phase). Per-category mute is parked — don't build until content density justifies it.
+**Open subtotal:** 5 items. ~1 week of clustered work (mention dispatch shipped 2026-05-11). Per-category mute is parked — don't build until content density justifies it.
 
 ---
 
