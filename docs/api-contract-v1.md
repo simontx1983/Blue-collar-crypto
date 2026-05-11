@@ -1856,6 +1856,16 @@ Mark a Local as the user's primary.
 - **Errors:** `bcc_unauthorized`, `bcc_not_found` (not a member of this Local)
 - **Mapping:** Updates `bcc_user_locals.is_primary` (singleton — exactly one row per user has `is_primary: true`). Emits `bcc_local_primary_changed`.
 
+#### Local detail page — composition note (no new REST surface)
+
+A Local is a semantic wrapper around a PeepSo group; the slug is identical on both routes (`peepso-page.post_name`). The Next.js Local detail page (`/locals/[slug]`) therefore composes the existing view-models in parallel rather than introducing a Locals-specific feed endpoint:
+
+- `GET /bcc/v1/locals/:slug` → header, membership pill, join/leave controls (this section).
+- `GET /bcc/v1/groups/:slug` → `GroupDetailResponse` with the server-authoritative `feed_visible` + `permissions.can_read_feed.unlock_hint` gate consumed by `<GroupFeedSection>` (§4.7.5).
+- `GET /bcc/v1/groups/:id/feed` → cursor-paginated feed entries inside `<GroupFeedSection>` via `useGroupFeed` (§4.7.6).
+
+No `/bcc/v1/locals/:slug/feed` endpoint exists or is planned. The two read calls are independent: a failed `/groups/:slug` read does not 500 the page — the header still renders and the feed slot shows a non-blocking notice. A 404 from `/locals/:slug` is still authoritative for page existence (Next `notFound()`).
+
 ### 4.7.1 Holder Groups (NFT-gated)
 
 NFT-gated PeepSo groups: one closed group per admin-verified collection. Holders see suggestions and join explicitly (suggest-don't-auto-join). Auto-join is opt-in via a per-user preference. Privacy is `closed` (defense in depth) — non-members see the group exists but content is gated by both PeepSo and our server-side eligibility check.
