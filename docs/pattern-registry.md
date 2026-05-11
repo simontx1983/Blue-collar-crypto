@@ -411,7 +411,10 @@ The platform is intentionally resilient — fail-closed throttles, fail-open cac
   - `peepso_absence` / 18 events — every BCC writer/repo on the PeepSo boundary contributes a unique event name. Phase 1.5 (2026-05-09) expanded coverage to all 18 V-11 guards across `bcc-core/src/PeepSo/*` + `bcc-core/src/Repositories/PeepSoMessageRepository`. Events: `status_writer_create`, `comment_writer_add`, `gif_writer_create`, `photo_writer_create`, `follow_writer_follow`, `follow_writer_unfollow`, `group_writer_join`, `group_writer_leave`, `notification_writer_send`, `reaction_writer_set`, `reaction_writer_remove`, `message_writer_send_new`, `message_writer_send_in_conversation`, `message_repo_unread_count`, `message_repo_is_participant`, `message_repo_root_conversation_id`, `message_repo_participants`, `message_repo_mark_viewed`. Counter is per-call (not dedup'd) so `/system/health` shows "the comment writer silently no-opped 1247 times in the last hour" not "we logged it once."
   - `search_lkg` / `served`, `search_lkg` / `unavailable_503` — bcc-search breaker-tripped responses (`SearchController::breakerTrippedResponse`).
   - `read_model_fallback` / `legacy_aggregation` — bcc-trust `PageDiscoveryService` taking the legacy-aggregation path because the read model has no data.
-  - `audit_log_swallow` / `score_mutation_before_snapshot` — bcc-trust `ScoreMutationLogger::readCurrentScore` silent-catch on the score-mutation hot path (Constitution §VIII.30 alignment: audit-log writes must never break mutations, but sustained activation = the read path is unhealthy on what's supposed to be a hot read).
+  - `audit_log_swallow` / 3 events — silent-catch read paths that are supposed to be reliable. Sustained activation on any event = the read is unhealthy on a hot path; admins see it via `/system/health` before users notice missing data. Events:
+    - `score_mutation_before_snapshot` (Phase 1) — bcc-trust `ScoreMutationLogger::readCurrentScore` silent-catch on the score-mutation hot path (Constitution §VIII.30 alignment: audit-log writes must never break mutations).
+    - `discovery_owner_verified_status` (Phase 1.8, 2026-05-11) — bcc-trust `PageDiscoveryService` silent-catch on the verified-badge owner lookup. Degrades to `verified=false`; sustained activation = `UserRepository::getByUserId` is unhealthy on a discovery-page hot path.
+    - `leaderboard_owner_fallback` (Phase 1.8, 2026-05-11) — bcc-trust `EndorsementLeaderboardEndpoint` silent-catch when the read model has no `owner_id` AND the resolver throws. Degrades to no avatar; sustained activation = read model is drifting on the leaderboard hot path.
   - **`legacy_ajax` / 9 events** — Phase 1.7 (2026-05-09) instrumentation of 9 suspected-dead AJAX handlers (V-08 candidates that the in-repo audit found no caller for):
     - From [`WalletController.php`](../app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Controllers/WalletController.php) (6): `wallet_challenge`, `wallet_verify`, `wallet_disconnect`, `wallet_set_primary`, `wallet_list`, `collection_toggle_profile`.
     - From [`UserLifecycleService.php`](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/UserLifecycleService.php) (3): `trust_sync_user`, `trust_bulk_sync_users`, `trust_init_page_score`.
@@ -420,7 +423,6 @@ The platform is intentionally resilient — fail-closed throttles, fail-open cac
     - **NOT instrumented** here: the 4 *live* admin-only AJAX handlers (`bcc_chain_refresh`, `bcc_collection_refresh`, `bcc_trust_debug_fraud`, `bcc_trust_debug_votes`) — they have confirmed inline-JS callers in admin pages (ChainsPage.php + debug.php) and are not V-08 candidates. They were originally bundled into V-08 by the Stabilization Plan but the Phase 1.7 audit reclassified them as healthy admin tooling.
 
   **Pending wirings** (subsequent batches):
-  - Other audit-log swallow paths (`EndorsementLeaderboardEndpoint:100`, `PageDiscoveryService:377`).
   - Holder-group provisioning sweep retries / dispute reconcile sweep catch-up activations.
   - Helius webhook dedup-skipped events.
 
@@ -437,7 +439,7 @@ The platform is intentionally resilient — fail-closed throttles, fail-open cac
   | Plugin | Block key | Source | Surfaces |
   |---|---|---|---|
   | bcc-core | `throttle` | `Throttle::health()` | `rate_limiter_ready`, `backend` (trust_engine / object_cache / none), `degraded`, `last_success_ts` |
-  | bcc-core | `degradation_metrics` | `DegradationMetrics::healthSnapshot()` | `any_active` triage flag + per-subsystem current/previous-hour counts for the canonical 5 wired subsystems (`throttle`, `null_trust_read`, `peepso_absence`, `search_lkg`, `read_model_fallback`). The canonical-subsystem map lives in bcc-core/bcc-core.php — new subsystems wired into `DegradationMetrics::record()` should add their `(subsystem, events)` tuple there. |
+  | bcc-core | `degradation_metrics` | `DegradationMetrics::healthSnapshot()` | `any_active` triage flag + per-subsystem current/previous-hour counts. Currently wired subsystems: `throttle`, `null_trust_read`, the 10 `null_*` NullService activations, `peepso_absence` (18 events), `search_lkg`, `read_model_fallback`, `audit_log_swallow` (3 events as of Phase 1.8), `legacy_ajax` (9 events). The canonical-subsystem map lives in bcc-core/bcc-core.php — new subsystems wired into `DegradationMetrics::record()` should add their `(subsystem, events)` tuple there. |
   | bcc-search | `search` | bcc-search/bcc-search.php | `ft_index_installed` flag + `persistent_cache` prerequisite |
   | bcc-trust | `trust_engine` | `Plugin.php:1743` | `recalc_queue_depth`, `read_model_drift`, `read_model_coverage` |
   | bcc-trust | `cron_status` | `Plugin.php:1743` | per-canonical-cron `next_run_ts` + `in_seconds`. `null` means "not currently scheduled" — alarm signal that a hook fell out of the activation registry. Covers: `bcc_disputes_reconcile`, `bcc_gated_group_provision`, `bcc_gated_group_reconcile_sweep`, `bcc_nft_eth_indexer_tick`, `bcc_nft_enrichment_tick`, `bcc_helius_dedupe_sweep`, `bcc_trust_daily_graph_update`, `bcc_trust_process_recalculations`. |
@@ -467,6 +469,65 @@ The two-counter-class split is intentional and not a §V.17–§V.21 violation �
   ([app/public/wp-content/plugins/bcc-core/bcc-core.php](../app/public/wp-content/plugins/bcc-core/bcc-core.php#L385-L402)).
   New subsystems extend the response object — do not invent
   parallel health endpoints.
+
+## Moderation recovery affordances (durable architectural principle)
+
+> **Undo is a moderation recovery affordance, not a historical
+> correctness mechanism.**
+
+That one sentence is load-bearing. It explains every constraint of
+the moderation-undo design:
+
+- **Short TTL (~30 s)** — the window is for fat-fingered misclicks,
+  not for "I changed my mind yesterday". Anything longer pretends to
+  be a rollback system without being one.
+- **No state snapshots** — capturing pre-mutation state would imply
+  the system can return to it, which it cannot if downstream
+  consumers have already read the post-mutation state.
+- **No event-replay engine** — the platform does not have temporal
+  semantics, and adding them for an undo affordance is the largest
+  possible scope blowout for the smallest possible UX win.
+- **Stale-state validation is mandatory** — before reversing, the
+  server compares current state to the expected post-action state.
+  Divergence (another moderator acted; cache flipped; race won by
+  someone else) → refuse with `bcc_undo_stale_state`. Reversing
+  without this check turns recovery into race-condition stomping.
+- **Some actions never support undo** — the test is *"have downstream
+  systems already consumed the effect?"*. If yes (trust-score deltas,
+  fraud-fingerprint snapshots, dispute verdicts, on-chain writes,
+  reputation history, permission caches), the operation only
+  *appears* reversible. The inverse action would produce a different
+  downstream state, not the prior one. These are permanently outside
+  the undo affordance regardless of how minor the action looks.
+- **Audit-log durability matters more than rollback perfection** —
+  every forward AND reversal lands in `bcc_trust_audit_log`. A loud,
+  traceable, slightly-imperfect record beats a clever silent one
+  every time.
+- **Fail closed under uncertainty** — missing transient, expired
+  token, mismatched current state, conflicting concurrent moderation
+  → all reject. Failing closed is the correct moderation posture.
+
+Concrete V1 implementation (admin queue: hide / dismiss / restore):
+server-issued single-use 30 s transient tokens; explicit inverse
+action on undo; one toast at a time on the frontend (replaces, never
+stacks); no persistence across page reloads. See
+`bcc-trust/app/Domain/Core/Services/ModerationQueueService.php::resolve / ::undo`
+and `bcc-frontend/src/components/admin/UndoToast.tsx`.
+
+Explicitly forbidden later evolutions:
+- generalised `/admin/undo` endpoint
+- undo stack / multi-step recovery
+- token persistence across reloads
+- automatic retry workers on stale-state rejections
+- snapshot or event-sourcing tables
+- exposing undo for suspend / unsuspend / score / fraud / dispute /
+  on-chain actions
+
+Pressure to grow this surface WILL appear. Resist unless the
+moderation model itself fundamentally changes (e.g. a real time-travel
+debug surface for incident review). The current model is a recovery
+affordance — it is not, and must not become, a generalised rollback
+framework.
 
 ## Confirmation-gated chain indexing (V2 Phase 1)
 
