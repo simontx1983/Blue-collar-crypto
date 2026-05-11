@@ -278,6 +278,47 @@ truth ownership check still goes through the third-party reader.
   Single-graph rule (§E3): never write to `peepso_group_members`
   directly.
 
+### V1 accepted debt — "Local-ness" is a title-prefix convention, not a column
+
+**What's load-bearing.** The only thing that distinguishes a Local from
+any other PeepSo group is `post_title LIKE 'Local %'`
+(see [docs/api-contract-v1.md §4.7](api-contract-v1.md), line ~1804).
+There is no `is_local` column, no `bcc_locals` lookup table, no FK.
+`/locals/:slug` and `/groups/:slug` resolve to the same underlying
+`peepso-page` row by shared slug (`post_name`); the Locals detail page
+composes both view-models in parallel (verified 2026-05-11 Locals feed
+wire-up — see [§4.7 composition note](api-contract-v1.md)).
+
+**Why composition over normalization (don't relitigate without cause).**
+A Local *is* a PeepSo group. Introducing a sidecar discriminator
+(`is_local` column or `bcc_locals` lookup) creates a second source of
+truth that must be kept in sync forever — a strictly worse problem
+than the current convention. At today's creation cadence (manual,
+admin-only, low-frequency) the convention's failure mode is
+recoverable: an admin renaming a group to drop the "Local " prefix
+silently removes it from the `/locals` listing while `/groups/:slug`
+keeps working. The user hits a 404, files a bug, the prefix gets
+re-added. Acceptable.
+
+**Trigger conditions that promote this to a real discriminator.** Hit
+any one and normalize (real `is_local TINYINT` on a BCC sidecar OR
+`bcc_locals` lookup keyed on `group_id`; enforce on write):
+
+- A second creator of Locals enters the system (automation, batch
+  admin tool, NFT-collection-seeded Locals, region-seeded Locals,
+  user-initiated Local creation).
+- The "Local " title prefix is dropped from product copy elsewhere
+  (e.g., a "Communities" rename pass) and admin tooling no longer
+  surfaces the convention as a visible hint.
+- A second product surface starts branching on "is this a Local?" as
+  a runtime decision (today only the `/locals` listing filter and the
+  `/locals/[slug]` detail page composition depend on it).
+
+**Until then: do not pre-emptively normalize.** The title-prefix
+convention is correct V1 debt, not silently wrong. A future agent
+reading this section who is considering a `bcc_locals` table or an
+`is_local` flag should re-read the trigger conditions first.
+
 ## Follow terminology overrides ("Keep Tabs" rebrand)
 
 The Floor uses a three-axis vocabulary for what PeepSo calls follow:
@@ -433,9 +474,11 @@ The two-counter-class split is intentional and not a §V.17–§V.21 violation �
   `HoldingsService::ownsAny` keep V1 signatures; persistent-first
   read with transient fallback is internal. Never expose the
   persistent table to a service that bypasses the facade.
-- **Resilience** — reuse `Onchain\Support\CircuitBreaker`
-  ([app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Support/CircuitBreaker.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Support/CircuitBreaker.php))
-  per chain — do not invent per-indexer breakers.
+- **Resilience** — reuse `Onchain\Support\OnchainCircuitBreaker`
+  ([app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Support/OnchainCircuitBreaker.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Support/OnchainCircuitBreaker.php))
+  per chain — do not invent per-indexer breakers. (Renamed from
+  `CircuitBreaker` in V-04 to disambiguate from the generic
+  `BCC\Trust\Core\Support\CircuitBreaker`.)
 - **Alchemy CU budgeting** — `alchemy_getAssetTransfers` = 120 CU
   flat (verified May 2026). Track per-chain CU/day in
   `wp_bcc_chain_checkpoints.cu_used_today`; circuit-break at
@@ -591,9 +634,9 @@ work).
 
 | Short name | FQCN A | FQCN B | Relationship |
 |---|---|---|---|
-| `LockRepository` | `BCC\Trust\Onchain\Repositories\LockRepository` (thin subclass of `BCC\Core\DB\AdvisoryLock` — empty body, intended as an extension point for onchain-specific helpers) | `BCC\PeepSo\Repositories\LockRepository` (advisory-lock primary, `wp_options` UNIQUE-KEY fallback when AdvisoryLock unavailable) | Both advisory-lock-based. Onchain is a no-op extension point; peepso-integration is the full implementation used by shadow-CPT sync. There is no semantic drift today — pick by call-site domain. The primitive itself lives in `BCC\Core\DB\AdvisoryLock`. |
+| ~~`LockRepository`~~ | ~~`BCC\Trust\Onchain\Repositories\LockRepository`~~ (was a no-op extension-point alias; deleted) | `BCC\PeepSo\Repositories\LockRepository` (advisory-lock primary, `wp_options` UNIQUE-KEY fallback when AdvisoryLock unavailable) | **RESOLVED.** V-02 of the Constitutional Violation Scan. The Onchain alias was deleted; its 7 callers now call `BCC\Core\DB\AdvisoryLock::` (which they were always ultimately calling through the alias). The short name `LockRepository` now belongs solely to peepso-integration. |
 | ~~`PeepSoPageRepository`~~ | `BCC\Core\Repositories\PeepSoPageRepository` (page ownership + categorization; reads `peepso_page_members` + `peepso_page_categories`) | `BCC\PeepSo\Repositories\PeepSoCategoryRepository` (shadow-CPT category-relation reads on `peepso_page_categories` only — *renamed from PeepSoPageRepository*) | **RESOLVED.** V-03 of the Constitutional Violation Scan. peepso-integration's class was renamed to `PeepSoCategoryRepository` to match its single-table responsibility. The short name `PeepSoPageRepository` now belongs solely to bcc-core. No autocomplete collision remains. |
-| `CircuitBreaker` | `BCC\Trust\Core\Support\CircuitBreaker` (transient-backed, named-key, generic external dependencies) | `BCC\Trust\Onchain\Support\CircuitBreaker` (`wp_cache`-backed with transient fallback, per-chain int-keyed, 6h TTL to outlast batch cron runs, incident-driven legacy-key tolerance, 5-min log-rate-limit on persistent corruption) | Materially different storage + thresholds. Onchain has hardening Core does not have — do **NOT** use Core's variant for chain RPC. The Onchain variant carries scars from prior incidents (legacy keys, batch-run TTL exhaustion). |
+| ~~`CircuitBreaker`~~ | `BCC\Trust\Core\Support\CircuitBreaker` (transient-backed, named-key, generic external dependencies — keeps the short name) | `BCC\Trust\Onchain\Support\OnchainCircuitBreaker` (`wp_cache`-backed with transient fallback, per-chain int-keyed, 6h TTL, HALF-OPEN probe-lock state machine, atomic DB counter, stale-chain detection, rate-limited corruption logging — *renamed from CircuitBreaker*) | **RESOLVED.** V-04 of the Constitutional Violation Scan. The Onchain class was renamed to `OnchainCircuitBreaker` to remove the autocomplete trap. The two breakers stay separate by design — they are NOT API-compatible (Core: string-keyed `allow/recordSuccess/recordFailure`; Onchain: int-keyed `isOpen/recordSuccess/recordFailure/releaseProbe/getAllStatus/getStaleChains`) and Onchain's hardening must NOT be ported into Core's HTTP-endpoint path. |
 
 ## REST namespace file-pattern rule
 
@@ -621,13 +664,15 @@ attempt during active migration.
   — not a second `FeedRankingService`. Earlier audits flagged this as
   a duplicate pair (V-05); verification on 2026-05-09 found only the
   bcc-trust copy. No annotation required.
-- **`LockRepository` collision shape**: the two BCC-owned
-  `LockRepository` classes are both advisory-lock-based. The earlier
-  audit's "transient vs advisory" framing did not match current code;
-  the runtime danger is autocomplete collision, not durability
-  divergence. The Onchain copy is a 21-line alias `extends
-  \BCC\Core\DB\AdvisoryLock`. Recorded here so a future agent reading
-  the older audit verbatim does not act on the inaccurate framing.
+- **`LockRepository` collision shape** (RESOLVED 2026-05-10 — V-02):
+  the Onchain alias was a no-op `extends \BCC\Core\DB\AdvisoryLock`
+  with no added behaviour. It has been deleted; all 7 Onchain callers
+  now call `\BCC\Core\DB\AdvisoryLock::` directly. The short name
+  `LockRepository` now belongs solely to
+  `BCC\PeepSo\Repositories\LockRepository` (the real implementation
+  with `tryAcquire` + `wp_options` fallback). Recorded here so a
+  future agent reading the older audit verbatim does not act on the
+  out-of-date "two LockRepositories" framing.
 - **V-27 (`UserStatusController` vs `bcc-trust/v1/user/status` route)
   is a false positive.** The controller is not a duplicate handler —
   it is the *extracted-handler class* wired by `TrustRestController`
