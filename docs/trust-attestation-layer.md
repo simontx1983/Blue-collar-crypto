@@ -1356,6 +1356,9 @@ iterates before code lands.
   `docs/trust-attestation-risk-assessment.md` (Phase 1 implementation
   conforms to its §5 Critical items; closed-network testing
   instruments its §4 watch signals)
+- Phase 1 implementation plan:
+  `docs/trust-attestation-phase-1-plan.md` (scope-frozen
+  implementation plan, 4-week sequencing, acceptance criteria)
 - Existing trust engine pattern: `pattern-registry.md` "Trust Engine"
 - Existing dispute mechanics: `app/Domain/Disputes/`
 - Existing endorsement pipeline: `app/Domain/Core/Services/EndorsementService.php`

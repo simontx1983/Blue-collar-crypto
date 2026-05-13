@@ -825,6 +825,79 @@ Cognitive shortcut, not bad intent.
   the card prompts counter-parties to read the camps, not just
   the Elite verdict.
 
+### 2.12 — Judgment fatigue / emotional exhaustion (long-horizon)
+
+**Profile.** The platform asks operators to evaluate people,
+publicly back people, interpret trust states, navigate contested
+entities, and make reputation decisions on an ongoing basis. Over
+long time horizons, even high-quality operators may experience the
+*cumulative* emotional cost of constant judgment — leading to
+over-cautious behavior, passive disengagement, hesitancy to attest
+even when warranted, emotional fatigue from social consequences,
+and eventual withdrawal from active participation.
+
+This is distinct from the individual behavioral risks (status
+anxiety §2.7, fear of disputes §2.5, conflict avoidance §2.3,
+prestige chasing §2.4) because it is the *compound effect* of all
+of them together, over months or years, on the operators the
+platform most needs to retain. A platform that wears out its best
+operators has a graph-quality decay problem that no individual
+mechanic prevents.
+
+**Constitutional defenses:**
+- Asymmetric-display rule reduces public stigma
+- Soft accountability (no clawback, no death spiral) reduces per-
+  attestation emotional cost
+- Bandwidth model on Stand Behind forces deliberate-not-frequent
+  high-conviction decisions
+- Vouch is low-cost; not every interaction requires conviction
+- Layer 0 retention engine gives operators non-judgment surfaces
+  to engage on
+
+**Residual risk.**
+- The cumulative emotional cost is real regardless of per-
+  attestation cost being low
+- Long-tenure operators may experience "reputation work" as labor
+- High-quality operators may withdraw before low-quality operators,
+  causing graph quality to degrade asymmetrically
+
+**Watch signals.**
+- Attestation rate per operator over their tenure on the platform
+  — declining trend for long-tenure high-reliability operators is
+  the headline signal
+- Retention rates by reliability standing — if `highly_reliable`
+  operators churn at higher rates than `consistent`, fatigue is
+  driving it
+- Self-reported emotional load in interviews — direct qualitative
+  measurement matters here
+- Layer 0 engagement vs. Layer 1 attestation ratio over time per
+  operator — if active Layer 1 operators are quietly migrating to
+  Layer-0-only behavior, that's fatigue
+- Sudden disengagement clusters — multiple high-reliability
+  operators going quiet around the same time
+
+**Hardening priority: Important.**
+
+**Specific implementation guidance:**
+- **Attestation is never required.** No mechanic, anywhere, ever,
+  pressures operators to attest at any cadence. Silence is a
+  legitimate state. This is already encoded as a principle but
+  must be explicitly enforced in design reviews.
+- **Self-mirror surfaces fatigue dimensions.** The self-mirror
+  should include trend lines showing the operator their own
+  engagement pattern over time — not as judgment, but as
+  self-awareness. "Your attestation cadence has been roughly the
+  same for 6 months — that's healthy" is the kind of language to
+  reach for.
+- **No "you haven't attested in N days" reminder notifications.**
+  Ever. The notification taxonomy explicitly excludes prompts to
+  attest. If a future PR proposes one, it's rejected by reference
+  to this risk profile.
+- **Tenure-aware onboarding messaging.** New operators are taught
+  that long-term silence is normal and acceptable; not every
+  operator participates in attestation at all, and that's fine.
+  Reduces the implicit pressure that "good operators attest."
+
 ### 2.11 — Emotional reactions to contested states
 
 **Profile.** Operators see their own card go `polarizing` or
@@ -917,10 +990,95 @@ the interpretation.
 If a community norm develops that operators are expected to
 vouch/stand-behind/dispute at certain rates, the platform
 inherits an engagement-cadence pressure that contradicts the
-anti-viral-by-design constitution. Hardest to detect because the
-norm is informal. Closed-network observation should specifically
-listen for phrases like "you haven't vouched for anyone in a while"
-or "your stand-behind ratio looks low" in community conversation.
+anti-viral-by-design constitution. The pressure would re-create
+engagement-economy dynamics through *culture* rather than
+*algorithms* — which is harder to detect and harder to revert
+than algorithmic engagement-economy because the failure mode is
+distributed across the user base, not centralized in a recommender
+that can be retuned.
+
+Five named cultural emergences to specifically watch for during
+closed-network testing:
+
+1. **Attestation guilt culture.** Operators feel bad for not
+   attesting "enough." Language pattern: "I really should vouch
+   for X" — where the "should" is felt as moral obligation, not
+   genuine judgment. Signals: support tickets / community
+   conversation expressing guilt about attestation cadence;
+   self-reported emotional pressure in interview rounds.
+
+2. **Silence-shaming.** Operators are socially criticized for not
+   participating in the attestation graph. Language patterns:
+   "X never vouches for anyone — what does that say about them?"
+   or "good operators should be visible in the roster." Signals:
+   Layer 0 post content referring critically to other operators'
+   attestation silence; community discussion treating non-
+   attestation as a character flaw.
+
+3. **Pressure to constantly weigh in.** A norm forms that
+   operators are expected to have a public opinion on every
+   notable entity. Language patterns: "where do you stand on
+   ProjectX?" treated as a demanding social question rather than
+   a polite one. Signals: rising attestation rates correlating
+   with rising platform-attention events (e.g., dispute filings,
+   major Layer 0 conversations); operators attesting under
+   apparent social pressure rather than independent judgment.
+
+4. **Prestige-maintenance behavior.** High-reliability operators
+   attest to maintain their visibility / public standing rather
+   than from genuine judgment. Language patterns: "I haven't
+   been seen on the graph lately, I should put my name on
+   something." Signals: attestation activity correlated with
+   *time-since-last-attestation* (operators attesting to break
+   a silence rather than because something happened); attestation
+   volume rising as a function of social-visibility decay.
+
+5. **"Good operators should always be active" norms.** A norm
+   forms that high-quality participation requires sustained
+   activity, conflating *engagement* with *judgment quality*.
+   Language patterns: "X used to be a great judge of operators
+   but they're not active anymore." Signals: operators expressing
+   self-doubt about their continued legitimacy when they reduce
+   attestation activity; community treating dormant
+   high-reliability operators as "fallen."
+
+**Why this matters.** Each of these cultural emergences would
+silently re-introduce engagement-economy pressure through user
+expectation rather than platform mechanic. Because no mechanic is
+causing the pressure, no mechanic can directly relieve it. The
+mitigations are:
+
+- Editorial / community-management posture (the platform's voice
+  explicitly affirms silence as legitimate)
+- Onboarding content (taught: no cadence expectation exists)
+- Interview-cycle vigilance (catch the norm forming in
+  conversation before it spreads)
+- Public platform statement of principle if drift is detected
+
+**Hardening priority: Critical** (elevated from Watch-only after
+the 2026-05-13 expansion). The constitution names anti-viral-by-
+design as a principle; this cultural-emergence risk is the most
+likely path for the principle to be violated by emergent
+behavior rather than by feature work.
+
+### 3.5 — Asymmetric attrition of high-quality operators (judgment fatigue compound)
+
+The compound effect of §2.12 judgment fatigue plus §3.4 cadence
+pressure plus §2.11 contested-state emotional reactions, over
+months and years, may produce asymmetric attrition: the operators
+the graph most needs (high-reliability, high-conviction, long-
+tenure judges) leave at higher rates than low-quality operators.
+Because each individual mechanism has been mitigated as much as
+the constitution can mitigate it, the residual is *cumulative
+exhaustion* that no single feature change addresses.
+
+The mitigation is *operational* rather than *architectural*:
+ongoing community management, editorial voice that affirms
+legitimate disengagement, interview-cycle vigilance, and product
+willingness to scale back surfaces if attrition signals trigger.
+
+Closed-network testing should include explicit retention cohorts
+tracking long-tenure high-reliability operators specifically.
 
 ---
 
@@ -965,6 +1123,26 @@ to one or more of the threats / behaviors above.
 - **Attestation:Layer-0 activity ratio per operator.** Healthy
   baseline TBD; >90% attestation activity flags reputation
   farming.
+- **Attestation rate per operator over tenure** (§2.12). Track
+  per-operator monthly attestation cadence over their full
+  tenure. Declining trend among long-tenure high-reliability
+  operators is the judgment-fatigue headline signal.
+- **Retention by reliability standing** (§2.12). If
+  `highly_reliable` operators churn at higher rates than
+  `consistent`, fatigue is driving asymmetric loss of the
+  operators the graph most needs.
+- **Sudden disengagement clusters** (§2.12). Multiple
+  high-reliability operators going quiet around the same time
+  signals either cohort fatigue or culture-pressure event.
+- **Attestation-rate correlation with social-visibility decay**
+  (§3.4 cadence-pressure). If attestation activity rises as a
+  function of time-since-last-attestation, prestige-maintenance
+  behavior is forming.
+- **Attestation-rate correlation with platform-attention events**
+  (§3.4 cadence-pressure). If attestation rates spike around
+  dispute filings or trending Layer 0 conversations, operators
+  are attesting under social pressure rather than independent
+  judgment.
 
 ### Qualitative signals
 
@@ -975,9 +1153,26 @@ to one or more of the threats / behaviors above.
   Listen for phrases that treat absence of attestation as
   pejorative. The single most important qualitative signal in
   this list.
-- **Attestation-cadence norm emergence.** Community references
-  to expected attestation rates ("you should be standing behind
-  X people by now").
+- **Attestation-cadence norm emergence — five-pattern watch
+  list** (§3.4 expanded 2026-05-13):
+  - **Attestation guilt culture** — "I really should vouch for X"
+    framed as moral obligation
+  - **Silence-shaming** — "good operators should be visible in
+    the roster"; criticism of non-participating operators
+  - **Pressure to constantly weigh in** — "where do you stand on
+    ProjectX?" as demanding social question
+  - **Prestige-maintenance behavior** — "I haven't been seen on
+    the graph lately, I should put my name on something"
+  - **"Good operators should always be active" norms** —
+    conflating engagement with judgment quality
+  Any of these in community conversation is a P1 signal — the
+  anti-viral-by-design constitutional principle is being
+  challenged by emergent culture rather than by feature work.
+- **Judgment fatigue indicators** (§2.12). Self-reported
+  emotional load in interview rounds; operators describing
+  attestation as feeling like work; long-tenure high-reliability
+  operators describing wanting to "step back from the
+  reputation stuff."
 - **Reliability-anxiety reports.** Support tickets, community
   posts about anxiety over own reliability standing.
 - **Dispute-fear reports.** Operators describing fear of filing
