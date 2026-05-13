@@ -1,6 +1,6 @@
 # V2 Roadmap
 
-**Status as of 2026-04-30:** V1 + V1.5 are scope-complete. V2 begins from here.
+**Status as of 2026-05-13:** V1 + V1.5 are scope-complete. V2 is in flight — Push Notifications + NFT Scaling Phase 1 (a/b/c) + Cosmos CW-721 + NFT-piece detail + @mention dispatch + "primary Local" post dispatch + "comment received" dispatch + Good Standing directory filter have all shipped. Remaining items below.
 
 This doc inventories every deferral logged in the V1 plan's §P4 ("the deferred list is real"), groups them by theme, and notes what each one actually buys vs. what it costs. It is **not** a build commitment — it is a working list to drive V2 phase planning.
 
@@ -67,12 +67,13 @@ The biggest single bucket. V1 shipped on-demand indexing for ETH + SOL only (§H
 
 | Item | What it buys | What it costs | Status |
 |---|---|---|---|
-| Continuous indexing (mint/transfer event listeners) | Near-real-time gallery vs. stale-while-revalidate cache | Event listener per chain + cron infra + budget cap | OPEN — flagship V2 phase candidate |
-| NFT-piece detail page (§H1) | Deeper drill-down per piece beyond the thumbnail | New route + per-piece view-model | OPEN |
-| Inject + Cosmos NFT support | Cross-chain creator coverage | Per-chain fetcher + indexer API or RPC integration | OPEN |
+| Continuous indexing (mint/transfer event listeners) | Near-real-time gallery vs. stale-while-revalidate cache | Event listener per chain + cron infra + budget cap | PARTIALLY SHIPPED 2026-05-07 — Phase 1 a/b/c backend landed on `bcc-trust` (ETH + SOL confirmation-gated walker, cron self-heal per `project_v2_nft_cron_drift_incident.md`). Active iteration on enrichment + indexer edge cases. Frontend syncing chip deferred until picker UI consumer lands. |
+| NFT-piece detail page (§H1) | Deeper drill-down per piece beyond the thumbnail | New route + per-piece view-model | SHIPPED — `/c/[slug]/[tokenId]` route + `NftPieceDetail` component live (`NftPieceEndpoint` + `NftPieceViewModelBuilder` on the backend) |
+| Cosmos NFT support (CW-721) | Cosmos creator coverage via standard CW-721 LCD queries | Per-chain fetcher | SHIPPED 2026-05-07 — `feat/v2-phase-2-cosmos-cw721`; intentionally asymmetric with ETH/SOL persistence (read-time + V1 transient, see `project_v2_phase_2_cosmos.md`). |
+| Injective NFT support | Injective creator coverage | Per-chain fetcher or indexer API | OPEN — separate chain from Cosmos CW-721 path |
 | Polkadot + NEAR + Thorchain NFT support | Long-tail chain coverage | Same per-chain cost; lower expected demand | OPEN — wait for evidence of demand |
 
-**Open subtotal:** ~6–10 weeks if all four ship. Continuous indexing alone is ~3–4 weeks.
+**Open subtotal:** Continuous indexing edge-case iteration is ongoing; Injective + long-tail chains remain genuinely open and demand-gated.
 
 ---
 
@@ -82,12 +83,12 @@ Multi-month bets that change *who* and *where* the platform serves.
 
 | Item | What it buys | What it costs | Status |
 |---|---|---|---|
-| Push notifications (§I1) | Bell delivery beyond email | VAPID + service worker + opt-in flow (per-event toggles already exist on backend) | OPEN — small V2 phase candidate |
+| Push notifications (§I1) | Bell delivery beyond email | VAPID + service worker + opt-in flow (per-event toggles already exist on backend) | SHIPPED — `PushDispatcher` + `PushPayload` + frontend `register.ts` / `usePushSubscription.ts` / `push-endpoints.ts`; per-event toggles on `/me/notification-prefs` via `NotificationPrefs::PUSH_TYPES`; 9-event V1 taxonomy complete (reaction / review / card_pulled / rank_up / endorse / welcome / mention / local_post / comment_received) |
 | Public API for external consumers (§Q12.10) | External integrations + ecosystem | Rate limiting + auth + docs + versioning + support burden | OPEN — wait for explicit demand |
 | Native mobile app (§J1) | Native gestures + push reliability | RN or native — months. PWA may cover most of the gap | OPEN — wait for engagement evidence |
 | Localization / i18n | Non-English markets | Translation pipeline + RTL + locale routing + ongoing translation cost | OPEN — wait for non-English demand |
 
-**Open subtotal:** Push notifications is the only realistic short-term item (~1–2 weeks). The rest are V2-of-V2.
+**Open subtotal:** All remaining items are V2-of-V2 (demand-gated). Push notifications landed.
 
 ---
 
@@ -114,16 +115,15 @@ These are listed only to confirm they no longer count against V2 scope.
 
 ---
 
-## Recommendation for the first V2 phase
+## Recommendation for the next V2 chunk
 
-If we pick by **smallest distance from "feature mostly works" to "feature is great,"** the two best opening phases are:
+The two originally-recommended first-V2 phases both landed (Push Notifications + NFT Scaling Phase 1 backend). The remaining buckets, ranked by leverage:
 
-1. **NFT Scaling Phase 1 — continuous ETH + SOL indexing.** Closes the largest known V1 compromise (§H1's on-demand stale-while-revalidate fallback). Galleries become live, not cached. ~3–4 weeks. Loop-aligned: directly improves the creator profile experience.
-2. **Push Notifications.** Closes the §I1 V1 compromise (email digest only). Per-event backend toggles already exist; the work is purely the delivery channel. ~1–2 weeks. Loop-aligned: pulls users back to act on highlights / reactions / endorsements without an email round-trip.
+1. **Engagement polish — small bundle.** Pick 2–3 from the open Engagement Polish rows above (`/me/progression` standalone page, sound on Heavy celebrations, network percentile on others' profiles). Each is ~half a day to a couple of days; together they thicken the V1 loop without a flagship-sized commitment.
+2. **NFT Scaling — edge-case iteration + Injective.** Continuous-indexing Phase 1 backend has shipped, but enrichment and indexer edge cases are still in active iteration. Closing those + landing Injective is the natural follow-on.
+3. **Operationally / strategically gated.** Admin curation (§G4), native mobile (§J1), public API (§Q12.10), i18n, and the Backer concept (§N4) all need staffing, design, or demand evidence before engineering — leave parked.
 
-The rest of the open items are either small polish (engagement polish bucket — pick a few to bundle) or operationally / strategically gated (admin curation, native mobile, public API, i18n, Backer).
-
-**My pick if forced:** start with **Push Notifications** as a 2-week proving phase — it's small, high-impact, and the backend is already 80% there. Then **NFT Scaling Phase 1** as the first real V2 chunk. Holds through the §P discipline because it ships one thing at a time and each phase replaces a known V1 compromise.
+**Pick if forced:** the small engagement-polish bundle. Each item plots directly onto the existing dopamine loop, none introduces a new product surface, and the bundle ships in days rather than weeks. The §P "default answer is no" discipline still applies — each polish row needs to clear the four green flags before it leaves the OPEN column.
 
 ---
 
