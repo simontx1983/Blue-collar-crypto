@@ -3813,6 +3813,32 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
+### v1.14 — 2026-05-13
+
+- **§J.2 `slot_holders[]` row shape extended** with two server-rendered
+  display fields so the FE picker renders without a follow-up
+  display fetch:
+  - `target_label` (string) — server-rendered display label per §A2.
+    `"@phillip"` for `user_profile` targets; `post_title` (or
+    `"#{id}"` fallback) for the three card kinds. Empty string when
+    the target is deleted / unresolvable; the FE renders the row
+    without a clickable affordance in that case.
+  - `target_link` (string) — server-rendered relative URL per §A2.
+    `/u/{handle}` for user_profile; `/v/{slug}` / `/p/{slug}` /
+    `/c/{slug}` for card kinds. Empty string when the target slug
+    is missing.
+  Additive — older FE clients that read the v1.12 lean shape still
+  parse cleanly (extra keys ignored). The lean-shape contract
+  documented in v1.12 is superseded by this entry but not broken.
+
+- **Picker UX contract preserved.** The §J.2 `bcc_attestation_bandwidth_exhausted`
+  error envelope is otherwise unchanged. `error.data` carries
+  `slot_holders[]` + `slots_total` + `slots_used`; status 409;
+  bounded ≤ 10 holders. The FE wires the picker dialog
+  (`SlotHoldersPicker`) on this code only — eligibility / fraud /
+  rate-limit errors continue to surface as inline alerts on the
+  cluster.
+
 ### v1.13 — 2026-05-13
 
 - **§4.20 §J.4 Trust Attestations roster endpoint SHIPPED.**
