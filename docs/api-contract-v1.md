@@ -2296,7 +2296,7 @@ PeepSo's `peepso_notifications` table is the storage layer (§I1 "extend, don't 
 }
 ```
 
-- `type` ∈ {`bcc_reaction`, `bcc_review`, `bcc_card_pulled`, `bcc_rank_up`, `bcc_endorse`, `bcc_welcome`, `bcc_mention`}. V1 catalogue per §I2; follow-posts deferred.
+- `type` ∈ {`bcc_reaction`, `bcc_review`, `bcc_card_pulled`, `bcc_rank_up`, `bcc_endorse`, `bcc_welcome`, `bcc_mention`, `bcc_local_post`}. V1 catalogue per §I2; follow-posts deferred.
 - `message` is server-rendered per §A2 — frontend renders verbatim. Plain English, capped at 200 chars (PeepSo's column width).
 - `actor.handle` may be empty when the originating user has been deleted; the frontend renders the message verbatim regardless.
 - `link` is a server-built relative path. Per type:
@@ -2307,6 +2307,7 @@ PeepSo's `peepso_notifications` table is the storage layer (§I1 "extend, don't 
   - `bcc_endorse` → `/v/<page-handle>` etc. (the endorsed page)
   - `bcc_welcome` → `/` (the floor — the user is probably already there when they see it)
   - `bcc_mention` → `/?focus=<act_id>` (jump to the floor focused on the post containing the @-tag; for comment mentions `act_id` is the **parent post's** act_id — the FE has no comment-anchor consumer in V1)
+  - `bcc_local_post` → `/locals/<slug>` resolved from `external_id` (the Local's group_id). Falls back to `/locals` when the group is no longer a Local (deleted, renamed off-prefix).
 - Self-notifications are emitted only for `bcc_rank_up` + `bcc_welcome` (audit trail beyond the §O1.2 Heavy toast / first-touch retention). Other types skip the dispatch when actor === recipient.
 
 #### `GET /bcc/v1/me/notifications`
@@ -2370,6 +2371,7 @@ Notifications are dispatched by `NotificationDispatcher` (sync subscribers, try/
 | `user_register` (WordPress core) | the new user (self-notification, type `bcc_welcome`) | `bcc_welcomed` user_meta already set (idempotency guard — once welcomed, never re-welcome) |
 | `bcc_post_created` | every user @-tagged in the post body (after `MentionPolicy::filterMentionable`) | author === mentionee (self-mention skip); banned / blocked / private mentionees stripped at validation time |
 | `bcc_comment_created` | every user @-tagged in the comment body | same skip rules as post mention; `act_id` passed is the **parent post's** act_id so the bell deep-links to the post on the floor |
+| `bcc_post_created` (async via `bcc_primary_local_post_fanout`) | every user whose `bcc_primary_local_group_id` user_meta matches the post's `peepso_group_id` | author === recipient (self-skip); same (recipient, group) already notified within the last 5 min (transient gate); post's group is NOT a Local (`post_title` doesn't match `Local %`); recipient cap of 1000 reached |
 
 ##### @-mention dispatch — policy locks (V2 retention slice, 2026-05-11)
 
@@ -2380,6 +2382,22 @@ Three behaviours are intentional and load-bearing — do not relitigate without 
 3. **Bell + push from day one.** `bcc_mention` is in both `BELL_TYPES` and `PUSH_TYPES`. Push aggregation via the existing 5-min `(recipient, eventType)` debounce coalesces rapid-fire mention floods into a single "N new mentions" push body — bell still fires per-post for the in-app row count.
 
 The `MentionPolicy::filterMentionable` gate is applied a SECOND time at dispatch (write-time validation already filtered) as defense in depth: a future write path that bypasses validation still cannot dispatch to banned / blocked / private mentionees.
+
+##### Primary-Local post dispatch — policy locks (V2 retention slice, 2026-05-11)
+
+Three behaviours are intentional and load-bearing — do not relitigate without explicit re-planning:
+
+1. **Primary-only recipient filter.** Only users whose `wp_usermeta.bcc_primary_local_group_id` matches the post's `peepso_group_id` are notified. Membership alone does NOT subscribe — the primary-Local pointer IS the "I want updates here" signal. Users who set a Local as primary today receive notifications starting with the next post; legacy posts stay silent (no backfill).
+2. **Dual coalescing.** Bell writes are gated by a 5-min per-`(recipient, group)` transient (`bcc_local_post_notified_{userId}_{groupId}`). Push uses the existing `PushDispatcher` 5-min `(recipient, eventType)` debounce + count aggregation. Both windows align so a recipient sees at most one bell row + one push (or push-aggregate) per Local per 5-min window — even if 10 different authors post in the Local during that window.
+3. **Always async via `AsyncDispatcher::enqueueAsync`.** A popular Local could fan out to thousands of recipients; sync dispatch would blow the §L1 300ms request budget. The originating `POST /posts/*` returns immediately; the async worker handles the per-recipient bell + push loop. Action Scheduler retries failed jobs per its standard semantics.
+
+Defense in depth:
+- `Plugin.php` pre-gates `(group_id > 0)` AND `(PeepSoGroupRepository::findOneById !== null)` BEFORE paying the async-enqueue cost. Non-Local posts never enqueue.
+- The dispatcher orchestrator (`dispatchPrimaryLocalPostFor`) re-checks `findOneById` defensively (the Local could be deleted between enqueue and worker pickup).
+- The shared `dispatch()` helper honors the per-recipient bell pref; `PushDispatcher::enqueue` self-gates on push pref + master.
+- Recipient hard cap of 1000 per fan-out (revisit when a real Local crosses ~500 primary-members; switch to cursor-paginated async chain rather than raising the LIMIT).
+
+The `bcc_post_created` event fires **both** subscribers when a mention sits inside a post in your primary Local — by design. Mention and Local-post are semantically distinct events ("you were called out" vs. "activity in your Local") and each is independently toggleable in prefs.
 
 #### Notification preferences (§I1 + V2 Phase 1)
 
@@ -2397,7 +2415,8 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
     "bcc_rank_up":     true,
     "bcc_endorse":     true,
     "bcc_welcome":     true,
-    "bcc_mention":     true
+    "bcc_mention":     true,
+    "bcc_local_post":  true
   },
   "push": {
     "enabled": false,
@@ -2406,7 +2425,8 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
       "endorse":           true,
       "dispute_outcome":   true,
       "panelist_selected": true,
-      "mention":           true
+      "mention":           true,
+      "local_post":        true
     }
   }
 }
