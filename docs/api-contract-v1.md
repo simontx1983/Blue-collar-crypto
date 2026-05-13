@@ -2215,6 +2215,7 @@ Paginated list of Cards filtered + sorted server-side. Backs `/directory`.
   - `tier` ∈ {`legendary`, `rare`, `uncommon`, `common`} — optional; canonical card-tier values per §C1. Risky tier is intentionally not selectable (entity hidden from card UI per §C1).
   - `sort` ∈ {`trust`, `newest`, `endorsements`, `followers`} — optional; default `trust`
   - `q` (search string) — optional; passed verbatim to the underlying `PageDiscoveryService`
+  - `good_standing_only` (`1`|`true`|`on`|`yes` → true; anything else → false) — optional; default false. When true, restricts results to operators in good standing per §E1 (`reputation_tier ∈ {neutral, trusted, elite}`). Composes with `tier` via AND server-side, so `tier=common&good_standing_only=1` is a vacuously empty intersection rather than an error.
   - `page` (1..20) — optional; default 1. The hard ceiling protects against unbounded `OFFSET` filesort
   - `per_page` (1..50) — optional; default 24
 - **Response 200:**
@@ -2235,6 +2236,7 @@ Paginated list of Cards filtered + sorted server-side. Backs `/directory`.
   - Filter SQL ← `PageDiscoveryService::query()` (the same service `/discover` already uses for the legacy bcc-page-slider block — discovery is shared, the legacy endpoint kept for back-compat)
   - Server translates canonical kind → legacy `_bcc_page_type` (validator→validator, project→builder, creator→nft) via `PageTypeMap`
   - Server translates canonical card-tier → reputation tier (legendary→elite, rare→trusted, uncommon→neutral, common→caution)
+  - The `good_standing_only` `IN`-clause sources its tier list from `UserViewService::GOOD_STANDING_TIERS` — the same constant `isInGoodStanding()` (and therefore the per-row `is_in_good_standing` stamp + the `/auth/*` response `in_good_standing` flag) reads from. The filter chip and the per-row stamp can never disagree.
   - Each row hydrated through `CardViewService::getCard()` so the per-item shape is identical to `GET /cards/:type/:id`
 
 #### `GET /bcc/v1/cards/search`

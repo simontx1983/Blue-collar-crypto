@@ -52,12 +52,12 @@ Curation + navigation polish.
 
 | Item | What it buys | What it costs | Status |
 |---|---|---|---|
-| "Good Standing only" search filter (§G2) | One-click filter to caution-tier-and-above | Small UI + filter param | OPEN |
+| "Good Standing only" search filter (§G2) | One-click filter to caution-tier-and-above | Small UI + filter param | SHIPPED 2026-05-13 (`GET /cards?good_standing_only=1`; tier list sourced from `UserViewService::GOOD_STANDING_TIERS` — same constant that drives the per-row `is_in_good_standing` stamp + auth-response flag; chip on `/directory`) |
 | Admin-curated featured row on `/directory` (§G4) | Editorial control over discovery | Needs an editorial ops role V1 doesn't have | OPEN — gated on staffing |
 | "Community" feed-mode tab (§N6) | A fourth feed mode | Duplicates Following with no system posts removed; cut for overlap | WON'T SHIP |
 | "Top cards" metric on Binder header (§N9) | Summary above the grid | The 3×3 grid below already shows them | WON'T SHIP |
 
-**Open subtotal:** 2 items, but admin-curated row is operationally gated. Effectively ~1 day of frontend work.
+**Open subtotal:** 1 item (admin-curated row), operationally gated. The §G2 toggle shipped 2026-05-13.
 
 ---
 
