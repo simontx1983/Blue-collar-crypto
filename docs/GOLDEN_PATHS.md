@@ -814,25 +814,60 @@ cd bcc-frontend && npx tsc --noEmit
 
 **Failure means:** `types.ts` is out of sync with itself, OR a hook/component references a removed field. Fix before merging.
 
-### 14.3 Envelope smoke
+### 14.3 Envelope smoke — three shapes
+
+The Envelope wrapper recognizes three already-enveloped shapes and refuses to re-wrap any of them. The browser-eval below probes all three from the same authenticated session and verifies each endpoint produces the expected shape.
 
 ```js
-// In browser devtools:
+// In browser devtools, signed in:
 const s = await (await fetch('/api/auth/session', { credentials: 'include' })).json();
-const r = await fetch('http://blue-collar-crypto-custom.local/wp-json/bcc/v1/me/account/email', {
-  method: 'PATCH',
-  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${s.bccToken}` },
-  body: JSON.stringify({ email: 'unused@example.com', current_password: 'wrong' }),
-});
-const body = await r.json();
-console.log(Object.keys(body));
+const wp = 'http://blue-collar-crypto-custom.local';
+const probes = [
+  // Canonical /bcc/v1 success → { data, _meta }
+  { name: 'canonical success', method: 'GET',  path: '/bcc/v1/me/holder-groups', expect: 'canonical-success' },
+  // Canonical /bcc/v1 error → { error, _meta }
+  { name: 'canonical error',   method: 'PATCH', path: '/bcc/v1/me/account/email',
+    body: { email: 'bad', current_password: 'wrong' }, expect: 'canonical-error' },
+  // Legacy bcc-trust/v1 → { success: true, data }  (no _meta, no double-wrap)
+  { name: 'legacy trust',      method: 'GET',  path: '/bcc-trust/v1/pages/top', expect: 'legacy-trust' },
+];
+const out = await Promise.all(probes.map(async p => {
+  const init = { method: p.method, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${s.bccToken}` } };
+  if (p.body) init.body = JSON.stringify(p.body);
+  const r = await fetch(`${wp}/wp-json${p.path}`, init);
+  const b = await r.json();
+  const k = Object.keys(b);
+  let shape = 'unknown';
+  if (k.includes('success') && k.includes('data') && !k.includes('_meta')) shape = 'legacy-trust';
+  else if (k.includes('data') && k.includes('_meta')) shape = 'canonical-success';
+  else if (k.includes('error') && k.includes('_meta')) shape = 'canonical-error';
+  return { ...p, actual: shape, pass: shape === p.expect, topKeys: k };
+}));
+console.table(out);
 ```
 
-**Expected:** `["error", "_meta"]` on the error envelope (because we sent a wrong password). The shape `{ error: { code, message, status } , _meta: { ... } }` is the contract.
+**Expected:** every row has `pass: true`.
 
-**Failure means:** Envelope wrapper isn't running on this endpoint, or the `rest_post_dispatch` filter priority got changed.
+**Failure means:**
+- One row reports `unknown` shape → Envelope `wrap()` is producing an off-contract response. Run the offline test (next subsection) to isolate.
+- Canonical-success/error probes report `legacy-trust` shape → Envelope is letting `/bcc/v1` responses through without wrapping. Check whether the canonical-recognition rules in `isAlreadyEnveloped()` got loosened.
+- Legacy-trust probe reports `canonical-success` (with `_meta`) → Envelope is double-wrapping the legacy trust shape again. This is the regression that Phase α fixed; the recognition rule at `Envelope.php::isAlreadyEnveloped()` was removed or weakened. Restore it.
 
-### 14.4 Dual-client namespace discipline
+### 14.4 Envelope offline test
+
+The recognition logic has a hand-rolled CLI test that runs without WP:
+
+```bash
+php app/public/wp-content/plugins/bcc-trust/tests/EnvelopeRecognitionTest.php
+```
+
+**Expected:** `PASS: 20/20 assertions`.
+
+This locks the four envelope-recognition rules — canonical success, canonical error, legacy trust, and the false-positive guards. If a future contributor weakens `isAlreadyEnveloped()` (e.g. relaxes the strict `=== true` match or drops the `!_meta` disambiguator), this test catches it.
+
+**Failure means:** the recognition behavior has drifted from the contract documented in `docs/api-contract-v1.md §1.4 / §1.5` and the legacy-trust note in `Envelope.php`'s docblock. Read the test output for the exact assertion that failed; the per-case label names the rule being violated.
+
+### 14.5 Dual-client namespace discipline
 
 The frontend ships two HTTP clients per the dual-namespace migration shim (V-07 / V-29 in the audit doc):
 
