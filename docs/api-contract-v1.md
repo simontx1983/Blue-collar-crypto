@@ -3813,6 +3813,70 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
+### v1.12 — 2026-05-13
+
+- **§4.20 Trust Attestations — Slice C mutation surfaces SHIPPED.**
+  No new architecture or contract drift; the three endpoints land as
+  locked. Implementation notes that callers MUST know about:
+  - **`POST /me/attestations` response shape clarification.** The
+    `attestor_summary` block emits the locked self-view fields
+    `stand_behind_slots_used`, `_total`, `_graduated`, `is_dormant`,
+    `reliability_standing`, `badges`, and the self-only
+    `operator_reliability` / `consensus_reliability` /
+    `early_read_accuracy` keys. V1 returns SLICE-E baselines for
+    fields that depend on the synthesis layer: `_graduated = 0`,
+    `is_dormant = false`, `reliability_standing = "newly_active"`,
+    `badges = []`, and the three numeric reliability fields = `null`.
+    The keys are PRESENT (contract-stable shape) — Slice E populates
+    real values without a shape change.
+  - **`decay.current_weight` equals `weight_at_time` at cast time**
+    (decay age = 0). Slice E ships the read-time decay function;
+    until then, `decay.current_weight` mirrors `weight_at_time` for
+    any subsequent reads — additive behavior, no caller change.
+  - **`bcc_attestation_bandwidth_exhausted` error: `slot_holders[]`
+    is `[]` in V1.** The contract surface stays; V1 emits an empty
+    array. The FE renders the locked "you're at your maximum, revoke
+    one to free a slot" fallback message rather than a server-supplied
+    picker. The picker payload lands when the `/me/attestations` list
+    endpoint ships (Slice D — same query as the roster surface,
+    scoped to the viewer).
+  - **`error.data` is the structured-error vehicle.** The locked
+    text "`error.unlock_hint`" in §J.2 (and analogous in the
+    bandwidth-exhausted body) is implemented as `error.data.unlock_hint`
+    / `error.data.slot_holders`. This matches the §1.4 envelope
+    where structured error context lives under `error.data` — the
+    parent envelope's `data` field rides every typed error payload.
+    Callers branch on `error.code` per the §γ error-contract rule;
+    they read aspirational copy from `error.data.unlock_hint` for
+    `bcc_attestation_ineligible`. The FE's `humanizeAttestationError`
+    helper in `AttestationActionCluster.tsx` surfaces the server's
+    `unlock_hint` verbatim when present (single source of truth).
+  - **Timestamp format.** All ISO 8601 UTC `Z`-suffixed strings
+    (e.g. `"2026-05-13T12:34:56Z"`). The service converts the DB
+    DATETIME (stored in WP site-local timezone via
+    `current_time('mysql')`) to UTC at response time.
+  - **`bcc_attestation_self` returns HTTP 422** (not 403). The
+    self-target case is a request-shape error ("you can't attest on
+    yourself"), not an authorization failure. Matches the §1.4
+    "request validation" convention.
+  - **Race safety.** Cast / revoke / reaffirm wrap in
+    `TransactionManager::run` with per-attestor + per-target MySQL
+    advisory locks (`bcc_attestation_a_$userId` /
+    `bcc_attestation_t_$targetKind_$targetId`). Idempotency check
+    uses `FOR UPDATE` on the unique-key range; locks release
+    AFTER commit so waiters see the committed insert under any
+    isolation level.
+  - **§I1 event taxonomy extension.** Four new bell/push event
+    types landed: `bcc_attestation_vouch_received`,
+    `bcc_attestation_stand_behind_received`,
+    `bcc_attestation_revoked`, `bcc_attestation_reaffirmed`. All
+    four resolve to `/u/{actor_handle}` per the locked link rule;
+    revoke uses the same link (the former attestor is the actor).
+    Bell prefs default ON for all four; push prefs default ON per
+    §I1 V2 baseline ("anti-noise carries the load via debounce").
+    Per-attestor push tag (`bcc-attestation-vouch-{handle}` etc.)
+    so multiple operators don't collapse into one OS-shell push.
+
 ### v1.11 — 2026-05-13
 
 - **§4.20 Trust Attestations — consistency reconciliation pass.**
