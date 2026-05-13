@@ -3118,7 +3118,7 @@ Slim header-badge endpoint — returns the total count of conversations with unr
 
 ### 4.20 Trust Attestations (§J)
 
-The Trust Attestation Layer is foundational product architecture, locked in `docs/trust-attestation-layer.md`. This section encodes the wire-level contracts that follow from that design. **Read the design doc first** — this section assumes the reader knows the three-layer architecture, the three V1 primitives, the bandwidth model on Stand Behind, and the soft-accountability stack.
+The Trust Attestation Layer is foundational product architecture, locked in `docs/trust-attestation-layer.md`. This section encodes the wire-level contracts that follow from that design. **Read the design doc first** — this section assumes the reader knows the three-layer architecture, the three V1 primitives, the bandwidth model on Stand Behind, and the soft-accountability stack. The companion `docs/trust-attestation-risk-assessment.md` documents the threat model + behavioral risk map; Phase 1 implementation must address its §5 Critical items.
 
 > **Status:** locked 2026-05-13. Phase 1 implementation gates on a separate scope-frozen plan. Endpoint shapes below are the V1 contract surface; routes ship as Phase 1 lands.
 
