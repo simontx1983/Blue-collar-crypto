@@ -3813,6 +3813,70 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
+### v1.13 — 2026-05-13
+
+- **§4.20 §J.4 Trust Attestations roster endpoint SHIPPED.**
+  `GET /bcc/v1/entities/:target_kind/:target_id/attestations` is live
+  end-to-end (Slice D). The contract surface is unchanged from §J.4;
+  this entry records the implementation reconciliations callers MUST
+  know about:
+  - **`attestor.is_dormant`** — V1 emits `false` for every row. The
+    field is contract-stable and present on every response; Slice E
+    adds the dormancy detector (last_login + last_attestation activity
+    over a 60-day window). Until then, no row dims as INACTIVE — the
+    FE renders the `INACTIVE` marker conditionally on the flag so the
+    activation is purely a backend change.
+  - **`attestor.reliability_standing`** — V1 emits `"newly_active"`
+    for every row. Same Slice E reconciliation as `is_dormant`. The
+    public catalogue is positive-only by construction
+    (`highly_reliable` / `consistent` / `newly_active`) per §J.3.2;
+    even an attestor in `caution` tier renders with `newly_active`
+    rather than a stigma marker.
+  - **`attestor.badges`** — V1 emits `[]` for every row. Slice E
+    populates per the §J.3.2.1 Early Read sub-track synthesis. The
+    FE's row chrome already conditionally renders the badge area, so
+    Slice E activation is again backend-only.
+  - **`is_pre_consensus_pick`** — V1 heuristic: true when
+    `kind === 'stand_behind'` AND `attestation_order_in_target ≤ 3`.
+    Vouch rows never mark as pre-consensus (vouch is abundant per
+    §J.1; the marker is reserved for the scarcer signal). Slice E
+    replaces with the §J.3.2.1 Early Read synthesis that compares
+    the call to later consensus.
+  - **Sort modes** — `recency` produces a distinct ORDER BY
+    (`created_at DESC, id DESC`). `decayed_weight` and `reliability`
+    both collapse to `weight_at_time DESC, created_at DESC` in V1
+    (decay age = 0 across all rows since no decay function ships
+    until Slice E). The parameter is accepted on the wire either
+    way — contract-stable.
+  - **`include_revoked` ordering** — when true, the response places
+    ACTIVE rows first, REVOKED rows after, regardless of the sort
+    mode. Phillip's note: revoked is archival; preserves "no hiding
+    the past" without interleaving the dead with the living.
+  - **Pagination** — `total_pages` is computed against the ACTIVE
+    count only. When `include_revoked` is true and revoked rows
+    surface on later pages, `total_pages` may be a soft under-
+    estimate (active-only ceiling). Acceptable V1; Slice E refines.
+  - **Deleted-attestor rows** — if a user account has been deleted
+    since casting, that row is silently dropped from the response
+    (the underlying attestation stays in the DB, but rendering a
+    "[deleted]" row would create UX awkwardness the contract
+    doesn't model). Acceptable V1 — Slice E reconsiders.
+  - **Cache:** authed → `private, max-age=30` + `Vary:
+    Authorization, Cookie`; anon → `public, max-age=30`. Both
+    aligned to the 30-second generation-counter invalidation
+    contract from §J.4.
+  - **§J.2 `slot_holders[]`** — Slice C's V1 stub returning `[]` is
+    now replaced with the real payload. Shape per item:
+    `{ id: int, kind: "stand_behind", target_kind: string,
+    target_id: int, created_at: ISO8601, context_note: string|null }`.
+    Bounded ≤ 10 rows (the §J.1 max for any attestor including
+    future graduated bonus). Ordered by `created_at ASC` so the
+    picker shows the operator's oldest commitment first — Phillip's
+    note: nudges "which has changed since I cast it" rather than
+    "which is least valuable to keep." The FE resolves target
+    display info (handle/name) via existing entity endpoints
+    rather than threading display data through the error envelope.
+
 ### v1.12 — 2026-05-13
 
 - **§4.20 Trust Attestations — Slice C mutation surfaces SHIPPED.**
