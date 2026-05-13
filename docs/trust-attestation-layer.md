@@ -172,6 +172,43 @@ elapsed) automatically free their slot. Old stand-behinds fade
 naturally; new ones get the freed allocation. Operators don't have
 to manually revoke just to make room. Time recycles bandwidth.
 
+**Long-term graph health — three additional refinements** (locked
+2026-05-13 after a calcification/ghost-graph pressure test):
+
+1. **Activity-gated display.** When an attestor is dormant (no
+   platform activity in 60+ days), their attestations are visually
+   dimmed in the roster AND deducted from the aggregate
+   `stand_behind_count` shown on the target. Slots remain allocated
+   in the underlying table — when the attestor returns their
+   support resumes intact — but the *display layer and aggregate
+   count* treat them as inactive. Ghost backers stop inflating
+   present-day reputation without forcing manual cleanup.
+
+2. **Soft renewal nudge.** Every 6 months, an attestor receives a
+   notification: *"Your Stand Behind on @target is 6 months old.
+   Still backing them?"* One-tap reaffirm (resets decay, refreshes
+   timestamp), one-tap revoke (frees the slot), or ignore
+   (continues to decay naturally). Hard expiry is explicitly
+   rejected — it forces operators into portfolio-manager mode.
+   Soft renewal preserves intent without making maintenance a chore.
+
+3. **Slot graduation.** Operators who consistently reaffirm AND
+   maintain high Operator Reliability earn additional slots over
+   time, capped at +3 above their tier baseline. An Elite operator
+   with 100+ accurate attestations might unlock 8th–10th slots.
+   This is the key anti-calcification valve: high-reliability
+   operators get more *supply* to back new entrants without needing
+   to revoke existing picks. New blood gets backed by trusted
+   voices; trusted voices don't have to choose between old and new
+   commitments.
+
+The combined effect: **slots are tied to ongoing engagement, not
+one-time allocation.** "Old money" reputation calcifies into ghosts
+(dimmed); active reputation re-affirms (refreshed); high-reliability
+operators earn *more* room to back new operators (supply unlocks).
+Calcification, ghost backers, and insider entrenchment all
+addressed without introducing a new primitive.
+
 **Targets:** same as Vouch.
 
 **Visible affordance:** the Stand Behind button on a card shows
@@ -289,6 +326,56 @@ No personal attack surface (the system, not a human, surfaces the
 issue). Evidence-driven (signals come from real disputes + real
 attestations + real time-series).
 
+### Polarization-as-intelligence — the five-state synthesis
+
+Locked 2026-05-13 after a controversy-as-signal pressure test.
+
+A single "Contested" badge collapses two phenomena that are
+actually distinct: a *bad* operator that everyone agrees about, and
+a *polarizing* operator that smart operators genuinely disagree
+about. These are different intelligence shapes and deserve
+different surfaces.
+
+Each entity is classified by the synthesis layer into exactly one
+of five derived states (replacing the single contested boolean):
+
+| State | Reputation Score | Engagement | Consensus | Meaning |
+|---|---|---|---|---|
+| `untested` | Low | Low | n/a | Insufficient signal — not enough attestations to grade |
+| `well_regarded` | High | Adequate | High | Safe pick, broad agreement |
+| `poorly_regarded` | Low | Adequate | High | Genuinely bad — operators agree this entity is weak |
+| `polarizing` | High | High | Low | Smart operators disagree — examine the camps |
+| `disputed` | Low | High | Low | Actively contested, multiple open claims, examine evidence |
+
+`polarizing` is the load-bearing addition. It distinguishes
+"controversial but credible" from "broadly bad." A polarizing
+entity isn't punished; it's *surfaced*. Counter-parties get the
+signal that smart operators disagree here and can read the camps.
+
+**Substantive divergence trigger.** The Polarizing classification
+requires divergence among **high-reliability** attestors only
+(reliability standing ≥ `consistent`). Cheap dispute-bombing from
+low-reliability accounts does NOT trigger Polarizing — those
+disputes still register in `unresolved_claims_count` but they do
+not move the entity into the controversial bucket. This is the
+antibody against brigading-via-disagreement: only substantive
+disagreement among reliable operators counts.
+
+**Controversy surfaces as INTELLIGENCE, not VIRALITY.** Polarizing
+entities can be discovered through Directory sort modes
+("Polarizing this week") and may be surfaced in the Floor's
+trust-event stream as a *category* of high-signal event — but
+the Floor's primary ranking remains recency + actor-reliability,
+NOT controversy. The platform does not develop attention-economy
+dynamics around controversial entities. Surfacing controversy is
+a *user-pull* capability (filter and explore), not a *platform-push*
+default.
+
+The platform optimizes for **truth**, not safety. Truth includes
+"experts disagree here — you need to think for yourself." A
+platform that hides disagreement to seem trustworthy is making the
+opposite bet.
+
 ---
 
 ## §J.3 Soft accountability — three mechanics
@@ -341,11 +428,54 @@ attestations are not retroactively debited.** This is the key
 distinction from clawback: bad-judgment attestors gradually lose
 *future* influence; they're not punished for *past* calls.
 
+**Three protections against death-spiral and stigma** (locked
+2026-05-13 after a reliability-visibility pressure test):
+
+1. **First-call protection.** A new operator's first 5–10
+   attestations don't count against reliability. The Reliability
+   Standing badge stays at `newly_active` until the operator has
+   made enough calls for the metric to be statistically
+   meaningful. Eliminates the "one bad early call permanently
+   brands me" death spiral and removes the pressure to delay one's
+   first attestation indefinitely.
+
+2. **Gradual change, not binary transitions.** No single
+   attestation outcome can move the operator across a Reliability
+   Standing boundary. Transitions require a sustained pattern
+   (10+ attestations crossing threshold over a rolling window).
+   Prevents the "one bad call ruins my badge" terror; preserves
+   the metric's responsiveness for sustained drift in either
+   direction.
+
+3. **Asymmetric public display — the load-bearing principle.**
+   - The numeric reliability score (`0.73`) is **never** rendered
+     to other viewers. Ever. It is a weighting input only.
+   - The Reliability Standing badge on other operators' profiles is
+     **positive-only.** Public badges: `highly_reliable`,
+     `consistent`, `newly_active`. There is **no public `volatile`
+     or `unreliable` badge.** Operators whose reliability softens
+     simply lose their positive badge; they don't gain a negative
+     one.
+   - The full numeric reliability, trend direction, and recent
+     attestation outcomes are visible **only to the operator
+     themselves** — the self-mirror for self-correction, not
+     public reckoning.
+   - The asymmetry is structurally important: **rewarding good
+     judgment > punishing bad judgment.** Same math, asymmetric
+     social weight.
+
+   This collapses two failure modes at once: it removes the
+   public stigma that would chill attestation supply, AND it
+   removes "@phillip's only got 0.62, why should I listen to him?"
+   as a debate-shutdown tactic — the number is simply not visible
+   for anyone to weaponize.
+
 Surfaced as **Operator Reliability** on the attestor's own profile
 in V1 (private to them, visible to no one else, so reliability is a
-mirror not a stigma). V2 expansion surfaces to public viewers once
-the metric has matured enough to be meaningful (~6 months of attest-
-ation density).
+mirror not a stigma). V2 expansion surfaces the *positive badges*
+publicly once the metric has matured enough to be meaningful (~6
+months of attestation density); the numeric score remains
+self-only forever.
 
 ### J.3.3 Meta-dispute — the malice backstop
 
@@ -552,6 +682,38 @@ Mobile layout collapses to alternating bands: trust events / layer
 0 culture / trust events / layer 0 culture. Same hierarchy,
 different rhythm.
 
+### Surfacing controversy — intelligence, not virality
+
+(Locked 2026-05-13 alongside the polarization-state synthesis in
+§J.2.)
+
+The platform must surface high-divergence entities without
+developing attention-economy "controversy = engagement" dynamics.
+The rules:
+
+1. **Divergence rendering on entity surfaces.** Clicking the
+   `polarizing` or `disputed` state on any card opens the
+   attestation roster split visually: high-reliability supporters
+   render in one column, high-reliability detractors in the other.
+   The counter-party reads the actual humans on each side, not a
+   computed badge. This is more valuable than any aggregate
+   metric — it's the evidence of disagreement.
+
+2. **Directory `Polarizing this week` sort.** The Directory gains
+   an optional sort that surfaces entities currently in the
+   `polarizing` derived state, ranked by recency of the divergence.
+   This is a *pull* capability for counter-parties who want to
+   examine where experts disagree — explicitly not the default
+   sort.
+
+3. **Floor surfaces controversy as a category, not a ranking
+   signal.** Polarizing trust events may appear in the Floor's
+   trust-event stream (as one event class among many), but the
+   Floor's primary ranking remains recency + actor-reliability.
+   Controversy never moves an event up the feed for being
+   controversial. This is the structural antibody against the
+   controversy-as-virality loop.
+
 ### Notifications taxonomy
 
 Trust events are first-class push:
@@ -623,6 +785,96 @@ passes. If they can't, the labels and UX are wrong and we iterate.
 **No algebra leaks into the UI.** Users see labels and badges, not
 formulas or weight calculations. The math lives in the synthesis
 layer, hidden behind plain English.
+
+### Ten anti-complexity heuristics — design-system enforced
+
+Locked 2026-05-13 after a 60-second-comprehension pressure test.
+Each is an enforced rule. Violations are bugs, not style choices.
+
+1. **No naked numbers.** Every numeric display has a verbal label
+   or badge attached. Operator Reliability never renders as `0.73`;
+   it renders as `Consistent`. Reputation Score 78 renders
+   alongside `Well Regarded`. If a value can't be translated to a
+   phrase, it can't be shown.
+2. **No formulas in user copy.** Phrases like "weighted attestations
+   × decay × reliability multiplier" never appear in any visible
+   UI surface — marketing copy, tooltips, onboarding cards, hover
+   states. The user sees outcomes, not algebra.
+3. **Show humans first, aggregates second.** Before any aggregate
+   metric, the user sees specific people. The attestation roster
+   (avatars + handles + reliability standing badges) renders
+   ABOVE the Reputation Score on every card. Aggregates summarize;
+   humans are evidence.
+4. **One action per primitive, no settings panel.** Vouch is one
+   button. Stand Behind is one button. Dispute is one button.
+   There is no "configure your vouch weight" or "set vouch type"
+   — the system handles weighting; the user casts.
+5. **Show what's scarce, hide what's abundant.** Vouch button has
+   no counter (abundance). Stand Behind button always shows
+   allocation: `Stand Behind · 2/5` (scarcity). The presence of a
+   counter teaches scarcity without explanation; absence teaches
+   abundance.
+6. **Plain English for state transitions.** State change
+   notifications read as sentences: *"Your Reliability Standing
+   changed: Newly Active → Highly Reliable."* Never *"Your
+   reliability metric crossed threshold 0.85."*
+7. **Negative signals are visible BUT calibrated.** `Under Review`
+   (active dispute) is loud — safety-orange strap, top of card.
+   `Volatile` (historical) is subtle — secondary badge, neutral
+   tone. UI weight tracks the actionability of the signal: loud
+   = present-tense problem, subtle = historical context.
+8. **The action label IS the explanation.** `Stand Behind 2/5`
+   tells the user the action exists, that it's scarce, and that
+   they've used some of their allotment. No tooltip required. No
+   onboarding card needed. The action documents itself.
+9. **Empty states are designed states.** A profile with zero
+   attestations doesn't read `No attestations`. It reads *"This
+   operator hasn't been backed yet. Be the first to vouch."*
+   Empty state is an invitation, not a void.
+10. **Asymmetric positive-only public badges.** Reliability Standing
+    badges visible to other viewers are exclusively the
+    celebratory ones (`highly_reliable`, `consistent`,
+    `newly_active`). There is no public negative badge. Operators
+    whose reliability softens lose positive badges; they don't
+    gain negative ones.
+
+### First-impression rule
+
+A new user landing on any card or profile must SEE, above the
+fold on a 13-inch laptop at 100% zoom, no scrolling required, in
+this order:
+
+1. **Identity** — avatar + handle + display name
+2. **Reputation summary panel** — score + reliability standing
+   badge + trust tier chip + standing chip + negative-state
+   badge (only if triggered: `Under Review` / `Polarizing` /
+   `Disputed`)
+3. **Attestation roster** — top 5 backers visible + "+N more"
+4. **Action cluster** — Vouch / Stand Behind / Dispute / Report +
+   utility row (Follow / Message / Block)
+
+If any of these falls below the fold, the design has failed and
+iterates before the surface ships.
+
+### Edge-case heuristics
+
+- **Heavily-revoked profile.** A profile where many stand-behinds
+  have been revoked recently does NOT hide the revocations. The
+  roster shows revoked entries dimmed behind a `Show revoked`
+  toggle. Historical visibility is preserved: "no hiding the past"
+  is a core platform value.
+- **Own-profile view is additionally informative.** Signed-in
+  operator viewing their own profile sees the Operator
+  Reliability mirror, the Stand Behind slot-allocation breakdown,
+  the "recyclable slots about to free" hint, and the
+  Discovery/Consensus reliability breakdown (when that lands —
+  see §J.10 open questions). The operator sees their own
+  reflection in more detail than anyone else.
+- **Anonymous viewer.** Same surface as authed-but-non-owner
+  viewer, minus the action cluster. The reputation graph is
+  *readable* by anyone; *writable* requires authentication. This
+  is intentional — the platform's defensibility is the readability
+  of the graph.
 
 ---
 
@@ -722,6 +974,29 @@ hard-locked here:
 7. **Revocation cooldown** — can you revoke and re-attest the same
    target immediately, or is there a cooling window to prevent
    flip-flopping? Decide in Phase 1.
+8. **Activity-gating dormancy threshold** (§J.1 refinement) — 60
+   days is a plausible default for when an attestor's roster
+   contribution dims. Tune in Phase 1 against early-cohort
+   activity data.
+9. **Soft-renewal nudge cadence** (§J.1 refinement) — 6 months is
+   a default. Possibly tier-dependent or activity-dependent.
+   Decide in Phase 2 when the nudge ships.
+10. **Slot-graduation thresholds** (§J.1 refinement) — how many
+    accurate attestations to earn +1 slot? Cap at +3 above tier
+    baseline. Exact ladder TBD in Phase 1.
+11. **First-call protection count** (§J.3.2 refinement) — 5 vs. 10
+    vs. variable-by-tier. Decide in Phase 1.
+12. **Gradual-change momentum window** (§J.3.2 refinement) — 10
+    attestations crossing threshold over what time window? Decide
+    in Phase 1.
+13. **Polarizing-state divergence cutoff** (§J.2 refinement) — what
+    variance among high-reliability attestors triggers the
+    Polarizing classification? Tune in Phase 3.
+14. **Public surfacing of positive Reliability Standing badges**
+    (§J.3.2 refinement) — V1 is self-only for numeric *and*
+    badges. V2 expansion opens the positive badges to public
+    viewers; the timing depends on attestation density (~6 months
+    minimum).
 
 ---
 

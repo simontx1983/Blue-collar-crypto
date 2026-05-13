@@ -3172,11 +3172,30 @@ Cast a new attestation. Idempotent on `(attestor_user_id, target_kind, target_id
     "attestor_summary": {
       "stand_behind_slots_used": 2,
       "stand_behind_slots_total": 5,
+      "stand_behind_slots_graduated": 0,
+      "is_dormant": false,
       "operator_reliability": 0.91,
       "reliability_standing": "highly_reliable"
     }
   }
   ```
+  Notes on `attestor_summary`:
+  - `stand_behind_slots_total` is the operator's *current effective*
+    slot count = tier baseline + graduated slots (capped at +3 above
+    tier baseline per §J.1 long-term graph health refinements).
+  - `stand_behind_slots_graduated` is the count of additional slots
+    earned via consistent reaffirmation + high Operator Reliability.
+    Surfaces only to the operator themselves; omitted from other
+    viewers' responses.
+  - `is_dormant` is true when the operator has not had platform
+    activity in ≥ the §J.10-tunable dormancy threshold (60 days
+    default). Drives the activity-gated display rule (§J.1) — when
+    true, this operator's attestations dim in rosters and deduct
+    from aggregate counts on targets.
+  - `operator_reliability` numeric value renders ONLY when the
+    requesting operator is querying their own state. For
+    third-party queries the field is absent — the asymmetric
+    public-display rule (§J.3.2) forbids exposing the number.
 - **Response 200 (existing):** same shape with `status: "existing"`.
 - **Errors:**
   - `bcc_invalid_request` (400) — bad kind, target_kind, or target_id
@@ -3190,6 +3209,36 @@ Cast a new attestation. Idempotent on `(attestor_user_id, target_kind, target_id
 - **Side effects:**
   - Push + bell notification to the target operator (§I1 taxonomy extends — see §J.7)
   - Layer 2 derived-intelligence read-model invalidation on the target via the existing generation-counter pattern
+
+#### §J.2.1 `POST /bcc/v1/me/attestations/:id/reaffirm`
+
+Soft-renewal endpoint — the operator confirms they still endorse
+the attestation. Refreshes the attestation's effective timestamp
+(resets the decay curve), preserves the original audit row, and
+lands a new audit row for the reaffirm event.
+
+Driven by the soft-renewal nudge described in §J.1 long-term graph
+health refinements. The user-facing path is one-tap from the
+notification (`stand_behind_renewal_nudge` event type — see §J.7);
+this is the underlying endpoint.
+
+- **Auth:** Bearer required; viewer must own the attestation.
+- **Body:** empty
+- **Response 200:**
+  ```json
+  {
+    "id": 42,
+    "reaffirmed_at": "2026-11-13T12:34:56Z",
+    "decay_reset_to": 1.0
+  }
+  ```
+- **Errors:** `bcc_not_found` (404), `bcc_forbidden` (403),
+  `bcc_attestation_revoked` (409 — cannot reaffirm a revoked
+  attestation), `bcc_rate_limited` (429).
+- **Audit:** `action=attestation_reaffirmed` (new action type per
+  the Destructive Mutation Hardening recipe).
+- **Side effects:** decay-curve reset to age=0; Layer 2
+  derived-intelligence read-model invalidation on the target.
 
 #### §J.3 `DELETE /bcc/v1/me/attestations/:id`
 
@@ -3309,10 +3358,9 @@ Existing card and profile endpoints (`/bcc/v1/cards/:type/:id`, `/bcc/v1/users/:
   },
   "negative_signals": {
     "under_review": false,
-    "contested": true,
+    "divergence_state": "polarizing",
     "volatile": false,
-    "unresolved_claims_count": 0,
-    "divergence_signal": "moderate"
+    "unresolved_claims_count": 0
   },
   "viewer_attestation": {
     "vouch": { "id": 42, "created_at": "..." } | null,
@@ -3342,8 +3390,10 @@ The §I1 bell + push catalogue extends with five trust-event types:
 | `attestation_vouch_received` | target operator | self-attest (structurally skipped); per-(recipient, kind, target) 5-min coalescing window |
 | `attestation_stand_behind_received` | target operator | same as above |
 | `attestation_revoked` | (former) target operator | self-revoke; structural target-equals-attestor |
+| `attestation_reaffirmed` | target operator | self-reaffirm; structural target-equals-attestor |
+| `stand_behind_renewal_nudge` | the attestor themselves | self-only; cadence per the soft-renewal nudge (§J.10 tunable, 6 months default); structurally skipped if attestation already revoked |
 | `dispute_filed_against_you` | target operator | self (structurally impossible); cooldown per (recipient, filer) 24h |
-| `reliability_threshold_crossed` | the operator themselves | direction must be *crossing*, not bouncing across the same boundary inside 24h |
+| `reliability_threshold_crossed` | the operator themselves | direction must be *crossing*, not bouncing across the same boundary inside 24h; cross to a *positive* badge fires push, cross *away* from a positive badge fires bell only (asymmetric-display rule — losing a positive badge isn't a public stigma, but the operator should still know to look in their self-mirror) |
 
 Each event is opt-toggleable on `/me/notification-prefs` per the existing §I1 contract. Defaults: all five enabled. `NotificationType` enum extends; `NotificationPrefs::BELL_TYPES` and `PUSH_TYPES` extend; `NotificationViewService::resolveLink` adds:
 
@@ -3359,10 +3409,15 @@ The negative signals on entity cards are derived, not user-cast:
 | Field | Trigger | Computed at |
 |---|---|---|
 | `under_review` | open dispute exists on this target (state ∈ `{open, in_panel}`) | read-time |
-| `contested` | variance of attestation `decayed_weight` is above the contested threshold | nightly worker |
+| `divergence_state` | classification into one of five derived states per §J.2 polarization-as-intelligence — `untested` / `well_regarded` / `poorly_regarded` / `polarizing` / `disputed`. `polarizing` requires divergence among **high-reliability** attestors (reliability standing ≥ `consistent`); cheap low-reliability dispute-bombing does not trigger it | nightly worker |
 | `volatile` | `reputation_score` swung > VOLATILITY_THRESHOLD points in a rolling 90-day window | nightly worker |
 | `unresolved_claims_count` | open dispute count + open content-report count | read-time |
-| `divergence_signal` | high-reliability attestors and low-reliability attestors are voting differently on the same target | nightly worker |
+
+`divergence_state` replaces the previous separate `contested`
+boolean + `divergence_signal` string. The five-state enum is
+mutually exclusive — every entity is classified into exactly one
+state. The classification is the load-bearing intelligence surface:
+`polarizing` is not a negative state, it's a *signal worth examining*.
 
 Thresholds are intentionally not locked in this contract — they're tunable parameters lifted to a `bcc_attestation_thresholds` config table populated by the nightly worker. The contract guarantees the *shape* of the surfaces; the *numbers* tune on real data once Phase 3 lands negative-badge surfaces in the UI.
 
@@ -3627,6 +3682,40 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.9 — 2026-05-13
+
+- **§4.20 Trust Attestations — failure-mode refinement pass.** The
+  Phase 1-blocking pressure test on four risk areas (slot rigidity,
+  reliability visibility, controversy as signal, 60-second
+  comprehension) lands as constitutional amendments to
+  `docs/trust-attestation-layer.md` and the corresponding wire-level
+  changes here. Key contract deltas:
+  - `attestor_summary` shape gains `stand_behind_slots_graduated`
+    (operator-self-only) and `is_dormant` (drives the
+    activity-gated display rule per §J.1).
+  - `operator_reliability` numeric field renders ONLY when the
+    requesting operator is querying their own state — the
+    asymmetric-public-display rule (§J.3.2) forbids exposing the
+    number to third parties.
+  - `negative_signals.contested` boolean + `divergence_signal`
+    string collapsed into a single `divergence_state` enum
+    (`untested` / `well_regarded` / `poorly_regarded` /
+    `polarizing` / `disputed`). The five-state synthesis
+    distinguishes "broadly bad" from "genuinely polarizing,"
+    surfacing controversy as intelligence rather than just
+    warning.
+  - `polarizing` classification requires divergence among
+    high-reliability attestors only — substantive-divergence
+    antibody against brigading-via-disagreement.
+  - New endpoint: `POST /me/attestations/:id/reaffirm` — soft-
+    renewal one-tap path driven by the §J.1
+    `stand_behind_renewal_nudge` notification.
+  - §I1 notification taxonomy extends with `attestation_reaffirmed`
+    and `stand_behind_renewal_nudge`. The `reliability_threshold_
+    crossed` event becomes asymmetric (push on positive cross,
+    bell-only on negative cross — losing a positive badge isn't
+    public stigma).
 
 ### v1.8 — 2026-05-13
 
