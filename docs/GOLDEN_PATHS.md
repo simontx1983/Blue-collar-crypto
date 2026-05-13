@@ -974,6 +974,46 @@ grep -rn "bccFetch\|bccTrustFetch\|bccFetchAsClient" "bcc-frontend/src/lib/api/"
 
 **Failure means:** A new adapter is calling the wrong client. The envelope parser will throw `bcc_invalid_envelope` at first contact. See `audit-doc V-07 / V-29` and Agent B's coupling-audit Finding #2.
 
+### 14.6 Phase γ — Error-code branching discipline
+
+The frontend MUST branch on `err.code`, not on `err.message`. The English copy on any error code is **debugging surface only** (logs, Sentry); rewriting it should never break a UI path. The canonical helper lives at `bcc-frontend/src/lib/api/errors.ts` and exposes two functions:
+
+- `isCode(err, "bcc_unauthorized")` — type-narrowing predicate for one-off branches
+- `humanizeCode(err, copyMap, defaultCopy)` — map `err.code` to call-site-owned copy; NEVER falls back to `err.message`
+
+```bash
+# Phase γ regression guard — runs three scans:
+#   A) err.message / error.message presentation fallback (HARD FAIL)
+#   B) err.message.includes() / pattern-matching (HARD FAIL)
+#   C) err.status === N branching outside whitelist (WARN)
+bash bcc-frontend/scripts/error-contract-guard.sh
+```
+
+**Expected:** `OK — no Phase γ regressions detected.`
+
+**Failure means:** A code change has re-introduced one of the Phase γ anti-patterns. Possible causes:
+
+- A new humanizer function falls back to `err.message` in its default case → replace with `humanizeCode(err, { ... }, "Default copy.")`.
+- A new branch uses `err.message.includes("permission")` instead of typed error classes → introduce a typed error in `lib/push/register.ts` or `lib/wallet/*.ts` (browser-side) or add a server-side stable code (server-side).
+- A new branch uses `err.status === N` without a whitelist entry → either branch on `err.code` (preferred) OR document the backend file:line debt and update the whitelist comment in the script.
+
+The whitelist is deliberately tight: server-component `notFound()` short-circuits (`app/**/page.tsx`, `status === 404`), the transport-level 401 refresh hook (`lib/api/bcc-trust-client.ts`), and the documented backend-contract debt in `components/onchain/NftPickerModal.tsx`. New whitelist entries require a comment naming the backend file + a code that should land there.
+
+### 14.7 Phase γ — Client-side typed errors
+
+Browser-side failures (Notification permission, ServiceWorker registration, wallet provider unavailable, user-rejected signature) MUST be thrown as typed error classes — not as plain `new Error("text")`.
+
+Typed classes live in:
+
+- `bcc-frontend/src/lib/push/register.ts` → `PushUnsupportedError`, `ServiceWorkerError`, `PushPermissionDeniedError`, `PushSubscriptionKeysError`
+- `bcc-frontend/src/lib/wallet/keplr.ts` → `KeplrUnavailableError`, `KeplrUserRejectedError`, `KeplrError`, `KeplrUnsupportedChainError`
+- `bcc-frontend/src/lib/wallet/metamask.ts` → `MetaMaskUnavailableError`, `MetaMaskUserRejectedError`, `MetaMaskError`
+- `bcc-frontend/src/lib/wallet/phantom.ts` → `PhantomUnavailableError`, `PhantomUserRejectedError`, `PhantomError`
+
+UI consumers branch via `instanceof` and pass through `err.message` from these classes — that copy is **authored by us at construction time**, not server-supplied, so it is safe to render directly.
+
+**Failure means:** A plain `new Error("text")` thrown from a browser-side helper is the regression. Pattern-matching `err.message.includes(...)` is the downstream symptom that γ.5's Section B catches. The fix is upstream — introduce a typed error class and update consumers to branch on `instanceof`.
+
 ---
 
 ## Appendix A — Failure Severity Decision Tree

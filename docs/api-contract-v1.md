@@ -65,34 +65,140 @@ Anonymous endpoints **must still respect privacy** (per K2): if a user's binder 
 
 ### 1.4 Errors
 
-Every error follows this shape (matches WP REST conventions):
+Every error follows this shape (matches the canonical envelope; see §L5):
 
 ```json
 {
-  "code": "bcc_permission_denied",
-  "message": "You need to be Level 2 to write reviews.",
-  "status": 403,
-  "data": {
-    "rule": "O5+D2",
-    "unlock_hint": "Pull 5 cards and visit the Floor 3 days to unlock reviews."
-  }
+  "error": {
+    "code": "bcc_permission_denied",
+    "message": "You need to be Level 2 to write reviews.",
+    "status": 403,
+    "data": {
+      "rule": "O5+D2",
+      "unlock_hint": "Pull 5 cards and visit the Floor 3 days to unlock reviews."
+    }
+  },
+  "_meta": { "version": "1.0" }
 }
 ```
 
-`code` is machine-readable (snake_case, namespaced `bcc_`). `message` is user-safe (the frontend may render it directly per §L2). `data.unlock_hint` appears whenever the error is a soft gate the user can resolve themselves.
+`code` is machine-readable (snake_case, namespaced `bcc_`). `message` is human-readable copy intended for **debugging surfaces** (logs, Sentry, dev tools) and as a **last-resort presentation fallback** — but the canonical Phase γ rule is:
 
-**Standard codes:**
+> **Clients MUST branch on `code`. Clients MUST NOT branch on `message` content, `message.includes(...)`, or HTTP status alone except where this contract explicitly says so.**
 
-| Code | HTTP | Meaning |
+`data.unlock_hint` appears whenever the error is a soft gate the user can resolve themselves; prefer reading it from the `unlock_hint` companion of the relevant `PermissionsBlock` (§2.1) rather than the error body.
+
+#### 1.4.1 Error envelope contract (Phase γ)
+
+The envelope contract has three sub-rules. They are part of the public API:
+
+1. **`error.code` is stable.** Once a code ships in this document, it does not change shape, location, or meaning. New codes may be added; existing codes are never repurposed. Removing a code requires a contract version bump.
+
+2. **`error.message` is presentation, not contract.** The server is free to evolve the English copy on any code at any time — including rephrasing, localizing, or de-personalizing it. Clients that branch on the message string will silently break when the copy is rewritten.
+
+3. **HTTP status mirrors `error.status`.** They are always equal. Clients SHOULD prefer `error.code` for branching; `status` is a coarse fallback that exists for transport-level concerns (proxies, retry tooling, CDN caching).
+
+#### 1.4.2 Retryable vs non-retryable
+
+Branch on `code`, not status, to decide whether a retry can succeed:
+
+| Class | Codes | Retry? |
 |---|---|---|
-| `bcc_invalid_request` | 400 | Bad input shape or missing required field |
-| `bcc_unauthorized` | 401 | Missing/expired JWT |
-| `bcc_permission_denied` | 403 | Auth'd but not allowed (gate fail) |
-| `bcc_not_found` | 404 | Resource does not exist or is hidden from this viewer |
-| `bcc_conflict` | 409 | State collision (claim already won, batch already closed) |
-| `bcc_rate_limited` | 429 | Per-user / per-IP rate limit hit |
-| `bcc_internal` | 500 | Unhandled server error — never exposes internals |
-| `bcc_upstream_unavailable` | 502 | Upstream chain RPC / indexer down |
+| Transient | `bcc_rate_limited`, `bcc_upstream_unavailable`, `bcc_internal` | Yes, with backoff |
+| Auth | `bcc_unauthorized`, `bcc_token_expired`, `bcc_token_invalid` | Refresh first (see §1.4.3), then retry once |
+| Client error | `bcc_invalid_request`, `bcc_permission_denied`, `bcc_blocked`, `bcc_forbidden` | No — the request is wrong; show UX, do not retry |
+| Resource state | `bcc_not_found`, `bcc_conflict` | No — state has changed; refetch |
+| Configuration | `bcc_push_not_configured`, `x_not_configured`, `github_not_configured` | No — the SERVER must be reconfigured |
+
+Clients SHOULD treat any unknown `bcc_*` code as **non-retryable** by default. Retry-on-unknown is unsafe.
+
+#### 1.4.3 Auth-expired vs auth-invalid
+
+Two distinct codes, two distinct UX paths:
+
+- `bcc_token_expired` (401) — the bearer was once valid but has aged past expiry. Clients SHOULD attempt a silent refresh (`POST /bcc/v1/auth/refresh`, see §β.3) and retry once. If the refresh itself returns `bcc_token_expired` or `bcc_unauthorized`, sign the user out.
+- `bcc_token_invalid` (401) — the bearer is malformed, was revoked, or never validated. Do NOT retry. Sign the user out and route to `/login`.
+- `bcc_unauthorized` (401) — no bearer was provided. Route to `/login`.
+
+The canonical envelope's `message` is presentation; the *behavior fork* is on `code` alone.
+
+#### 1.4.4 Rate-limit semantics
+
+`bcc_rate_limited` (429) is retryable with backoff. The server MAY include `data.retry_after_seconds` (positive integer). When present, clients SHOULD wait at least that long before retrying. When absent, clients SHOULD apply at least 1.5× exponential backoff starting from 2 seconds.
+
+Rate-limit buckets are per-user (when authenticated) AND per-IP. Both must allow the request through; the more conservative rejection wins. The server never returns 429 from cached read paths (cached responses bypass throttling).
+
+#### 1.4.5 Capability-denied semantics
+
+`bcc_permission_denied` (403) is **never used for state errors** ("can't unlink — wallet doesn't exist") and **never used for input errors** ("missing chain field"). Those are `bcc_not_found` and `bcc_invalid_request` respectively.
+
+`bcc_permission_denied` always carries `data.unlock_hint` (when one applies). UI surfaces that show entity actions (endorse, claim, post, pull) MUST prefer the `permissions.can_*.allowed` boolean + `unlock_hint` resolved server-side at view-model assembly time over a 403-then-handle pattern. The 403 path is the *race condition / direct-call* fallback, not the canonical UX.
+
+Resource ownership errors use `bcc_forbidden` (403) — the viewer is authenticated but is not the owner / not authorized for this resource. Distinguishing `bcc_permission_denied` (gate not met) from `bcc_forbidden` (not the owner / wrong identity) lets clients branch the unlock-vs-redirect UX cleanly.
+
+User-relationship errors (blocked, muted) use `bcc_blocked` (403). The frontend SHOULD NOT explain why (no "this user blocked you" copy); a generic "You can't message this person" is correct.
+
+#### 1.4.6 Standard codes
+
+| Code | HTTP | Class | Meaning |
+|---|---|---|---|
+| `bcc_invalid_request` | 400 | Client error | Bad input shape or missing required field |
+| `bcc_unauthorized` | 401 | Auth | No bearer present |
+| `bcc_token_expired` | 401 | Auth | Bearer expired; refresh + retry once |
+| `bcc_token_invalid` | 401 | Auth | Bearer malformed/revoked; sign out |
+| `bcc_permission_denied` | 403 | Client error | Auth'd but gate fail (soft, `unlock_hint`) |
+| `bcc_forbidden` | 403 | Client error | Auth'd but not the owner / wrong identity |
+| `bcc_blocked` | 403 | Client error | Blocked or muted by counter-party (do not explain) |
+| `bcc_not_found` | 404 | Resource state | Resource does not exist or is hidden from this viewer |
+| `bcc_conflict` | 409 | Resource state | State collision (claim already won, batch already closed) |
+| `bcc_rate_limited` | 429 | Transient | Per-user / per-IP rate limit hit (optionally `data.retry_after_seconds`) |
+| `bcc_internal` | 500 | Transient | Unhandled server error — never exposes internals |
+| `bcc_upstream_unavailable` | 502 | Transient | Upstream chain RPC / indexer down |
+
+**Feature-specific codes** (extend the table above; same semantics):
+
+| Code | HTTP | Surfaces | Meaning |
+|---|---|---|---|
+| `bcc_signature_invalid` | 400 | Wallet link, claim, wallet-login | Signed payload didn't verify against the address |
+| `bcc_too_many_mentions` | 400 | Composer, comment | Body has more `@`-mentions than `data.max` allows |
+| `bcc_invalid_mention_target` | 400 | Composer, comment | `data.user_id` is not addressable (privacy, blocked, deactivated) |
+| `bcc_invalid_envelope` | 0 | All | Client-detected: response did not match envelope shape (NOT server-emitted) |
+| `bcc_push_not_configured` | 503 | Push subscribe | Server lacks VAPID keys |
+| `x_not_configured` | 503 | OAuth / X | Server lacks X (Twitter) OAuth config |
+| `github_not_configured` | 503 | OAuth / GitHub | Server lacks GitHub OAuth config |
+| `invalid_nonce` | 400 | OAuth callbacks | Stale or mismatched nonce |
+| `share_not_found` | 404 | OAuth / X verify | No tweet found that links this site |
+| `bcc_nft_not_owned` | 403 | NFT showcase | Selected NFT isn't in the viewer's linked wallets |
+| `bcc_wallet_not_supported` | 400 | Wallet link | Chain isn't enabled on this site |
+
+#### 1.4.7 Client-side typed errors
+
+Some failures originate in the browser before any HTTP request lands. These MUST surface as **typed error classes**, not plain `new Error("...")` strings. Pattern-matching on `err.message` is forbidden (Phase γ).
+
+| Class | Origin | Branch on |
+|---|---|---|
+| `PushUnsupportedError` | `lib/push/register.ts` | `instanceof` |
+| `ServiceWorkerError` | `lib/push/register.ts` | `instanceof` |
+| `PushPermissionDeniedError` | `lib/push/register.ts` | `instanceof` |
+| `PushSubscriptionKeysError` | `lib/push/register.ts` | `instanceof` |
+| `KeplrUnavailableError`, `KeplrUserRejectedError`, `KeplrError` | `lib/wallet/keplr.ts` | `instanceof` |
+| `MetaMaskUnavailableError`, `MetaMaskUserRejectedError`, `MetaMaskError` | `lib/wallet/metamask.ts` | `instanceof` |
+| `PhantomUnavailableError`, `PhantomUserRejectedError`, `PhantomError` | `lib/wallet/phantom.ts` | `instanceof` |
+
+These classes carry **authored** `.message` copy — that copy is safe to render directly because it's owned by our frontend, not the server.
+
+#### 1.4.8 Canonical client-side error helper
+
+The frontend ships `bcc-frontend/src/lib/api/errors.ts`, exporting two functions:
+
+```ts
+isCode(err: unknown, code: string): boolean
+humanizeCode(err: unknown, copyMap: Record<string, string>, defaultCopy: string): string
+```
+
+`humanizeCode` deliberately does NOT fall back to `err.message`. Every UI string is either authored at the call site (in `copyMap` or `defaultCopy`) or constructed by a typed client-side error class. The server's English copy is never user-visible through this helper.
+
+The two functions are the ONLY supported pattern for surfacing BCC error envelopes in components. Direct `err.message` reads in user-facing JSX are a regression and will be caught by the regression grep documented in §γ.5.
 
 ### 1.5 Pagination
 
