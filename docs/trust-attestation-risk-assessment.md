@@ -820,10 +820,60 @@ Cognitive shortcut, not bad intent.
   backers aren't visually amplified relative to other tiers.
   Cross-tier roster diversity is a visible quality of the card,
   not just a math quality.
-- **Polarizing state surfaces when Elite consensus diverges from
-  neutral consensus.** A specific divergence-pattern visible on
-  the card prompts counter-parties to read the camps, not just
-  the Elite verdict.
+- **Polarizing state surfaces under the substantive-divergence
+  rule** — divergence among high-reliability attestors (reliability
+  standing ≥ `consistent`) per the locked §J.2 trigger. When the
+  pattern appears, the divergence-rendering split on the card
+  shows supporters and detractors in separate columns, prompting
+  counter-parties to read the actual humans on each side rather
+  than relying on aggregate Elite verdict alone.
+
+### 2.11 — Emotional reactions to contested states
+
+**Profile.** Operators see their own card go `polarizing` or
+`disputed` and react defensively (filing meta-disputes,
+deactivating, retaliating, leaving platform).
+
+**Constitutional defenses:**
+- Polarizing framed as intelligence, not condemnation
+- Substantive-divergence trigger filters out brigading
+- Asymmetric public-display rule generally
+
+**Residual risk.**
+- Regardless of framing, having your card show "smart operators
+  disagree about you" is emotionally hard
+- Retention risk for operators in transition states
+
+**Watch signals.**
+- Operator retention rates after a card transitions into
+  `polarizing` or `disputed` state
+- Account deactivations clustered around state transitions
+- Increased meta-dispute filings from operators whose cards
+  recently transitioned
+
+**Hardening priority: Critical.** Retention loss after legitimate
+state classifications would create both a moral and a product
+problem — operators with contested reputations leaving means the
+graph loses signal density at exactly the moments it matters most.
+
+**Specific implementation guidance:**
+- **Pre-publication notification.** 24-hour heads-up before a
+  card transitions into `polarizing` or `disputed`: *"Your card
+  is approaching a Polarizing classification. Here's the
+  divergence pattern. Here's what it means. Here's what you can
+  do."* Gives the operator time to prepare emotionally and engage
+  constructively, not react defensively.
+- **Self-only `why am I in this state` view.** A self-mirror
+  surface that explains the classification in plain English with
+  the underlying signals visible: *"Five high-reliability
+  operators have stood behind you. Two have filed disputes. The
+  reliability of the dispute filers is high. This pattern
+  triggers Polarizing classification."* Helps the operator
+  contextualize rather than catastrophize.
+- **In-product guidance for contested operators.** Link to
+  "what does Polarizing mean and what should I do?" guidance
+  directly from the operator's own card view. Treats the state
+  as a moment to engage, not a verdict to suffer.
 
 ### 2.12 — Judgment fatigue / emotional exhaustion (long-horizon)
 
@@ -876,7 +926,11 @@ mechanic prevents.
 - Sudden disengagement clusters — multiple high-reliability
   operators going quiet around the same time
 
-**Hardening priority: Important.**
+**Hardening priority: Important** (feeds Existential vulnerability
+§3.5 via the asymmetric-attrition compound; §5 implementation
+synthesis tracks the §2.12 + §3.4 operational mitigations as a
+single Critical bundle item, since the existential consequence is
+fed by the compound rather than by §2.12 alone).
 
 **Specific implementation guidance:**
 - **Attestation is never required.** No mechanic, anywhere, ever,
@@ -897,53 +951,6 @@ mechanic prevents.
   that long-term silence is normal and acceptable; not every
   operator participates in attestation at all, and that's fine.
   Reduces the implicit pressure that "good operators attest."
-
-### 2.11 — Emotional reactions to contested states
-
-**Profile.** Operators see their own card go `polarizing` or
-`disputed` and react defensively (filing meta-disputes,
-deactivating, retaliating, leaving platform).
-
-**Constitutional defenses:**
-- Polarizing framed as intelligence, not condemnation
-- Substantive-divergence trigger filters out brigading
-- Asymmetric public-display rule generally
-
-**Residual risk.**
-- Regardless of framing, having your card show "smart operators
-  disagree about you" is emotionally hard
-- Retention risk for operators in transition states
-
-**Watch signals.**
-- Operator retention rates after a card transitions into
-  `polarizing` or `disputed` state
-- Account deactivations clustered around state transitions
-- Increased meta-dispute filings from operators whose cards
-  recently transitioned
-
-**Hardening priority: Critical.** Retention loss after legitimate
-state classifications would create both a moral and a product
-problem — operators with contested reputations leaving means the
-graph loses signal density at exactly the moments it matters most.
-
-**Specific implementation guidance:**
-- **Pre-publication notification.** 24-hour heads-up before a
-  card transitions into `polarizing` or `disputed`: *"Your card
-  is approaching a Polarizing classification. Here's the
-  divergence pattern. Here's what it means. Here's what you can
-  do."* Gives the operator time to prepare emotionally and engage
-  constructively, not react defensively.
-- **Self-only `why am I in this state` view.** A self-mirror
-  surface that explains the classification in plain English with
-  the underlying signals visible: *"Five high-reliability
-  operators have stood behind you. Two have filed disputes. The
-  reliability of the dispute filers is high. This pattern
-  triggers Polarizing classification."* Helps the operator
-  contextualize rather than catastrophize.
-- **In-product guidance for contested operators.** Link to
-  "what does Polarizing mean and what should I do?" guidance
-  directly from the operator's own card view. Treats the state
-  as a moment to engage, not a verdict to suffer.
 
 ---
 
@@ -1222,72 +1229,101 @@ watch signals trigger.
    copy only.
 10. **Empty-state copy on profiles** (§2.9) — heuristic 9
     elevated to risk-mitigation status.
+11. **Cadence-pressure + judgment-fatigue operational bundle**
+    (§3.4 elevated to Critical + §2.12 feeding existential §3.5).
+    Bundled because the constitution has no mechanical lever for
+    either; the mitigations are operational and presentational.
+    Phase 1 commitments:
+    - Tenure-aware onboarding messaging (silence is normal and
+      acceptable; no cadence expectation)
+    - Notification taxonomy explicitly forbids "you haven't
+      attested in N days" reminder prompts
+    - Self-mirror surfaces fatigue dimensions as self-awareness,
+      not judgment — calibrated weekly cadence, not real-time
+      ticker
+    - Closed-network interview rounds explicitly listen for the
+      five cadence-pressure language patterns (§3.4) and for
+      judgment-fatigue indicators (§2.12)
+    - Editorial / community-management posture: the platform's
+      voice explicitly affirms legitimate disengagement
+    Constitutional rule: no future PR may add a mechanic that
+    pressures operators to attest at any cadence. Rejected by
+    reference to this bundle.
 
 ### Important — should land in Phase 1 or 1.5
 
-11. **Account-age visibility on entity cards** (§1.5) — surface
+12. **Account-age visibility on entity cards** (§1.5) — surface
     "created N days ago."
-12. **Reputation-damage cap from frivolous disputes** (§1.3) —
+13. **Reputation-damage cap from frivolous disputes** (§1.3) —
     threshold escalation after dismissed-dispute pattern.
-13. **Visible filer track record on disputes** (§1.3) — surface
+14. **Visible filer track record on disputes** (§1.3) — surface
     on dispute page.
-14. **Group cooldown on dispute filing** (§1.3) — cohort-level
+15. **Group cooldown on dispute filing** (§1.3) — cohort-level
     cooldown.
-15. **Sub-threshold dormancy detection** (§1.4) — flag for
+16. **Sub-threshold dormancy detection** (§1.4) — flag for
     moderator review.
-16. **Tighter dormancy threshold for slot-counting** (§1.4) —
+17. **Tighter dormancy threshold for slot-counting** (§1.4) —
     30-day attestation-activity threshold.
-17. **Polarizing-stickiness bidirectional rule** (§1.7) —
+18. **Polarizing-stickiness bidirectional rule** (§1.7) —
     sustained-consensus required to clear; faster un-polarizing
     on frivolous resolution.
-18. **Cluster-aware polarization detection** (§1.7) — independence
+19. **Cluster-aware polarization detection** (§1.7) — independence
     of diverging opinions matters.
-19. **Revocation cooldown on Stand Behind slots** (§1.8) — 7-day
+20. **Revocation cooldown on Stand Behind slots** (§1.8) — 7-day
     delay before slot frees on revocation.
-20. **First-mover credit single-use per target** (§1.8) —
+21. **First-mover credit single-use per target** (§1.8) —
     revocation forfeits the first-mover position.
-21. **Tier-mobility visibility in self-mirror** (§1.9) — operators
+22. **Tier-mobility visibility in self-mirror** (§1.9) — operators
     see their own promotion path.
-22. **Directory "Recently emerging" filter** (§2.1) —
+23. **Directory "Recently emerging" filter** (§2.1) —
     discoverability for under-attested operators.
-23. **Dispute education in onboarding** (§2.3) — lower perceived
+24. **Dispute education in onboarding** (§2.3) — lower perceived
     social cost.
-24. **Panel-adjudication transparency** (§2.3, §2.5) — outcomes
+25. **Panel-adjudication transparency** (§2.3, §2.5) — outcomes
     + reasoning visible.
-25. **Dispute private until panel acceptance** (§2.5) — reduces
+26. **Dispute private until panel acceptance** (§2.5) — reduces
     fear of public exposure.
-26. **Visual de-emphasis of badges** (§2.4) — design-system
+27. **Visual de-emphasis of badges** (§2.4) — design-system
     enforcement on badge prominence.
-27. **No badge-progress public surface** (§2.4) — progress is
+28. **No badge-progress public surface** (§2.4) — progress is
     self-only.
-28. **Self-mirror weekly-cadence design** (§2.7) — trend
-    direction, not real-time ticker.
-29. **Spike-detection weight dampener** (§2.8) — bulk-vouching
+29. **Self-mirror weekly-cadence design** (§2.7) — trend
+    direction, not real-time ticker. (Item 29 is the cadence
+    rule; the sub-track breakdown lives separately as Phase 1.5
+    scope per the Phase 1 plan §11 split — basic Reliability
+    Standing badge ships Phase 1; Consensus / Early Read sub-
+    tracks ship Phase 1.5.)
+30. **Spike-detection weight dampener** (§2.8) — bulk-vouching
     gets baseline weight only.
-30. **Vouch confirmation step** (§2.8) — light friction to
+31. **Vouch confirmation step** (§2.8) — light friction to
     prevent reflex-vouching.
-31. **Onboarding-funnel attestation prompt** (§2.9) — request a
+32. **Onboarding-funnel attestation prompt** (§2.9) — request a
     vouch from someone you know to escape zero-state.
 
 ### Watch-only — instrument and observe
 
-32. **Selective-vouch self-mirror surfacing** (§1.6)
-33. **Reputation farming self-mirror dimension** (§1.10)
-34. **Late-mover self-mirror nudge** (§2.2)
-35. **Newly Active visibility examples** (§2.6)
-36. **Card UX for cross-tier roster diversity** (§2.10) — A/B
+33. **Selective-vouch self-mirror surfacing** (§1.6)
+34. **Reputation farming self-mirror dimension** (§1.10)
+35. **Late-mover self-mirror nudge** (§2.2)
+36. **Newly Active visibility examples** (§2.6)
+37. **Card UX for cross-tier roster diversity** (§2.10) — A/B
     candidate during closed-network testing
 
 ---
 
 ## Part 6 — Phase 1 plan integration
 
-The Phase 1 scope-freeze plan (separate doc, to be written next)
-must explicitly incorporate items 1–10 from §5 as required
-deliverables. Items 11–31 are strongly recommended for Phase 1 but
-acceptable to defer to Phase 1.5 with explicit cause. Items 32–36
-are post-launch tunings; no Phase 1 work required beyond
-instrumenting their watch signals.
+The Phase 1 scope-freeze plan
+(`docs/trust-attestation-phase-1-plan.md`) explicitly incorporates
+items 1–11 from §5 as required deliverables. Items 12–32 are
+strongly recommended for Phase 1 but acceptable to defer to Phase
+1.5 with explicit cause. Items 33–37 are post-launch tunings; no
+Phase 1 work required beyond instrumenting their watch signals.
+
+Item numbering was renumbered when item 11 (cadence-pressure +
+judgment-fatigue operational bundle) was added 2026-05-13 during
+the consistency audit reconciliation pass. Previous Important and
+Watch-only items shifted by one.
 
 The closed-network testing protocol (also separate doc, to be
 written before code lands) must build dashboards for every signal

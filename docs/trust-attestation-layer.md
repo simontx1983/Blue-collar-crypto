@@ -289,71 +289,31 @@ single-axis popularity metric.
 Negative signals at V1 are **derived patterns** the system surfaces
 automatically. No human casts them; the synthesis layer detects them.
 
-### Disputed Status
+### Why derived signals, not human-cast downvotes
 
-**Trigger:** active dispute filed against the entity (state =
-`open` or `in_panel`).
+The principle that drives the rest of this section:
 
-**Surface:** prominent badge on the card — `⚠ Under Review`.
+- The presence of disputes carries process cost (filing requires
+  evidence + tier-gate + stake)
+- The *absence* of consensus among high-reliability operators is
+  itself a signal
+- The variance of attestation weight surfaces opinion divergence
+- The volatility of the derived Reputation Score surfaces
+  instability
 
-**Lifecycle:** clears when the dispute resolves. A resolved dispute
-that found in the entity's favor leaves no badge. A resolved dispute
-that found against them feeds Reliability Volatility (below).
+No brigading vector — you cannot coordinate to trigger a
+detected-pattern. No personal attack surface — the system, not a
+human, surfaces the issue. Evidence-driven — every signal traces
+to real disputes, real attestations, real time-series.
 
-### Contested Reputation
-
-**Trigger:** high variance in attestation weight on a target.
-
-When 10 high-reliability operators vouch + 5 file disputes (or vice
-versa), the synthesis layer detects opinion divergence and surfaces
-`⚠ Contested`. The threshold is variance-based, not count-based, so
-small entities can be Contested too.
-
-**Surface:** secondary badge on the card; clickable to see the
-attestation roster sorted by polarity.
-
-### Unresolved Claims
-
-**Trigger:** open dispute count > 0 OR open complaint count > 0.
-
-**Surface:** numeric badge — `2 unresolved claims`. Quantitative
-honesty without editorializing.
-
-### Reliability Volatility
-
-**Trigger:** the entity's Reputation Score has swung by > N points
-in a rolling window (e.g. 20-point swing in 90 days).
-
-**Surface:** `⚠ Volatile` badge. Means: this entity's reputation
-isn't stable. Counter-parties may want to wait.
-
-### Attestation Divergence
-
-**Trigger:** high-reliability operators and low-reliability
-operators are voting differently on the same target.
-
-Specifically: if attestors with reliability > 0.8 mostly vouch and
-attestors with reliability < 0.3 also mostly vouch, that's consensus
-(low divergence). If the high-reliability group is split or
-divergent from the low-reliability group, that's signal.
-
-**Surface:** subtle indicator on the attestation roster — the high-
-reliability and low-reliability sub-rosters render separately so
-the divergence is *seeable*, not just computed.
-
-### Why this works
-
-Nobody cast a downvote. The system detected the negative pattern
-from:
-- The presence of disputes (which carry process cost)
-- The *absence* of consensus among high-reliability operators
-- The variance of attestation weight
-- The volatility of the derived Reputation Score
-
-No brigading vector (you can't coordinate detected-patterns).
-No personal attack surface (the system, not a human, surfaces the
-issue). Evidence-driven (signals come from real disputes + real
-attestations + real time-series).
+Supplemental entity-level signals that compose with the five-state
+classification — `under_review` (real-time flag for an open
+dispute), `reputation_volatile` (rapid score swing in a rolling
+window), `unresolved_claims_count` (open dispute + open
+content-report total) — are specified in
+`docs/api-contract-v1.md` §J.8. The five-state classifier below is
+the headline; the supplemental fields are additional context the
+synthesis layer surfaces alongside it.
 
 ### Polarization-as-intelligence — the five-state synthesis
 
@@ -725,13 +685,19 @@ into the synthesis) but conceptually separate.
 
 ### Reliability Standing
 
-A categorical badge derived from Operator Reliability:
+A categorical badge derived from Operator Reliability. **Public
+badges are positive-only per the asymmetric-display rule (§J.3.2).**
+Operators whose reliability softens lose their positive badge; they
+never gain a negative one.
 
 - **Highly Reliable** — reliability > 0.85 with > 20 attestations
 - **Consistent** — reliability 0.65–0.85 with > 20 attestations
 - **Newly Active** — < 20 attestations (insufficient data)
-- **Volatile** — reliability 0.4–0.65 with > 20 attestations
-- **Untested** — 0 attestations
+
+(Operators whose reliability falls below the Consistent floor with
+> 20 attestations simply have no public badge. The numeric
+reliability is visible only to the operator themselves via the
+self-mirror.)
 
 The badge format keeps the metric human. Nobody reads
 "reliability 0.73" and reacts; everyone reads "Consistent" and
@@ -776,8 +742,14 @@ weight. Layout, top to bottom:
    - Reliability Standing badge (if attestor; otherwise omitted)
    - Trust Tier chip
    - Standing chip (`✓ GOOD STANDING` / `⚠ UNDER REVIEW`)
-   - Negative-signal badges (Contested, Volatile, Under Review,
-     Unresolved Claims — only when triggered)
+   - Negative-state badge (only when triggered): the five-state
+     `divergence_state` from §J.2 renders one of `Polarizing` /
+     `Disputed` / `Poorly Regarded` when applicable (the positive
+     and untested states surface without a badge)
+   - Supplemental signals (when triggered): `Under Review` (active
+     dispute), `Reputation Volatile` (rapid score swing),
+     `Unresolved Claims` (numeric count). These compose with the
+     divergence_state classification per §J.2.
 3. **Derived intelligence panel** — Confidence gauge (validator) or
    Builder/Creator Reputation gauge (others), with subcomponent
    breakdown for inspection
@@ -915,15 +887,21 @@ validate. The mechanics:
 
 ### Notifications taxonomy
 
-Trust events are first-class push:
+Trust events are first-class push. Seven event types in the V1
+taxonomy (full schema + recipient rules + Phase 1 vs Phase 1.5
+sequencing locked in `docs/api-contract-v1.md` §J.7):
 
 - `attestation_vouch_received` — "@phillip vouched for you"
 - `attestation_stand_behind_received` — "@marcus stood behind you"
 - `attestation_revoked` — "@phillip revoked their vouch"
+- `attestation_reaffirmed` — "@marcus reaffirmed their stand behind"
+- `stand_behind_renewal_nudge` — self-only soft renewal nudge driven
+  by §J.1 long-term graph health refinements
 - `dispute_filed_against_you` — formal challenge incoming
-- `dispute_resolved` — outcome, in your favor or against
 - `reliability_threshold_crossed` — "Your Reliability Standing
   changed: Newly Active → Consistent"
+  (asymmetric per §J.3.2 — push on cross-into-positive, bell-only
+  on cross-out-of-positive)
 
 Each opt-toggleable on `/me/notification-prefs` per the existing
 §I1 contract.
@@ -947,19 +925,50 @@ Specifically, they must understand:
   reliability volatility
 - **What the platform values** — accuracy, accountability, evidence
 
-The onboarding flow accomplishes this in four cards:
+The onboarding flow accomplishes this in four cards. Copy locked
+here; implementation matches verbatim per
+`docs/trust-attestation-phase-1-plan.md` §8.2.
 
-1. **"This is an operator intelligence network."** — One sentence
-   product framing. Single visual: a card with a Reputation Score
-   and attestation roster.
-2. **"Three things you can do."** — Vouch / Stand Behind / Dispute,
-   icons + one-line explanations + the scarcity badge on Stand
-   Behind.
-3. **"Your reputation grows from what others say about you. Your
-   reliability is your own track record."** — Plain English split
-   between the two metrics.
-4. **"Cast your first vouch."** — Walks the user through vouching
-   for a sample card. The feeling of the action is the lesson.
+**Card 1 — "What this is."**
+> Blue Collar Crypto is an operator intelligence network. Operators
+> back, dispute, or stay silent about other operators. The platform
+> synthesizes those signals into a reputation graph counter-parties
+> consult before trusting someone with capital, code, or governance.
+
+**Card 2 — "Three things you can do."**
+> **Vouch** — "I think this operator is competent." Abundant — back
+> as many as you want.
+>
+> **Stand Behind** — "I'm putting my reputation on this operator's
+> work." Scarce. You only have a few high-conviction slots; spend
+> them deliberately.
+>
+> **Dispute** — "This needs panel review." Formal. Requires
+> evidence and panel adjudication.
+
+**Card 3 — "How reputation works."**
+> Your **reputation** grows from what others say about you.
+> Your **reliability** is your own track record as a judge of
+> others.
+>
+> Both grow slowly. Both are durable.
+>
+> **Absence of attestation is not a negative signal.** Most
+> operators are silent — that's normal and acceptable. The graph
+> doesn't expect you to attest on any schedule. Cast attestations
+> only when you have genuine judgment to offer.
+
+**Card 4 — "Cast your first vouch."**
+> Walks the user through vouching for a sample operator card. The
+> feeling of the action is the lesson. Card 3's teaching prevents
+> the user from interpreting their own initial low Reputation
+> Score as a negative signal — silence is normal.
+
+Card 3's "absence is not a negative signal" teaching is
+**load-bearing** per the risk-assessment §2.9 mitigation for the
+"no vouch = bad" interpretation drift — the most likely path to
+existential cultural failure. The exact wording must ship verbatim;
+softening or rephrasing reopens the failure mode.
 
 If a user completes onboarding and can answer "what's the difference
 between Vouch and Stand Behind?" correctly, the comprehension test
@@ -974,7 +983,7 @@ passes. If they can't, the labels and UX are wrong and we iterate.
 | Layer 1 formal negative | `dispute` | "Dispute" |
 | Composite entity score | `reputation_score` | "Reputation Score" |
 | Per-attestor track record | `operator_reliability` | "Operator Reliability" |
-| Categorical reliability badge | `reliability_standing` | "Highly Reliable" / "Consistent" / "Volatile" / "Newly Active" / "Untested" |
+| Categorical reliability badge (public; positive-only per §J.3.2) | `reliability_standing` | "Highly Reliable" / "Consistent" / "Newly Active" |
 | Existing tier enum | `trust_tier` | "Elite" / "Trusted" / "Neutral" / "Caution" / "Risky" |
 | Validator-card synthesis | `validator_confidence` | "Confidence" |
 | Project-card synthesis | `builder_reputation` | "Builder Reputation" |
@@ -1145,7 +1154,7 @@ before code touches anything.
 - Confidence decay function applied at read time
 - `OperatorReliabilityRepository` read-model
 - `ContentReportService.TARGET_KINDS` extends to `['feed_item',
-  'user_profile', 'card']`
+  'user_profile', 'validator_card', 'project_card', 'creator_card']`
 - Profile + card action cluster (Vouch / Stand Behind / Dispute /
   Report + utility cluster)
 - Attestation roster surface on profile/card

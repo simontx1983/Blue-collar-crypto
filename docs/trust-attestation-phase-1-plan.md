@@ -19,12 +19,14 @@ capacity changes, sequence reshuffles per §11.
 Phase 1 delivers the foundational layer of the Trust Attestation
 Layer: the three V1 primitives (Vouch / Stand Behind / Dispute),
 the core attestation table + service, the synthesis math (decay,
-reliability, divergence-state classification), the entity card +
-profile action cluster + attestation roster + reputation summary
-panel, the self-mirror reliability view, the four-card onboarding
-flow, the critical-priority hardening from the risk assessment
-§5 items 1–10, and the closed-network testing instrumentation
-hooks.
+reliability, divergence-state classification, the 40% Elite-tier
+weight cap, and the 1.3× signal-source diversity multiplier), the
+entity card + profile action cluster + attestation roster +
+reputation summary panel, the self-mirror reliability view (basic
+Reliability Standing in Phase 1; sub-tracks in Phase 1.5 per §11),
+the four-card onboarding flow, the critical-priority hardening
+from the risk assessment §5 items 1–11, and the closed-network
+testing instrumentation hooks.
 
 **Phase 1 ships the *philosophy* in code, not the full system.**
 Phase 1.5 + Phase 2 + Phase 3 extend the surfaces and harden the
@@ -63,11 +65,14 @@ Before any Phase 1 code lands:
 - `AttestationService` (generalized from existing
   `EndorsementService`)
 - Synthesis layer extensions: decay function, Reputation Score
-  composite, Operator Reliability computation, divergence-state
-  classification, Stand Behind bandwidth tracking
+  composite (with the 40% Elite-tier weight cap per §J.4 item 8
+  and the 1.3× signal-source diversity multiplier per §J.4 item
+  9 explicitly wired), Operator Reliability computation,
+  divergence-state classification, Stand Behind bandwidth tracking
 - Critical-risk-mitigation services:
   - `WalletAgeWeighter`
-  - `NewAccountReputationVelocityCap`
+  - `NewEntityReputationVelocityCap` (caps new ENTITY scores in
+    their first 60 days; not a user-account scope)
   - `ReciprocityPenaltyResolver`
   - `CohortOverlapDampener`
   - `MetaDisputeFilerEligibility`
@@ -254,9 +259,12 @@ shipped. Closed-network testing instrumentation in place.
 - Day 1: `WalletAgeWeighter` service. Plumbed into the synthesis
   layer's weight calculation. Wallet-age sourced from existing
   `bcc_wallet_links.linked_at`.
-- Day 1: `NewAccountReputationVelocityCap`. Applied at read-time
+- Day 1: `NewEntityReputationVelocityCap`. Applied at read-time
   in the Reputation Score synthesis — clamps any entity's score
-  to ≤ 50 for the first 60 days of its existence.
+  to ≤ 50 for the first 60 days of its existence. (Service name
+  reflects entity-card scope; the cap applies to new validator /
+  project / creator / profile entities, not to user-account
+  reputation per se.)
 - Day 2: `ReciprocityPenaltyResolver`. Detects A→B + B→A patterns
   in attestation data; applies baseline weight (no diversity
   bonus) to mutual attestations.
@@ -405,9 +413,10 @@ SELECT
   e.revoked_at
 FROM wp_bcc_endorsements e
 JOIN wp_posts p ON p.ID = e.page_id
-WHERE
-  p.post_type IN ('peepso-validator', 'peepso-project', 'peepso-creator')
-  AND e.revoked_at IS NULL OR e.revoked_at IS NOT NULL;
+WHERE p.post_type IN ('peepso-validator', 'peepso-project', 'peepso-creator');
+-- revoked_at column is copied verbatim above; no WHERE filter
+-- on it — both active and revoked endorsement rows migrate, with
+-- their revoked_at timestamps preserved.
 ```
 
 Followup: a second pass computes `attestation_order_in_target`
@@ -463,9 +472,10 @@ Each is a focused single-responsibility service:
 - `WalletAgeWeighter::weightFor(int $attestorUserId): float`
   — returns a [0.5, 1.0] multiplier based on the attestor's
   oldest wallet-link age. Plumbed into the synthesis layer.
-- `NewAccountReputationVelocityCap::cap(int $targetId,
+- `NewEntityReputationVelocityCap::cap(int $targetId,
   int $rawScore): int` — read-time clamp; first 60 days of
-  entity existence, score ≤ 50.
+  entity existence, score ≤ 50. (Service name reflects entity-
+  card scope; not a user-account scope.)
 - `ReciprocityPenaltyResolver::weightFor(int $attestorUserId,
   string $targetKind, int $targetId): float` — detects mutual
   attestations and returns the baseline-only multiplier.
@@ -507,8 +517,9 @@ amendment first per §A4.
 
 ### 8.2 Onboarding four-card flow (load-bearing per §2.9)
 
-The cards land in the existing onboarding sequence. Copy is
-locked here — implementation matches verbatim:
+The cards land in the existing onboarding sequence. Copy is also
+locked in the constitution `trust-attestation-layer.md` §J.7; both
+docs must stay in sync. Implementation matches verbatim:
 
 **Card 1 — "What this is."**
 > Blue Collar Crypto is an operator intelligence network. Operators
@@ -566,7 +577,7 @@ The 10 Critical items from `trust-attestation-risk-assessment.md`
 | # | Item | Phase 1 owner | Status |
 |---|---|---|---|
 | 1 | Wallet-age weighting | `WalletAgeWeighter` (Wk 4) | TBD |
-| 2 | New-account Reputation Score velocity cap | `NewAccountReputationVelocityCap` (Wk 4) | TBD |
+| 2 | New-entity Reputation Score velocity cap | `NewEntityReputationVelocityCap` (Wk 4) | TBD |
 | 3 | Reciprocity penalty | `ReciprocityPenaltyResolver` (Wk 4) | TBD |
 | 4 | Cohort-cluster overlap dampener | `CohortOverlapDampener` (Wk 4) | TBD |
 | 5 | Meta-dispute filer eligibility | `MetaDisputeFilerEligibility` (Wk 4) | TBD |
@@ -575,9 +586,10 @@ The 10 Critical items from `trust-attestation-risk-assessment.md`
 | 8 | Onboarding "absence is not negative" teaching | Onboarding Card 3 (Wk 3–4) | TBD |
 | 9 | No "0 attestations" numeric display | Empty-state copy (Wk 3) | TBD |
 | 10 | Empty-state copy on profiles | Empty-state copy (Wk 3) | TBD |
+| 11 | Cadence-pressure + judgment-fatigue operational bundle | Onboarding tenure copy (Wk 3) + self-mirror cadence design (Wk 3) + notification taxonomy exclusion of "haven't attested in N days" reminders (Wk 4) + community-management editorial baseline (out-of-band) | TBD |
 
 A Phase 1 PR cannot land without explicit verification of the
-items it touches. The Phase 1 final review checks all 10.
+items it touches. The Phase 1 final review checks all 11.
 
 ## 10. Acceptance criteria
 
@@ -626,20 +638,30 @@ capacity changes:
 
 If the deadline forces scope reduction:
 
-- **Cut last:** items 1–10 Critical from §9 — these are
-  non-negotiable per the risk assessment.
-- **Cut first (in order):** self-mirror reliability view (Wk 3
-  Day 4 — can ship as basic standing badge in Phase 1, full
-  sub-track breakdown in Phase 1.5); pre-publication notification
-  UX (can ship as bell-only in Phase 1, full 24-hour heads-up
-  in Phase 1.5); attestation-roster divergence-rendering split
-  (can ship simple sorted list in Phase 1, split view in Phase
-  1.5).
+- **Cut last (non-negotiable):** items 1–11 Critical from §9 —
+  these are non-negotiable per the risk assessment.
+- **Self-mirror reliability view is split** into two pieces (per
+  the consistency-audit reconciliation 2026-05-13):
+  - **Phase 1 (Critical, non-cuttable):** basic Reliability
+    Standing badge on own profile + the weekly-cadence design
+    rule (trend direction shown, not a real-time ticker). This
+    is the §2.7 status-anxiety mitigation; cutting it reopens
+    that risk.
+  - **Phase 1.5 (cuttable from Phase 1):** the Consensus
+    Reliability + Early Read Accuracy sub-track numeric
+    breakdown. Operators see a single Reliability Standing in
+    Phase 1; sub-tracks land Phase 1.5.
+- **Cut first (in order, only if needed):** sub-track breakdown
+  (see above), pre-publication notification UX (can ship as
+  bell-only in Phase 1, full 24-hour heads-up in Phase 1.5),
+  attestation-roster divergence-rendering split (can ship
+  simple sorted list in Phase 1, split view in Phase 1.5).
 
-Phase 1 must not ship without items 1–10 from §9. Cutting any
+Phase 1 must not ship without items 1–11 from §9. Cutting any
 of them creates either a security gap (Sybil, cartel, laundering)
 or a cultural gap ("no vouch = bad" interpretation drift, contested-
-state retention) that the architecture relies on.
+state retention, cadence-pressure norm emergence) that the
+architecture relies on.
 
 ## 12. Open questions to resolve during planning
 

@@ -3406,8 +3406,6 @@ Read the attestation roster for an entity.
           "reliability_standing": "highly_reliable",
           "badges": ["highly_reliable", "early_read"]
         },
-        "weight_at_time": 1.0,
-        "decayed_weight": 0.93,
         "is_pre_consensus_pick": true,
         "attestation_order": 1,
         "context_note": "...",
@@ -3417,14 +3415,23 @@ Read the attestation roster for an entity.
     ],
     "summary": {
       "vouch_count": 14,
-      "stand_behind_count": 3,
-      "vouch_weight_sum": 9.7,
-      "stand_behind_weight_sum": 2.4,
-      "divergence_signal": "low" | "moderate" | "high"
+      "stand_behind_count": 3
     },
     "pagination": { "page": 1, "per_page": 24, "total_pages": 1, "has_more": false }
   }
   ```
+  Note on synthesis invisibility (§J.4.1): per-attestation numeric
+  weight fields (`weight_at_time`, `decayed_weight`) are server-side
+  only and never appear in third-party roster responses. Sorting
+  by decayed weight is supported via the `sort` query parameter
+  (sorting is performed server-side; the resulting order surfaces
+  the ranking without exposing the weights themselves). The
+  `summary.divergence_signal` field has been removed; the
+  authoritative divergence surface is the entity view-model's
+  `divergence_state` enum (§J.6, five-state classification).
+  Self-only views (e.g. an operator querying their own
+  attestation surface) MAY include the weights — that's a future
+  endpoint, not in V1 scope.
 - **Cache:** `private, max-age=30`. Underlying read model is generation-counter invalidated by `POST` / `DELETE` against the same target.
 
 #### §J.5 `GET /bcc/v1/me/reliability`
@@ -3520,6 +3527,8 @@ Each event is opt-toggleable on `/me/notification-prefs` per the existing §I1 c
 
 - `attestation_vouch_received`, `attestation_stand_behind_received` → `/u/{attestor_handle}` (the source of the attestation)
 - `attestation_revoked` → `/u/{former_attestor_handle}`
+- `attestation_reaffirmed` → `/u/{attestor_handle}` (same target as the original attestation event)
+- `stand_behind_renewal_nudge` → `/me/attestations` (the operator's own attestation list, where the one-tap reaffirm / revoke / ignore choice is presented)
 - `dispute_filed_against_you` → `/disputes/{dispute_id}`
 - `reliability_threshold_crossed` → `/me/reliability`
 
@@ -3555,7 +3564,7 @@ These are deliberately not locked in this contract — they're tuning decisions 
 1. Stand Behind slot counts (`bcc_attestation_thresholds.stand_behind_slots_by_tier`)
 2. Decay curve shape (`bcc_attestation_thresholds.decay_curve_function` + breakpoints)
 3. Operator Reliability formula weights
-4. Negative-badge thresholds (volatility points, contested variance, divergence cutoff)
+4. Negative-state thresholds — `volatile` flag trigger points (reputation score swing magnitude × window length), and the `polarizing` state's high-reliability-attestor divergence cutoff (per the §J.8 five-state classification). The constitution's §J.10 has the full open-question list; this is the wire-relevant subset.
 5. Context-note character cap (current contract: 280; revisit in Phase 1)
 6. Revocation cooldown (current contract: none; revisit if flip-flop abuse emerges)
 7. Public surfacing of Operator Reliability on others' profiles (V1 self-only; V2 expansion gated on ≥ 6 months of attestation density)
@@ -3803,6 +3812,41 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.11 — 2026-05-13
+
+- **§4.20 Trust Attestations — consistency reconciliation pass.**
+  Cleanup-only commit; no new architecture, no new mechanics. Wire
+  changes:
+  - **Removed `weight_at_time` and `decayed_weight` from public
+    roster items** (`GET /entities/:target_kind/:target_id/
+    attestations`). Per the §J.4.1 synthesis-invisibility
+    invariant, per-attestation numeric weights are server-side
+    only. Sorting by decayed weight remains supported via the
+    `sort` query parameter (server-side sort, weights not
+    returned).
+  - **Removed `summary.divergence_signal`** from the roster
+    response. The authoritative divergence surface is the entity
+    view-model's `divergence_state` enum (§J.8 five-state
+    classification); the roster summary had legacy parallel
+    vocabulary that drifted from the locked model.
+  - **Added missing `resolveLink` mappings** for
+    `attestation_reaffirmed` → `/u/{attestor_handle}` and
+    `stand_behind_renewal_nudge` → `/me/attestations`.
+  - **§J.10 item 4 vocabulary updated** from legacy "contested
+    variance" wording to the locked "polarizing divergence cutoff."
+  - Constitution (`docs/trust-attestation-layer.md`) and risk
+    assessment (`docs/trust-attestation-risk-assessment.md`)
+    received parallel cleanup: removed the obsolete five-badge
+    negative-signal model superseded by the §J.8 five-state
+    synthesis; removed `Volatile` from the public Reliability
+    Standing enumeration per the §J.3.2 asymmetric-display rule;
+    aligned constitution onboarding Card 3 with the Phase 1 plan
+    verbatim copy (load-bearing "absence is not a negative
+    signal" teaching); aligned notification taxonomy to the 7-event
+    list (added `attestation_reaffirmed` and
+    `stand_behind_renewal_nudge`; dropped the stale
+    `dispute_resolved` reference).
 
 ### v1.10 — 2026-05-13
 
