@@ -115,6 +115,96 @@ console.log({ status: r.status, body: await r.json() });
 
 **Recovery:** see Section 1.1 / 1.2; if the JWT bridge is broken, fall back to logging in via the SPA and re-running the test.
 
+### 1.5 Silent-refresh round-trip (Phase β.3)
+
+The `/bcc/v1/auth/refresh` endpoint exchanges a near-expiry-or-recently-expired JWT for a fresh one. `JwtToken::REFRESH_GRACE_SECONDS = 86400` allows up to 1 day of post-exp survivability so a mobile client that's been backgrounded across the 7-day TTL doesn't force a re-login.
+
+Browser steps (signed in):
+
+```js
+const s1 = await (await fetch('/api/auth/session', { credentials: 'include' })).json();
+const wp = 'http://blue-collar-crypto-custom.local';
+
+// 1. Happy path
+const r1 = await fetch(`${wp}/wp-json/bcc/v1/auth/refresh`, {
+  method: 'POST',
+  headers: { Authorization: `Bearer ${s1.bccToken}` },
+});
+const fresh = (await r1.json())?.data?.token;
+console.log({ status: r1.status, tokenChanged: fresh !== s1.bccToken });
+
+// 2. Negative paths
+const r2 = await fetch(`${wp}/wp-json/bcc/v1/auth/refresh`, { method: 'POST' });
+const r3 = await fetch(`${wp}/wp-json/bcc/v1/auth/refresh`, {
+  method: 'POST',
+  headers: { Authorization: 'Bearer xyz.malformed.token' },
+});
+console.log({ missing: r2.status, malformed: r3.status });
+```
+
+**Expected:**
+- Happy path: `status: 200, tokenChanged: true`, fresh token has the canonical `{data, _meta}` envelope.
+- Missing bearer: `401 bcc_unauthorized`.
+- Malformed bearer: `401 bcc_unauthorized` (every JWT failure mode collapses to one code — no info leak).
+
+**Failure means:**
+- 200 with `tokenChanged: false` → endpoint returned the original token. Decoder isn't reaching `JwtToken::encode`. Check the handler at `AuthEndpoint::refresh`.
+- 401 on happy path with valid bearer → either the bearer is already past `REFRESH_GRACE_SECONDS + TTL_SECONDS` (real expiry; re-login required), or signature / revocation / suspended-user gate blocked. Check `wp-content/debug.log`.
+- 429 → Throttle bucket exhausted. The endpoint is per-IP at 30/60s; an integration smoke shouldn't trip it unless re-run rapidly.
+
+### 1.6 Full SPA refresh-on-401 chain
+
+Verifies the client.ts retry-on-401 + NextAuth session-update merge end-to-end. The session-update path has TWO load-bearing requirements that NextAuth 4.x silently no-ops if either is omitted:
+
+1. Body must include `csrfToken` from `GET /api/auth/csrf`.
+2. Payload must be wrapped under `data:` — NextAuth unwraps that and passes it as `session` to the jwt callback when `trigger === 'update'`.
+
+Both gotchas are documented in `bcc-frontend/src/lib/api/client.ts`'s `tryRefresh` helper.
+
+Browser steps (signed in):
+
+```js
+const s1 = await (await fetch('/api/auth/session', { credentials: 'include' })).json();
+const wp = 'http://blue-collar-crypto-custom.local';
+
+// 1. Refresh
+const r = await fetch(`${wp}/wp-json/bcc/v1/auth/refresh`, {
+  method: 'POST',
+  headers: { Authorization: `Bearer ${s1.bccToken}` },
+});
+const refreshed = await r.json();
+const fresh = refreshed.data.token;
+const newExp = Date.now() + refreshed.data.expires_in * 1000;
+
+// 2. CSRF + session update (the two-gotcha shape)
+const { csrfToken } = await (await fetch('/api/auth/csrf', { credentials: 'include' })).json();
+await fetch('/api/auth/session', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  credentials: 'include',
+  body: JSON.stringify({
+    csrfToken,
+    data: { bccToken: fresh, bccTokenExpiresAt: newExp },
+  }),
+});
+
+// 3. Re-read session
+await new Promise(r => setTimeout(r, 200));
+const s2 = await (await fetch('/api/auth/session', { credentials: 'include' })).json();
+console.log({
+  tokenChanged: s1.bccToken !== s2.bccToken,
+  sessionCarriesFreshToken: s2.bccToken === fresh,
+  expAdvanced: s2.bccTokenExpiresAt > s1.bccTokenExpiresAt,
+});
+```
+
+**Expected:** every field `true`.
+
+**Failure means:**
+- `tokenChanged: true` but `sessionCarriesFreshToken: false` → NextAuth received the update but didn't merge. Most likely cause: missing `csrfToken` OR missing `data:` wrapper. Both are required.
+- `tokenChanged: false` → refresh endpoint is broken (see Section 1.5).
+- `expAdvanced: false` → jwt callback in `auth.ts` isn't reading `session.bccTokenExpiresAt` from the merge payload. Check the `trigger === 'update'` branch.
+
 ---
 
 ## Section 2 — Account Security Flows
