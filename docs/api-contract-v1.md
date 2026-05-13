@@ -3116,6 +3116,283 @@ Slim header-badge endpoint — returns the total count of conversations with unr
 
 ---
 
+### 4.20 Trust Attestations (§J)
+
+The Trust Attestation Layer is foundational product architecture, locked in `docs/trust-attestation-layer.md`. This section encodes the wire-level contracts that follow from that design. **Read the design doc first** — this section assumes the reader knows the three-layer architecture, the three V1 primitives, the bandwidth model on Stand Behind, and the soft-accountability stack.
+
+> **Status:** locked 2026-05-13. Phase 1 implementation gates on a separate scope-frozen plan. Endpoint shapes below are the V1 contract surface; routes ship as Phase 1 lands.
+
+#### §J.1 Primitives
+
+Three Layer-1 attestation kinds at V1:
+
+| Kind | Semantic | Conviction | Bandwidth |
+|---|---|---|---|
+| `vouch` | "Competent." | Low/medium | Unlimited (throttle-gated) |
+| `stand_behind` | "Reputation-staked." | High | Tier-scaled slot cap (Elite 7 / Trusted 5 / Neutral 3 / Caution+Risky 0) |
+| `dispute` | "Formal challenge." | Adversarial | Tier-gated (≥ trusted), evidence-required, stake-required |
+
+Each kind operates on the same target taxonomy:
+
+```
+target_kind ∈ { user_profile, validator_card, project_card, creator_card }
+```
+
+`endorse` is **not** a separate V1 verb — it collapses into `vouch` with `target_kind` in the `*_card` set.
+
+#### §J.2 `POST /bcc/v1/me/attestations`
+
+Cast a new attestation. Idempotent on `(attestor_user_id, target_kind, target_id, kind)` — a duplicate returns the existing row with `status: "existing"`.
+
+- **Auth:** Bearer required.
+- **Body:**
+  ```json
+  {
+    "kind": "vouch" | "stand_behind",
+    "target_kind": "user_profile" | "validator_card" | "project_card" | "creator_card",
+    "target_id": 12345,
+    "context_note": "Optional ≤ 280-char free-text rationale."
+  }
+  ```
+- **Response 201 (created):**
+  ```json
+  {
+    "id": 42,
+    "status": "created",
+    "kind": "vouch",
+    "target_kind": "user_profile",
+    "target_id": 12345,
+    "weight_at_time": 1.0,
+    "context_note": "...",
+    "created_at": "2026-05-13T12:34:56Z",
+    "decay": {
+      "current_weight": 1.0,
+      "as_of": "2026-05-13T12:34:56Z"
+    },
+    "attestor_summary": {
+      "stand_behind_slots_used": 2,
+      "stand_behind_slots_total": 5,
+      "operator_reliability": 0.91,
+      "reliability_standing": "highly_reliable"
+    }
+  }
+  ```
+- **Response 200 (existing):** same shape with `status: "existing"`.
+- **Errors:**
+  - `bcc_invalid_request` (400) — bad kind, target_kind, or target_id
+  - `bcc_attestation_self` (422) — attestor and target identity match
+  - `bcc_attestation_ineligible` (403) — tier/standing gate failed; `error.unlock_hint` carries the plain-English path forward
+  - `bcc_attestation_bandwidth_exhausted` (409) — only for `kind=stand_behind` when slots are full; body includes a `slot_holders[]` array so the FE can render the "drop one to add one" picker server-supplied
+  - `bcc_rate_limited` (429) — per-user attestation throttle tripped
+  - `bcc_attestation_fraud_blocked` (403) — fingerprint dedup or fraud orchestrator denied
+- **Cache:** `private, no-store`. Mutation endpoint.
+- **Audit:** lands a row in `bcc_trust_activity` per the Destructive Mutation Hardening recipe — `action ∈ {attestation_vouch_created, attestation_stand_behind_created}`.
+- **Side effects:**
+  - Push + bell notification to the target operator (§I1 taxonomy extends — see §J.7)
+  - Layer 2 derived-intelligence read-model invalidation on the target via the existing generation-counter pattern
+
+#### §J.3 `DELETE /bcc/v1/me/attestations/:id`
+
+Revoke an existing attestation.
+
+- **Auth:** Bearer required; viewer must own the attestation.
+- **Response 200:**
+  ```json
+  {
+    "id": 42,
+    "revoked_at": "2026-05-13T18:01:23Z",
+    "attestor_summary": {
+      "stand_behind_slots_used": 1,
+      "stand_behind_slots_total": 5
+    }
+  }
+  ```
+- **Errors:** `bcc_not_found` (404), `bcc_forbidden` (403), `bcc_rate_limited` (429).
+- **Idempotency:** re-DELETE on an already-revoked row returns 200 with the existing `revoked_at` (no audit row on the no-op — per Destructive Mutation Hardening invariant 1, "audit on real state transition only").
+- **Audit:** `action=attestation_revoked` on real transition.
+- **Notification:** push + bell to the (former) target — `attestation_revoked` event type.
+- **Reputation Score impact on attestor:** none. Revocation is healthy signal of changing assessment, not punishment.
+
+#### §J.4 `GET /bcc/v1/entities/:target_kind/:target_id/attestations`
+
+Read the attestation roster for an entity.
+
+- **Auth:** anonymous OR Bearer (viewer-aware fields vary).
+- **Query:**
+  - `kind` ∈ `{vouch, stand_behind, all}` — default `all`
+  - `sort` ∈ `{decayed_weight, recency, reliability}` — default `decayed_weight`
+  - `include_revoked` (`0|1`) — default `0`
+  - `page` (1..20), `per_page` (1..50, default 24)
+- **Response 200:**
+  ```json
+  {
+    "items": [
+      {
+        "id": 42,
+        "kind": "stand_behind",
+        "attestor": {
+          "id": 7,
+          "handle": "phillip",
+          "display_name": "Phillip",
+          "avatar_url": "...",
+          "reputation_score": 78,
+          "reliability_standing": "highly_reliable"
+        },
+        "weight_at_time": 1.0,
+        "decayed_weight": 0.93,
+        "context_note": "...",
+        "created_at": "...",
+        "revoked_at": null
+      }
+    ],
+    "summary": {
+      "vouch_count": 14,
+      "stand_behind_count": 3,
+      "vouch_weight_sum": 9.7,
+      "stand_behind_weight_sum": 2.4,
+      "divergence_signal": "low" | "moderate" | "high"
+    },
+    "pagination": { "page": 1, "per_page": 24, "total_pages": 1, "has_more": false }
+  }
+  ```
+- **Cache:** `private, max-age=30`. Underlying read model is generation-counter invalidated by `POST` / `DELETE` against the same target.
+
+#### §J.5 `GET /bcc/v1/me/reliability`
+
+Returns the signed-in operator's own reliability surface. Mirror, not stigma — V1 is self-only; V2 expansion opens this to public viewers once decay history is dense enough to be meaningful (see §J.10).
+
+- **Auth:** Bearer required.
+- **Response 200:**
+  ```json
+  {
+    "operator_reliability": 0.87,
+    "reliability_standing": "highly_reliable",
+    "since_attestation_count": 28,
+    "stand_behind_allocation": {
+      "slots_total": 5,
+      "slots_used": 2,
+      "slots_recyclable_count": 1,
+      "next_slot_unlocks_at": null
+    },
+    "track_record": {
+      "total_attestations": 28,
+      "outcomes": {
+        "targets_disputed_and_upheld": 1,
+        "targets_disputed_and_dismissed": 0,
+        "targets_received_further_attestations": 19,
+        "targets_clean_and_active": 8
+      }
+    },
+    "trends": {
+      "reliability_30d_ago": 0.91,
+      "reliability_90d_ago": 0.95,
+      "direction": "softening" | "steady" | "improving"
+    }
+  }
+  ```
+- **Cache:** `private, max-age=60`.
+- **`slots_recyclable_count`:** number of currently-allocated Stand Behind slots whose decayed_weight has crossed the 50% threshold and are eligible to auto-free on the next write. FE renders this as a soft "you have N slots about to recycle" hint.
+
+#### §J.6 Entity view-model extensions
+
+Existing card and profile endpoints (`/bcc/v1/cards/:type/:id`, `/bcc/v1/users/:handle`) carry the following additions:
+
+```json
+{
+  "reputation_score": 78,
+  "reliability_standing": "consistent",
+  "attestation_summary": {
+    "vouch_count": 14,
+    "stand_behind_count": 3,
+    "vouch_weight_sum": 9.7,
+    "stand_behind_weight_sum": 2.4
+  },
+  "negative_signals": {
+    "under_review": false,
+    "contested": true,
+    "volatile": false,
+    "unresolved_claims_count": 0,
+    "divergence_signal": "moderate"
+  },
+  "viewer_attestation": {
+    "vouch": { "id": 42, "created_at": "..." } | null,
+    "stand_behind": { "id": null, "created_at": null }
+  },
+  "permissions": {
+    "can_vouch":        { "allowed": true,  "unlock_hint": null },
+    "can_stand_behind": { "allowed": false, "unlock_hint": "All 5 Stand Behind slots are in use. Drop one to add this." },
+    "can_dispute":      { "allowed": false, "unlock_hint": "Reach Trusted tier to file disputes." },
+    "can_report":       { "allowed": true,  "unlock_hint": null }
+  }
+}
+```
+
+**`trust_score` cosmetic rename to `reputation_score`:** the API emits BOTH `trust_score` (legacy) AND `reputation_score` (new canonical) for one release cycle. Frontend reads `reputation_score`. `trust_score` is removed in the release after Phase 1 ships.
+
+**`reputation_tier` and `card_tier` unchanged** — they remain the categorical-stratification axes per §C1. Reputation Score is the continuous axis they categorize.
+
+**`is_in_good_standing` unchanged** — sourced from `UserViewService::GOOD_STANDING_TIERS` per §G2.
+
+#### §J.7 Notification event taxonomy (§I1 extension)
+
+The §I1 bell + push catalogue extends with five trust-event types:
+
+| Event | Recipient | Skipped when |
+|---|---|---|
+| `attestation_vouch_received` | target operator | self-attest (structurally skipped); per-(recipient, kind, target) 5-min coalescing window |
+| `attestation_stand_behind_received` | target operator | same as above |
+| `attestation_revoked` | (former) target operator | self-revoke; structural target-equals-attestor |
+| `dispute_filed_against_you` | target operator | self (structurally impossible); cooldown per (recipient, filer) 24h |
+| `reliability_threshold_crossed` | the operator themselves | direction must be *crossing*, not bouncing across the same boundary inside 24h |
+
+Each event is opt-toggleable on `/me/notification-prefs` per the existing §I1 contract. Defaults: all five enabled. `NotificationType` enum extends; `NotificationPrefs::BELL_TYPES` and `PUSH_TYPES` extend; `NotificationViewService::resolveLink` adds:
+
+- `attestation_vouch_received`, `attestation_stand_behind_received` → `/u/{attestor_handle}` (the source of the attestation)
+- `attestation_revoked` → `/u/{former_attestor_handle}`
+- `dispute_filed_against_you` → `/disputes/{dispute_id}`
+- `reliability_threshold_crossed` → `/me/reliability`
+
+#### §J.8 Negative-signal computation (Layer 2 read model)
+
+The negative signals on entity cards are derived, not user-cast:
+
+| Field | Trigger | Computed at |
+|---|---|---|
+| `under_review` | open dispute exists on this target (state ∈ `{open, in_panel}`) | read-time |
+| `contested` | variance of attestation `decayed_weight` is above the contested threshold | nightly worker |
+| `volatile` | `reputation_score` swung > VOLATILITY_THRESHOLD points in a rolling 90-day window | nightly worker |
+| `unresolved_claims_count` | open dispute count + open content-report count | read-time |
+| `divergence_signal` | high-reliability attestors and low-reliability attestors are voting differently on the same target | nightly worker |
+
+Thresholds are intentionally not locked in this contract — they're tunable parameters lifted to a `bcc_attestation_thresholds` config table populated by the nightly worker. The contract guarantees the *shape* of the surfaces; the *numbers* tune on real data once Phase 3 lands negative-badge surfaces in the UI.
+
+#### §J.9 Reports extend to user_profile and card target kinds
+
+`ContentReportService::TARGET_KINDS` extends from `['feed_item']` to `['feed_item', 'user_profile', 'validator_card', 'project_card', 'creator_card']`. The existing report pipeline (validate → throttle → insert → §A3 emit + auto-hide threshold + admin-queue notifier) is reused with no changes to the report row shape — only the target_kind column accepts new values.
+
+Self-report rejection is preserved: reporter_user_id !== target's owner_user_id (resolved server-side from the target via the existing resolver pattern).
+
+#### §J.10 Open questions deferred to Phase 1 plan
+
+These are deliberately not locked in this contract — they're tuning decisions made in the Phase 1 scope-freeze plan against real performance and product data:
+
+1. Stand Behind slot counts (`bcc_attestation_thresholds.stand_behind_slots_by_tier`)
+2. Decay curve shape (`bcc_attestation_thresholds.decay_curve_function` + breakpoints)
+3. Operator Reliability formula weights
+4. Negative-badge thresholds (volatility points, contested variance, divergence cutoff)
+5. Context-note character cap (current contract: 280; revisit in Phase 1)
+6. Revocation cooldown (current contract: none; revisit if flip-flop abuse emerges)
+7. Public surfacing of Operator Reliability on others' profiles (V1 self-only; V2 expansion gated on ≥ 6 months of attestation density)
+
+#### §J.11 Migration
+
+- Existing `bcc_endorsements` rows materialize into `bcc_trust_attestations` as `kind=vouch, target_kind=*_card` on the Phase 1 migration. Original timestamps preserved.
+- Existing `ReactionTypeRegistry::KIND_VOUCH` and `KIND_STAND_BEHIND` post-reaction rows are frozen at Layer 0. They remain queryable, surface on post UIs as +1-style content reactions, and contribute **zero** to Layer 2 synthesis going forward.
+- `KIND_SOLID` and `KIND_FIRE` reactions are unchanged — always Layer 0, never contributed to trust graph.
+- `trust_score` field cosmetically renames to `reputation_score` in API responses; both emitted for one release cycle.
+
+---
+
 ## 5. Encoded rules — quick reference
 
 ### 5.1 §N7 — gated actions always visible
@@ -3350,6 +3627,30 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.8 — 2026-05-13
+
+- **§4.20 Trust Attestations (§J)** — new section. Locks the wire-level
+  contract for the Trust Attestation Layer (foundational product
+  architecture, full design in `docs/trust-attestation-layer.md`). Three
+  V1 primitives: `vouch` (abundant, low/medium conviction), `stand_behind`
+  (scarce, tier-scaled bandwidth slots — Elite 7 / Trusted 5 / Neutral
+  3 / Caution+Risky 0), `dispute` (formal adversarial). Endpoints:
+  `POST /me/attestations`, `DELETE /me/attestations/:id`,
+  `GET /entities/:target_kind/:target_id/attestations`,
+  `GET /me/reliability`. Entity view-model gains `reputation_score`
+  (cosmetic rename of `trust_score`, dual-emitted for one release
+  cycle), `reliability_standing`, `attestation_summary`,
+  `negative_signals` (derived: `under_review`, `contested`, `volatile`,
+  `unresolved_claims_count`, `divergence_signal` — no human-cast
+  downvote primitive). §I1 notification taxonomy extends with five
+  trust-event types. `ContentReportService::TARGET_KINDS` extends to
+  `['feed_item', 'user_profile', 'validator_card', 'project_card',
+  'creator_card']`. Existing `bcc_endorsements` rows migrate as
+  `kind=vouch, target_kind=*_card`; existing `KIND_VOUCH` /
+  `KIND_STAND_BEHIND` post reactions freeze at Layer 0 with zero
+  trust-graph weight. Phase 1 implementation gates on a separate
+  scope-frozen plan.
 
 ### v1.7 — 2026-05-09
 
