@@ -440,7 +440,7 @@ The platform is intentionally resilient — fail-closed throttles, fail-open cac
   | Plugin | Block key | Source | Surfaces |
   |---|---|---|---|
   | bcc-core | `throttle` | `Throttle::health()` | `rate_limiter_ready`, `backend` (trust_engine / object_cache / none), `degraded`, `last_success_ts` |
-  | bcc-core | `degradation_metrics` | `DegradationMetrics::healthSnapshot()` | `any_active` triage flag + per-subsystem current/previous-hour counts. Currently wired subsystems: `throttle`, `null_trust_read`, the 10 `null_*` NullService activations, `peepso_absence` (18 events), `search_lkg`, `read_model_fallback`, `audit_log_swallow` (4 events — 3 read-path + 1 write-path as of 2026-05-13), `legacy_ajax` (9 events). The canonical-subsystem map lives in bcc-core/bcc-core.php — new subsystems wired into `DegradationMetrics::record()` should add their `(subsystem, events)` tuple there. |
+  | bcc-core | `degradation_metrics` | `DegradationMetrics::healthSnapshot()` | `any_active` triage flag + per-subsystem current/previous-hour counts. Currently wired subsystems: `throttle`, `null_trust_read`, the 10 `null_*` NullService activations, `peepso_absence` (18 events), `search_lkg`, `read_model_fallback`, `audit_log_swallow` (4 events — 3 read-path + 1 write-path as of 2026-05-13), `legacy_ajax` (9 events), `account_security_mail` (5 events — AccountSecurityMailer wp_mail failures on credential / wallet change side-channel emails; treat sustained activation as P1). The canonical-subsystem map lives in bcc-core/bcc-core.php — new subsystems wired into `DegradationMetrics::record()` should add their `(subsystem, events)` tuple there. |
   | bcc-search | `search` | bcc-search/bcc-search.php | `ft_index_installed` flag + `persistent_cache` prerequisite |
   | bcc-trust | `trust_engine` | `Plugin.php:1743` | `recalc_queue_depth`, `read_model_drift`, `read_model_coverage` |
   | bcc-trust | `cron_status` | `Plugin.php:1743` | per-canonical-cron `next_run_ts` + `in_seconds`. `null` means "not currently scheduled" — alarm signal that a hook fell out of the activation registry. Covers: `bcc_disputes_reconcile`, `bcc_gated_group_provision`, `bcc_gated_group_reconcile_sweep`, `bcc_nft_eth_indexer_tick`, `bcc_nft_enrichment_tick`, `bcc_helius_dedupe_sweep`, `bcc_trust_daily_graph_update`, `bcc_trust_process_recalculations`. |
@@ -615,6 +615,46 @@ when its insert returns false. Sustained activation on the
 the write path; investigate DB connectivity, table existence, or
 write contention before forensic queries surface the gap on incident
 review.
+
+### Side-channel security email (credential + identity-bearing changes only)
+
+A fifth invariant applies to a narrower set of routes: any mutation
+that changes a credential OR an identity-bearing artifact (email,
+password, account deletion, wallet link / unlink) must send a
+plain-text security email out-of-band, regardless of whether
+in-app or push notifications also fire.
+
+The threat model: an attacker with a live session can suppress
+in-app + push signals because they read the same auth context.
+The user's email inbox is a separate trust anchor.
+
+Helper:
+[`BCC\Trust\Core\Services\AccountSecurityMailer`](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/AccountSecurityMailer.php)
+exposes five static methods (`emailChanged`, `passwordChanged`,
+`accountDeleted`, `walletLinked`, `walletUnlinked`). Call AFTER
+the audit-log row lands. Constraints (load-bearing):
+
+- **Never throws.** Caller's mutation has committed.
+- **Never retries.** Security emails are time-sensitive; a delayed
+  retry from a sweep cron creates a worse confusion than no
+  email at all.
+- **Plain text only.** No HTML rendering surface.
+- **No secrets in body.** No password, no full wallet address.
+  Truncate wallets first-6/last-4; mask new email when echoed in
+  the old-address canary.
+- **Email-change special case.** Send to BOTH old and new
+  addresses (independent sends).
+- **Account deletion special case.** Capture email + display_name
+  BEFORE `wp_delete_user` — caller passes them to the mailer
+  explicitly, since by the time the mailer runs `get_userdata`
+  returns false.
+
+Failures record
+`DegradationMetrics::record('account_security_mail', <event>)` per
+the taxonomy registered in bcc-core/bcc-core.php. Sustained
+activation here = P1 alert, not warning: the user who was supposed
+to receive the canary did not, and the audit_log row is the only
+remaining trail.
 
 ### What the recipe does NOT cover
 
