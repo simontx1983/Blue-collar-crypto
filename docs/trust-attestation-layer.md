@@ -23,6 +23,35 @@ If a brand-new user can't understand this in 60 seconds, the design has
 failed. Every primitive, every surface, every label in this document
 exists in service of that comprehension test.
 
+### Anti-viral-by-design — constitutional principle
+
+The platform optimizes for **judgment quality, operator
+intelligence, and signal density.** It does NOT optimize for
+engagement velocity, virality, or attention capture. This
+distinction is constitutional, not stylistic — future feature work
+that reintroduces engagement-economy mechanics (vanity metrics,
+streak-style retention hooks beyond §O1, viral-share incentives,
+controversy-as-feed-ranking, real-time leaderboards, attention-
+chasing notifications) violates the architecture even if it
+performs better against a short-term engagement KPI.
+
+Concrete invariants this principle enforces (each already encoded
+elsewhere in this doc; named here so they can be checked as a set):
+
+- No leaderboards anywhere
+- No real-time "who's casting now" stream
+- No prediction-market UX language
+- The Floor ranks by recency + actor-reliability, never by
+  controversy or engagement velocity
+- Negative signals are surfaced as intelligence (pull) not as
+  virality drivers (push)
+- Synthesis mechanics that shape the graph (caps, multipliers,
+  weight rules) are invisible to users
+
+If a future PR is hard to reconcile with this principle, the PR
+needs an explicit constitutional amendment to this document
+before it can land. The principle precedes any individual feature.
+
 ---
 
 ## §J.0 The three-layer architecture
@@ -477,6 +506,85 @@ publicly once the metric has matured enough to be meaningful (~6
 months of attestation density); the numeric score remains
 self-only forever.
 
+### J.3.2.1 Early Read — the independent-discovery sub-track
+
+Locked 2026-05-13 after an elite-attestor centralization pressure
+test. The earlier soft-accountability mechanics all reward "be
+right" — but "be right by waiting for consensus" is structurally
+easier than "be right by independent discovery." Without an
+offsetting reward, game theory pushes everyone toward consensus
+alignment and the graph centralizes around Elite opinion. This
+sub-track is the antibody.
+
+**Early-conviction multiplier on Stand Behind reliability.** When
+the synthesis layer computes reliability credit for a stand-behind
+attestation, the credit is multiplied by how early the attestation
+was cast relative to consensus emergence on that target:
+
+| Stand-behind order | Reliability-credit multiplier |
+|---|---|
+| 1st on a target | 2.5× |
+| 2nd–5th | 1.5× |
+| 6th–20th | 1.0× (baseline) |
+| 21st+ | 0.5× (consensus-following) |
+
+Same outcome math (target later proves out or doesn't); but
+reliability *credit* scales with how early the attestor saw it.
+First movers who are right gain reliability faster than
+bandwagoners who are right. First movers who are wrong are still
+protected by first-call protection (§J.3.2). The result:
+independent discovery becomes a viable path to reliability
+standing, distinct from consensus alignment.
+
+**Scope:** the early-conviction multiplier applies to **Stand
+Behind only.** Vouches are abundant and low-cost; multiplying
+their reliability impact would incentivize vouch-spamming obscure
+targets to game discovery. Stand Behind is already scarce via the
+bandwidth model — composing the two scarcity layers (limited slots
++ early-credit multiplier) makes the discovery reward expensive to
+fake and meaningful to earn.
+
+**Per-attestor split into two sub-tracks** (self-mirror only —
+public surface is unified through Reliability Standing):
+
+- **Consensus Reliability** — how often you correctly back
+  operators that subsequent attestation flow confirms
+- **Early Read Accuracy** — how often your pre-consensus calls
+  prove out (subject to the multiplier table above)
+
+The mirror surfaces both so operators can see their own judgment
+shape. *"You're a strong Early Read with moderate Consensus
+Reliability"* is different from *"You're a strong Consensus
+Validator."* Both are legitimate forms of operator intelligence;
+the platform celebrates both styles.
+
+**Public surface — the `Early Read` badge** (asymmetric-display
+rule preserved). An operator who has consistently identified
+operators before consensus formed earns the `Early Read` badge,
+visible to other viewers on their profile. There is no negative
+counterpart — operators who don't make first-mover calls are simply
+consensus-track operators, which is a legitimate style. The
+platform doesn't pressure everyone into being a discoverer.
+
+**First-mover protection.** The early-conviction multiplier does
+NOT apply to the operator's first 5 stand-behinds. Lottery-ticket
+attestations don't shortcut the path; the operator earns into the
+Early Read reward path the same way they earn into reliability.
+
+**Retrospective surfacing only.** First-mover events surface on the
+Floor *after* subsequent attestations validate the call (typically
+days or weeks later — see §J.6). There is no real-time "who's
+casting now" stream. The recognition is retrospective, never
+race-to-attest.
+
+**No leaderboard, ever.** Both Consensus Reliability and Early
+Read Accuracy surface to the operator themselves and as
+celebratory badges on profiles. Neither metric appears as a ranked
+list. There is no "Top 10 Early Read Operators" page. The metrics
+inform self-knowledge and platform-side surfacing; they don't fuel
+competitive optimization. This is a constitutional invariant per
+the anti-viral-by-design principle above.
+
 ### J.3.3 Meta-dispute — the malice backstop
 
 Deliberate malice (coordinated stand-behind rings, vouch-bombing a
@@ -526,6 +634,66 @@ anti-inflation stack:
    operators cannot attest at all; their would-be attestations
    produce no weight. The graph defends itself against low-tier
    actors trying to seed weight by attesting.
+8. **Elite-tier weight cap — anti-cartelization.** The aggregate
+   Elite-tier contribution to any single entity's Reputation Score
+   is capped at **40%.** An entity backed exclusively by Elite
+   operators mathematically cannot exceed Reputation Score 70 —
+   reaching the highest scores requires cross-tier validation. This
+   is the structural antibody against the Elite cohort becoming a
+   de facto editorial board with sole gatekeeping power over the
+   top of the graph. Elite attestations still carry the most weight
+   *per attestation*; the cap is on the aggregate contribution to a
+   single target, not on individual Elite influence.
+9. **Signal-source diversity multiplier.** A vouch from an attestor
+   who has never previously attested for anything in the target's
+   immediate network gets a **1.3×** diversity multiplier in
+   synthesis. Vouches from attestors with significant overlap with
+   the target's existing roster get baseline weight. Same number of
+   backers, different intelligence value — entities backed by a
+   diverse cohort signal broader applicability. Specialization is
+   not penalized (a Cosmos validator vouching for other Cosmos
+   validators is baseline-weighted, not debited); reaching across
+   the graph is additionally rewarded.
+
+### J.4.1 Synthesis invisibility — load-bearing invariant
+
+Locked 2026-05-13. The Elite-weight cap (§J.4 item 8), the
+diversity multiplier (item 9), the early-conviction multiplier
+(§J.3.2.1), and every other synthesis-shaping mechanic in this
+document are **invisible to users.** They never surface in:
+
+- UI copy, tooltips, hover states, or onboarding cards
+- Admin dashboards visible to operators
+- API response fields exposed to clients (the math runs server-
+  side; only the *outputs* — Reputation Score, Reliability
+  Standing, divergence state — are exposed)
+- Warnings like "this entity's score is suppressed because…" or
+  "your attestation weight is capped because…"
+- Marketing copy or platform messaging
+
+The synthesis layer **quietly shapes the graph.** Users perceive
+outcomes (a Reputation Score number, a divergence-state badge, a
+trust-event in their feed). They do not perceive — and the
+platform does not advertise — the rules that produce those
+outcomes. This is an extension of the §J.7 "no formulas in user
+copy" heuristic, generalized to synthesis *mechanics*, not just
+formulas.
+
+Why: the moment users perceive active intervention mechanics, two
+failure modes emerge. (1) Users start optimizing against the
+rules instead of demonstrating judgment — the rules become the
+game. (2) Public debate about the rules eclipses public debate
+about the entities being graded. The platform's authority degrades
+into rules-lawyering. The synthesis must be evidently fair (the
+graph produces sensible results) without being visibly mechanical
+(no one is looking at the formula).
+
+This invariant survives implementation. If a future PR adds a
+synthesis mechanic AND surfaces it to users, the PR is rejected
+even if the surfacing is well-intentioned (e.g., "in the spirit of
+transparency"). Transparency at the mechanism level is the wrong
+trade — the platform earns trust by producing accurate, useful
+intelligence, not by exposing its own arithmetic.
 
 ---
 
@@ -714,6 +882,37 @@ The rules:
    controversial. This is the structural antibody against the
    controversy-as-virality loop.
 
+### Surfacing Early Read — retrospective independent discovery
+
+(Locked 2026-05-13 alongside the Early Read sub-track in §J.3.2.1.)
+
+The platform celebrates operators whose pre-consensus calls
+validate. The mechanics:
+
+1. **Floor first-mover events as a distinct event class.** The
+   trust-event stream surfaces events of shape
+   *"@operator was the first to back @target, which has now reached
+   N backers"* — but only **retrospectively**, after subsequent
+   attestations validate the original call (typically days or
+   weeks later). There is no real-time "who's casting now" feed.
+   These events have no comment thread, no like-count, no
+   engagement-economy hooks — they are informational broadcasts
+   per the anti-viral-by-design constitutional principle.
+
+2. **Directory `Early Read` filter.** Operators with the public
+   Early Read badge can be discovered via a Directory filter,
+   alongside the existing kind / tier / good-standing axes. The
+   filter is *pull*, not *push*: counter-parties who want to
+   examine operators with strong independent-discovery track
+   records can find them. The Directory's default sort remains
+   trust + reliability; Early Read is an optional axis.
+
+3. **Profile badge placement.** The `Early Read` badge renders in
+   the same row as Reliability Standing on a profile — a peer-level
+   credential, not a special-status decoration. Operators see it
+   as one of multiple recognized judgment styles, not as a
+   gamified achievement.
+
 ### Notifications taxonomy
 
 Trust events are first-class push:
@@ -780,6 +979,9 @@ passes. If they can't, the labels and UX are wrong and we iterate.
 | Validator-card synthesis | `validator_confidence` | "Confidence" |
 | Project-card synthesis | `builder_reputation` | "Builder Reputation" |
 | Creator-card synthesis | `creator_reputation` | "Creator Reputation" |
+| Independent-discovery sub-track (self-mirror) | `early_read_accuracy` | "Early Read Accuracy" |
+| Consensus-alignment sub-track (self-mirror) | `consensus_reliability` | "Consensus Reliability" |
+| Independent-discovery public badge | `early_read` | "Early Read" |
 | Layer 0 reactions on posts | `reaction.kind=*` | "Solid" / "Fire" — unchanged |
 
 **No algebra leaks into the UI.** Users see labels and badges, not
@@ -796,10 +998,16 @@ Each is an enforced rule. Violations are bugs, not style choices.
    it renders as `Consistent`. Reputation Score 78 renders
    alongside `Well Regarded`. If a value can't be translated to a
    phrase, it can't be shown.
-2. **No formulas in user copy.** Phrases like "weighted attestations
-   × decay × reliability multiplier" never appear in any visible
-   UI surface — marketing copy, tooltips, onboarding cards, hover
-   states. The user sees outcomes, not algebra.
+2. **No formulas — and no synthesis mechanics — in user copy.**
+   Phrases like "weighted attestations × decay × reliability
+   multiplier" never appear in any visible UI surface — marketing
+   copy, tooltips, onboarding cards, hover states. Neither do
+   descriptions of the *mechanics* themselves: no "Elite-tier
+   contribution capped at 40%" tooltip, no "your attestation is
+   getting a diversity bonus" hint, no "this score is suppressed
+   because…" warning. The user sees outcomes, not algebra and not
+   the rules that produce the algebra. See §J.4.1 (synthesis
+   invisibility) for the full invariant.
 3. **Show humans first, aggregates second.** Before any aggregate
    metric, the user sees specific people. The attestation roster
    (avatars + handles + reliability standing badges) renders
@@ -875,6 +1083,50 @@ iterates before the surface ships.
   *readable* by anyone; *writable* requires authentication. This
   is intentional — the platform's defensibility is the readability
   of the graph.
+
+---
+
+## §J.7.5 Architectural freeze — Phase 1 begins from this lock
+
+Locked 2026-05-13. The Trust Attestation Layer's core graph
+mechanics are now **frozen** at the level of philosophy and
+incentive architecture. Further mechanics-level expansion is
+deferred until **implementation or live testing reveals existential
+failures** — not because we've thought of more refinements, not
+because additional sophistication looks possible.
+
+The next stage of work is operational, not architectural:
+
+- Implementation sequencing (Phase 1 scope-freeze plan, then code)
+- Abuse testing (adversarial walkthrough of each primitive +
+  synthesis mechanic against named attacker profiles)
+- Closed-network simulation (small-cohort behavioral pilot before
+  open-network release)
+- Onboarding validation (the 60-second comprehension test run
+  against real new users, with playback / interview)
+- UX readability passes (each surface checked against the ten
+  anti-complexity heuristics + first-impression rule)
+- Emotional / social behavior analysis (post-launch observation of
+  whether the dynamics this design intends actually emerge)
+
+Specifically deferred until existential failure surfaces:
+
+- New attestation primitives beyond Vouch / Stand Behind / Dispute
+- New derived intelligence axes beyond Reputation Score /
+  Reliability Standing / Confidence / Builder Reputation / Creator
+  Reputation / Early Read
+- Reworking the synthesis math at the constitutional level (Phase
+  1 plan will tune the numbers within the locked envelope; that's
+  not constitutional change)
+- New surfaces beyond the locked card / profile / Floor / Directory
+  / notification taxonomy
+
+If a future contributor proposes constitutional expansion before
+live testing has surfaced a failure, the burden of proof is on the
+proposal to demonstrate the failure mode it addresses is real and
+present, not theoretical. **The default answer is no.** This is
+the same §P "scope discipline" rule the V1 plan operated under,
+applied to the trust-attestation domain.
 
 ---
 
@@ -997,6 +1249,23 @@ hard-locked here:
     badges. V2 expansion opens the positive badges to public
     viewers; the timing depends on attestation density (~6 months
     minimum).
+15. **Early-conviction multiplier gradient** (§J.3.2.1) — the
+    2.5×/1.5×/1.0×/0.5× ladder is plausible-feeling default. Tune
+    in Phase 1 against simulation data; the gradient *shape*
+    (graduated, not binary) is the locked architectural commitment;
+    the exact numbers are not.
+16. **Elite-tier weight cap exact percentage** (§J.4 item 8) — 40%
+    is the design intent. Tune within ±10% in Phase 1 against
+    simulation outcomes; do not change the *existence* of the cap.
+17. **Diversity multiplier strength** (§J.4 item 9) — 1.3× is the
+    design intent. Tune within ±0.1× in Phase 1.
+18. **Early Read badge threshold** (§J.3.2.1) — how many validated
+    pre-consensus calls qualify an operator for the public badge?
+    Lock in Phase 1; the badge is asymmetric-positive-only either
+    way.
+19. **First-mover protection count on Early Read** (§J.3.2.1) — 5
+    stand-behinds is plausible default; reconcile with the §J.3.2
+    first-call protection count.
 
 ---
 

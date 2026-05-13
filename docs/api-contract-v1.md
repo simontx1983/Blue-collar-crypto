@@ -3196,6 +3196,18 @@ Cast a new attestation. Idempotent on `(attestor_user_id, target_kind, target_id
     requesting operator is querying their own state. For
     third-party queries the field is absent — the asymmetric
     public-display rule (§J.3.2) forbids exposing the number.
+  - When the operator is querying their own state, the response
+    also includes the two-sub-track breakdown:
+    `consensus_reliability` (numeric, self-only) and
+    `early_read_accuracy` (numeric, self-only) — per the §J.3.2.1
+    Early Read sub-track. These never expose to third-party queries.
+  - `badges` array contains the operator's earned public badges,
+    visible to third-party queries. V1 catalogue:
+    `highly_reliable` / `consistent` / `newly_active` (the
+    Reliability Standing positive ladder) and `early_read` (the
+    independent-discovery public badge). Asymmetric-display rule
+    preserved: no negative badges exist in the catalogue at all,
+    so this field cannot expose stigma even by inclusion.
 - **Response 200 (existing):** same shape with `status: "existing"`.
 - **Errors:**
   - `bcc_invalid_request` (400) — bad kind, target_kind, or target_id
@@ -3285,10 +3297,13 @@ Read the attestation roster for an entity.
           "display_name": "Phillip",
           "avatar_url": "...",
           "reputation_score": 78,
-          "reliability_standing": "highly_reliable"
+          "reliability_standing": "highly_reliable",
+          "badges": ["highly_reliable", "early_read"]
         },
         "weight_at_time": 1.0,
         "decayed_weight": 0.93,
+        "is_pre_consensus_pick": true,
+        "attestation_order": 1,
         "context_note": "...",
         "created_at": "...",
         "revoked_at": null
@@ -3682,6 +3697,43 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.10 — 2026-05-13
+
+- **§4.20 Trust Attestations — anti-centralization refinement pass
+  + architectural freeze.** Final foundational amendment to the
+  Trust Attestation Layer before Phase 1 implementation planning.
+  Locks the anti-centralization mechanics, an explicit
+  anti-viral-by-design constitutional principle, the synthesis
+  invisibility invariant, and declares the architectural freeze.
+  Contract deltas:
+  - `attestor_summary` (self-only branch) gains
+    `consensus_reliability` and `early_read_accuracy` numeric
+    sub-tracks. Third-party branch unchanged — these never expose.
+  - `attestor.badges` array added to attestor surfaces (in both the
+    self-only and third-party branches). V1 catalogue:
+    `highly_reliable` / `consistent` / `newly_active` / `early_read`
+    — asymmetric-display rule preserved (no negative badges in the
+    catalogue at all).
+  - Attestation roster items gain `is_pre_consensus_pick` boolean
+    and `attestation_order` integer (the original position of this
+    attestation among stand-behinds on the target). Lets the UI
+    visibly mark first-movers in the roster without exposing the
+    underlying early-conviction multiplier math.
+  - Synthesis mechanics — Elite-tier weight cap (40% aggregate
+    contribution to a single entity's Reputation Score),
+    diversity multiplier (1.3× for cross-network attestations),
+    early-conviction multiplier (2.5× → 1.5× → 1.0× → 0.5×
+    gradient on Stand Behind reliability credit) — are
+    **server-side only.** No API field exposes any of these
+    mechanisms; clients see only the synthesis *outputs*
+    (Reputation Score, Reliability Standing, badge list,
+    divergence state).
+  - "Discovery Specialist" terminology pressure-tested and
+    renamed to **"Early Read"** — intelligence-oriented register
+    rather than achievement-system framing. Internal field names:
+    `early_read_accuracy` (sub-track metric), `early_read`
+    (badge enum value).
 
 ### v1.9 — 2026-05-13
 
