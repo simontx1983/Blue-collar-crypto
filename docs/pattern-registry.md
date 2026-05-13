@@ -411,10 +411,11 @@ The platform is intentionally resilient — fail-closed throttles, fail-open cac
   - `peepso_absence` / 18 events — every BCC writer/repo on the PeepSo boundary contributes a unique event name. Phase 1.5 (2026-05-09) expanded coverage to all 18 V-11 guards across `bcc-core/src/PeepSo/*` + `bcc-core/src/Repositories/PeepSoMessageRepository`. Events: `status_writer_create`, `comment_writer_add`, `gif_writer_create`, `photo_writer_create`, `follow_writer_follow`, `follow_writer_unfollow`, `group_writer_join`, `group_writer_leave`, `notification_writer_send`, `reaction_writer_set`, `reaction_writer_remove`, `message_writer_send_new`, `message_writer_send_in_conversation`, `message_repo_unread_count`, `message_repo_is_participant`, `message_repo_root_conversation_id`, `message_repo_participants`, `message_repo_mark_viewed`. Counter is per-call (not dedup'd) so `/system/health` shows "the comment writer silently no-opped 1247 times in the last hour" not "we logged it once."
   - `search_lkg` / `served`, `search_lkg` / `unavailable_503` — bcc-search breaker-tripped responses (`SearchController::breakerTrippedResponse`).
   - `read_model_fallback` / `legacy_aggregation` — bcc-trust `PageDiscoveryService` taking the legacy-aggregation path because the read model has no data.
-  - `audit_log_swallow` / 3 events — silent-catch read paths that are supposed to be reliable. Sustained activation on any event = the read is unhealthy on a hot path; admins see it via `/system/health` before users notice missing data. Events:
+  - `audit_log_swallow` / 4 events — silent-catch read paths that are supposed to be reliable, **plus** the WRITE path inside `AuditLogger::log()` itself (the §VIII.30 swallow that the constitution deliberately requires). Sustained activation on any event = the audit subsystem is unhealthy; admins see it via `/system/health` before incident review discovers the gap. Events:
     - `score_mutation_before_snapshot` (Phase 1) — bcc-trust `ScoreMutationLogger::readCurrentScore` silent-catch on the score-mutation hot path (Constitution §VIII.30 alignment: audit-log writes must never break mutations).
     - `discovery_owner_verified_status` (Phase 1.8, 2026-05-11) — bcc-trust `PageDiscoveryService` silent-catch on the verified-badge owner lookup. Degrades to `verified=false`; sustained activation = `UserRepository::getByUserId` is unhealthy on a discovery-page hot path.
     - `leaderboard_owner_fallback` (Phase 1.8, 2026-05-11) — bcc-trust `EndorsementLeaderboardEndpoint` silent-catch when the read model has no `owner_id` AND the resolver throws. Degrades to no avatar; sustained activation = read model is drifting on the leaderboard hot path.
+    - `log_write_failed` (2026-05-13) — bcc-trust `AuditLogger::log` insert returned false. The §VIII.30 swallow itself: mutation has committed but the audit row was lost. Distinct from the read-path sources so dashboards can segment "audit reads unhealthy" from "audit writes unhealthy" (different remediation: read model drift vs. DB connectivity / table missing).
   - **`legacy_ajax` / 9 events** — Phase 1.7 (2026-05-09) instrumentation of 9 suspected-dead AJAX handlers (V-08 candidates that the in-repo audit found no caller for):
     - From [`WalletController.php`](../app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Controllers/WalletController.php) (6): `wallet_challenge`, `wallet_verify`, `wallet_disconnect`, `wallet_set_primary`, `wallet_list`, `collection_toggle_profile`.
     - From [`UserLifecycleService.php`](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/UserLifecycleService.php) (3): `trust_sync_user`, `trust_bulk_sync_users`, `trust_init_page_score`.
@@ -439,7 +440,7 @@ The platform is intentionally resilient — fail-closed throttles, fail-open cac
   | Plugin | Block key | Source | Surfaces |
   |---|---|---|---|
   | bcc-core | `throttle` | `Throttle::health()` | `rate_limiter_ready`, `backend` (trust_engine / object_cache / none), `degraded`, `last_success_ts` |
-  | bcc-core | `degradation_metrics` | `DegradationMetrics::healthSnapshot()` | `any_active` triage flag + per-subsystem current/previous-hour counts. Currently wired subsystems: `throttle`, `null_trust_read`, the 10 `null_*` NullService activations, `peepso_absence` (18 events), `search_lkg`, `read_model_fallback`, `audit_log_swallow` (3 events as of Phase 1.8), `legacy_ajax` (9 events). The canonical-subsystem map lives in bcc-core/bcc-core.php — new subsystems wired into `DegradationMetrics::record()` should add their `(subsystem, events)` tuple there. |
+  | bcc-core | `degradation_metrics` | `DegradationMetrics::healthSnapshot()` | `any_active` triage flag + per-subsystem current/previous-hour counts. Currently wired subsystems: `throttle`, `null_trust_read`, the 10 `null_*` NullService activations, `peepso_absence` (18 events), `search_lkg`, `read_model_fallback`, `audit_log_swallow` (4 events — 3 read-path + 1 write-path as of 2026-05-13), `legacy_ajax` (9 events). The canonical-subsystem map lives in bcc-core/bcc-core.php — new subsystems wired into `DegradationMetrics::record()` should add their `(subsystem, events)` tuple there. |
   | bcc-search | `search` | bcc-search/bcc-search.php | `ft_index_installed` flag + `persistent_cache` prerequisite |
   | bcc-trust | `trust_engine` | `Plugin.php:1743` | `recalc_queue_depth`, `read_model_drift`, `read_model_coverage` |
   | bcc-trust | `cron_status` | `Plugin.php:1743` | per-canonical-cron `next_run_ts` + `in_seconds`. `null` means "not currently scheduled" — alarm signal that a hook fell out of the activation registry. Covers: `bcc_disputes_reconcile`, `bcc_gated_group_provision`, `bcc_gated_group_reconcile_sweep`, `bcc_nft_eth_indexer_tick`, `bcc_nft_enrichment_tick`, `bcc_helius_dedupe_sweep`, `bcc_trust_daily_graph_update`, `bcc_trust_process_recalculations`. |
@@ -528,6 +529,115 @@ moderation model itself fundamentally changes (e.g. a real time-travel
 debug surface for incident review). The current model is a recovery
 affordance — it is not, and must not become, a generalised rollback
 framework.
+
+## Destructive mutation hardening (pattern)
+
+Every destructive Next.js REST mutation (POST / PATCH / DELETE that
+changes state) must satisfy four invariants. The set was derived
+empirically on 2026-05-13 across the Tier 1A–1D sweep
+(commits `08be805` / `1feff92` / `eed5d4f` / `6c78b87` / `25b54d9`
+on `bcc-trust` main) plus the observability close-out
+(`8106e55` / `f8110eb`) and frontend copy fix (`13deb24`).
+
+**1. Audit-log only on real state transitions.** Call
+`BCC\Trust\Core\Security\AuditLogger::log($action, $targetId, $meta,
+$targetType, $userId)` AFTER the underlying write commits, but
+gate the call on whether the write actually changed state. Idempotent
+re-attempts, no-op duplicates, and "writer returned `true` but the
+row already existed" cases must not generate audit rows — they
+inflate the trail with non-events and pollute admin forensic
+queries.
+
+- If the writer's return value distinguishes inserted-vs-no-op
+  (e.g. `PeepSoBlockWriter::block` returns `'created' | 'existing' |
+  'invalid' | 'error'`), gate on it.
+- If the writer collapses both cases to `true` (e.g.
+  `PeepSoGroupWriter::join` / `::leave` per its docblock at
+  `bcc-core/src/PeepSo/PeepSoGroupWriter.php:46–50` and `:97–104`),
+  **pre-check the prior state** via the relevant repository (e.g.
+  `PeepSoGroupRepository::getMembershipStatus`) and audit only on
+  the transition direction.
+- If the operation is gated by a domain `JoinResult` / equivalent
+  value object that returns `success=true` for both "did the work"
+  AND "would have been a no-op" cases (`JoinResult::CODE_OK` vs
+  `JoinResult::CODE_ALREADY_MEMBER` in
+  `bcc-trust/app/Domain/Onchain/ValueObjects/JoinResult.php`), gate
+  on the specific transition code.
+
+**2. Throttle BEFORE any credential gate.** Call
+`BCC\Core\Security\Throttle::allow($action . ':' . $userId, $limit, 60)`
+**immediately** after the `get_current_user_id()` zero-check and
+**before** any further work — including any current-password check.
+The credential gate itself is brute-force-vulnerable without an
+upstream rate limit: a session-hijacked attacker could attempt
+`verifyCurrentPassword` at machine speed.
+
+Standard buckets (per-user, 60s window):
+
+| Class of operation | `$limit` |
+|---|---|
+| Common mutation (block, group join/leave, plain settings update) | 10–20 |
+| Credential-gated (account email / password change) | 5 |
+| Irreversible (account delete) | 3 |
+
+Pattern is established at
+`WalletController::rest_unlink_wallet`, `AuthEndpoint::walletLink`,
+and across all 10 endpoints touched in commit `6c78b87`.
+
+**3. Storage idempotency is the canonical replay defense.** Prefer
+storage-layer UNIQUE keys + pre-checks (`WalletRepository::exists`,
+`hasUserFlagged`, `hasActiveDisputeForVote`, etc.) that return 409
+on duplicate state, OR writer return values that surface
+`'existing' | 'created'`. The vote pipeline is the exception that
+needs `X-Idempotency-Key` because it carries a time-bounded fraud
+signal + an async fan-out; everything else relies on storage
+guarantees. Do not add per-route Idempotency-Key handling without
+a clear reason that storage-layer guarantees can't satisfy.
+
+**4. Retention belongs to `archiveBatch()`, not standalone DELETE.**
+The bcc_trust_activity / bcc_trust_audit_log table is bounded by
+`AuditLogRepository::archiveBatch(5000)` invoked from
+`UserLifecycleService::archiveActivity` inside
+`CronService::dailyCleanup` (line 74). **Do not add a standalone
+`AuditLogger::cleanOldLogs()` call to the cron path** — it will
+preempt the archive INSERT and the archive table will silently
+stay empty (see commit `eed5d4f`'s message for the historical
+regression). The retained method on `AuditLogger` exists for any
+future direct-purge caller; if you need one, audit your assumption
+first.
+
+### Observability hook
+
+The §VIII.30 swallow inside `AuditLogger::log()` itself emits
+`DegradationMetrics::record('audit_log_swallow', 'log_write_failed')`
+when its insert returns false. Sustained activation on the
+`/system/health` surface = the audit subsystem is dropping rows on
+the write path; investigate DB connectivity, table existence, or
+write contention before forensic queries surface the gap on incident
+review.
+
+### What the recipe does NOT cover
+
+- Reads / GET endpoints — those don't change state, so audit + rate
+  limit + retention are not required.
+- Bulk-admin actions surfaced through wp-admin (separate hardening
+  track; see `Admin/ModerationService` patterns).
+- The frontend's per-surface `bcc_rate_limited` copy — that's UX
+  polish on top of the backend hardening. Components that already
+  have a `code → copy` map gain a `bcc_rate_limited` key when their
+  route picks up a Throttle (commit `13deb24` is the
+  AccountSection example). Other components fall back to
+  `err.message` ("Too many requests.") — usable, not broken.
+
+### Explicitly forbidden additions
+
+- Per-route Idempotency-Key handling without a documented
+  storage-guarantee gap.
+- New rate-limit primitives. `BCC\Core\Security\Throttle::allow` is
+  the canonical gate.
+- A standalone audit-log purge cron alongside `archiveBatch`.
+- Auditing every read path. Audit is for **state transitions**, not
+  request volume.
 
 ## Confirmation-gated chain indexing (V2 Phase 1)
 
