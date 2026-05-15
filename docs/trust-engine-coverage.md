@@ -126,7 +126,6 @@ homepage copy ("review, react, or dispute") or accept the framing.
 |---|---|---|---|---|
 | `/bcc-trust/v1/endorse` | POST | `endorse-endpoints.endorsePage` | ✅ | EndorseButton on every entity profile |
 | `/bcc-trust/v1/revoke-endorsement` | POST | `endorse-endpoints.revokeEndorsement` | ✅ | Confirm-and-revoke flow |
-| `/bcc/v1/endorsements/top` | GET | — | ❌ | V2 — leaderboard surface |
 | `/bcc/v1/endorsements/mine` | GET | — | ❌ | V2 — own-endorsements list (data exists in user view-model already) |
 
 **Impact**: Endorsement give/revoke is live, gated server-side via
@@ -184,7 +183,6 @@ trust earned today/lifetime against caps.
 | `/bcc/v1/cards/search` | GET | `cards-search-endpoints.getSearchSuggestions` | ✅ | |
 | `/bcc/v1/discover` | GET | — | ❌ | V2 — richer discovery (featured/trending). `/feed/hot` already covers algorithmic trending per §G4 |
 | `/bcc-trust/v1/pages/top` | GET | — | ❌ | V2 — leaderboard |
-| `/bcc/v1/endorsements/top` | GET | — | ❌ | V2 — leaderboard |
 
 **Impact**: V2 leaderboard work doesn't block anything user-facing today.
 
