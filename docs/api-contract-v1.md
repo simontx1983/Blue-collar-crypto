@@ -3578,6 +3578,140 @@ These are deliberately not locked in this contract — they're tuning decisions 
 
 ---
 
+### 4.21 NFT showcase selections (V2 Phase 1)
+
+The viewer's saved NFT showcase — up to 200 token tuples surfaced on the profile photo strip and edited at `/settings/nft-showcase`. Backed by `bcc_user_nft_selections` (sort by `display_order ASC, added_at ASC`).
+
+All endpoints in this section require Bearer JWT — anonymous → `bcc_unauthorized 401`. Suspended accounts → `bcc_forbidden 403`. Standard envelope per §1.4 / §1.5.
+
+**Known contract debt:** the controller (`NftSelectionController.php`) currently emits some failure paths with non-canonical envelope shapes (status-only, no stable `code`). The frontend's `humanizeError` helper compensates with `err.status` shims that will be retired once the controller migrates to canonical envelopes + the codes documented per endpoint below. Tracked; not a contract break to ship the frontend ahead of the migration.
+
+#### `GET /bcc/v1/nft-selections/picker`
+
+Live holdings across the viewer's linked wallets, annotated with which are already selected. The single endpoint that surfaces `meta.indexer_state` + `meta.indexer_state_label` per §3.6.
+
+- **Auth:** required.
+- **Query:**
+  - `force` (optional, boolean) — when truthy (`1` / `true`), bypasses the HoldingsService transient cache and re-fetches from chain. Costs one RPC round-trip per linked wallet. Default reads the 24h transient.
+- **Response 200 data shape:**
+  ```json
+  {
+    "items": [{
+      "chain_id": 1, "contract_address": "0x…", "token_id": "42",
+      "wallet_link_id": 15, "is_selected": true,
+      "name": "Genesis #042", "collection_name": null,
+      "image_url": "https://…", "metadata_uri": "ipfs://…",
+      "token_standard": "ERC-721"
+    }],
+    "truncated": false,
+    "wallets_checked": 2, "wallets_truncated": 0,
+    "selected_keys": { "1|0x…|42": true },
+    "refreshed_at": { "15": "2026-05-15 14:23:47" },
+    "meta": {
+      "indexer_state":       { "ethereum": "syncing" },
+      "indexer_state_label": { "ethereum": "Syncing holdings…" }
+    }
+  }
+  ```
+  - `refreshed_at` is keyed by `wallet_link_id` (not chain). Value is MySQL UTC datetime (`YYYY-MM-DD HH:MM:SS`); frontend normalizes to ISO at the boundary.
+  - `meta.indexer_state` ∈ {`healthy`, `syncing`, `degraded`} per §3.6. `indexer_state_label` is `""` for `healthy` — the contract's "no chip" signal.
+- **Errors:** `bcc_unauthorized 401`, `bcc_rate_limited 429` (10/60/user — shared bucket with `force=1` refreshes).
+- **Rate limit:** 10/60/user.
+- **Cache:** `no-store` (transient is server-side; the response is per-request live). React Query `staleTime: 60_000`.
+
+#### `GET /bcc/v1/nft-selections`
+
+The viewer's currently saved selections, joined with chain metadata so the UI can render badges + explorer links without a second fetch.
+
+- **Auth:** required.
+- **Response 200 data shape:**
+  ```json
+  {
+    "items": [{
+      "id": 142, "user_id": 7, "wallet_link_id": 15,
+      "chain_id": 1, "contract_address": "0x…", "token_id": "42",
+      "collection_name": null, "name": "Genesis #042",
+      "image_url": "https://…", "metadata_uri": "ipfs://…",
+      "token_standard": "ERC-721",
+      "display_order": 0, "added_at": "2026-05-15 14:00:00",
+      "chain_slug": "ethereum", "chain_name": "Ethereum",
+      "explorer_url": "https://etherscan.io/token/…"
+    }]
+  }
+  ```
+  - Numeric fields may arrive as strings from `$wpdb->get_results`; client types accept both per §A2 boundary tolerance.
+  - `display_order` is 0-indexed; new selections get `MAX + 1`.
+- **Errors:** `bcc_unauthorized 401`.
+- **Rate limit:** unthrottled (read-only, single index lookup bounded to 200 rows).
+- **Cache:** `no-store`. React Query `staleTime: 30_000`; mutations invalidate the namespace.
+
+#### `POST /bcc/v1/nft-selections`
+
+Add a token to the showcase. Server verifies the token appears in the viewer's HoldingsService holdings before persisting — silent ownership-mismatch is impossible.
+
+- **Auth:** required.
+- **JSON body:**
+  ```json
+  { "chain_id": 1, "contract_address": "0x…", "token_id": "42" }
+  ```
+- **Response 200 data shape:**
+  ```json
+  { "id": 142, "ok": true }
+  ```
+- **Errors:**
+  - `bcc_nft_not_owned 403` — the token is not in any of the viewer's linked-wallet holdings (cache may lag; refresh via picker `?force=1` and retry).
+  - `bcc_invalid_request 422` — malformed `contract_address` or empty `token_id`.
+  - `bcc_rate_limited 429` — 60/60/user shared bucket with DELETE.
+  - `bcc_unavailable 503` — DB write failure.
+- **Rate limit:** 60/60/user.
+- **Side effects:**
+  - Bumps the per-user selections generation counter (`gen_user_selections_{user_id}` in cache group `bcc_nft_selections`). §5.
+  - No bus event in V1.
+
+#### `DELETE /bcc/v1/nft-selections`
+
+Remove a token from the showcase. Body shape matches POST. Idempotent — removing a non-existent selection returns `{ok: false}`, not 404.
+
+- **Auth:** required.
+- **JSON body:** identical to POST.
+- **Response 200 data shape:** `{ "ok": true | false }`.
+- **Errors:** `bcc_invalid_request 422` (malformed body), `bcc_rate_limited 429` (shares the 60/60 bucket with POST).
+- **Rate limit:** 60/60/user (shared with POST).
+- **Side effects:** bumps the per-user selections generation counter on `ok: true`.
+
+#### `POST /bcc/v1/nft-selections/refresh`
+
+Explicit force re-fetch of on-chain holdings. Functionally equivalent to `GET /picker?force=1` but with a tighter throttle bucket — reserved for non-picker surfaces (a future wallets-section "Refresh holdings" button) where the picker isn't already open.
+
+- **Auth:** required.
+- **JSON body:** none.
+- **Response 200 data shape:** same as `GET /picker` (post-refresh snapshot).
+- **Errors:** `bcc_rate_limited 429` — 3/60/user.
+- **Rate limit:** 3/60/user (separate bucket from picker GET).
+- **Side effects:** clears the HoldingsService transient cache for every linked wallet; stamps `wallet_links.last_holdings_refresh_at` on each successful per-wallet chain fetch.
+- **Frontend note:** the picker modal does NOT call this endpoint — it uses `GET /picker?force=1` directly because the picker is already open and the cache slot to seed is known. This POST exists for the wallets-section refresh use case.
+
+#### `POST /bcc/v1/nft-selections/reorder`
+
+Set new display order for the viewer's selections.
+
+- **Auth:** required.
+- **JSON body:**
+  ```json
+  { "ordered_ids": [142, 139, 150] }
+  ```
+  First element becomes `display_order = 0`, etc. Unowned ids are silently skipped (no leak).
+- **Response 200 data shape:**
+  ```json
+  { "ok": true, "updated": 3 }
+  ```
+  `updated` is the number of rows actually written; can be less than `ordered_ids.length` if some ids were unowned (local cache lagged a remote delete).
+- **Errors:** `bcc_invalid_request 422` (missing or non-array `ordered_ids`).
+- **Rate limit:** unthrottled in V1 — UI is button-driven and naturally bounded by user pacing. Worth a throttle if abuse appears.
+- **Side effects:** bumps the per-user selections generation counter when `updated > 0`.
+
+---
+
 ## 5. Encoded rules — quick reference
 
 ### 5.1 §N7 — gated actions always visible
