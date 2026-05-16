@@ -17,9 +17,9 @@ These rules govern how the brand vocabulary in this glossary is exposed in the U
 
 **Rule 2 — Branded names ship with helper labels.** When a branded term is used in primary UI, it gets a descriptive companion (tooltip, sub-label, or helper text). The branded name becomes the only label only after the user has demonstrated familiarity.
 
-**Rule 3 — Cards are the primary interaction unit.** Every entity (member, validator, project, NFT creator) lives behind a card. All key actions (follow / view / review / pull) are accessible directly from a card. UI patterns are designed card-first.
+**Rule 3 — Cards are the primary interaction unit.** Every entity (member, validator, project, NFT creator) lives behind a card. All key actions (follow / view / review / watch) are accessible directly from a card. UI patterns are designed card-first.
 
-**Rule 4 — System terms ≠ UI terms.** The API, schema, and code use plain system terms (`follow`, `feed`, `endorsement`). The UI uses branded terms (`Pull`, `The Floor`, `Letter from the Floor`). The two never have to match.
+**Rule 4 — System terms ≠ UI terms.** The API, schema, and code use plain system terms (`follow`, `feed`, `endorsement`). The UI uses branded terms (`Watch`, `The Floor`, `Letter from the Floor`). The two never have to match.
 
 **Rule 5 — V1-NOT-USED terms must not appear in shipping UI.** If a term is marked 🚫, it does not get rendered to users in V1, even as flavor copy. Reserved for later.
 
@@ -29,7 +29,7 @@ These rules govern how the brand vocabulary in this glossary is exposed in the U
 
 | Term | Definition | Status |
 |---|---|---|
-| **Member** | A basic community user with an account. Can follow, react, write reviews, sign disputes, pull cards. | 🔒 |
+| **Member** | A basic community user with an account. Can follow, react, write reviews, sign disputes, watch cards. | 🔒 |
 | **Operator** | A member who has claimed and verified ownership of a validator page via wallet signature. Can post AS the validator. | 🔒 |
 | **Creator** | A member who has claimed and verified ownership of an NFT-creator page (same mechanism as operator). | 🔒 |
 | **Delegator** | A user who has staked on-chain with a validator. Proven by `bcc_onchain_signals` rows. | 🔒 |
@@ -59,16 +59,18 @@ These rules govern how the brand vocabulary in this glossary is exposed in the U
 
 ## 3. Actions (things users do)
 
-### 3a. Pull / Follow — split
+### 3a. Watch / Follow — split (replaces the retired Pull / Follow split)
 
 Two terms, one relationship. Per UX Rule 4: the system uses one term, the UI uses the other.
 
 | Term | Where it lives | Definition | Status |
 |---|---|---|---|
-| **Pull** | UI label only | The button text and user-facing action for adding an entity's card to your binder. Button: **"Pull Card"**. Tooltip: *"Follow this validator/creator/project"*. | 🔒 |
-| **Follow** | System / API / schema | The underlying relationship (a `peepso_follower` row). Endpoint: `POST /bcc/v1/follows`. Database, logs, admin tools, onboarding copy ("you're now following 3 cards") all use **Follow**. | 🔒 |
+| **Watch** | UI label + API verb | The button text + canonical API verb for adding an entity's card to your watchlist. Button: **"Watch"** / **"Watching"** (cast state). Endpoint: `POST /bcc/v1/me/watching/watch`. | 🔒 |
+| **Follow** | Storage / underlying relationship | The underlying relationship (a `peepso_follower` row). Database, logs, admin tools all reference the follow graph. "Watch" is what the UI and the public API call the same write. | 🔒 |
 
-**Why both:** "Pull" is the branded interaction (good for discoverability and voice), but every new user knows what "follow" means. We keep the brand on the button, the universal word everywhere else.
+**Why both:** "Watch" is the canonical interaction verb (UI + API); "Follow" is the underlying storage relationship that PeepSo owns. We keep the brand on the action, the universal word in the storage layer.
+
+**Legacy "Pull" vocabulary (retired 2026-05-13):** the previous version of this row mapped "Pull" → UI / "Follow" → System. As of 2026-05-13 (full Binder → Watching rename, see `docs/api-contract-v1.md §1.1.1`), "Pull" is retired as user-facing vocabulary. It survives only as legacy physical names on internal tables (`bcc_pull_meta`, `bcc_pull_batches`) and on the deprecated `/me/binder/pull` route, which is removed in release N+1.
 
 ### 3b. Claim & sign
 
@@ -123,7 +125,7 @@ Helper labels render as italic sub-labels under the chip in normal use, and as t
 | Term | Definition | Status |
 |---|---|---|
 | **The Floor** | The main activity feed — the social-hub homepage. Where all public posts land. **Dual-labeled until familiar:** new users see *"The Floor (Activity Feed)"* in the nav and section headings. Once a user has visited the Floor 3+ times, the helper drops to just *"The Floor."* The tooltip on hover always reads "Activity Feed." | 🔒 |
-| **Binder** | A member's personal collection of pulled cards. Looks like a 3-ring binder with 3×3 card pages. | 🔒 |
+| **Watchlist** | A member's personal collection of watched cards. Looks like a 3-ring binder with 3×3 card pages (visual metaphor preserved — the *name* "Binder" was retired 2026-05-13; the visual layout is unchanged). Backed by `peepso_user_followers` + the legacy-named `bcc_pull_meta` sidecar table. | 🔒 |
 | **Stream** | A single user's or entity's personal post timeline (their profile's post feed). | 🔒 |
 | **Studio Log** | A creator's stream — specifically branded for the artist-workshop context. | 🔒 |
 | **The Record** | The on-chain, verifiable truth section on an entity profile (uptime, governance, slashing, commission history). No operator input. | 🔒 |
@@ -217,7 +219,7 @@ These are the entry points new users see first and return to most often.
 
 Heavily used but reached *through* a primary surface, not directly.
 
-- **Binder** — accessed from your own profile or a nav link
+- **Watchlist** (formerly "Binder," renamed 2026-05-13) — accessed from your own profile or a nav link
 - **Gallery** — on a creator profile
 - **Studio Log** — on a creator profile
 - **Stream** — on any profile
@@ -264,7 +266,7 @@ Each chain has an assigned brand color in the design system (see `theme.json` to
 
 All previously-tentative terms are resolved. Recap:
 
-- **Pull / Follow** — split. Pull = UI label, Follow = system / API. (See §3a.)
+- **Watch / Follow** — split. Watch = UI label + API verb, Follow = underlying storage relationship. (See §3a. Replaces the retired Pull / Follow split.)
 - **Local 342** — real construct. Locals are PeepSo Groups; a user joins multiple, designates one as primary. (See §7.)
 - **Journeyman / Apprentice / Foreman** — real ranks. Apprentice + Journeyman auto-assigned by reputation tier + activity. Foreman+ admin-conferred. Revocable.
 - **Good Standing** — locked. Auto-derived: tier ≥ neutral AND no active flags. (See §7.)

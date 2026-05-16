@@ -42,10 +42,11 @@ same commit. When a hook is retired (cleared via
 | `bcc_nft_eth_indexer_tick` | `bcc_one_minute` | [bcc-trust/bcc-trust.php:1209](../app/public/wp-content/plugins/bcc-trust/bcc-trust.php#L1209) | bcc-trust/bcc-trust.php:364 — `NftEthIndexerWorker::runAllChains`. Hook-name constant: `\BCC\Trust\Onchain\Workers\NftEthIndexerWorker::CRON_HOOK`. |
 | `bcc_helius_dedupe_sweep` | `bcc_five_minutes` | [bcc-trust/bcc-trust.php:1218](../app/public/wp-content/plugins/bcc-trust/bcc-trust.php#L1218) | bcc-trust onchain — Helius signature replay-protection LRU eviction. |
 | `bcc_nft_enrichment_tick` | `bcc_five_minutes` | [bcc-trust/bcc-trust.php:1229](../app/public/wp-content/plugins/bcc-trust/bcc-trust.php#L1229) | `\BCC\Trust\Onchain\Services\NftEnrichmentService::CRON_HOOK`. Backfills name + image_url on freshly-indexed rows. |
-| `bcc_pull_batch_sweep` (`PullBatchAggregator::SWEEP_HOOK`) | `bcc_pull_batch_sweep_minute` (every minute) | [bcc-trust/app/Domain/Core/Plugin.php:1320](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Plugin.php#L1320) | bcc-trust/app/Domain/Core/Plugin.php:1327 — `pullBatchAggregator()->sweep()`. |
+| `bcc_watch_batch_sweep` (`WatchBatchAggregator::SWEEP_HOOK`; legacy hook name `bcc_pull_batch_sweep` retired 2026-05-13 — self-heal `wp_clear_scheduled_hook` on `plugins_loaded`) | `bcc_pull_batch_sweep_minute` (every minute; interval slug retained for back-compat) | [bcc-trust/app/Domain/Core/Plugin.php:1320](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Plugin.php#L1320) | bcc-trust/app/Domain/Core/Plugin.php:1327 — `watchBatchAggregator()->sweep()`. |
 | `bcc_disputes_auto_resolve` (`DisputeScheduler::EVENT_AUTO_RESOLVE`) | `daily` | [bcc-trust/app/Domain/Disputes/Services/DisputeScheduler.php:23](../app/public/wp-content/plugins/bcc-trust/app/Domain/Disputes/Services/DisputeScheduler.php#L23) | DisputeScheduler — bounded auto-resolve sweep. |
 | `bcc_disputes_reconcile` (`DisputeScheduler::EVENT_RECONCILE`) | `bcc_five_minutes` | [DisputeScheduler.php:27](../app/public/wp-content/plugins/bcc-trust/app/Domain/Disputes/Services/DisputeScheduler.php#L27) | DisputeScheduler reconcile-sweep — covers cron lag + Action-Scheduler silent-enqueue failures. |
 | `bcc_trust_deferred_rm_sync` | `bcc_thirty_seconds` | [bcc-trust/app/Domain/Core/Services/PageReadModelSync.php:109](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/PageReadModelSync.php#L109) | PageReadModelSync — deferred read-model rebuild for staleness recovery. |
+| `bcc_trust_divergence_state_sweep` | `daily` | [bcc-trust/bcc-trust.php](../app/public/wp-content/plugins/bcc-trust/bcc-trust.php) (activation + `plugins_loaded` self-heal) | `PolarizationTransitionNotifier::sweep()` — daily walk of attestation-touched + dispute-touched candidates over a 48h window, classifies each via `DivergenceStateClassifier`, persists to `bcc_target_divergence_state` sidecar, fires §J.7 `divergence_state_warning` notifications on transitions INTO `polarizing`/`disputed`. Per-(recipient, target, state) 24h coalescing via `last_notified_at`. Fire-and-forget posture: per-target failures contained, sweep degrades silently. PR-8b. |
 
 Per-chain `bcc_chain_refresh_*` hooks are registered dynamically via
 `\BCC\Trust\Onchain\Services\ChainRefreshService::schedule_crons()`
@@ -82,7 +83,7 @@ but make `wp cron schedule list` harder to read.
 |---|---|---|---|
 | `bcc_thirty_seconds` | 30 | "BCC: Every 30 Seconds" | [PageReadModelSync::registerIntervals](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/PageReadModelSync.php#L45) |
 | `bcc_one_minute` | 60 | "BCC: Every Minute" | [CronService::addCronIntervals](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/CronService.php) |
-| `bcc_pull_batch_sweep_minute` | 60 | "BCC: Every Minute" | [Plugin.php:1309](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Plugin.php#L1309) (`PullBatchAggregator::SWEEP_INTERVAL`) |
+| `bcc_pull_batch_sweep_minute` (legacy interval slug retained per §4.5.1) | 60 | "BCC: Every Minute" | [Plugin.php:1309](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Plugin.php#L1309) (`WatchBatchAggregator::SWEEP_INTERVAL`) |
 | `bcc_five_minutes` | 300 | (CronService) | [CronService::addCronIntervals](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/CronService.php) |
 | `bcc_thirty_minutes` | 1800 | "Every 30 Minutes (BCC RL Cleanup)" | [bcc-core/bcc-core.php:275](../app/public/wp-content/plugins/bcc-core/bcc-core.php#L275) |
 | `bcc_weekly` | 604800 | (CronService) | [CronService::addCronIntervals](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/CronService.php) |
@@ -127,9 +128,10 @@ consolidation phase) for the following reasons:
 - Several V-19 sites are **already self-documenting at the class
   header** (`PageTypeMap`, `AuthEndpoint`, `CardsListEndpoint`) —
   adding another marker is duplication.
-- One site is **explicitly LOCKED** (`BinderService` `is_legacy`
-  field, "LOCKED — do not violate in UI/feed") — re-tagging risks
-  weakening the existing lock signal.
+- One site is **explicitly LOCKED** (`WatchingService` `is_legacy`
+  field, "LOCKED — do not violate in UI/feed"; class renamed
+  from `BinderService` on 2026-05-13 per `api-contract-v1.md §4.5.1`)
+  — re-tagging risks weakening the existing lock signal.
 - The Onchain `CircuitBreaker` `:323` / `:357` "legacy keys" markers
   are already covered by the V-04 class-header annotation work
   shipped in Phase A (see

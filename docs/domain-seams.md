@@ -46,7 +46,7 @@ visibility deficit doesn't compound.
 | Trust storage | `bcc_trust_*` tables (votes, endorsements, scores, user_info, edges, fraud_analysis, suspensions, patterns, reputation, page_read_model, ...) |
 | Trust pipelines | Vote (5-stage), Endorsement (vesting), Read-model sync |
 | Content & social | Comments, photos, GIFs, mentions, reactions (PeepSo sidecar tables for BCC-owned semantics) |
-| Group + binder logic | `GroupContextResolver`, `GroupActivityHeatService`, `BinderService`, `BinderRepository`, `PullBatchAggregator` |
+| Group + watching logic | `GroupContextResolver`, `GroupActivityHeatService`, `WatchingService`, `WatchingRepository`, `WatchBatchAggregator` (renamed 2026-05-13 from `BinderService` / `BinderRepository` / `PullBatchAggregator` — see `api-contract-v1.md §4.5.1`) |
 | Read model | `bcc_page_read_model` (canonical denormalisation per §III.11) |
 | Notifications | `NotificationDispatcher` + `PushDispatcher` + `DigestService` |
 | Admin moderation surface | `ModerationService`, `ContentReportService`, `RepairService`, `AutoHideService`, `AdminDashboardRepository` |

@@ -51,7 +51,7 @@ when unclaimed. **CLAIM THIS PAGE** opens a 3-step modal
 elements: streak counter (flame), today's recent-impact line, comparison
 line ("Top X% this week" or "Quiet shift"). Own-profile only adds the
 **rank progress strip**. Tabs: **Reviews / Disputes / Activity /
-Network / Binder / Blog**.
+Network / Watching / Blog**.
 
 **Creator profile (`/c/<slug>`)** — gallery + featured drop layout.
 
@@ -72,7 +72,7 @@ follows change.
 
 **Onboarding** — wizard at `/onboarding`. Step 1 home-chain picker
 (skippable). Step 2 first-pull suggestions. Done triggers the **§O1
-dopamine animation**: cards fly into a binder icon, rarity-tinted glow
+dopamine animation**: cards fly into a watchlist icon (3-ring binder iconography preserved), rarity-tinted glow
 trails, stat-pop, background shift, lands on the Floor (not a "Done"
 screen). **Reduced-motion** falls back to a static confirmation tile.
 
@@ -200,7 +200,7 @@ Every list, feed, and grid must define all three:
 
 Specific empty states to spot-check:
 - Panel duty with no assignments: "Not on duty"
-- Binder with `binder_hidden=true` viewed by another user: "Binder is
+- Watchlist with `watching_hidden=true` (legacy alias `binder_hidden`) viewed by another user: "Watchlist is
   private" placeholder
 - Feed with all sources blocked: empty-state CTA to unblock or
   broaden filters

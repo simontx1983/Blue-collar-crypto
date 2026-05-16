@@ -36,6 +36,34 @@ The host is the WordPress site. The Next.js app proxies cross-origin via its API
 
 Versioning: `v1` is locked for V1 in both namespaces. Breaking changes go to `v2`. Additive changes (new fields, new endpoints) ship to `v1` with a deprecation header on anything removed.
 
+#### 1.1.1 Additive-deprecation runway (rename pattern)
+
+When a v1 surface needs to **rename** (route or field), a hard v2 cutover is not the only option. The rename can ship within v1 over a two-release runway:
+
+1. **Release N — additive ship.** New name lands alongside the old. Both routes call the same handler; both fields hold identical values. The OLD name gets `Deprecation`/`Sunset` response headers per [RFC 8594](https://datatracker.ietf.org/doc/html/rfc8594). Frontend cuts over to the new name in the same release.
+
+2. **Release N+1 — old name removed.** Cleanup release: the deprecated routes / fields disappear. The `Sunset` header date documents when this happens.
+
+**Required headers on the deprecated surface (release N only):**
+
+- `Deprecation: true`
+- `Sunset: <RFC 7231 HTTP-date>` — the exact date the deprecated surface is removed in release N+1.
+- `Link: <https://docs/api-contract-v1.md#section>; rel="deprecation"` — points clients to the migration guide.
+
+**Required documentation in the contract:**
+
+- The new canonical name is documented in its primary section.
+- The deprecated name lives in a `§X.Y.1 Deprecated: <name>` subsection beside it, with a one-line "removed in release N+1" stamp.
+
+**When to use this pattern instead of v2:**
+
+- Use this pattern when the underlying handler / data is unchanged — only the name is moving. Single concept, two labels for one release.
+- Use a hard v2 bump when shape changes (field types, response envelope, semantics).
+
+Migration record (precedents):
+
+- **2026-05-13** — Binder → Watching rename (§4.5). First use of this pattern. Sunset date documented per-route in §4.5.1.
+
 ### 1.2 Authentication
 
 Three modes:
@@ -47,7 +75,7 @@ Three modes:
 | **Wallet-signed** | One-time challenge-response (claim flow, wallet linking) | `POST` with `{ wallet, signature, nonce }` payload |
 
 JWT lifetime: 1h access, 30d refresh. Refresh handled by NextAuth.
-Anonymous endpoints **must still respect privacy** (per K2): if a user's binder is hidden, anonymous reads see "Binder is private," not the contents.
+Anonymous endpoints **must still respect privacy** (per K2): if a user's watchlist is hidden, anonymous reads see "Watchlist is private," not the contents.
 
 ### 1.3 Headers
 
@@ -378,7 +406,7 @@ Or, if the viewer has zero network connection:
 - `headline` is server-rendered, ready to display. The frontend never composes it from `named_handles` + `additional_count`.
 - `named_handles` only ever contains **elite** or **trusted** tier users from the viewer's network (§O4.1).
 - `additional_count` includes neutral-tier users from the viewer's network. Caution/risky users are excluded entirely (§O4.1 + §K1 shadow-limit propagation).
-- **Hidden-binder rule (§O4):** users who have hidden their binder (per §K2) still contribute to `additional_count` but **never** appear in `named_handles`, even if they're elite/trusted.
+- **Hidden-watchlist rule (§O4):** users who have hidden their watchlist (per §K2) still contribute to `additional_count` but **never** appear in `named_handles`, even if they're elite/trusted.
 - `kind` is one of: `follow`, `vouch`, `stand_behind`, `dispute_signed`, `nft_held`, `local_member`. Determines which verb the headline uses.
 - `weighted: true` means the headline applied trust weighting; `false` means raw count (used only on internal admin views, never on public surfaces — kept in the contract for symmetry).
 
@@ -410,11 +438,11 @@ Or `null` if the action shouldn't celebrate.
 
 **Rules:**
 
-- `kind` is one of: `light` (e.g., a normal pull), `mid` (first-of-its-kind action — server tracks via `bcc_first_*` user_meta flags per §O1.2), `heavy` (tier upgrade, rank promotion, feature unlock, 30-day streak).
+- `kind` is one of: `light` (e.g., a normal watch), `mid` (first-of-its-kind action — server tracks via `bcc_first_*` user_meta flags per §O1.2), `heavy` (tier upgrade, rank promotion, feature unlock, 30-day streak).
 - For Heavy moments delivered via §4.11, the inline shape is wrapped — `kind`/`label`/`icon` are nested under `celebration`, alongside an `id` for consume targeting. See §4.11 for the wrapper.
 - `label` is what the frontend renders in the toast. Plain English, ≤ 50 chars.
-- `icon` is a server-defined enum the frontend maps to a sprite (`pull`, `review-stamp`, `vouch-handshake`, `dispute-shield`, `rank-up`, `tier-upgrade`, `streak-flame`, `unlock`, `local-badge`).
-- `rarity_tint` is non-null only on `light` celebrations triggered by a pull — the value is the pulled card's `card_tier`, used for the glow color (§O1).
+- `icon` is a server-defined enum the frontend maps to a sprite (`watch`, `review-stamp`, `vouch-handshake`, `dispute-shield`, `rank-up`, `tier-upgrade`, `streak-flame`, `unlock`, `local-badge`). The legacy `pull` icon name is accepted by the frontend during the §1.1.1 deprecation window — see §4.5.1.
+- `rarity_tint` is non-null only on `light` celebrations triggered by a watch — the value is the watched card's `card_tier`, used for the glow color (§O1).
 - Reduced-motion fallback (§O1.2): the frontend renders the static toast with `label`, ignoring all animation hints. Server contract is identical; the rendering decision is client-side only.
 
 ### 2.4 `LivingBlock`
@@ -620,7 +648,7 @@ Appears on Feed item view-models and on Card view-models that support reactions.
 | `kind_grammar` | Applies to `post_kind` | Reaction kinds | Visual grammar |
 |---|---|---|---|
 | `"trust"`  | `review`, `dispute_signed`, `page_claim`, `project_drop`, `nft_drop`, `signal` | `solid`, `vouch`, `stand_behind` | restrained, intentional |
-| `"social"` | `status`, `pull_batch`, `blog_excerpt` | `like`, `love`, `haha`, `wow`, `fire` | expressive, emoji-forward |
+| `"social"` | `status`, `watch_batch` (legacy `pull_batch`), `blog_excerpt` | `like`, `love`, `haha`, `wow`, `fire` | expressive, emoji-forward |
 | `"tribal"` | _(reserved — V2)_ | _(reserved — e.g. `same_wallet`, `onchain_confirm`)_ | identity-forward |
 
 `counts` always carries all kinds for the active grammar with zero-fill. The frontend never derives the kind set from `post_kind` — it reads `kind_grammar`.
@@ -733,6 +761,7 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
   "counts": {
     "followers": 142,
     "following": 38,
+    "watching_size": 38,
     "binder_size": 38,
     "reviews_written": 8,
     "disputes_signed": 1,
@@ -740,6 +769,7 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
     "solids_received": 117
   },
   "privacy": {
+    "watching_hidden": false,
     "binder_hidden": false,
     "reviews_hidden": false,
     "disputes_hidden": false,
@@ -760,6 +790,7 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
   },
   "links": {
     "self":      "/u/simontx",
+    "watching":  "/u/simontx/watching",
     "binder":    "/u/simontx/binder",
     "reviews":   "/u/simontx/reviews",
     "activity":  "/u/simontx/activity",
@@ -774,8 +805,8 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
 
 - `is_self: false`
 - `progression`, `feature_access`, `ux_helpers` are **omitted entirely** (not even `null`). They are own-only.
-- `privacy` block reduced to `{ binder_hidden, reviews_hidden, ... }` reflecting what the viewer can see, not what's set.
-- `permissions.can_follow` becomes meaningful (`allowed: true` if the viewer can pull this user as a member card).
+- `privacy` block reduced to `{ watching_hidden, reviews_hidden, ... }` reflecting what the viewer can see, not what's set. Legacy `binder_hidden` is emitted alongside `watching_hidden` during the §1.1.1 deprecation window.
+- `permissions.can_follow` becomes meaningful (`allowed: true` if the viewer can watch this user as a member card).
 - `wallets` returns `address_short` only (never full addresses for others — the privacy floor).
 
 **Field rules:**
@@ -829,10 +860,10 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
 - `claim_target` (per §N8) — non-null only when the page is unclaimed AND a claim target resolves. Drives the four-step claim modal.
 - `chains` (per §K3) — list of `CardChain` objects when 2+ chains back the same page; `null` otherwise. V1.5 validator-only; creator gallery filter is V2.
 - `card_tier` may be `null` only when the entity is risky-tier (per §C1) — and in that case the entity should not appear in card UIs at all. If a card response returns `card_tier: null`, the frontend renders nothing visible (treat as a 404 from the UI perspective).
-- `permissions.can_pull.allowed` is `false` when (a) viewer is anonymous, (b) viewer is the card subject (you can't follow yourself), or (c) the card is hidden (risky tier). In cases (a) and (c), `unlock_hint` is `null` — these aren't hints the user can resolve.
+- `permissions.can_watch.allowed` is `false` when (a) viewer is anonymous, (b) viewer is the card subject (you can't follow yourself), or (c) the card is hidden (risky tier). In cases (a) and (c), `unlock_hint` is `null` — these aren't hints the user can resolve. (Legacy permission key `permissions.can_pull` is emitted alongside `can_watch` during the §1.1.1 deprecation window.)
 - `viewer_has_reviewed` / `viewer_has_endorsed` (per §D2 / §V1.5) — drives "WRITE A REVIEW" → "REMOVE YOUR REVIEW" CTA swaps. Always `false` for anonymous viewers and on member cards.
 - `endorse_unlock_hint` mirrors `permissions.can_endorse.unlock_hint` so the EndorseButton can render the hover hint without reaching into the permission object.
-- `binder_size` (on member cards' stats and on `User.counts.binder_size`) **counts member follows alongside entity follows.** Pulling another member is a first-class binder action, no separate `following_count` field exists.
+- `watching_size` (on member cards' stats and on `User.counts.watching_size`) **counts member follows alongside entity follows.** Watching another member is a first-class watchlist action, no separate `following_count` field exists. Legacy alias `binder_size` is emitted alongside `watching_size` during the §1.1.1 deprecation window.
 
 **Deferred to V1.5:**
 
@@ -869,7 +900,7 @@ When on-chain meta is wired (per §K3 chain support and §H1 indexer), entity ca
 - **Validator:** `trust`, `uptime` (percent), `fee` (percent), `self_bonded` (currency_native), `delegators` (count), `voting_power` (percent)
 - **Project:** `trust`, `stage` (text), `tvl` (currency_usd), `contributors` (count), `last_release` (text)
 - **Creator:** `trust`, `pieces` (count), `collections` (count), `collectors` (count), `last_drop_at` (duration)
-- **Member:** add `rank` (text), `binder_size` (count), `primary_local` (text)
+- **Member:** add `rank` (text), `watching_size` (count, legacy alias `binder_size`), `primary_local` (text)
 
 V1 frontend types declare `stats: CardStat[]` (opaque array, no per-kind narrowing). Adding kind-specific stats in V1.5 is purely additive — no breaking change.
 ```
@@ -880,9 +911,9 @@ V1 frontend types declare `stats: CardStat[]` (opaque array, no per-kind narrowi
 
 ```json
 "actions": {
-  "pull": {
+  "watch": {
     "method":        "POST",
-    "href":          "/wp-json/bcc/v1/me/binder/pull",
+    "href":          "/wp-json/bcc/v1/me/watching/watch",
     "body":          { "target_kind": "validator", "target_id": 1842 },
     "idempotent":    true,
     "requires_auth": true
@@ -899,11 +930,11 @@ V1 frontend types declare `stats: CardStat[]` (opaque array, no per-kind narrowi
 
 **Rules:**
 
-- Action keys are stable identifiers (`pull`, `claim`). Permission to invoke is in `permissions.*`; presence in `actions` does NOT imply the viewer is allowed (gate on `permissions.<key>.allowed`).
-- `claim` is omitted when the page has no resolvable underlying on-chain entity. `pull` is always emitted.
+- Action keys are stable identifiers (`watch`, `claim`). Permission to invoke is in `permissions.*`; presence in `actions` does NOT imply the viewer is allowed (gate on `permissions.<key>.allowed`). During the §1.1.1 deprecation window the legacy key `pull` is emitted alongside `watch` with the legacy `/me/binder/pull` href.
+- `claim` is omitted when the page has no resolvable underlying on-chain entity. `watch` is always emitted.
 - `body` is the request payload template — the client passes it as-is. Servers may add server-only fields (CSRF token, etc.) at request time.
 - `idempotent` true means safe to retry on transport error.
-- Member cards emit only `pull` (members are not claimable in V1).
+- Member cards emit only `watch` (members are not claimable in V1).
 - V1 frontend consumers may hardcode endpoint paths; V1.5 will switch to reading `actions[].href` so URL changes don't require frontend deploys.
 
 ### 3.3 `FeedItem` (polymorphic)
@@ -954,7 +985,7 @@ Feed items share an envelope and vary by `post_kind`.
 **Field rules:**
 
 - `id` is a string in the form `feed_<int>` (the underlying activity ID is opaque to the client — using a string lets us migrate if needed).
-- `external_id` is the module-specific FK (e.g. `wp_posts.ID` for status / blog / review backings, `bcc_pull_batches.id` for `pull_batch`, `bcc_onchain_claims.id` for `page_claim`, `0` for system-authored signals). Used by server-side hydrators and by the client as a stable React key. Treat as opaque.
+- `external_id` is the module-specific FK (e.g. `wp_posts.ID` for status / blog / review backings, `bcc_pull_batches.id` for `watch_batch` posts (table name retains its legacy `pull_batches` form per §4.5.1), `bcc_onchain_claims.id` for `page_claim`, `0` for system-authored signals). Used by server-side hydrators and by the client as a stable React key. Treat as opaque.
 - `scope_tags` lists which feed-mode tabs (§N6) this post is eligible for. Used for client-side optimistic filtering when switching tabs without refetching.
 - `comment_count` is the number of visible (non-trashed) comments on the post at response-time. Server-computed via one batched COUNT(*) GROUP BY across the page. Clients MUST treat this as a count badge — the actual list is fetched separately via §4.13. Always present; `0` when there are no comments.
 - `group` is **omitted** (not `null`) when the post does NOT come from a PeepSo group. When present, the post is a wall post inside a group:
@@ -963,7 +994,7 @@ Feed items share an envelope and vary by `post_kind`.
   - `verification` is `null` for non-NFT groups; for NFT-gated groups it carries `{kind: 'on_chain', label: 'On-Chain Verified'}`. Frontend MUST render `label` verbatim — never abbreviate to "Verified" alone.
   - **No server-side ranking is applied based on this field in v1.** The Floor feed continues to order strictly by recency. The `group` block is metadata for badge rendering and (optional) client-side prioritization. A scored ranking layer is deferred until usage telemetry exists to tune it honestly.
   - **Mapping:** `peepso_group_id` post-meta on the activity's wp_post (PeepSo writes this when a status post is created inside a group) → `GroupContextResolver::forManyGroups`. Batched per page; no N+1.
-- V1 author block is **user-only** — every post in V1 is authored by a WP user (status, review, pull_batch, page_claim, dispute_signed, blog). System-emitted signals (§3.3.5) currently ride the same shape with the system actor's user_id; their `post_kind` discriminates them, not the author block.
+- V1 author block is **user-only** — every post in V1 is authored by a WP user (status, review, watch_batch, page_claim, dispute_signed, blog). System-emitted signals (§3.3.5) currently ride the same shape with the system actor's user_id; their `post_kind` discriminates them, not the author block.
 - `author.is_operator` — true when the author holds a verified operator/creator claim on any entity (per §N8). Drives the OPERATOR chip next to the author name.
 - `attached_card` is omitted (not `null`) when no card is attached.
 
@@ -1014,12 +1045,12 @@ V1.5 transition rules: clients tolerant of unknown fields ride forward without c
 
 `grade` ∈ {`A`, `B`, `C`, `D`, `F`}. `long_form` is a long-form review body (≤ 2000 chars), null for short reviews.
 
-**3.3.3 `pull_batch`** — C3 batched pulls:
+**3.3.3 `watch_batch`** — C3 batched watches (legacy kind name `pull_batch` accepted during the §1.1.1 deprecation window):
 
 ```json
 "body": {
   "card_count": 5,
-  "summary_text": "Simon pulled 5 cards",
+  "summary_text": "Simon started watching 5 cards",
   "top_cards": [
     { "...": "summary Card view-model, max 3" }
   ],
@@ -1030,11 +1061,11 @@ V1.5 transition rules: clients tolerant of unknown fields ride forward without c
 ```
 
 **Rules (§C3):**
-- Batches close after exactly **10 minutes of pull inactivity**. At close, the server emits exactly one `pull_batch` FeedItem.
+- Batches close after exactly **10 minutes of watch inactivity**. At close, the server emits exactly one `watch_batch` FeedItem. The legacy `post_kind` value `pull_batch` is emitted on the deprecated `/me/binder/*` mutation path; the canonical `/me/watching/*` path emits `watch_batch`. Both serialize to the same `body` shape.
 - `top_cards` contains a **maximum of 3** summary Card view-models. If the batch has more than 3 cards, `more_count = card_count - 3` (always, never paginated, never expandable in V1).
 - `frozen: true` is always true once posted. There is no other value in V1.
-- If the user later unfollows cards in this batch, the batch post does NOT update. `card_count`, `top_cards`, `more_count` reflect the batch at the moment of posting.
-- The binder UI (separate from the feed) reflects unfollows immediately. Feed and binder are not synchronized after the post.
+- If the user later stops watching cards in this batch, the batch post does NOT update. `card_count`, `top_cards`, `more_count` reflect the batch at the moment of posting.
+- The watchlist UI (separate from the feed) reflects unfollows immediately. Feed and watchlist are not synchronized after the post.
 
 **3.3.4 `dispute_signed`** — D2 dispute signing:
 
@@ -1221,7 +1252,7 @@ Encodes §O2 + §O2.1. Strict slot ordering: negative → positive → external.
       "slot": 1,
       "category": "negative",
       "title": "Blacksmith Node uptime dropped to 96.2%",
-      "body": "−3.7% in the last 24h. You hold this validator in your binder.",
+      "body": "−3.7% in the last 24h. You're watching this validator.",
       "cta": { "label": "View record", "href": "/v/blacksmith-node" },
       "severity": "warn",
       "source_event_id": "signal_evt_882012",
@@ -1272,7 +1303,7 @@ The `Comment` view-model used by §4.13 endpoints. One row per visible comment o
     "display_name": "Simon TX",
     "avatar_url":   "https://bluecollar.crypto/wp-content/uploads/2026/05/simontx-avatar.jpg"
   },
-  "body":      "love this — finally a binder that respects pulls.",
+  "body":      "love this — finally a watchlist that respects watches.",
   "mentions":  [],
   "posted_at": "2026-05-06T14:09:33Z",
   "permissions": {
@@ -1407,14 +1438,14 @@ Per-piece detail view-model used by §4.17. One row per uniquely-identified NFT,
 - `owners[]` is empty (`[]`) for ERC-721 / CW-721 (the single holder lives on `owner` only). For ERC-1155 it is the top-N holders by balance, capped server-side at **N = 10**. Each item has the same shape as `owner` minus `is_linked` / `user` enrichment (privacy: only the dominant `owner` gets handle resolution; the rest stay wallet-only). Future expansion to a paginated full-holder list is a separate endpoint.
 - `marketplace_links[]` is per-chain. Empty array when no marketplace is configured for the chain. The list is server-curated from a new `bcc_onchain_chains.marketplace_template` column (added in V2 Phase 6 — see §4.17 mapping notes) and is stable across requests.
 - `mint_link` mirrors the §3.2 Card pattern; relative path within the BCC site, points to the creator's mint surface with the token pre-selected.
-- `permissions` is reserved for future viewer-aware actions (favorite, hide-from-binder, etc.) — V2 Phase 6 ships with `{}`. Frontend renders no per-piece actions.
+- `permissions` is reserved for future viewer-aware actions (favorite, hide-from-watchlist, etc.) — V2 Phase 6 ships with `{}`. Frontend renders no per-piece actions.
 - `meta.read_time` is `true` for chains with no persistent indexer (CW-721 / Cosmos as of V2 Phase 2 — read-time + V1-transient per pattern-registry). Frontend MAY surface a "Live data — may take a moment" affordance when this is true and the piece is a thumbnail in a list, though for the detail view itself the latency is acceptable without explicit copy.
 - `meta.indexer_state` + `meta.indexer_state_label` follow the §3.6 contract verbatim — frontend renders the server-pre-formatted label, never invents copy.
 - `meta.owners_summary_label` is the server-pre-formatted multi-holder summary string (e.g., `"Held by 8 collectors"`). `null` for ERC-721 / CW-721 / SPL (single-holder standards) and for ERC-1155 with `owners_count <= 1`. Non-null for ERC-1155 with multiple holders. **Frontend renders the value verbatim**; the FE MUST NOT compose its own count-with-noun string from `owners_count`. The server uses `_n('Held by %d collector', 'Held by %d collectors', $count)` so the locale-correct plural lands in `meta.owners_summary_label` when i18n ships. Frontend rendering rule: when `meta.owners_summary_label !== null`, also render the `owners[]` co-owner tiles; when null, render only the dominant `owner` block. This single field drives both the count copy and the multi-holder render branch (§S "no business logic on client").
 
 **V2 Phase 6 deferred:**
 
-- **Per-piece reactions / comments** — `FeedItem` is the reactive surface for content; pieces are passive read-only views in V2. V2.5+ may introduce a `nft_piece_pulled` event but it is not part of this view-model.
+- **Per-piece reactions / comments** — `FeedItem` is the reactive surface for content; pieces are passive read-only views in V2. V2.5+ may introduce a `nft_piece_watched` event but it is not part of this view-model.
 - **Provenance / transfer history** — Phase 7. The persistent index already stores transfers but exposing them requires a paginated history sub-endpoint with privacy redaction for non-linked wallets.
 - **Floor / last-sale** — collection-level only today (§4.7.4 `collection_stats`). Per-piece price history is a marketplace integration, deferred until at least one chain has a stable price oracle.
 
@@ -1724,14 +1755,16 @@ Slim prefix-search endpoint backing the composer's `@`-mention autocomplete (§3
 - **Side effects:** none. Pure read; no notification, no logging beyond the rate-limit counter.
 - **Sister endpoints:** the composer's full-name → user_id resolution at submit time is **not** exposed as a separate endpoint — the picker emits the wire-format token `@peepso_user_<id>(name)` directly into the post body using `user_id` from this response, and the server's `MentionPolicy` re-validates on `POST /posts*` (§3.3.12 server-side enforcement). A user picked from the dropdown but who turns hidden between picker-select and submit gets rejected at write-time with `bcc_invalid_mention_target` — picker results are advisory, not authoritative.
 
-### 4.5 Binder
+### 4.5 Watching
 
-#### `GET /bcc/v1/me/binder`
+> **2026-05-13 rename:** these routes replaced `/me/binder/*` under the §1.1.1 additive-deprecation pattern. The legacy routes remain available with `Deprecation`/`Sunset` headers for one release — see §4.5.1.
 
-Returns the viewer's binder (§C2 — UI projection of PeepSo follows + `bcc_pull_meta`).
+#### `GET /bcc/v1/me/watching`
+
+Returns the viewer's watchlist (§C2 — UI projection of PeepSo follows + `bcc_pull_meta` sidecar). The watchlist is the canonical name for what was formerly the "binder."
 
 - **Auth:** Bearer
-- **Query:** `cursor`, `limit` (default 18 = 2 binder pages of 3×3, max 54), `filter` (optional: `validator|project|creator|member`), `tier` (optional: `legendary|rare|uncommon|common`)
+- **Query:** `cursor`, `limit` (default 18 = 2 watchlist pages of 3×3, max 54), `filter` (optional: `validator|project|creator|member`), `tier` (optional: `legendary|rare|uncommon|common`)
 - **Response 200:**
   ```json
   {
@@ -1739,9 +1772,9 @@ Returns the viewer's binder (§C2 — UI projection of PeepSo follows + `bcc_pul
       {
         "follow_id": 88123,
         "card": { "...": "summary Card view-model" },
-        "pulled_at": "2026-04-22T09:14:00Z",
-        "card_tier_at_pull": "rare",
-        "tier_label_at_pull": "Rare",
+        "watched_at": "2026-04-22T09:14:00Z",
+        "card_tier_at_watch": "rare",
+        "tier_label_at_watch": "Rare",
         "batch_id": "batch_abc123"
       }
     ],
@@ -1751,11 +1784,40 @@ Returns the viewer's binder (§C2 — UI projection of PeepSo follows + `bcc_pul
 - **Errors:** `bcc_unauthorized`
 - **Rate limit:** 60/min/user
 - **Cache:** `Cache-Control: private, max-age=30`
-- **Mapping:** JOIN of `peepso_follower` + `bcc_pull_meta` (§C2). Removed cards (unfollowed) do not appear. `card_tier_at_pull` is the `card_tier` (`legendary|rare|uncommon|common|null`) at the moment of the pull, not the current tier — preserved for historical narrative. `tier_label_at_pull` is the pre-rendered display string per §A2.
+- **Mapping:** JOIN of `peepso_follower` + `bcc_pull_meta` (§C2). Removed cards (unwatched) do not appear. `card_tier_at_watch` is the `card_tier` (`legendary|rare|uncommon|common|null`) at the moment the card was watched, not the current tier — preserved for historical narrative. `tier_label_at_watch` is the pre-rendered display string per §A2. The underlying storage table retains its legacy physical name `bcc_pull_meta` — see `docs/database-schema.md` for the storage-vs-logical naming note.
 
-#### `POST /bcc/v1/me/binder/pull`
+#### `GET /bcc/v1/me/watching/summary`
 
-Pulls a card (= creates a PeepSo follow + `bcc_pull_meta` row).
+Returns the viewer's identity-snapshot (§N9) — pre-computed tier distribution + monthly activity counts for the watchlist header.
+
+- **Auth:** Bearer
+- **Response 200:**
+  ```json
+  {
+    "handle": "simontx",
+    "watching_size": 39,
+    "tier_distribution": {
+      "legendary": { "count": 2, "percent": 5 },
+      "rare":      { "count": 7, "percent": 18 },
+      "uncommon":  { "count": 14, "percent": 36 },
+      "common":    { "count": 14, "percent": 36 },
+      "unknown":   { "count": 2, "percent": 5 }
+    },
+    "monthly_activity": {
+      "reviews_written":  4,
+      "solids_received":  12,
+      "disputes_signed":  1
+    }
+  }
+  ```
+- **Errors:** `bcc_unauthorized`
+- **Rate limit:** 60/min/user
+- **Cache:** `Cache-Control: private, max-age=60`
+- **Mapping:** server-pre-computed identity snapshot per §A2 / §L5; clients render, never derive percentages.
+
+#### `POST /bcc/v1/me/watching/watch`
+
+Starts watching a card (= creates a PeepSo follow + `bcc_pull_meta` row).
 
 - **Auth:** Bearer
 - **Body:**
@@ -1765,17 +1827,17 @@ Pulls a card (= creates a PeepSo follow + `bcc_pull_meta` row).
     "card_id": 1842
   }
   ```
-- **Response 201 (new pull):**
+- **Response 201 (new watch):**
   ```json
   {
     "follow_id": 88123,
-    "binder_size": 39,
-    "already_in_binder": false,
+    "watching_size": 39,
+    "already_watching": false,
     "card": { "...": "summary Card view-model" },
     "celebration": {
       "kind": "light",
-      "label": "Pulled Blacksmith Node.",
-      "icon": "pull",
+      "label": "Now watching Blacksmith Node.",
+      "icon": "watch",
       "rarity_tint": "legendary"
     },
     "feed_post": {
@@ -1785,12 +1847,12 @@ Pulls a card (= creates a PeepSo follow + `bcc_pull_meta` row).
     }
   }
   ```
-- **Response 200 (already in binder — idempotent):**
+- **Response 200 (already watching — idempotent):**
   ```json
   {
     "follow_id": 88123,
-    "binder_size": 38,
-    "already_in_binder": true,
+    "watching_size": 38,
+    "already_watching": true,
     "card": { "...": "summary Card view-model" },
     "celebration": null,
     "feed_post": null
@@ -1798,32 +1860,59 @@ Pulls a card (= creates a PeepSo follow + `bcc_pull_meta` row).
   ```
 - **Errors:**
   - `bcc_invalid_request` — bad card kind/id
-  - `bcc_permission_denied` — viewing your own member card and trying to pull yourself
+  - `bcc_permission_denied` — viewing your own member card and trying to watch yourself
   - `bcc_rate_limited` — soft limit (per §L3)
 - **Rate limit:** 120/hour/user (soft), 600/day/user (hard)
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:**
-  - Side effects: PeepSo follow created, `bcc_pull_meta` row inserted, `bcc_card_pulled` event emitted (§A3 async — request returns before subscribers run)
-  - `feed_post.kind: "deferred_batch"` always (per §C3 — pulls go through the rolling-window aggregator before becoming a feed post). The `estimated_post_at` = the current pull's timestamp + **10 minutes** (every pull resets the inactivity window per §C3). The frontend may show a passive "+1 to your binder" without waiting for the feed.
-  - **Idempotency (`already_in_binder`):** if the card is already in the viewer's binder when this endpoint is called (e.g., user double-clicks Pull, or two tabs race), the server returns `200` with `already_in_binder: true`, the existing `follow_id`, the current `binder_size` (unchanged), `celebration: null`, and `feed_post: null`. No new row is inserted, no event re-emitted, no double-celebration fired. The frontend uses this signal to skip the dopamine animation on the second call.
+  - Side effects: PeepSo follow created, `bcc_pull_meta` row inserted, `bcc_card_watched` event emitted (§A3 async — request returns before subscribers run). For release N back-compat the server ALSO emits the legacy `bcc_card_pulled` event with the same payload; removed in release N+1.
+  - `feed_post.kind: "deferred_batch"` always (per §C3 — watches go through the rolling-window aggregator before becoming a feed post). The `estimated_post_at` = the current watch's timestamp + **10 minutes** (every watch resets the inactivity window per §C3). The frontend may show a passive "+1 to your watchlist" without waiting for the feed.
+  - **Idempotency (`already_watching`):** if the card is already in the viewer's watchlist when this endpoint is called (e.g., user double-clicks Watch, or two tabs race), the server returns `200` with `already_watching: true`, the existing `follow_id`, the current `watching_size` (unchanged), `celebration: null`, and `feed_post: null`. No new row is inserted, no event re-emitted, no double-celebration fired. The frontend uses this signal to skip the dopamine animation on the second call.
 
-#### `DELETE /bcc/v1/me/binder/:follow_id`
+#### `DELETE /bcc/v1/me/watching/:follow_id`
 
-Removes a card from the binder (= PeepSo unfollow).
+Stops watching a card (= PeepSo unfollow).
 
 - **Auth:** Bearer
-- **Path:** `follow_id` (the PeepSo follow row ID, returned by `GET /me/binder`)
+- **Path:** `follow_id` (the PeepSo follow row ID, returned by `GET /me/watching`)
 - **Response 200:**
   ```json
   {
     "removed": true,
-    "binder_size": 38
+    "watching_size": 38
   }
   ```
 - **Errors:** `bcc_not_found`, `bcc_unauthorized`
 - **Rate limit:** 60/min/user
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** PeepSo unfollow + cascade `bcc_pull_meta`. **Does not** edit any prior feed post per §C3.
+
+### 4.5.1 Deprecated: `/me/binder/*` (removed in release N+1)
+
+Legacy routes kept alive for one release under the §1.1.1 additive-deprecation runway. They return **identical** payloads to their `/me/watching/*` counterparts, with the following back-compat aliases:
+
+- `watched_at` ↔ legacy `pulled_at`
+- `card_tier_at_watch` ↔ legacy `card_tier_at_pull`
+- `tier_label_at_watch` ↔ legacy `tier_label_at_pull`
+- `watching_size` ↔ legacy `binder_size`
+- `already_watching` ↔ legacy `already_in_binder`
+- Celebration `label`: `"Pulled <name>."` (legacy) replaced with `"Now watching <name>."` (canonical). The canonical route returns the new copy; the deprecated route returns the legacy copy unchanged so old clients render the wording they expect.
+- Celebration `icon`: `"pull"` (legacy) ↔ `"watch"` (canonical), same one-for-one alias rule.
+
+| Legacy route | Canonical replacement |
+|---|---|
+| `GET /bcc/v1/me/binder` | `GET /bcc/v1/me/watching` |
+| `GET /bcc/v1/me/binder/summary` | `GET /bcc/v1/me/watching/summary` |
+| `POST /bcc/v1/me/binder/pull` | `POST /bcc/v1/me/watching/watch` |
+| `DELETE /bcc/v1/me/binder/:follow_id` | `DELETE /bcc/v1/me/watching/:follow_id` |
+
+**Deprecation headers (required on every response from these routes):**
+
+- `Deprecation: true`
+- `Sunset: <RFC 7231 HTTP-date>` — exact removal date, set by the release N+1 cut.
+- `Link: <https://docs/api-contract-v1.md#45-watching>; rel="deprecation"`
+
+The legacy `bcc_card_pulled` event is also emitted in parallel with `bcc_card_watched` during the deprecation window and removed in release N+1.
 
 ### 4.6 Pages (claim flow)
 
@@ -1914,7 +2003,7 @@ List of available Locals (PeepSo Groups in BCC clothing).
 - Authenticated non-member: `{ "is_member": false, "is_primary": false, "joined_at": null }`.
 - Authenticated member: `{ "is_member": true, "is_primary": <bool>, "joined_at": "<iso8601>" }`.
 
-**Pagination:** uses **offset** envelope per §1.5 (Locals is a directory, not a time-ordered feed). Cursor pagination is reserved for `/feed`, `/feed/hot`, `/me/binder`.
+**Pagination:** uses **offset** envelope per §1.5 (Locals is a directory, not a time-ordered feed). Cursor pagination is reserved for `/feed`, `/feed/hot`, `/me/watching` (and its legacy alias `/me/binder` during the §1.1.1 deprecation window).
 
 #### `POST /bcc/v1/me/locals/:id/join`
 
@@ -2339,7 +2428,7 @@ Paginated list of Cards filtered + sorted server-side. Backs `/directory`.
 - **Errors:** `bcc_invalid_request` (bad `kind`, `tier`, `sort`, or `page > 20`)
 - **Cache:** `Cache-Control: private, max-age=15`. Underlying `PageDiscoveryService` query is server-cached for 30s with a stampede lock; the short client TTL is courtesy for back-button nav.
 - **Mapping:**
-  - Filter SQL ← `PageDiscoveryService::query()` (the same service `/discover` already uses for the legacy bcc-page-slider block — discovery is shared, the legacy endpoint kept for back-compat)
+  - Filter SQL ← `PageDiscoveryService::query()`. (`/bcc/v1/discover` was retired 2026-05-15 along with the legacy bcc-page-slider Gutenberg block it served; `PageDiscoveryService` is now used solely by this endpoint.)
   - Server translates canonical kind → legacy `_bcc_page_type` (validator→validator, project→builder, creator→nft) via `PageTypeMap`
   - Server translates canonical card-tier → reputation tier (legendary→elite, rare→trusted, uncommon→neutral, common→caution)
   - The `good_standing_only` `IN`-clause sources its tier list from `UserViewService::GOOD_STANDING_TIERS` — the same constant `isInGoodStanding()` (and therefore the per-row `is_in_good_standing` stamp + the `/auth/*` response `in_good_standing` flag) reads from. The filter chip and the per-row stamp can never disagree.
@@ -2404,13 +2493,13 @@ PeepSo's `peepso_notifications` table is the storage layer (§I1 "extend, don't 
 }
 ```
 
-- `type` ∈ {`bcc_reaction`, `bcc_review`, `bcc_card_pulled`, `bcc_rank_up`, `bcc_endorse`, `bcc_welcome`, `bcc_mention`, `bcc_local_post`, `bcc_comment_received`}. V1 catalogue per §I2; follow-posts deferred.
+- `type` ∈ {`bcc_reaction`, `bcc_review`, `bcc_card_watched`, `bcc_rank_up`, `bcc_endorse`, `bcc_welcome`, `bcc_mention`, `bcc_local_post`, `bcc_comment_received`}. V1 catalogue per §I2; follow-posts deferred. **Legacy alias:** `bcc_card_pulled` is emitted in parallel with `bcc_card_watched` during the §1.1.1 deprecation window; clients SHOULD branch on the new name and accept either. Removed in release N+1.
 - `message` is server-rendered per §A2 — frontend renders verbatim. Plain English, capped at 200 chars (PeepSo's column width).
 - `actor.handle` may be empty when the originating user has been deleted; the frontend renders the message verbatim regardless.
 - `link` is a server-built relative path. Per type:
   - `bcc_reaction` → `/?focus=<act_id>` (jump back to the post)
   - `bcc_review` → `/v/<page-handle>` etc. (the reviewed page, route prefix per kind)
-  - `bcc_card_pulled` → `/u/<actor-handle>` (the puller's profile)
+  - `bcc_card_watched` → `/u/<actor-handle>` (the watcher's profile) — legacy `bcc_card_pulled` resolves identically during deprecation
   - `bcc_rank_up` → `/u/<recipient-handle>` (your own profile — progression strip lives there)
   - `bcc_endorse` → `/v/<page-handle>` etc. (the endorsed page)
   - `bcc_welcome` → `/` (the floor — the user is probably already there when they see it)
@@ -2474,7 +2563,7 @@ Notifications are dispatched by `NotificationDispatcher` (sync subscribers, try/
 |---|---|---|
 | `bcc_reaction_added` | author of the reacted-to post | actor === author |
 | `bcc_review_published` | page owner via `PageOwnerResolver` | author === page owner |
-| `bcc_card_pulled` | the followee user | viewer === followee (impossible from the binder UI, defensive) |
+| `bcc_card_watched` (legacy `bcc_card_pulled`) | the followee user | viewer === followee (impossible from the watchlist UI, defensive) |
 | `bcc_rank_awarded` | the recipient (self-notification) | rank label not in catalog |
 | `bcc_trust_endorsement_added` | endorsed page owner | endorser === page owner |
 | `user_register` (WordPress core) | the new user (self-notification, type `bcc_welcome`) | `bcc_welcomed` user_meta already set (idempotency guard — once welcomed, never re-welcome) |
@@ -2531,7 +2620,7 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
   "bell": {
     "bcc_reaction":         true,
     "bcc_review":           true,
-    "bcc_card_pulled":      true,
+    "bcc_card_watched":     true,
     "bcc_rank_up":          true,
     "bcc_endorse":          true,
     "bcc_welcome":          true,
@@ -2742,7 +2831,7 @@ Create a comment on the parent post.
 - **Auth:** required. Anonymous → `bcc_unauthorized 401`.
 - **Request body:**
   ```json
-  { "body": "love this — finally a binder that respects pulls." }
+  { "body": "love this — finally a watchlist that respects watches." }
   ```
   - `body` (string, required, 1–2000 chars after trim). PeepSo applies its own sanitization on top (`htmlspecialchars` + `strip_content`).
 - **Holder-Groups gate:** writes require write-grade membership (`gm_user_status` ∈ `member`, `member_owner`, `member_manager`, `member_moderator`). `member_readonly` can read but not create. Non-members get `bcc_forbidden 403`.
@@ -3464,9 +3553,17 @@ Returns the signed-in operator's own reliability surface. Mirror, not stigma —
       "reliability_30d_ago": 0.91,
       "reliability_90d_ago": 0.95,
       "direction": "softening" | "steady" | "improving"
+    },
+    "divergence_state": "untested" | "well_regarded" | "poorly_regarded" | "polarizing" | "disputed",
+    "explainer": {
+      "state": "untested",
+      "headline": "No reads yet.",
+      "body": "Server-pinned copy explaining the operator's current divergence state. Render verbatim per §A2. Per the §2.7 status-anxiety mitigation, the body avoids any 'you should do X' nudge — it explains, it doesn't prescribe."
     }
   }
   ```
+- **`divergence_state`** — the operator's own divergence-state classification per §J.8. SELF-ONLY context on this surface (the same value flows to the public §J.6 `negative_signals.divergence_state` for entity-card targets; user_profile targets keep it self-only in V1 per §J.10 q14). PR-8a ships this as a read-time `DivergenceStateClassifier` output.
+- **`explainer`** — server-pinned copy block explaining the current state in plain language. Per the §J.5 critical-risk-mitigation item #7 ("self-only 'why am I in this state' view"), the operator's self-mirror is the only surface that carries this — never on third-party endpoints. The `headline` + `body` strings are server-rendered per §A2; the FE renders them verbatim.
 - **Cache:** `private, max-age=60`.
 - **`slots_recyclable_count`:** number of currently-allocated Stand Behind slots whose decayed_weight has crossed the 50% threshold and are eligible to auto-free on the next write. FE renders this as a soft "you have N slots about to recycle" hint.
 
@@ -3522,8 +3619,9 @@ The §I1 bell + push catalogue extends with five trust-event types:
 | `stand_behind_renewal_nudge` | the attestor themselves | self-only; cadence per the soft-renewal nudge (§J.10 tunable, 6 months default); structurally skipped if attestation already revoked |
 | `dispute_filed_against_you` | target operator | self (structurally impossible); cooldown per (recipient, filer) 24h |
 | `reliability_threshold_crossed` | the operator themselves | direction must be *crossing*, not bouncing across the same boundary inside 24h; cross to a *positive* badge fires push, cross *away* from a positive badge fires bell only (asymmetric-display rule — losing a positive badge isn't a public stigma, but the operator should still know to look in their self-mirror) |
+| `divergence_state_warning` | the target operator (page owner for entity targets; the user themselves for user_profile targets) | per-(recipient, target_kind, target_id, new_state) 24-hour coalescing window; only fires on transitions INTO `polarizing` or `disputed` — never on transitions out of them; PR-8b ships only the `disputed` path in V1 since the V1 classifier doesn't produce `polarizing` until Slice E.5 reliability cache lands |
 
-Each event is opt-toggleable on `/me/notification-prefs` per the existing §I1 contract. Defaults: all five enabled. `NotificationType` enum extends; `NotificationPrefs::BELL_TYPES` and `PUSH_TYPES` extend; `NotificationViewService::resolveLink` adds:
+Each event is opt-toggleable on `/me/notification-prefs` per the existing §I1 contract. Defaults: all enabled (six trust events + the legacy taxonomy). `NotificationType` enum extends; `NotificationPrefs::BELL_TYPES` and `PUSH_TYPES` extend; `NotificationViewService::resolveLink` adds:
 
 - `attestation_vouch_received`, `attestation_stand_behind_received` → `/u/{attestor_handle}` (the source of the attestation)
 - `attestation_revoked` → `/u/{former_attestor_handle}`
@@ -3531,6 +3629,7 @@ Each event is opt-toggleable on `/me/notification-prefs` per the existing §I1 c
 - `stand_behind_renewal_nudge` → `/me/attestations` (the operator's own attestation list, where the one-tap reaffirm / revoke / ignore choice is presented)
 - `dispute_filed_against_you` → `/disputes/{dispute_id}`
 - `reliability_threshold_crossed` → `/me/reliability`
+- `divergence_state_warning` → `/me/reliability` (the self-mirror surface where the §J.5 `explainer` block sits — the operator lands on plain-language framing for their new state, not on a raw card view)
 
 #### §J.8 Negative-signal computation (Layer 2 read model)
 
@@ -3538,10 +3637,10 @@ The negative signals on entity cards are derived, not user-cast:
 
 | Field | Trigger | Computed at |
 |---|---|---|
-| `under_review` | open dispute exists on this target (state ∈ `{open, in_panel}`) | read-time |
-| `divergence_state` | classification into one of five derived states per §J.2 polarization-as-intelligence — `untested` / `well_regarded` / `poorly_regarded` / `polarizing` / `disputed`. `polarizing` requires divergence among **high-reliability** attestors (reliability standing ≥ `consistent`); cheap low-reliability dispute-bombing does not trigger it | nightly worker |
+| `under_review` | active dispute exists on this target (state = `'reviewing'`, per `DisputeStatus::REVIEWING`) | read-time |
+| `divergence_state` | classification into one of five derived states per §J.2 polarization-as-intelligence — `untested` / `well_regarded` / `poorly_regarded` / `polarizing` / `disputed`. `polarizing` requires divergence among **high-reliability** attestors (reliability standing ≥ `consistent`); cheap low-reliability dispute-bombing does not trigger it | read-time in V1 (PR-8a `DivergenceStateClassifier`); nightly worker in Slice E.5+ once the threshold-tunables table populates |
 | `volatile` | `reputation_score` swung > VOLATILITY_THRESHOLD points in a rolling 90-day window | nightly worker |
-| `unresolved_claims_count` | open dispute count + open content-report count | read-time |
+| `unresolved_claims_count` | active dispute count (state = `'reviewing'`) + open content-report count | read-time |
 
 `divergence_state` replaces the previous separate `contested`
 boolean + `divergence_signal` string. The five-state enum is
@@ -3712,6 +3811,51 @@ Set new display order for the viewer's selections.
 
 ---
 
+### 4.22 User endorsements — given direction (§J.6)
+
+Public read of pages a specific user has endorsed. The inverse of the attestation roster (which shows attestations RECEIVED by a user via `GET /entities/user_profile/:id/attestations`). Same row shape as `/endorsements/mine`; the per-handle public read shares the server-side hydration helper (`UserEndorsementsEndpoint::hydrate`) with the auth-only `/mine` endpoint so both surfaces emit identical row shapes — single source of trust per §A4.
+
+Anonymous-readable per §J trust-graph doctrine: attestation data is public-by-design. The per-page endorser list is already public via the entity card; this endpoint is the same data sliced by user.
+
+#### `GET /bcc/v1/users/{handle}/endorsements`
+
+- **Auth:** Anonymous OR Bearer (response shape is identical; no viewer-aware fields).
+- **Path:**
+  - `handle` — required, matches `HANDLE_PATTERN` (lowercase alphanumeric + hyphens, 3–20 chars).
+- **Query:**
+  - `limit` (integer, optional, default 20, min 1, max 50).
+- **Response 200 data shape:**
+  ```json
+  {
+    "items": [{
+      "id": 142,
+      "page_id": 4521,
+      "page_title": "Validator name or page title",
+      "page_url": "https://site/p/some-page",
+      "avatar_url": "https://… (page-owner avatar; empty string if unresolvable)",
+      "trust_score": 67,
+      "tier": "trusted",
+      "weight": 1.25,
+      "context": "general",
+      "reason": "Optional public note, server-trimmed; null when blank.",
+      "created_at": "2026-05-15 14:23:47"
+    }],
+    "total": 12
+  }
+  ```
+  - `created_at` is MySQL UTC datetime (`YYYY-MM-DD HH:MM:SS`); frontend normalizes at the boundary via `formatRelativeTime`.
+  - `total` is the count of `items` actually returned (not a paginated grand total).
+  - `tier` is the *current* reputation tier of the endorsed page, snapshotted from `bcc_page_read_model` at request time — not the tier at the moment of endorsement.
+  - `trust_score` may be `null` when the page has no read-model row (e.g., a stub created by claim flow before the first scoring tick). Frontend should not display the score per the §J anti-leaderboard posture; it's exposed for non-UI consumers.
+- **Errors:**
+  - `bcc_not_found 404` — handle does not resolve to a known user.
+  - `bcc_rate_limited 429` — 30/60/IP shared throttle bucket (`users_endorsements`).
+- **Rate limit:** 30/60/IP (shared across all `/users/:handle/endorsements` callers — per-handle granularity isn't worth the bucket sprawl).
+- **Cache:** `public, max-age=15` with `Vary: Authorization`. Short shared cache absorbs sub-tab toggles inside the backing panel without staling on fresh endorsements. React Query `staleTime: 15_000`.
+- **Frontend consumer:** `BackingPanel` "Given" sub-tab on `/u/[handle]`. The "Received" sub-tab consumes `GET /entities/user_profile/:user_id/attestations` (§J.6); together they form the two faces of the operator's trust graph.
+
+---
+
 ## 5. Encoded rules — quick reference
 
 ### 5.1 §N7 — gated actions always visible
@@ -3730,15 +3874,15 @@ Retroactive: when a user crosses a threshold, the unlock applies to all past con
 
 - Server computes `social_proof.headline` from the viewer's network filtered by trust weight.
 - Elite/trusted contacts surface by name; neutrals count toward "+N others"; caution/risky are excluded.
-- Hidden-binder users contribute to count, never to names.
-- Shadow-limited authors are excluded from social_proof, F1 ranking inputs, and pull-batch feed visibility for any viewer (§K1 + §O4.1).
+- Hidden-watchlist users contribute to count, never to names.
+- Shadow-limited authors are excluded from social_proof, F1 ranking inputs, and watch-batch feed visibility for any viewer (§K1 + §O4.1).
 - `social_proof: null` when the viewer has zero network connection.
 
-### 5.4 §C3 — pull batching frozen
+### 5.4 §C3 — watch batching frozen
 
-Pulls accumulate into a batch while the user keeps pulling. The batch closes after exactly **10 minutes of pull inactivity**; at close, the server emits one `pull_batch` FeedItem. The post body shows up to **3 top cards** + "+N more" (`more_count = card_count - 3`). Once posted, the FeedItem is **frozen**: subsequent unfollows do not edit or remove the post. Binder UI updates immediately on unfollow; feed does not.
+Watches accumulate into a batch while the user keeps watching. The batch closes after exactly **10 minutes of watch inactivity**; at close, the server emits one `watch_batch` FeedItem (legacy kind name `pull_batch` during the §1.1.1 deprecation window). The post body shows up to **3 top cards** + "+N more" (`more_count = card_count - 3`). Once posted, the FeedItem is **frozen**: subsequent unfollows do not edit or remove the post. Watchlist UI updates immediately on unfollow; feed does not.
 
-Server contract: `pull_batch.frozen` is always `true` in V1. The field exists for forward compatibility (V2 may introduce live batches).
+Server contract: `watch_batch.frozen` is always `true` in V1. The field exists for forward compatibility (V2 may introduce live batches).
 
 ### 5.5 `unlock_hint` usage
 
@@ -3796,7 +3940,7 @@ For each view-model field, the table below names the existing BCC system that ow
 | `primary_local`, `locals` | `peepso_group_members` (PeepSo's membership ledger — single graph rule) joined with `wp_usermeta.bcc_primary_local_group_id` for the primary pointer; no dedicated BCC table |
 | `wallets` | `bcc_wallet_links` (existing) |
 | `counts.followers/following` | `peepso_follower` aggregates |
-| `counts.binder_size` | `peepso_follower` filtered to BCC card kinds |
+| `counts.watching_size` (legacy `counts.binder_size`) | `peepso_follower` filtered to BCC card kinds |
 | `counts.reviews_written` | `bcc_trust_votes` aggregated |
 | `counts.disputes_signed` | `bcc_trust_flags` signers aggregated |
 | `counts.solids_given/received` | `peepso_reactions` aggregated by reaction-type ID |
@@ -3836,7 +3980,7 @@ For each view-model field, the table below names the existing BCC system that ow
 | `posted_at` | `peepso_activities.act_time` |
 | `scope_tags` | server-derived from kind + visibility |
 | `author.*` | JOIN `wp_users` + `peepso_pages` (entity authors) + system flag |
-| `body.*` | per-kind, sourced from kind-specific tables (`bcc_trust_votes` for reviews, `bcc_pull_meta` batches for pulls, `bcc_onchain_signals` for signals, etc.) |
+| `body.*` | per-kind, sourced from kind-specific tables (`bcc_trust_votes` for reviews, `bcc_pull_meta` batches for watches (table retains legacy physical name per §4.5.1), `bcc_onchain_signals` for signals, etc.) |
 | `attached_card` | summary Card view-model |
 | `reactions` | `peepso_reactions` aggregated |
 | `social_proof` | new V1 (same composer as Card) |
@@ -3857,12 +4001,11 @@ The following schema additions are **referenced but not implemented** by Phase 1
 
 - `bcc_onchain_claims.recovery_pending` — new column on the EXISTING `bcc_onchain_claims` table for §B5 page-claim recovery (no new table; entity_type='page' for page claims, single-claim-wins via existing `ClaimRepository::createExclusiveClaim()` advisory lock)
 - `bcc_photo_alts` — `(pho_id, owner_id, alt_text, updated_at)` (v1.5 §3.3.9 / §4.18; sidecar to `peepso_photos`, PK = `pho_id`, BCC-owned so PeepSo updates can't clobber)
-- `bcc_pull_meta` — `(follow_id, tier_at_pull, batch_id, pulled_at)` (§C2)
+- `bcc_pull_meta` — `(follow_id, tier_at_pull, batch_id, pulled_at)` (§C2). Table + column names retain their legacy `pull`-prefixed forms per §4.5.1; the logical concept they store is "watch metadata."
 - `bcc_user_ranks` — `(user_id, rank_key, awarded_by, awarded_at, revoked_at, revoke_reason)` (§E2)
 - `wp_usermeta.bcc_handle` (§B6)
 - `wp_usermeta.bcc_primary_local_group_id` — singleton pointer to the user's primary Local; membership ledger itself stays in PeepSo's `peepso_group_members` per the single graph rule (§E3)
 - `wp_usermeta.bcc_ui_familiar` (§N5 — boolean for UI dual-label drop-off only)
-- `wp_usermeta.bcc_floor_visits` (§O5 — integer counter for Level-2 unlock gate; distinct from §N5's familiarity boolean per the §N5 scope clarification)
 - `wp_usermeta.bcc_first_review`, `bcc_first_vouch`, `bcc_first_dispute`, `bcc_first_local_join`, `bcc_first_wallet_link` (§O1.2)
 - `wp_usermeta.bcc_privacy_*` keys (§K2)
 - `wp_usermeta.bcc_highlights_dismissed_until` (§O2)
@@ -3870,6 +4013,9 @@ The following schema additions are **referenced but not implemented** by Phase 1
 **Removed via 2026-04-27 anti-overengineering pass:**
 - `bcc_user_locals` (duplicated `peepso_group_members`; replaced with `bcc_primary_local_group_id` user-meta key)
 - `bcc_page_claims` (duplicated `bcc_onchain_claims`; merged via `entity_type='page'` + `recovery_pending` column)
+
+**Removed via 2026-05-14 gate-pruning pass:**
+- `wp_usermeta.bcc_floor_visits` — was the Level-2 unlock gate's second axis. Removed because visiting the Floor is passive consumption, not a deliberate signal. LEVEL_ACTIVE now requires only pulls ≥ 5. Existing rows in production are ignored; no migration needed.
 
 ---
 
@@ -3880,7 +4026,7 @@ All ten open items locked **2026-04-27**. Phase 1 implementation may begin.
 1. **Avatar URLs** — **absolute URL, CDN-ready.** No relative paths. The server controls the host so a CDN origin can be swapped in without a contract change. See §1.7 (Asset / media URLs) and §6.1.
 2. **Currency formatting** — **server-side abbreviated** with K/M/B suffixes (1 decimal max). Full numeric value always present in `raw`. Thresholds: `< 1k` full numerals · `≥ 1k` → K · `≥ 1M` → M · `≥ 1B` → B. See §2.8.
 3. **Slug stability** — **immutable post-creation.** Admins rename via display name only. `links.self` URLs are stable forever. See §1.7 (Slugs).
-4. **Member-card pull semantics** — **member pulls count toward `binder_size`.** Member cards are first-class binder citizens; no separate `following_count` field. See §3.2 field rules.
+4. **Member-card watch semantics** — **member watches count toward `watching_size` (legacy alias `binder_size`).** Member cards are first-class watchlist citizens; no separate `following_count` field. See §3.2 field rules.
 5. **Anonymous `GET /me/highlights`** — **401 `bcc_unauthorized`.** Frontend hides the entire HighlightStrip for unauthenticated viewers. See §3.4.
 6. **Cursor format** — **base64-encoded JSON of `(timestamp, id, rank_score_at_emit)`.** Preserves scroll order across re-ranks. Opaque to the client; never decode. See §1.5.
 7. **Wallet `address_short`** — **`<first-6>…<last-4>` for all chains.** Sliced from the full chain-prefixed address. Server-only writer; frontend never re-truncates. See §1.7.
@@ -3896,7 +4042,7 @@ Logged here so re-readers don't expect them in V1's contract.
 
 - **Real-time signal SSE endpoint** (`GET /signals/live`) — Phase 3 deliverable.
 - **NFT gallery list endpoints** (`GET /creators/:slug/gallery`, `GET /collections/:id/pieces`) — still deferred. The per-piece DETAIL endpoint (`GET /nft-pieces/{chain}/{contract}/{tokenId}`) ships in V2 Phase 6 — see §4.17. The list-form gallery is a follow-on phase that still needs cursor pagination + collection-level filters.
-- **Binder summary endpoint** (`GET /me/binder/summary`) — Phase 6.
+- **~~Watchlist summary endpoint~~ (`GET /me/watching/summary`)** — **shipped 2026-05-13** per §4.5. Originally tracked here as the Phase-6 deferred `GET /me/binder/summary`.
 - **Email digest endpoints** — opt-in only per §I1; deferred to V1.5.
 - **Per-event notification preferences endpoints** — deferred to V1.5 per §I1.
 - **@mentions notification + composer parsing** — deferred to composer v2.
@@ -3922,13 +4068,13 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
   - `POST /me/onboarding/complete` — persists the `bcc_onboarded` flag + optional `home_chain` (validated against the `HOME_CHAINS` enum). Response carries `rank_label` (server-rendered per §A2 — the §O1 dopamine moment renders it verbatim, no client-side rank mapping). Idempotent on re-run.
   - Bonus: `GET /me/onboarding/status` is also registered (read-side flag check; not previously listed in §8).
 - **Directory endpoints (§G1/§G2)** — both fully wired:
-  - `GET /cards` — paginated list of Card view-models with `kind`/`tier`/`sort`/`q` filters. Wraps `PageDiscoveryService` (shared with the legacy `/discover` endpoint kept for back-compat with the bcc-page-slider block); each row hydrated through `CardViewService::getCard()` so the per-item shape is identical to the single-card endpoint.
+  - `GET /cards` — paginated list of Card view-models with `kind`/`tier`/`sort`/`q` filters. Wraps `PageDiscoveryService`; each row hydrated through `CardViewService::getCard()` so the per-item shape is identical to the single-card endpoint. (Historical note: `/bcc/v1/discover` previously shared this service for the legacy bcc-page-slider block; that endpoint was retired 2026-05-15.)
   - `GET /cards/search` — top-N suggestions for the §G1 nav-bar autocomplete. Internally calls bcc-search via `rest_do_request` and maps the flat result shape (reputation_tier → card_tier, category_slug → card_kind, route prefix per kind) into the `SearchSuggestion` shape per §A2.
 - **Notifications endpoints (§I1)** — fully wired:
   - `GET /me/notifications` — cursor-paginated list scoped to `not_module_id = BCC_NOTIFICATION_MODULE_ID` (= 9000). Server-rendered messages + server-built `link` per type per §A2.
   - `GET /me/notifications/unread-count` — drives the bell badge; frontend polls 60s + on window focus.
   - `POST /me/notifications/mark-read` — single (`{id: N}`) + bulk (`{}`) in one route. Idempotent.
-  - `NotificationDispatcher` subscribes to `bcc_reaction_added`, `bcc_review_published`, `bcc_card_pulled`, `bcc_rank_awarded`. Writes through `PeepSoNotificationWriter` (bcc-core) — single-graph rule per §I1. The `bcc_reaction_added` / `bcc_reaction_removed` events were added to `ReactionsEndpoint` as part of this work (only event the catalogue was missing).
+  - `NotificationDispatcher` subscribes to `bcc_reaction_added`, `bcc_review_published`, `bcc_card_watched` (and its legacy alias `bcc_card_pulled` during the §1.1.1 deprecation window), `bcc_rank_awarded`. Writes through `PeepSoNotificationWriter` (bcc-core) — single-graph rule per §I1. The `bcc_reaction_added` / `bcc_reaction_removed` events were added to `ReactionsEndpoint` as part of this work (only event the catalogue was missing).
 - **Celebrations endpoints (§O1.2 out-of-band path)** — fully wired:
   - `GET /me/celebrations/pending` — reads the single-slot `wp_usermeta.bcc_pending_celebration` stash. Frontend polls 60s + on window focus.
   - `POST /me/celebrations/consume` — clears the stash. Idempotent.
@@ -3946,6 +4092,73 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.17 — 2026-05-15
+
+- **§4.21 NFT showcase selections** documented end-to-end. Five
+  previously-undocumented endpoints (`GET /picker`, `GET /`, `POST /`,
+  `DELETE /`, `POST /refresh`, `POST /reorder`) ship with full
+  envelope shapes, error codes, rate-limit posture, and side-effect
+  notes (per-user generation counter bumps in cache group
+  `bcc_nft_selections`). The picker GET was previously referenced
+  only as an §3.6 cross-link at line 1363; the other endpoints
+  existed in code but were not in the contract, creating §9
+  contract-drift risk.
+- **Known contract debt called out:** the controller emits some
+  failure paths with non-canonical envelopes today; the frontend's
+  `humanizeError` helper shims `err.status` until the canonical
+  migration. Tracked.
+- Frontend Tier A PR 2 (showcase MOVE UP / DOWN reorder, §5
+  generation-counter fix on the repository) consumes this contract
+  section.
+
+### v1.16 — 2026-05-14
+
+- **§J.7 notification taxonomy extends** with a seventh trust-event
+  type: `divergence_state_warning`. Fires to the target operator
+  when their entity (or own user_profile) transitions INTO the
+  `polarizing` or `disputed` divergence-state per §J.8. Coalescing:
+  per-(recipient, target_kind, target_id, new_state) 24h cooldown
+  so the same transition can't spam the bell across multiple
+  cron ticks. Routing: deep-links to `/me/reliability` (the §J.5
+  self-mirror with the `explainer` body). PR-8b ships the worker
+  + sidecar; V1 only fires on `disputed` transitions because the
+  classifier doesn't produce `polarizing` until Slice E.5.
+- `NotificationType::DIVERGENCE_STATE_WARNING` constant added;
+  `NotificationPrefs::BELL_TYPES` / `PUSH_TYPES` / `DEFAULTS`
+  extend; default ON in both bell and push (anti-noise carried by
+  the 24h coalescing). Older FE clients reading the v1.15 prefs
+  shape still parse cleanly — the new bell/push toggles default
+  to true on the server, so absence of the key in a stored prefs
+  blob falls through to enabled.
+
+### v1.15 — 2026-05-14
+
+- **§J.5 self-mirror response extended** with two new fields per
+  PR-8a:
+  - `divergence_state` (top-level) — the operator's own classification.
+    Same five-state enum as `§J.6 negative_signals.divergence_state`,
+    surfaced on the self-mirror for context.
+  - `explainer` block (`{state, headline, body}`) — server-pinned
+    plain-language explanation of the current state per the
+    critical-risk-mitigation item #7. Surfaces verbatim per §A2;
+    self-only by construction.
+  Additive — older FE clients reading the v1.14 shape still parse
+  cleanly (extra keys ignored). No breakage.
+- **§J.8 dispute-state predicate aligned with `DisputeStatus` enum.**
+  Earlier wording referenced `state ∈ {open, in_panel}` — these slugs
+  don't exist in the actual enum (`app/Domain/Disputes/Domain/DisputeStatus.php`).
+  The contract now references `'reviewing'` (the canonical active-dispute
+  state per `DisputeStatus::REVIEWING`). All four terminal states
+  (`accepted`, `rejected`, `dismissed`, `timeout_no_quorum`) explicitly
+  do NOT count as active. Two §J.8 rows updated: `under_review` trigger
+  and `unresolved_claims_count` trigger.
+- **§J.8 `divergence_state` "Computed at" clarification.** V1 ships the
+  classifier as a read-time pure function (`DivergenceStateClassifier`,
+  PR-8a). The "nightly worker" wording is preserved for the post-Slice-E.5
+  cached-recompute path; the surface shape is unchanged. No behavior
+  change for clients — both implementations produce the same
+  `negative_signals.divergence_state` enum value on the wire.
 
 ### v1.14 — 2026-05-13
 
@@ -4398,7 +4611,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ### v1.2 — 2026-04-29
 
 - **§4.9 Directory** — new section. Locks the `GET /cards` (paginated browse) and `GET /cards/search` (autocomplete) contracts shipped for §G1/§G2. Both endpoints return canonical card-shaped view-models per §A2/§L5; the search endpoint wraps bcc-search server-side so the frontend never sees reputation_tier or category_slug.
-- **§4.10 Notifications** — new section. Locks the §I1 contract: `GET /me/notifications`, `GET /me/notifications/unread-count`, `POST /me/notifications/mark-read`. Storage layer is `peepso_notifications` scoped to `BCC_NOTIFICATION_MODULE_ID = 9000` (single-graph rule). Notification view-models carry server-rendered messages + server-built `link` per §A2. V1 catalogue: `bcc_reaction`, `bcc_review`, `bcc_card_pulled`, `bcc_rank_up` — @mentions and follow-posts deferred to V1.5.
+- **§4.10 Notifications** — new section. Locks the §I1 contract: `GET /me/notifications`, `GET /me/notifications/unread-count`, `POST /me/notifications/mark-read`. Storage layer is `peepso_notifications` scoped to `BCC_NOTIFICATION_MODULE_ID = 9000` (single-graph rule). Notification view-models carry server-rendered messages + server-built `link` per §A2. V1 catalogue: `bcc_reaction`, `bcc_review`, `bcc_card_watched` (legacy alias `bcc_card_pulled` per §1.1.1), `bcc_rank_up` — @mentions and follow-posts deferred to V1.5.
 - **§4.11 Celebrations** — new section. Locks the §O1.2 out-of-band delivery path: `GET /me/celebrations/pending`, `POST /me/celebrations/consume`. Single-slot stash per user (last-write-wins). Today only `RankProgressionListener` produces; `level_up` and `tier_upgrade` kinds are reserved on the wire so future producers slot in without contract changes.
 - **§2.3 `Celebration`** updated to acknowledge both delivery paths (inline on write responses for sync triggers; out-of-band via §4.11 for async-subscriber triggers like rank-up). Same shape on both paths so the frontend toast is path-agnostic.
 - **§8 Out of scope** — the line "Notification endpoints — Phase 7" removed (notifications shipped in V1). Replaced with two narrower deferrals: email digest and per-event preferences (both V1.5 per §I1), and @mentions (composer v2).

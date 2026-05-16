@@ -84,6 +84,18 @@ background audits, worktree-based parallelism), see
   cron, or anything handling user input. Treat findings the same as
   arch-guardrails violations — fix or get explicit sign-off before merge.
 
+### Repo-level guard scripts
+
+- `scripts/cadence-pressure-guard.sh` — enforces the §2.7 / §J.5
+  cadence-pressure policy. Scans operator-facing copy (Next.js
+  components, lifted copy modules, the four bcc-trust PHP services
+  that emit user-facing strings) for nudge-shaped patterns
+  (`haven't`, `days since you`, `streak`, `you should attest`,
+  etc.). Inline overrides via `cadence-pressure-guard:allow — <reason>`
+  on the same or preceding line. Run **before merging** any branch
+  that adds or modifies operator-facing copy. See
+  [docs/cadence-pressure-policy.md](docs/cadence-pressure-policy.md).
+
 ### Subagents (invoke via the Agent tool)
 
 **Reviewers** (verify, never edit):

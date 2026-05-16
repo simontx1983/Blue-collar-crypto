@@ -35,7 +35,7 @@ Small-surface retention work. Most items are 1–10 days each.
 | Streak-freeze / streak-saver mechanic | Retention without punishing one missed day | New rules + UI + cap logic + abuse vector | OPEN |
 | `/me/progression` standalone page (§N11) | Full progression map vs. just the Living Header strip | New route + richer view-model | SHIPPED 2026-05-13 — server-component route at `/me/progression` reusing the §3.1 own-only `progression` block (no new endpoint). Renders ALL `next_rank_thresholds` (vs. the leading-only LivingHeader bar) + the `trust_score_recent_changes` timeline. Discoverable via the `ViewerMenu` "Progression" item. |
 | Network percentile shown on **others'** profiles (§O3.1) | Status display visible to others | Privacy toggle (some users won't want their rank visible) | OPEN |
-| Per-card binder visibility toggle (§C2) | More granular hide control | Whole-binder hide (§K2) already covers the privacy job | WON'T SHIP |
+| Per-card watchlist visibility toggle (§C2) | More granular hide control | Whole-watchlist hide (§K2) already covers the privacy job | WON'T SHIP |
 | Rich-text status composer | Format expression for status posts | Conflicts with §D2 500-char rule; long-form is what the §D6 blog tab is for | WON'T SHIP |
 | "Friend comparison" Living Header line (§O3.1) | Third comparison kind | Network percentile + Local peer already cover the slot | WON'T SHIP |
 | Always-on reaction helper labels | Persistent clarity | Overrides §N1 familiarity drop-off (the whole point of §N5 was one flag, one drop) | WON'T SHIP |
@@ -55,7 +55,7 @@ Curation + navigation polish.
 | "Good Standing only" search filter (§G2) | One-click filter to caution-tier-and-above | Small UI + filter param | SHIPPED 2026-05-13 (`GET /cards?good_standing_only=1`; tier list sourced from `UserViewService::GOOD_STANDING_TIERS` — same constant that drives the per-row `is_in_good_standing` stamp + auth-response flag; chip on `/directory`) |
 | Admin-curated featured row on `/directory` (§G4) | Editorial control over discovery | Needs an editorial ops role V1 doesn't have | OPEN — gated on staffing |
 | "Community" feed-mode tab (§N6) | A fourth feed mode | Duplicates Following with no system posts removed; cut for overlap | WON'T SHIP |
-| "Top cards" metric on Binder header (§N9) | Summary above the grid | The 3×3 grid below already shows them | WON'T SHIP |
+| "Top cards" metric on Watching header (§N9) | Summary above the grid | The 3×3 grid below already shows them | WON'T SHIP |
 
 **Open subtotal:** 1 item (admin-curated row), operationally gated. The §G2 toggle shipped 2026-05-13.
 

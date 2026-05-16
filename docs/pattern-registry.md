@@ -341,37 +341,49 @@ from the Next.js app.
   Exposes the desktop / mobile pair for the active CTA
   (`Keeping Tabs ✓` desktop, `Watching ✓` <sm) because the verb form
   overflows the CardFactory `grid-cols-3` button at 320–375px viewports.
-- **API contract is untouched.** `follow_id`, `followers`, `following`,
-  `can_follow`, `followed_by_in_network`, `follower_count_hidden`,
-  `pull_batch`, `pulled_at`, `card_tier_at_pull`, `bcc_card_pulled` and
-  the `following` feed scope value are stable per §9. Only display
-  labels changed.
+- **API contract** (as of 2026-05-13): `follow_id`, `followers`,
+  `following`, `can_follow`, `followed_by_in_network`,
+  `follower_count_hidden`, and the `following` feed scope value are
+  stable per §9. The Watch / Watching set (`watch_batch`, `watched_at`,
+  `card_tier_at_watch`, `bcc_card_watched`) replaced the previous
+  `pull_batch` / `pulled_at` / `card_tier_at_pull` / `bcc_card_pulled`
+  names under the §1.1.1 additive-deprecation runway — the legacy names
+  remain emitted in parallel for one release and then retire.
 
-### Verb axis vs. place noun (post-Tier-1 cohesion)
+### Unified Watching vocabulary (post-Tier-1 cohesion, post-2026-05-13 retirement)
 
-A lifecycle moment that used to be split between two verbs is now
-unified:
+**2026-05-13 retirement note:** the previous version of this section
+preserved "Binder" as a forever-stable place-noun while the verb
+("Keep Tabs" / "Watching") moved to the new vocabulary. That split
+left the product with mixed naming — backend / classes / page route
+saying "Binder," UI state copy saying "Watching." Per the
+2026-05-13 rename, the vocabulary is now fully unified on Watching.
+"Binder" is retired as a product noun.
 
-- **Verb axis** = "Keep Tabs" / "Watching" / "Watchers". Used for every
-  CTA, state, and narrative invitation across both PeepSo and the
-  frontend (e.g., `BinderGrid` empty-state invite, `FeedView` empty
-  state, `OnboardingWizard` step 2, profile counts, feed tabs).
-- **Place noun** = `Binder`. Preserve forever. Cards live in the
-  Binder. Onboarding step 2 is "Start your binder."
-- **Lore-only "pull"** survives in three narrow seams that earned their
-  keep — do **not** broaden them, but don't migrate them either:
-  1. `LivingHeader` activity counter — `pluralize(n, "pull", "pulls")`
-     for `today.pulls` (domain-specific count noun).
-  2. `Composer.tsx` and `ReviewCallout.tsx` one-line motivational unlock
-     hints ("keep pulling and posting") — idiomatic flavor, not action
-     vocabulary.
-  3. Cultural / brand-voice writing outside the product chrome (marketing,
-     announcements). The Binder ritual still exists — it's just not the
-     primary product verb anymore.
+Canonical:
 
-Feed item past-tense narration uses the binder noun:
-`Added ${n} cards to their binder.` Category badge for `pull_batch` is
-`WATCHED` (single-word, parallel to `POSTED`/`REVIEWED`/`DISPUTED`).
+- **Verb axis** = "Watch" (CTA), "Watching" (state), "Watchers" (audience).
+- **Place noun** = "Watchlist" — the page where a viewer's watched cards
+  live. The previous "Binder" place noun is retired; user-facing copy now
+  reads "Your watchlist," "EMPTY WATCHLIST," "Start watching."
+- **Past-tense narration** = "Started watching N cards." Category badge
+  for the `watch_batch` feed kind is `WATCHED` (unchanged — it already
+  used the new vocabulary).
+- **"Pull" survives only as legacy storage names** that aren't worth
+  migrating today: the `bcc_pull_meta` table, the `bcc_pull_batches`
+  table, and column names like `pulled_at` inside those tables. None
+  of these names surface in user-facing copy or in API view-model
+  field names anymore. They're documented as legacy physical names
+  in [`docs/api-contract-v1.md` §4.5.1](api-contract-v1.md) and
+  [`docs/database-schema.md`](database-schema.md).
+
+Migration trace:
+
+- The legacy `/me/binder/*` routes, `counts.binder_size`,
+  `privacy.binder_hidden`, and the `bcc_card_pulled` event remain
+  emitted in parallel during the §1.1.1 additive-deprecation window
+  (release N), then removed in release N+1. Do not introduce new
+  usages of these legacy names in code.
 
 ## NFT-gated holder groups
 
@@ -940,7 +952,7 @@ isLoading, error}`-compatible (a superset is fine):
 |---|---|
 | Auth / Account | `useAccount`, `useUpdateHandle`, `useUpdateProfile`, `useOAuthConnections` |
 | Feed / Posts | `useFeed`, `useGroupFeed`, `useCreatePost`, `useReactions`, `useComments`, `useHighlights`, `useReportContent`, `useSetPhotoAlt`, `useUserActivity` |
-| Binder / Pulls | `useBinder`, `useBinderPull` |
+| Watching | `useWatching`, `useWatch` (legacy `useBinder`, `useBinderPull` retired 2026-05-13) |
 | Communities / Groups | `useGroup`, `useGroupMembers`, `useMyGroups`, `useHolderGroups`, `useLocalsPrimary` |
 | Disputes / Endorsements | `useDisputes`, `useEndorse` |
 | Messaging | `useConversations`, `useConversation`, `useStartConversation`, `useReplyInConversation`, `useMarkConversationRead`, `useUnreadMessageCount` |
@@ -958,7 +970,7 @@ isLoading, error}`-compatible (a superset is fine):
 |---|---|---|
 | Admin | 1 | `ModerationQueue` — §K1 Phase C admin moderation surface. |
 | Auth / Wallet | 3 | `WalletAuthButton`, `WalletSignupPrompt`, `EligibleCommunitiesModal`. |
-| Binder | 3 | `BinderGrid`, `BinderHeader`, `BinderTile`. |
+| Watching | 3 | `WatchingGrid`, `WatchingHeader`, `WatchingTile` (renamed from `BinderGrid`/`BinderHeader`/`BinderTile` 2026-05-13). |
 | Blog | 1 | `UserBlogList`. |
 | Cards | 1 | `CardFactory` (presentation only). |
 | Celebration | 2 | `CelebrationGate`, `CelebrationToast`. |
@@ -971,9 +983,9 @@ isLoading, error}`-compatible (a superset is fine):
 | Endorse | 1 | `EndorseButton`. |
 | Entity | 3 | `EntityProfile`, `ChainTabs`, `LockedStreamPanel`. |
 | Feed | 7 | `FeedView`, `FeedItemCard`, `FeedTabs`, `CommentDrawer`, `HighlightStrip`, `ReactionRail`, `ReportButton`. |
-| Groups | 8 | `GroupActionButton`, `GroupFeedSection`, `GroupGatedNotice`, `GroupHero`, `GroupMembersStrip`, `GroupMembershipStrip`, `HeatBadge`, `VerificationBadge`. |
+| Groups | 11 | `GroupActionButton`, `GroupAboutPanel`, `GroupCard`, `GroupDetailShell`, `GroupFeedSection`, `GroupGatedNotice`, `GroupMembersStrip`, `GroupMembershipStrip`, `GroupTabs`, `HeatBadge`, `VerificationBadge`. |
 | Landing | 2 | `FloorBriefing`, `FloorIntro`. |
-| Layout | 3 | `SiteHeader`, `SiteFooter`, `UnderConstructionPage`. |
+| Layout | 4 | `FileRail`, `PageHero`, `SiteHeader`, `SiteFooter` (+ `UnderConstructionPage`). |
 | Locals / Members | 3 | `LocalMembershipControls`, `FlippableMemberCard`, `MembersGrid`. |
 | Messages | 4 | `ConversationList`, `MessageComposer`, `MessagesBadge`, `ThreadView`. |
 | Notifications | 1 | `NotificationBell`. |

@@ -253,17 +253,19 @@ The four tables below back the headless Next.js frontend per [api-contract-v1.md
 
 ---
 
-## bcc_pull_meta
+## bcc_pull_meta — legacy physical name; stores Watch metadata
 
-Sidecar metadata for PeepSo follows that represent BCC card pulls. Per §C2 of the V1 plan, the binder is a UI projection of `peepso_follower` joined to this table; **NO separate follow graph**. Rows are 1:1 with `peepso_follower` rows.
+Sidecar metadata for PeepSo follows that represent BCC card watches. Per §C2 of the V1 plan, the watchlist (formerly "Binder," renamed 2026-05-13 — see `pattern-registry.md` and `api-contract-v1.md §4.5.1`) is a UI projection of `peepso_follower` joined to this table; **NO separate follow graph**. Rows are 1:1 with `peepso_follower` rows.
+
+The **table name and column names retain their original `pull`-prefixed forms** (`bcc_pull_meta`, `tier_at_pull`, `pulled_at`) — a physical rename is deferred to a later release because it requires a data-copy migration with no API-surface benefit (these names are internal storage; user-facing API field names are `watched_at`, `card_tier_at_watch`). The logical concept stored here is "watch metadata."
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `follow_id` | BIGINT UNSIGNED | PeepSo follow row ID — PRIMARY KEY (1:1 with follow) |
-| `tier_at_pull` | VARCHAR(20) | `card_tier` at moment of pull (`legendary`/`rare`/`uncommon`/`common`); preserves historical narrative even when the entity's current tier changes |
-| `batch_id` | VARCHAR(64) | Ties pulls into one feed post per §C3 (10-minute rolling inactivity window) |
-| `visibility` | VARCHAR(20) | Per-pull visibility (V1: always `'public'`; reserved for V2 per-card hiding) |
-| `pulled_at` | DATETIME | Pull timestamp |
+| `tier_at_pull` | VARCHAR(20) | `card_tier` at moment the card was watched (`legendary`/`rare`/`uncommon`/`common`); preserves historical narrative even when the entity's current tier changes. **API exposes this as `card_tier_at_watch`.** |
+| `batch_id` | VARCHAR(64) | Ties watches into one feed post per §C3 (10-minute rolling inactivity window) |
+| `visibility` | VARCHAR(20) | Per-watch visibility (V1: always `'public'`; reserved for V2 per-card hiding) |
+| `pulled_at` | DATETIME | Watch timestamp. **API exposes this as `watched_at`.** |
 
 **Primary Key:** `(follow_id)` — single row per follow
 

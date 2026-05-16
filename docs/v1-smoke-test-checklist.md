@@ -81,10 +81,11 @@ Brand-new account through the §B6 + §O1 onboarding wizard.
   "already taken".
 - [ ] **2.3** Submit a valid form → redirect to `/onboarding` wizard,
   step 1: home-chain picker. Skippable.
-- [ ] **2.4** Step 2: first-pull suggestions render 3-5 cards. Click
-  Pull on each → button flips to "Pulled" / disabled.
+- [ ] **2.4** Step 2: first-watch suggestions render 3-5 cards. Click
+  Watch on each → button flips to "Watching" / disabled.
 - [ ] **2.5** Click Done → **§O1 dopamine animation** fires:
-  - [ ] Cards fly into a binder icon
+  - [ ] Cards fly into a watchlist icon (the visual still uses the
+    3-ring binder iconography per pattern-registry — name is "watchlist")
   - [ ] Rarity-tinted glow trails (gold/blue/green/white)
   - [ ] Stat-pop "+ N cards · Apprentice rank earned · You're on the
     Floor"
@@ -134,13 +135,17 @@ Logged in as User A. Visit `/u/<userA-handle>`.
   this week" or "Quiet shift").
 - [ ] **4.2** **Rank progress strip:** shows current rank + next-rank
   progress bar with "X reviews to go" copy (only on own profile).
-- [ ] **4.3** Tabs: Reviews, Disputes, Activity, Network, Binder,
+- [ ] **4.3** Tabs: Reviews, Disputes, Activity, Network, Watching,
   Blog. Click each → content loads.
 - [ ] **4.4** Visit `/u/<userB-handle>` (someone else) → no rank
   progress strip, no own-profile-only chrome.
-- [ ] **4.5** Privacy: User B sets `binder_hidden=true` in
-  `/settings/privacy`. User A visits `/u/<userB-handle>/binder` → sees
-  "Binder is private" placeholder.
+- [ ] **4.5** Privacy: User B sets `watching_hidden=true` (legacy
+  alias `binder_hidden` accepted during the §1.1.1 deprecation window) in
+  `/settings/privacy`. User A visits `/u/<userB-handle>/watching` →
+  sees "Watchlist is private" placeholder.
+- [ ] **4.5.1** Visit the legacy URL `/u/<userB-handle>/binder` →
+  308 redirects to `/u/<userB-handle>/watching`. The legacy route
+  remains alive for one release per `api-contract-v1.md §4.5.1`.
 
 ## 5. Validator profile + claim flow
 
@@ -265,8 +270,9 @@ Settings, Sign Out.
   Idempotent (clicking again on a phantom row returns `removed: false`,
   doesn't error).
 - [ ] **9.8** **/settings/privacy** — toggle a flag (e.g.
-  `binder_hidden`). Save → server returns the full prefs tree.
-  Verify on `/u/<handle>/binder` from a different account.
+  `watching_hidden`; legacy alias `binder_hidden` accepted during the
+  §1.1.1 deprecation window). Save → server returns the full prefs tree.
+  Verify on `/u/<handle>/watching` from a different account.
 - [ ] **9.9** **/settings/notifications** — toggles work; Save fires
   PATCH; "Saved" auto-fades after 3s; PATCH is partial-only (diff'd
   by the form).

@@ -181,7 +181,7 @@ trust earned today/lifetime against caps.
 | `/bcc/v1/cards` | GET | `cards-list-endpoints.getCardsList` | ✅ | |
 | `/bcc/v1/cards/:type/:id` | GET | `card-endpoints.getCardEntity` | ✅ | View-model now includes `viewer_has_endorsed` + `endorse_unlock_hint` + `permissions.can_endorse` |
 | `/bcc/v1/cards/search` | GET | `cards-search-endpoints.getSearchSuggestions` | ✅ | |
-| `/bcc/v1/discover` | GET | — | ❌ | V2 — richer discovery (featured/trending). `/feed/hot` already covers algorithmic trending per §G4 |
+| `/bcc/v1/discover` | GET | — | ⛔ retired 2026-05-15 | Legacy back-compat endpoint for a consumer that no longer exists. `PageDiscoveryService` lives on under `/cards/list`. |
 | `/bcc-trust/v1/pages/top` | GET | — | ❌ | V2 — leaderboard |
 
 **Impact**: V2 leaderboard work doesn't block anything user-facing today.
@@ -201,14 +201,20 @@ trust earned today/lifetime against caps.
 
 ---
 
-## Binder & Cards-In-Hand
+## Watching & Cards-In-Hand
+
+Renamed from "Binder & Cards-In-Hand" 2026-05-13 per the §1.1.1 additive-deprecation runway (see `api-contract-v1.md §4.5.1`). The legacy `/me/binder/*` routes remain alive for one release with `Deprecation`/`Sunset` headers; the frontend talks to `/me/watching/*` exclusively.
 
 | Route | Method | Frontend wrapper | Status |
 |---|---|---|---|
-| `/bcc/v1/me/binder` | GET | `binder-endpoints.getBinder` | ✅ |
-| `/bcc/v1/me/binder/summary` | GET | `getBinderSummary` | ✅ |
-| `/bcc/v1/me/binder/pull` | POST | `pullCard` | ✅ |
-| `/bcc/v1/me/binder/:follow_id` | DELETE | `unpullCard` | ✅ |
+| `/bcc/v1/me/watching` | GET | `watching-endpoints.getWatching` | ✅ |
+| `/bcc/v1/me/watching/summary` | GET | `getWatchingSummary` | ✅ |
+| `/bcc/v1/me/watching/watch` | POST | `watchCard` | ✅ |
+| `/bcc/v1/me/watching/:follow_id` | DELETE | `unwatchCard` | ✅ |
+| `/bcc/v1/me/binder` (deprecated, removed in release N+1) | GET | — (legacy alias, no FE wrapper) | ⚠️ |
+| `/bcc/v1/me/binder/summary` (deprecated) | GET | — | ⚠️ |
+| `/bcc/v1/me/binder/pull` (deprecated) | POST | — | ⚠️ |
+| `/bcc/v1/me/binder/:follow_id` (deprecated) | DELETE | — | ⚠️ |
 
 ---
 
@@ -333,7 +339,7 @@ Listed here for completeness so future-you knows nothing is forgotten.
 | Reviews & posts | ✅ full | `/flag` overlap with reports — V2 cleanup |
 | Cards & browse | ✅ core | `/discover`, leaderboards — V2 |
 | Profile | ✅ full | — |
-| Binder | ✅ full | — |
+| Watching (formerly Binder, renamed 2026-05-13) | ✅ full | — |
 | Feed & reactions | ✅ full | — |
 | Locals | ✅ full | — |
 | Notifications / highlights / celebrations | ✅ full | — |
