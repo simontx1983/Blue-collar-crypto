@@ -110,7 +110,6 @@ wallet sig + X handle + GitHub identity all reachable from `/settings/identity`.
 | `/bcc-trust/v1/remove-vote` | POST | wrapped via `removeReview` (DELETE `/me/reviews/:page_id`) | 🚧 | Self-removal only |
 | `/bcc-trust/v1/report-vote` | POST | — | ❌ | V2 — flag a specific vote (separate from `/me/reports` content reports) |
 | `/bcc-trust/v1/user/{id}/pages/scores` | GET | — | ❌ | V2 — per-user score breakdown across all pages they've voted on |
-| `/bcc-trust/v1/pages/top` | GET | — | ❌ | V2 — top-pages-by-score leaderboard (deferred per §G4) |
 
 **Impact**: Trust Engine copy says **"Vote, endorse, or dispute"**. The "vote"
 verb is fused to the review flow. The deliberate V1.5 decision was to leave
@@ -182,9 +181,8 @@ trust earned today/lifetime against caps.
 | `/bcc/v1/cards/:type/:id` | GET | `card-endpoints.getCardEntity` | ✅ | View-model now includes `viewer_has_endorsed` + `endorse_unlock_hint` + `permissions.can_endorse` |
 | `/bcc/v1/cards/search` | GET | `cards-search-endpoints.getSearchSuggestions` | ✅ | |
 | `/bcc/v1/discover` | GET | — | ⛔ retired 2026-05-15 | Legacy back-compat endpoint for a consumer that no longer exists. `PageDiscoveryService` lives on under `/cards/list`. |
-| `/bcc-trust/v1/pages/top` | GET | — | ❌ | V2 — leaderboard |
 
-**Impact**: V2 leaderboard work doesn't block anything user-facing today.
+**Impact**: leaderboard endpoints retired; `/cards/list` is the canonical browse surface for trust-ranked entities.
 
 ---
 

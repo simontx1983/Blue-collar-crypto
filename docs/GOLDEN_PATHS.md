@@ -919,7 +919,7 @@ const probes = [
   { name: 'canonical error',   method: 'PATCH', path: '/bcc/v1/me/account/email',
     body: { email: 'bad', current_password: 'wrong' }, expect: 'canonical-error' },
   // Legacy bcc-trust/v1 → { success: true, data }  (no _meta, no double-wrap)
-  { name: 'legacy trust',      method: 'GET',  path: '/bcc-trust/v1/pages/top', expect: 'legacy-trust' },
+  { name: 'legacy trust',      method: 'GET',  path: '/bcc-trust/v1/user/status', expect: 'legacy-trust' },
 ];
 const out = await Promise.all(probes.map(async p => {
   const init = { method: p.method, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${s.bccToken}` } };
