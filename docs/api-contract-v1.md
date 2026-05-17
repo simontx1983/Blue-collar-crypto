@@ -1116,26 +1116,72 @@ V1.5 transition rules: clients tolerant of unknown fields ride forward without c
 }
 ```
 
-**3.3.8 `blog_excerpt`** — D6 long-form post. Same FeedItem shape in two rendering contexts:
+**3.3.8 `blog_excerpt`** — §D6 long-form post. Same FeedItem shape in
+two rendering contexts (Floor vs. Blog tab). Body shape stabilized
+2026-05-15 by the V1 crypto-blog composer:
 
 ```json
 "body": {
-  "is_blog_excerpt": true,
   "title": "Why I'm rotating out of Cosmos validators",
-  "excerpt": "The set is becoming concentrated. Three operators run 41% of voting power, and the upcoming upgrade…",
-  "excerpt_truncated_at": 412,
-  "full_text": "The set is becoming concentrated. Three operators run 41% of voting power, and the upcoming upgrade narrows the active set further.\n\n## What changes\n\nIf you're a delegator on a top-3 validator, your effective decentralization just dropped. The math: when one operator controls X% of voting power…\n\n## What I'm doing about it\n\nRotating 60% of my position to validators ranked 15–35…",
-  "read_link": "/u/simontx/blog/why-im-rotating-out"
+  "excerpt": "The set is becoming concentrated. Three operators run 41% of voting power…",
+  "full_text": "The set is becoming concentrated. Three operators run 41% of voting power, and the upcoming upgrade narrows the active set further.\n\n## What changes\n\n…",
+  "wp_post_id": 4929,
+  "category": "analysis",
+  "tags": ["staking", "decentralization"],
+  "chain_tags": [
+    {"id": 8, "slug": "cosmos", "name": "Cosmos Hub", "color": null, "icon_url": null},
+    {"id": 10, "slug": "akash",  "name": "Akash",      "color": null, "icon_url": null}
+  ],
+  "disclosure": {
+    "tickers": ["ATOM", "AKT"],
+    "note": "Author holds ATOM and AKT."
+  },
+  "cover_image_url": "https://example.com/wp-content/uploads/2026/05/cover.jpg"
 }
 ```
 
 **Rules (§D6):**
 
-- `excerpt` is server-truncated at the nearest sentence boundary within the 300–500 char window (§D6). Rendered when this FeedItem appears in **Floor contexts** (`/feed`, `/feed/hot`).
-- `full_text` is the complete post body (markdown/HTML, no character limit). Rendered when this FeedItem appears in **Blog tab contexts** (`/u/:handle/blog`, `/v/:slug/blog`).
-- **Same `post_kind`, same FeedItem, two rendering surfaces** — there is **no separate blog post type or CPT** (§D6). Blog posts live in the FeedItem system; the Blog tab is a filter where `post_kind = blog_excerpt`.
-- The server MAY omit `full_text` from Floor-context responses to save bytes; a Blog-context response MUST include it.
-- `is_blog_excerpt: true` is the marker the frontend uses to render the "Read full post" affordance in Floor contexts.
+- `title` is author-supplied (≤ 120 chars), rendered as the stencil
+  headline on both surfaces.
+- `excerpt` is the author-written Floor teaser (80–500 chars,
+  enforced server-side via `BLOG_EXCERPT_MIN_LENGTH` /
+  `BLOG_EXCERPT_MAX_LENGTH`). NOT auto-derived from the body — the
+  writer picks the hook. Rendered when this FeedItem appears in
+  **Floor contexts** (`/feed`, `/feed/hot`).
+- `full_text` is the complete post body (markdown source, capped at
+  `BLOG_FULL_TEXT_MAX_LENGTH = 60_000`). Rendered when this FeedItem
+  appears in **Blog tab contexts**
+  (`/u/:handle?tab=blog`, `/v/:slug` blog sub-tab if applicable).
+- **Floor context responses ship `full_text: ""`** — the server
+  deliberately strips the body to keep Floor payloads small
+  (20 items × 60KB body would be ~1.2MB). `BlogService::hydrateForPostId`
+  accepts an `$includeFullText` flag wired to `false` from the Floor
+  hydrator. Blog-tab context responses ship the full body.
+- **Same `post_kind`, same FeedItem, two rendering surfaces** —
+  there is **no separate blog post type or CPT** (§D6). Blog posts
+  live as `peepso-post` wp_posts with `_bcc_activity_module='blog'`
+  on the backing wp_post and `act_module_id = 204` on the
+  `peepso_activities` row (per
+  `PeepSoActivityWriter::MODULE_ID_BY_NAME`).
+- `category` is one of `news | analysis | guide | opinion | tools |
+  events` (the `BlogCategory` enum). May be `null` on pre-V1 posts
+  that lack the meta.
+- `tags` is a `string[]` of 0..`BLOG_TAGS_MAX` free-form pills
+  (lowercase, alnum-dash, ≤ `BLOG_TAG_LEN_MAX` chars each). `[]`
+  when absent.
+- `chain_tags` is a `list<{id, slug, name, color, icon_url}>` of
+  0..`BLOG_CHAIN_TAGS_MAX` chain references resolved server-side
+  against `bcc_onchain_chains`. `[]` when absent. `color` and
+  `icon_url` are nullable (admin-curated).
+- `disclosure` is `null` (no disclosure declared) or
+  `{tickers: string[], note: string}`. Empty struct
+  (`{tickers: [], note: ""}`) is rejected at write-time as
+  `bcc_invalid_request` — send `null` to clear instead.
+- `cover_image_url` is the URL of the WP attachment pinned via
+  `set_post_thumbnail`. `null` when no cover is set.
+- `wp_post_id` is the canonical wp_post identifier; clients use it
+  for the `PATCH /posts/{id}` edit path.
 
 **3.3.9 `photo`** — v1.5 photo post. Single image per post, optional caption. Underlying storage is PeepSo's photo module (act_module_id = 4), so multi-photo / album / GIF backgrounds inherit any future PeepSo capability without a contract change.
 
@@ -3856,6 +3902,88 @@ Anonymous-readable per §J trust-graph doctrine: attestation data is public-by-d
 
 ---
 
+### 4.23 Account activity + session revocation (Tier D)
+
+In-app counterpart to the `AccountSecurityMailer` out-of-band email channel (`project_account_security_mailer.md`). Two surfaces:
+
+- **`GET /me/account-activity`** — the user's own audit timeline, filtered server-side to the six credential-class events that AccountSecurityMailer also emails on. The 1:1 correspondence is load-bearing: the in-app timeline lets the user cross-check an email alert against an authenticated view of their own account history. A hijacked-session attacker who reads in-app rows can't suppress the email; an attacker who suppresses email can't hide the in-app row.
+- **`POST /auth/logout-everywhere`** — destructive credential mutation. Bumps the user's `bcc_token_version` user_meta via `JwtToken::revokeAllForUser`, invalidating every outstanding JWT (including the request's own bearer) on next decode. Writes a `sessions_revoked_all` audit row and fires the AccountSecurityMailer confirmation email BEFORE the response is sent.
+
+Both surfaces require Bearer JWT; suspended accounts → `bcc_forbidden 403`. Standard envelope per §1.4 / §1.5.
+
+#### `GET /bcc/v1/me/account-activity`
+
+- **Auth:** required (401 anonymous, 403 suspended). Self-only by construction — the controller filters on `get_current_user_id()`; the repository's bounded query keys on `user_id`. No admin override.
+- **Query:**
+  - `page` (integer, optional, default 1, min 1).
+  - `per_page` (integer, optional, default 20, min 1, max 50).
+- **Response 200 data shape:**
+  ```json
+  {
+    "items": [{
+      "id": 142,
+      "action": "account_password_changed",
+      "target_type": "user",
+      "target_id": 7,
+      "ip_masked": "192.168.1.***",
+      "created_at": "2026-05-15 14:23:47"
+    }],
+    "total": 12,
+    "page": 1,
+    "per_page": 20,
+    "total_pages": 1
+  }
+  ```
+  - `action` is one of (stable codes, branch on these): `account_email_changed`, `account_password_changed`, `account_deleted`, `wallet_linked`, `wallet_unlinked`, `sessions_revoked_all`. Server-side allowlist enforced — non-security audit rows (vote_*, endorse_*, group_join, etc.) do NOT bleed into this surface.
+  - `created_at` is MySQL UTC datetime (`YYYY-MM-DD HH:MM:SS`); frontend normalizes at the boundary via `formatRelativeTime`.
+  - `ip_masked` is the source IP with the last octet (IPv4) or last 64 bits (IPv6) replaced with `***`. Empty string when the row's `ip_address` column was NULL at write time.
+- **Sensitive-field policy:**
+  - `ip_masked` is the ONLY surface for source IP — the raw VARBINARY column never leaves the server. Security-through-obscurity posture for the case where the user's own audit log is later compromised (screen-shoulder-surf, shared device).
+  - No user-agent, no session tokens, no device fingerprints. The `bcc_trust_activity` schema doesn't store them.
+  - `target_type` + `target_id` are kept for future enrichment surfaces; V1 the UI doesn't display them.
+- **Errors:**
+  - `bcc_unauthorized 401` — anonymous.
+  - `bcc_forbidden 403` — suspended.
+  - `bcc_rate_limited 429` — 30/60/user (`me_account_activity` bucket).
+- **Rate limit:** 30/60/user. Per-user (not per-IP) — this is an authed read of the user's own data; an attacker scraping their own audit log is bounded by the bucket without inadvertently locking out legitimate cross-tab fetches.
+- **Cache:** `no-store`. Per-user state.
+- **Frontend consumer:** `AccountActivitySection` on `/settings/account`. Renders the timeline with humanized labels keyed off `action`; paginates via "OLDER →" / "← NEWER" (no infinite scroll on security-sensitive surfaces).
+
+#### `POST /bcc/v1/auth/logout-everywhere`
+
+- **Auth:** required (401 anonymous).
+- **Request body:** none.
+- **Response 200 data shape:**
+  ```json
+  { "ok": true }
+  ```
+- **Errors:**
+  - `bcc_unauthorized 401` — anonymous.
+  - `bcc_rate_limited 429` — 5/60/user (`logout_everywhere` bucket). Tight cap because the blast radius is total session invalidation; no legitimate user fires this more than a few times per minute.
+- **Rate limit:** 5/60/user.
+- **Side effects (in order):**
+  1. Audit row written: `AuditLogger::log('sessions_revoked_all', $userId, [], 'user', $userId)`. Counts toward the §4.23 GET timeline + 90-day retention.
+  2. Out-of-band email: `AccountSecurityMailer::sessionsRevokedAll($userId)`. Track-F redundancy — if an attacker triggers this to lock the legitimate user out, the email channel still warns. Failure records `account_security_mail` / `sessions_revoked_all_send_failed` DegradationMetric per `project_account_security_mailer.md`.
+  3. Token version bumped: `JwtToken::revokeAllForUser($userId)`. Every outstanding JWT for this user (including the bearer that authenticated THIS request) fails the `tv` check on next decode and returns `ERR_REVOKED`.
+- **Client-side responsibility:** the bearer is invalidated by the time the response is read. The client MUST call `signOut({ callbackUrl: "/" })` (or equivalent) immediately on 200 — any subsequent authenticated request will 401. The hook `useLogoutEverywhere()` in `useAccount.ts` does this automatically in `onSuccess`.
+- **Self-revocation note:** the user CAN sign themselves out of their own current session. The mutation is intentionally not session-aware (no "all OTHER devices" carve-out) — this is the minimal D2 per the Tier D scope decision; the per-device listing UI is deferred to a future planning session.
+- **Cache:** `no-store`.
+
+#### Cross-channel correspondence
+
+| AuditLogger action          | AccountSecurityMailer email subject                      |
+|-----------------------------|----------------------------------------------------------|
+| `account_email_changed`     | "Your account email was changed"                         |
+| `account_password_changed`  | "Your password was changed"                              |
+| `account_deleted`           | "Your account was deleted"                               |
+| `wallet_linked`             | "A wallet was linked to your account"                    |
+| `wallet_unlinked`           | "A wallet was unlinked from your account"                |
+| `sessions_revoked_all`      | "All other devices signed out"                           |
+
+The user can verify any email against the in-app timeline. A row WITHOUT a matching email = the email channel failed (`account_security_mail` DegradationMetric should be active). An email WITHOUT a matching row = the timeline is stale OR the user is looking at a phishing email; treat the timeline as the trust anchor.
+
+---
+
 ## 5. Encoded rules — quick reference
 
 ### 5.1 §N7 — gated actions always visible
@@ -4058,7 +4186,52 @@ These routes ARE registered in V1 and return contract-compliant envelopes today,
 These routes ARE shipped in V1 with real data — earlier drafts of this doc listed them as Phase 2 / Phase 5 deferrals, but implementation has caught up and they're now first-class V1 surfaces. Documented here so the contract matches reality.
 
 - **Composer endpoints** — both fully wired:
-  - `POST /posts` accepts `kind: 'status' | 'review'` (V1 set; disputes / blog / post-as-entity remain V1.5/V2 per §P1). Routes through `PostsService::createStatus` / `createReview` which write via PeepSo's canonical `add_post` path. Auth-required; rejects unknown kinds with `bcc_invalid_request`/400. Reviews are gated on Level 2 + reputation tier ≥ neutral via `FeatureAccessService`. v1.5: status bodies are run through `MentionPolicy` (§3.3.12) — bodies containing `@peepso_user_<id>(name)` tokens for hidden/blocked/banned/private users are rejected with `bcc_invalid_mention_target`; bodies with > 10 mention tokens get `bcc_too_many_mentions`.
+  - `POST /posts` accepts `kind: 'status' | 'review' | 'blog'`
+    (disputes / post-as-entity remain V1.5/V2 per §P1). Routes
+    through `PostsService::createStatus` / `createReview` /
+    `createBlog`. Status + review write via PeepSo's canonical
+    `add_post` path; blog writes directly via
+    `PeepSoStatusWriter::createSelfBlogPost` (post_type=`peepso-post`
+    with `_bcc_activity_module='blog'` post_meta and
+    `act_module_id=204` on the activity row — see
+    `PeepSoActivityWriter::MODULE_ID_BY_NAME`). Auth-required;
+    rejects unknown kinds with `bcc_invalid_request`/400. Reviews
+    are gated on Level 2 + reputation tier ≥ neutral via
+    `FeatureAccessService`. Blog accepts `title`, `excerpt`,
+    `content`, `category`, `tags[]`, `chain_tags[]` (slugs resolved
+    server-side), `disclosure` (`null = none` /
+    `{tickers, note} = declared`; empty struct rejected), and
+    `status: 'draft' | 'publish'`. Draft posts skip the
+    `peepso_activities` insert until the
+    `BlogStatusTransitionHandler` observes draft→publish. v1.5:
+    status / blog bodies are run through `MentionPolicy` (§3.3.12)
+    — bodies containing `@peepso_user_<id>(name)` tokens for
+    hidden/blocked/banned/private users are rejected with
+    `bcc_invalid_mention_target`; bodies with > 10 mention tokens
+    get `bcc_too_many_mentions`.
+  - `PATCH /posts/{id}` (added 2026-05-15) — owner-only blog edit.
+    Partial-update semantics: omitted fields are unchanged;
+    `tags: []` / `chain_tags: []` clear; `disclosure: null` clears;
+    `cover_image_id: 0` un-pins the cover. `post_author` is
+    immutable from the API. Server calls
+    `wp_save_post_revision($postId)` before any mutation so edit
+    history is captured via WP-native revisions (no separate
+    revisions table). `bcc_not_found` when the post doesn't exist
+    or isn't a blog post; `bcc_forbidden` when viewer is not the
+    post_author.
+  - `POST /blog/cover-image` (added 2026-05-15) — multipart
+    cover-image upload. Wraps `wp_handle_upload` +
+    `wp_insert_attachment`. Accepts `image/jpeg|png|webp|gif`, ≤ 8
+    MB. Returns `{attachment_id, url, width, height}`. Sets the
+    attachment's `post_author` so the create-path ownership check
+    in `PostsService::createBlog` accepts it. Throttled at 5 /
+    60 s / user via `Throttle::allow` (key:
+    `BCC_TRUST_RATE_LIMIT_BLOG_COVER_UPLOAD`).
+  - `GET /blog/chain-options` (added 2026-05-15) — anonymous-readable
+    picker source for the composer's chain-tag multi-select.
+    Returns `{items: [{id, slug, name, color, icon_url}, ...]}`
+    from `ChainRepository::getActive()`. `Cache-Control: public,
+    max-age=3600` (the chain registry changes rarely).
   - `POST /reactions` accepts §D5 kinds `'solid' | 'vouch' | 'stand_behind'` (locked). Routes through bcc-core's `PeepSoReactionWriter` (single-graph rule). Throttled at 60/minute per viewer. Returns the post-mutation `{counts, viewer_reaction}` shape so the frontend patches its cache without a feed refetch. `DELETE /reactions/:feed_id` also registered.
   - Bonus: `DELETE /me/reviews/:id` is also live and routes through `PostsService::removeReview`.
 - **Onboarding endpoints** — all four fully wired:
