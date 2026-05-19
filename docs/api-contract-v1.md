@@ -4266,6 +4266,70 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
+### v1.18 — 2026-05-17
+
+- **§4.31 — coalesced badges polling endpoint.**
+  New `GET /wp-json/bcc/v1/me/badges?open_threads=12,47` replaces the
+  three previously-uncached polling endpoints
+  (`/me/messages/unread-count`, `/me/notifications/unread-count`, and
+  the per-thread 5s `/me/conversations/{id}/messages` poll) with one
+  cached payload. Auth required. Server-side cached for 15s with the
+  §5 generation-counter pattern (cache group `bcc_badges`, key
+  `me_badges:{userId}:gen{N}:{open_threads_key}`), bumped by
+  `MessagesService::sendMessage`, `MessagesService::markRead`,
+  `NotificationsEndpoint::markRead`, and
+  `NotificationDispatcher::dispatch`. Response envelope (standard
+  §1.4 `data`/`_meta` wrap):
+  ```
+  GET /wp-json/bcc/v1/me/badges?open_threads=12,47
+
+  {
+    "data": {
+      "messages_unread": 3,
+      "notifications_unread": 1,
+      "open_thread_hints": {
+        "12": { "latest_message_id": 88421, "posted_at": "2026-05-17T10:14:02Z" }
+      },
+      "polled_at": "2026-05-17T10:14:30Z"
+    },
+    "_meta": { "version": "v1", "reaction_types": { ... } }
+  }
+  ```
+  `Cache-Control: private, max-age=10`. `open_threads` is a
+  comma-separated list of conversation root ids (cap 5 server-side,
+  silently dropped beyond). The map's keys are the same ids stringified
+  (PHP json-encodes int-keyed assoc arrays as string keys). Threads
+  where the viewer is not a participant are silently absent from
+  `open_thread_hints` — server-side auth gate, never trust the
+  frontend's query param. Frontend types in
+  `bcc-frontend/src/lib/api/types.ts`: `BadgesResponse` +
+  `BadgesOpenThreadHint`. The legacy single-count endpoints remain
+  available for backward compat but the bcc-frontend hooks
+  (`useUnreadMessageCount`, `useUnreadCount`, `useConversation`) all
+  now shim into a single `useBadges` query via the
+  `BadgesProvider`.
+
+- **Internal `POST /wp-json/bcc/v1/internal/indexer/tick`** — signed
+  cron-relay endpoint invoked by Vercel Cron at 1-min cadence. Auth via
+  `X-Bcc-Internal` header verified `hash_equals` against
+  `BCC_INTERNAL_CRON_SECRET` (must be defined in wp-config.php).
+  Misconfigured constant → `503 bcc_misconfigured`. Missing/wrong
+  header → `401 bcc_unauthorized` (with per-IP rate-limited
+  sig-fail logging, mirrors `HeliusWebhookEndpoint`). Success body:
+  ```
+  { "ok": true, "ran_at": "2026-05-17T10:14:30Z", "elapsed_ms": 1203 }
+  ```
+  Error body uses the canonical §1.5 envelope shape with `error.code`,
+  `error.message`, `error.status`. `Cache-Control: no-store`. Exists
+  to replace WP-Cron on shared hosts (Hostinger Business) whose cron
+  caps at 5–15 min — the `NftEthIndexerWorker` registration stays in
+  place as a fallback, and a new `MAX_RUNTIME_SECONDS = 20` guard in
+  the worker keeps a single tick well under shared-host
+  `max_execution_time` caps. Per-chain `AdvisoryLock` makes WP-Cron +
+  Vercel-Cron racing for the same chain a silent no-op for the late
+  caller. Endpoint is internal, not consumed by `bcc-frontend` typed
+  clients.
+
 ### v1.17 — 2026-05-15
 
 - **§4.21 NFT showcase selections** documented end-to-end. Five
