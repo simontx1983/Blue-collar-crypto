@@ -26,7 +26,8 @@ section at the bottom. Don't pad the active list.
 
 - [ ] Holder-group provisioning sweep retries — pending `DegradationMetric` wiring. Listed under "Pending wirings" in [`pattern-registry.md`](pattern-registry.md).
 - [ ] Helius webhook dedup-skipped events — pending `DegradationMetric` wiring. Same "Pending wirings" section.
-- [ ] **Subsystem-count guard script** (`scripts/subsystem-count-guard.sh`) — diff the canonical-subsystem map in [`bcc-core.php`](../app/public/wp-content/plugins/bcc-core/bcc-core.php) against the counts in `pattern-registry.md` + `GOLDEN_PATHS.md §12.1`. Would have caught the `legacy_ajax 9→3` lag and the `audit_log_swallow 3-vs-4` contradiction (drift audit 2026-05-26).
+<!-- subsystem-count guard shipped 2026-05-26 — see Recently shipped below -->
+
 
 ## Docs
 
@@ -39,6 +40,7 @@ section at the bottom. Don't pad the active list.
 Once an item ships, move it here with a date + commit hash so the
 file documents recent flow. Trim entries older than ~30 days.
 
+- 2026-05-26 — Subsystem-count guard (`scripts/subsystem-count-guard.php`) — diffs canonical map in `bcc-core.php` against `pattern-registry.md` + `GOLDEN_PATHS.md`. First run caught two undetected drifts: `audit_log_swallow` docs claimed 4 events but canonical had 3 (my earlier "fix" had aligned to the wrong source); `account_security_mail` docs lagged behind the 2026-05-16 Tier D sixth-event addition. Both fixed.
 - 2026-05-26 — Endorse error-code Phase γ stabilization (contract v1.20). `bcc-trust 3e27fa5`, `bcc-frontend e9b4caf`, contract `921ee0f`.
 - 2026-05-26 — `cron_dispatch` DegradationMetric subsystem closes the fraud-analyzer enqueue silent-failure gap. `bcc-core 4f3e686`, `bcc-trust a9b07f9`, docs `469fdda`.
 - 2026-05-26 — Drift-audit mechanical fixes (audit_log_swallow count, api-contract header, cron-registry cross-refs + hook names). `c4f44bd` + `2ce719a`.

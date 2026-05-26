@@ -25,6 +25,7 @@
 !/bcc-global-library/
 !/.claude/
 !/.mcp.json
+!/scripts/
 
 # Inside .claude/, drop user-local overrides — they belong to the dev,
 # not the team.
