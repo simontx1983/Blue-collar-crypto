@@ -1573,6 +1573,103 @@ Verifies a signed nonce and links the wallet to the authenticated user.
 
 **Mapping:** verifier → existing `bcc-core` `WalletVerifier`. Storage → `bcc_wallet_links` table. Nonce → `bcc-core` challenge service. First-link flag → `wp_usermeta.bcc_first_wallet_link`.
 
+#### `GET /bcc/v1/auth/wallet-nonce`
+
+Issues a single-use challenge nonce for **anonymous** wallet signing. Public sibling of `/auth/nonce`. Drives `/auth/wallet-login` and `/auth/wallet-signup`. Stored in a separate transient keyspace from the authed nonce, so an anonymous nonce can never be replayed against `/auth/wallet-link` or vice versa.
+
+- **Auth:** Anonymous
+- **Query:** `chain_slug` (required), `wallet_address` (required)
+- **Response 200:**
+  ```json
+  {
+    "nonce": "8f3a7b2e9c1d4f6a",
+    "message": "Sign this to verify you control this wallet on Blue Collar Crypto.\n\nNonce: 8f3a7b2e9c1d4f6a\nIssued: 2026-04-27T14:23:00Z\nExpires: 2026-04-27T14:33:00Z",
+    "chain_slug": "cosmos",
+    "chain_id": 4,
+    "wallet_address": "cosmos1abcdef…",
+    "expires_at": "2026-04-27T14:33:00Z"
+  }
+  ```
+- **Errors:** `bcc_invalid_request` (missing chain/address, unsupported chain, bad address format), `bcc_rate_limited`
+- **Rate limit:** IP-bucketed (`WALLET_NONCE_RATE_LIMIT`/min/IP). Disjoint from `/auth/nonce`'s user-keyed bucket — the two routes never starve each other under partial DoS.
+- **Cache:** `Cache-Control: no-store`
+
+#### `POST /bcc/v1/auth/wallet-login`
+
+Verifies a signed nonce, looks up the BCC user the wallet is linked to, mints + returns a JWT. Wallet-as-credential equivalent of `/auth/login`.
+
+- **Auth:** Anonymous
+- **Body:**
+  ```json
+  {
+    "wallet_address": "cosmos1abcdef…",
+    "signature": "<base64 or hex signature>",
+    "extra": { "public_key": "<base64 pubkey, Cosmos only>" }
+  }
+  ```
+  `extra` is an optional object passed verbatim to `WalletVerifier::verify` — Cosmos requires `public_key` here; ETH/Solana ignore it.
+- **Response 200:**
+  ```json
+  {
+    "user_id": 42,
+    "handle": "alice",
+    "token": "<JWT>",
+    "expires_in": 604800,
+    "token_type": "Bearer",
+    "in_good_standing": true
+  }
+  ```
+- **Errors:**
+  - `bcc_invalid_request` 400 — missing field, expired nonce, unsupported chain.
+  - `bcc_signature_invalid` 401 — signature verification failed.
+  - `bcc_wallet_not_linked` 404 — no BCC account is bound to this wallet. Frontend should route the user to `/signup` (or the wallet-signup flow) with the wallet pre-attached. **Distinct, recoverable code** — never auto-promotes.
+  - `bcc_invalid_state` 409 — account is missing a handle (created outside BCC signup); routes through handle-claim surface.
+  - `bcc_rate_limited` 429.
+  - `bcc_internal_error` 500 — stored challenge malformed.
+- **Rate limit:** IP-bucketed (`WALLET_LOGIN_RATE_LIMIT`/min/IP). Throttle gates the route **before** the CPU-bound verify step.
+- **Cache:** `Cache-Control: no-store`
+- **Side effects:** sets `wp_set_auth_cookie`, emits `user_login` audit row, fires `bcc_user_login` action.
+
+#### `POST /bcc/v1/auth/wallet-signup`
+
+Verifies a signed nonce, creates a new user (placeholder email if none supplied), links the wallet, mints + returns a JWT. Wallet-as-credential equivalent of `/auth/signup`.
+
+- **Auth:** Anonymous
+- **Body:**
+  ```json
+  {
+    "wallet_address": "cosmos1abcdef…",
+    "signature": "<base64 or hex signature>",
+    "handle": "alice",
+    "display_name": "Alice",
+    "email": "alice@example.com",
+    "extra": { "public_key": "<base64 pubkey, Cosmos only>" }
+  }
+  ```
+  `handle` is required (§B6 rules: 3–20 chars, lowercase + digits + hyphens). `display_name` and `email` are optional; missing email → deterministic placeholder.
+- **Response 201:**
+  ```json
+  {
+    "user_id": 42,
+    "handle": "alice",
+    "token": "<JWT>",
+    "expires_in": 604800,
+    "token_type": "Bearer",
+    "in_good_standing": true
+  }
+  ```
+- **Errors:**
+  - `bcc_invalid_request` 400 — missing field, expired nonce, unsupported chain, bad address.
+  - `bcc_invalid_handle` 400 / `bcc_handle_reserved` 409 / `bcc_conflict` 409 — handle validation per §B6.
+  - `bcc_signature_invalid` 401 — signature verification failed.
+  - `bcc_wallet_already_linked` 409 — wallet is already bound to an account. Frontend should route to `/login`.
+  - `bcc_rate_limited` 429.
+  - `bcc_internal_error` 500 — stored challenge malformed, or `wp_insert_user` failed.
+- **Rate limit:** IP-bucketed (`WALLET_SIGNUP_RATE_LIMIT`/min/IP).
+- **Cache:** `Cache-Control: no-store`
+- **Side effects:** sets `wp_set_auth_cookie`, fires `bcc_wallet_verified` (seeds trust-engine + onchain-signals rows just like `verifyAndLink`), emits `user_signup` audit row, fires `bcc_user_signup` action. **Note:** does NOT emit the `bcc_first_wallet_link` celebration on the response — celebration delivery for wallet-signup is reserved for a future contract revision.
+- **Race protection:** if a concurrent signup wins the wallet-link race between the `existsForOtherUser` check and the actual link write, the inserted user is rolled back (`wp_delete_user`) and `bcc_wallet_already_linked` is returned. No orphan user is left behind.
+
 ### 4.2 Cards
 
 #### `GET /bcc/v1/cards/:type/:id`
@@ -2513,6 +2610,107 @@ Top-N search suggestions for the §G1 nav-bar autocomplete. Smaller per-item sha
   - Server maps the flat result shape into `SearchSuggestion`: reputation_tier → card_tier per §C1, category_slug → card_kind per `PageTypeMap`, route prefix per kind (`/v/`, `/p/`, `/c/`)
   - Dropped silently: rows with unrecognized `category_slug` (e.g., `dao` — not a card kind in V1) and rows whose tier maps to risky (entity hidden from card UI)
   - Falls back to empty list when bcc-search is degraded (503) — autocomplete must never block the user mid-type with an error toast
+
+#### `GET /bcc/v1/search` (multi-vertical: projects + trending)
+
+Direct bcc-search project search and trending mode — the upstream that `cards/search` wraps. The frontend uses this **directly** on the `/search` results page so the Projects tab gets the full project shape (tier badge text, verified, endorsements, category) — fields the §A2 cards wrapper trims away. The autocomplete dropdown still goes through `cards/search`.
+
+- **Auth:** Anonymous OR Bearer (token silently ignored by handler; sent only so viewer-aware ranking signals stay warm when the user is signed in)
+- **Query:**
+  - `q` (string) — 2..100 chars (server returns empty for shorter; `QueryQualityGate` rejects pure-stopword / low-entropy queries to empty too)
+  - `type` (string, optional) — reputation category slug (e.g. `validator`, `builder`, `creator`). Falls through to category routing in `SearchController`.
+  - `trending` (string, optional) — when `=1`, ignores `q` / `type` and returns top-scored projects regardless of query.
+- **Response 200:**
+  ```json
+  {
+    "results": [
+      {
+        "page_id": 1842,
+        "page_name": "Blacksmith Node",
+        "page_url": "/v/blacksmith-node",
+        "avatar_url": "https://…",
+        "trust_score": 98,
+        "tier": "elite",
+        "endorsements": 24,
+        "verified": true,
+        "followers": 312,
+        "category": "Validator",
+        "category_slug": "validator"
+      }
+    ],
+    "categories": [
+      { "slug": "validator", "name": "Validator" }
+    ]
+  }
+  ```
+- **Errors (legacy WP shape — not §L5 envelope):**
+  - `rate_limit_exceeded` (HTTP 429) — `10 req / 5s` per subnet
+  - `dependency_unavailable` (HTTP 503) — PeepSo plugin not loaded
+  - `categories_unavailable` (HTTP 503) — reputation category fetch failed
+  - `rebuild_in_progress` (HTTP 503) — bcc-search FULLTEXT index rebuilding; `Retry-After: 5`. In trending mode the same code surfaces with a "Trending is warming up" message.
+  - `score_enrichment_failed` (HTTP 503) — trust-score enrichment pipeline down
+  - `temporarily_overloaded` (HTTP 503) — internal rate-limit ceiling reached
+- **Cache:** server-side `60s` (per-query results) + LKG mirror for 503 fallback. Trending mode: `300s` (5 min) + LKG.
+- **Envelope note:** bcc-search predates §L5 — this endpoint returns raw `{ results, categories }` (or `{ results, meta }` for trending mode where `categories` is absent because they don't apply). The bcc-frontend client routes these through `bccSearchFetchAsClient` (not the envelope-strict `bccFetch`) and maps legacy WP errors (`{ code, message, data: { status } }`) into `BccApiError` so the UI's `err.code` branching contract per Phase γ stays uniform.
+
+#### `GET /bcc/v1/search/users`
+
+Users vertical — separate cache + rate-limit bucket from project search so the two verticals don't share quota.
+
+- **Auth:** Anonymous OR Bearer (token silently ignored by handler)
+- **Query:**
+  - `q` (string) — 2..100 chars (`QueryQualityGate` shared with project search)
+  - `limit` (int, optional) — default 20, capped at 50
+- **Response 200:**
+  ```json
+  {
+    "results": [
+      {
+        "id": 42,
+        "username": "simontx",
+        "display_name": "Simon",
+        "avatar_url": "https://…",
+        "profile_url": "/u/simontx"
+      }
+    ],
+    "meta": { "count": 1, "query": "simon" }
+  }
+  ```
+- **Errors (legacy WP shape):**
+  - `rate_limit_exceeded` (HTTP 429)
+  - `user_search_unavailable` (HTTP 503; `Retry-After: 5`)
+- **Cache:** server-side `45s` per-query.
+- **Envelope note:** raw shape (no §L5 envelope) — same client routing as `GET /bcc/v1/search` above.
+
+#### `GET /bcc/v1/search/groups`
+
+Groups vertical — separate cache + rate-limit bucket. Returns PeepSo group rows (open + closed are listed; secret are filtered server-side).
+
+- **Auth:** Anonymous OR Bearer (token silently ignored by handler)
+- **Query:**
+  - `q` (string) — 2..100 chars
+  - `limit` (int, optional) — default 20, capped at 50
+- **Response 200:**
+  ```json
+  {
+    "results": [
+      {
+        "id": 17,
+        "name": "Blacksmiths Local 412",
+        "slug": "blacksmiths-local-412",
+        "description": "On-chain plumbers and welders.",
+        "avatar_url": "https://…",
+        "group_url": "/locals/blacksmiths-local-412"
+      }
+    ],
+    "meta": { "count": 1, "query": "black" }
+  }
+  ```
+- **Errors (legacy WP shape):**
+  - `rate_limit_exceeded` (HTTP 429)
+  - `group_search_unavailable` (HTTP 503; `Retry-After: 5`)
+- **Cache:** server-side `45s` per-query.
+- **Envelope note:** raw shape (no §L5 envelope) — same client routing as `GET /bcc/v1/search` above.
 
 ### 4.10 Notifications (§I1)
 
@@ -3982,6 +4180,87 @@ Both surfaces require Bearer JWT; suspended accounts → `bcc_forbidden 403`. St
 
 The user can verify any email against the in-app timeline. A row WITHOUT a matching email = the email channel failed (`account_security_mail` DegradationMetric should be active). An email WITHOUT a matching row = the timeline is stale OR the user is looking at a phishing email; treat the timeline as the trust anchor.
 
+### 4.24 Wallets
+
+Self-service wallet management for the `/settings/account` linked-wallets surface plus the §N8 page-claim wallet panel. Pairs with §4.1's `/auth/wallet-*` family — the auth endpoints establish a session; this section manages the wallet set bound to the established session.
+
+Wallet `address_short` formatting follows §1.7. All write paths fire the `AccountSecurityMailer` out-of-band side-channel per §4.23.
+
+#### `GET /bcc/v1/wallets`
+
+Returns the current user's linked wallets.
+
+- **Auth:** required. Suspended accounts → `bcc_forbidden 403`.
+- **Response 200:**
+  ```json
+  {
+    "items": [{
+      "id": 142,
+      "wallet_address": "cosmos1abcdef…",
+      "chain_slug": "cosmos",
+      "chain_name": "Cosmos Hub",
+      "chain_type": "cosmos",
+      "explorer_url": "https://www.mintscan.io/cosmos/account/{address}",
+      "wallet_type": "user",
+      "label": "",
+      "is_primary": false,
+      "verified": true,
+      "created_at": "2026-04-27 14:24:00"
+    }]
+  }
+  ```
+- **Errors:** `bcc_rate_limited` 429.
+- **Rate limit:** 30/min/user.
+- **Cache:** `Cache-Control: no-store`.
+
+#### `DELETE /bcc/v1/wallets/{id}`
+
+Unlinks a wallet owned by the current user. Idempotent — a double-tap unlink against an already-gone row yields `removed: false` with HTTP 200 (no 404, to avoid leaking whether `id` exists for someone else).
+
+- **Auth:** required. Suspended accounts → `bcc_forbidden 403`.
+- **Path:** `id` (integer, wallet_link row id).
+- **Response 200:**
+  ```json
+  { "ok": true, "id": 142, "removed": true }
+  ```
+- **Errors:** `bcc_unauthorized` 401, `bcc_invalid_request` 400 (id missing), `bcc_rate_limited` 429.
+- **Rate limit:** 10/min/user.
+- **Cache:** `Cache-Control: no-store`.
+- **Side effects on a true state transition (`removed: true` for an own-wallet):** writes `wallet_unlinked` audit row (`AuditLogger::log`) and fires `AccountSecurityMailer::walletUnlinked` (§4.23 side-channel). The trust-engine domain event `bcc_wallet_disconnected` fires from the underlying `WalletIdentityService::unlinkWallet`, triggering `BonusService::handleWalletDisconnect` and Helius unsubscribe (Solana only).
+
+#### `GET /bcc/v1/wallets/project/{post_id}`
+
+Returns wallets linked to a project / validator / creator page, used by §N8 claim panels and on-page provenance strips.
+
+- **Auth:** required.
+- **Path:** `post_id` (integer, peepso-page CPT id).
+- **Response 200:** array of wallet records, shape matching `/wallets` items above **with one privacy gate** — non-owners and non-admins see the full record minus `wallet_address`. The post author and admins see the full record.
+- **Envelope deviation:** this endpoint currently returns a raw array (not the `§1.4 { ok, data }` envelope). Tracked as known §9 contract drift to close in a follow-up; frontend treats the raw array as `data`.
+- **Errors:** `bcc_rate_limited` 429.
+- **Rate limit:** 30/min/user.
+
+#### `GET /bcc/v1/chains`
+
+Returns the enabled-chain catalog. Public; consumed by the wallet-link selector and the §N8 claim chain dropdown.
+
+- **Auth:** Anonymous.
+- **Response 200:** array of chain records.
+  ```json
+  [{
+    "id": 4,
+    "slug": "cosmos",
+    "name": "Cosmos Hub",
+    "chain_type": "cosmos",
+    "chain_id_hex": null,
+    "explorer_url": "https://www.mintscan.io/cosmos",
+    "native_token": "ATOM",
+    "icon_url": "https://…/cosmos.svg"
+  }]
+  ```
+- **Envelope deviation:** also returns a raw array (see `/wallets/project/{post_id}` above). Same follow-up.
+- **Errors:** `bcc_rate_limited` 429.
+- **Rate limit:** 30/min/IP.
+
 ---
 
 ## 5. Encoded rules — quick reference
@@ -4265,6 +4544,24 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.19 — 2026-05-25
+
+- **§4.1 — anonymous wallet-credential auth endpoints documented.**
+  Locks the three already-shipped endpoints (`GET /auth/wallet-nonce`,
+  `POST /auth/wallet-login`, `POST /auth/wallet-signup`) that were
+  in production but absent from the contract. Documents the
+  disjoint-keyspace nonce posture (anon nonce ≠ authed `/auth/nonce`),
+  the IP-bucketed throttles, the distinct `bcc_wallet_not_linked` /
+  `bcc_wallet_already_linked` recoverable codes, and the wallet-signup
+  link-race rollback path.
+- **§4.24 — new Wallets section.** Locks the self-service wallet
+  management surface: `GET /wallets` (envelope), `DELETE /wallets/:id`
+  (envelope, idempotent), `GET /wallets/project/:post_id` (raw-array
+  drift flagged), `GET /chains` (raw-array drift flagged). Both
+  raw-array endpoints are tracked as §9 contract drift to be closed
+  in a follow-up envelope sweep. Wallet write paths cross-reference
+  the §4.23 `AccountSecurityMailer` side-channel.
 
 ### v1.18 — 2026-05-17
 
