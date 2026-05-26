@@ -18,7 +18,6 @@ section at the bottom. Don't pad the active list.
 
 ## Backend / Contract
 
-- [ ] Migrate the remaining 12 `self::error()` call sites in [`TrustRestController.php`](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Controllers/TrustRestController.php) to `errorWithCode()` with §1.4.6 stable codes. The legacy `trust_error` first-arg is §γ-incompatible; the endorse path was scoped first (v1.20).
 - [ ] Audit other plugins' `new WP_Error('<not-bcc_*>', ...)` first-args — verify each emits a §1.4.6 stable code. Today only `TrustRestController` has been audited; `bcc-search`, `bcc-core`, and the disputes/onchain controllers haven't been swept.
 
 ## Observability
@@ -40,6 +39,7 @@ section at the bottom. Don't pad the active list.
 Once an item ships, move it here with a date + commit hash so the
 file documents recent flow. Trim entries older than ~30 days.
 
+- 2026-05-26 — Full TrustRestController migration to `errorWithCode()` complete. All 9 remaining `self::error()` sites mapped to §1.4.6 stable codes (`bcc_internal`, `bcc_invalid_request`, `bcc_rate_limited`, `bcc_forbidden`). The legacy `error()` helper deleted entirely (no callers left). Dead 503 branch in `safeExceptionError` deleted under fresh-install policy (no exception in bcc-trust throws with code 503; the docblock literally said "reserved"). Controller is now 100 % §γ-compliant.
 - 2026-05-26 — Envelope drift "sweep" turned out to be a doc-only correction (contract v1.21). Live curl of `/chains` proved both endpoints were ALWAYS enveloped by `Envelope::wrap()`; the v1.19 "raw-array drift flagged" notes were authored from a wrong reading of the controller code. No server-side change. Bonus discovery: contract claims aren't verified against runtime — added a sibling parity-probe to Active.
 - 2026-05-26 — Subsystem-count guard (`scripts/subsystem-count-guard.php`) — diffs canonical map in `bcc-core.php` against `pattern-registry.md` + `GOLDEN_PATHS.md`. First run caught two undetected drifts: `audit_log_swallow` docs claimed 4 events but canonical had 3 (my earlier "fix" had aligned to the wrong source); `account_security_mail` docs lagged behind the 2026-05-16 Tier D sixth-event addition. Both fixed.
 - 2026-05-26 — Endorse error-code Phase γ stabilization (contract v1.20). `bcc-trust 3e27fa5`, `bcc-frontend e9b4caf`, contract `921ee0f`.
