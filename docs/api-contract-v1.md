@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.20 · 2026-05-26 · Phase 1 deliverable
+**Status:** Draft v1.21 · 2026-05-26 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -4236,8 +4236,7 @@ Returns wallets linked to a project / validator / creator page, used by §N8 cla
 
 - **Auth:** required.
 - **Path:** `post_id` (integer, peepso-page CPT id).
-- **Response 200:** array of wallet records, shape matching `/wallets` items above **with one privacy gate** — non-owners and non-admins see the full record minus `wallet_address`. The post author and admins see the full record.
-- **Envelope deviation:** this endpoint currently returns a raw array (not the `§1.4 { ok, data }` envelope). Tracked as known §9 contract drift to close in a follow-up; frontend treats the raw array as `data`.
+- **Response 200:** standard `{ data, _meta }` envelope where `data` is an array of wallet records, shape matching `/wallets` items above **with one privacy gate** — non-owners and non-admins see the full record minus `wallet_address`. The post author and admins see the full record.
 - **Errors:** `bcc_rate_limited` 429.
 - **Rate limit:** 30/min/user.
 
@@ -4246,20 +4245,22 @@ Returns wallets linked to a project / validator / creator page, used by §N8 cla
 Returns the enabled-chain catalog. Public; consumed by the wallet-link selector and the §N8 claim chain dropdown.
 
 - **Auth:** Anonymous.
-- **Response 200:** array of chain records.
+- **Response 200:** standard `{ data, _meta }` envelope where `data` is an array of chain records.
   ```json
-  [{
-    "id": 4,
-    "slug": "cosmos",
-    "name": "Cosmos Hub",
-    "chain_type": "cosmos",
-    "chain_id_hex": null,
-    "explorer_url": "https://www.mintscan.io/cosmos",
-    "native_token": "ATOM",
-    "icon_url": "https://…/cosmos.svg"
-  }]
+  {
+    "data": [{
+      "id": 4,
+      "slug": "cosmos",
+      "name": "Cosmos Hub",
+      "chain_type": "cosmos",
+      "chain_id_hex": null,
+      "explorer_url": "https://www.mintscan.io/cosmos",
+      "native_token": "ATOM",
+      "icon_url": "https://…/cosmos.svg"
+    }],
+    "_meta": { "request_id": "8f3a7b2e9c1d4f6a" }
+  }
   ```
-- **Envelope deviation:** also returns a raw array (see `/wallets/project/{post_id}` above). Same follow-up.
 - **Errors:** `bcc_rate_limited` 429.
 - **Rate limit:** 30/min/IP.
 
@@ -4547,6 +4548,20 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
+### v1.21 — 2026-05-26
+
+- **§4.24 — `/wallets/project/:post_id` + `/chains` envelope deviation
+  retracted (doc-only correction).** v1.19 §4.24 entries flagged both
+  endpoints as raw-array drift to be closed in a "follow-up envelope
+  sweep." Live verification on the 2026-05-26 sweep showed both
+  endpoints have **always** been enveloped via `Envelope::wrap()`'s
+  auto-wrap in `rest_post_dispatch` — `rest_ensure_response($indexed_array)`
+  is correctly recognised as not-yet-enveloped and wrapped into
+  `{ data: [...], _meta: { request_id } }` before the response leaves
+  WordPress. The drift mentions were authored from a wrong reading of
+  the controller code; no server-side behaviour change ships in this
+  bump. §4.24 entries updated to reflect the actual on-the-wire shape.
+
 ### v1.20 — 2026-05-26
 
 - **§1.4.6 — endorse error codes Phase γ-stabilized.**
@@ -4574,11 +4589,12 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
   `bcc_wallet_already_linked` recoverable codes, and the wallet-signup
   link-race rollback path.
 - **§4.24 — new Wallets section.** Locks the self-service wallet
-  management surface: `GET /wallets` (envelope), `DELETE /wallets/:id`
-  (envelope, idempotent), `GET /wallets/project/:post_id` (raw-array
-  drift flagged), `GET /chains` (raw-array drift flagged). Both
-  raw-array endpoints are tracked as §9 contract drift to be closed
-  in a follow-up envelope sweep. Wallet write paths cross-reference
+  management surface: `GET /wallets`, `DELETE /wallets/:id`
+  (idempotent), `GET /wallets/project/:post_id`, `GET /chains` —
+  all four endpoints emit the standard `{ data, _meta }` envelope
+  via the auto-wrap (v1.19 originally flagged the two GET-array
+  endpoints as drift; v1.21 retracted that — see v1.21 entry).
+  Wallet write paths cross-reference
   the §4.23 `AccountSecurityMailer` side-channel.
 
 ### v1.18 — 2026-05-17

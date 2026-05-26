@@ -18,7 +18,6 @@ section at the bottom. Don't pad the active list.
 
 ## Backend / Contract
 
-- [ ] Envelope drift sweep — `GET /wallets/project/{post_id}` + `GET /chains` still return raw arrays instead of `{ data, _meta }`. Flagged in [`api-contract-v1.md` v1.19 changelog](api-contract-v1.md) as §9 drift to close in a follow-up sweep.
 - [ ] Migrate the remaining 12 `self::error()` call sites in [`TrustRestController.php`](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Controllers/TrustRestController.php) to `errorWithCode()` with §1.4.6 stable codes. The legacy `trust_error` first-arg is §γ-incompatible; the endorse path was scoped first (v1.20).
 - [ ] Audit other plugins' `new WP_Error('<not-bcc_*>', ...)` first-args — verify each emits a §1.4.6 stable code. Today only `TrustRestController` has been audited; `bcc-search`, `bcc-core`, and the disputes/onchain controllers haven't been swept.
 
@@ -27,6 +26,7 @@ section at the bottom. Don't pad the active list.
 - [ ] Holder-group provisioning sweep retries — pending `DegradationMetric` wiring. Listed under "Pending wirings" in [`pattern-registry.md`](pattern-registry.md).
 - [ ] Helius webhook dedup-skipped events — pending `DegradationMetric` wiring. Same "Pending wirings" section.
 <!-- subsystem-count guard shipped 2026-05-26 — see Recently shipped below -->
+- [ ] **API-contract-vs-code parity probe** — for each endpoint claimed in `api-contract-v1.md` §4, hit the live site and verify the response shape matches the documented envelope/raw-array/field-set. The v1.21 envelope-drift retraction (2026-05-26) showed the contract can drift away from code in *both* directions — claiming drift that doesn't exist, OR claiming code that doesn't ship. A live-probe guard catches both. Sibling to `subsystem-count-guard.php` in shape.
 
 
 ## Docs
@@ -40,6 +40,7 @@ section at the bottom. Don't pad the active list.
 Once an item ships, move it here with a date + commit hash so the
 file documents recent flow. Trim entries older than ~30 days.
 
+- 2026-05-26 — Envelope drift "sweep" turned out to be a doc-only correction (contract v1.21). Live curl of `/chains` proved both endpoints were ALWAYS enveloped by `Envelope::wrap()`; the v1.19 "raw-array drift flagged" notes were authored from a wrong reading of the controller code. No server-side change. Bonus discovery: contract claims aren't verified against runtime — added a sibling parity-probe to Active.
 - 2026-05-26 — Subsystem-count guard (`scripts/subsystem-count-guard.php`) — diffs canonical map in `bcc-core.php` against `pattern-registry.md` + `GOLDEN_PATHS.md`. First run caught two undetected drifts: `audit_log_swallow` docs claimed 4 events but canonical had 3 (my earlier "fix" had aligned to the wrong source); `account_security_mail` docs lagged behind the 2026-05-16 Tier D sixth-event addition. Both fixed.
 - 2026-05-26 — Endorse error-code Phase γ stabilization (contract v1.20). `bcc-trust 3e27fa5`, `bcc-frontend e9b4caf`, contract `921ee0f`.
 - 2026-05-26 — `cron_dispatch` DegradationMetric subsystem closes the fraud-analyzer enqueue silent-failure gap. `bcc-core 4f3e686`, `bcc-trust a9b07f9`, docs `469fdda`.
