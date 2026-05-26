@@ -72,6 +72,16 @@ deduplication is via WordPress's `(hook, serialized args)` keying.
 | Per-vote dispatcher hook (`VoteJobDispatcher`) | [VoteJobDispatcher.php:126](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/Vote/VoteJobDispatcher.php#L126) | Vote job dispatch — Action Scheduler primary, `wp_schedule_single_event` fallback. |
 | PeepSo shadow-page user-cleanup (`ShadowPageSyncService::USER_CLEANUP_HOOK`) | [blue-collar-crypto-peepso-integration/app/Services/ShadowPageSyncService.php:545](../app/public/wp-content/plugins/blue-collar-crypto-peepso-integration/app/Services/ShadowPageSyncService.php#L545) | Cleanup of orphaned shadow-CPT posts after user delete (T+30s). |
 
+**Observability cross-reference**: enqueue failures on the unrecoverable
+single-event paths surface as `cron_dispatch` DegradationMetric events
+(canonical registry in [bcc-core/bcc-core.php](../app/public/wp-content/plugins/bcc-core/bcc-core.php),
+documented in [pattern-registry.md §observability](pattern-registry.md)).
+The instrumented sites are `EndorsementFraudAnalyzer::schedule` (event
+`endorsement_fraud_analyzer`) and `VoteJobDispatcher::enqueue` wp-cron
+fallback (event `vote_job_dispatcher`). Recoverable surfaces with a
+reconciliation sweep (e.g. `bcc_disputes_reconcile`) intentionally
+stay out of the subsystem — see pattern-registry for the policy.
+
 ## Custom cron intervals
 
 Registered via the WordPress `cron_schedules` filter. New intervals
