@@ -198,6 +198,8 @@ User-relationship errors (blocked, muted) use `bcc_blocked` (403). The frontend 
 | `share_not_found` | 404 | OAuth / X verify | No tweet found that links this site |
 | `bcc_nft_not_owned` | 403 | NFT showcase | Selected NFT isn't in the viewer's linked wallets |
 | `bcc_wallet_not_supported` | 400 | Wallet link | Chain isn't enabled on this site |
+| `bcc_endorse_self` | 403 | Endorse | User attempted to endorse their own page |
+| `bcc_fraud_locked` | 403 | Endorse, attest, vote | Account is restricted from this action due to flagged unusual activity. Distinct from `bcc_permission_denied` because it is NOT user-resolvable — no `unlock_hint` applies; the frontend surfaces a generic "temporarily restricted" copy. |
 
 #### 1.4.7 Client-side typed errors
 
@@ -4544,6 +4546,22 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.20 — 2026-05-26
+
+- **§1.4.6 — endorse error codes Phase γ-stabilized.**
+  `POST /bcc-trust/v1/endorse` and `POST /bcc-trust/v1/revoke-endorsement`
+  previously emitted every error envelope with the legacy `trust_error`
+  code, forcing the frontend to pattern-match `err.message` (a §γ
+  violation). Both routes now emit stable codes: existing standard
+  codes (`bcc_unauthorized`, `bcc_invalid_request`, `bcc_conflict`,
+  `bcc_not_found`, `bcc_rate_limited`, `bcc_permission_denied`,
+  `bcc_internal`) plus two new feature-specific codes added to the
+  table — `bcc_endorse_self` (403) and `bcc_fraud_locked` (403).
+  Soft gates (quest-locked, account-too-new) surface as
+  `bcc_permission_denied` with `data.unlock_hint` per §1.4.5; the
+  canonical UX path remains the server-rendered
+  `permissions.can_endorse` boolean.
 
 ### v1.19 — 2026-05-25
 
