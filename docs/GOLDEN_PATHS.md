@@ -804,7 +804,7 @@ foreach (($dm["degradation_metrics"]["subsystems"] ?? []) as $name => $events) {
 - `search_lkg` (2 events)
 - `read_model_fallback` (1 event)
 - `audit_log_swallow` (4 events)
-- `legacy_ajax` (9 events)
+- `legacy_ajax` (3 events — was 9; 6 wallet/collection AJAX handlers retired 2026-05-25)
 - `account_security_mail` (5 events)
 
 **Failure means:** A registered subsystem dropped out of the canonical map in `bcc-core/bcc-core.php`. New subsystems wired into `DegradationMetrics::record()` MUST register here — the map is the only place future agents discover which events are even possible.
