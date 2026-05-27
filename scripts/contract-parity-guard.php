@@ -129,17 +129,23 @@ function normalize_path(string $path): string {
 | Token-walk to find:
 |   register_rest_route('namespace', '/path', [...])
 |   register_rest_route(self::NAMESPACE, self::ROUTE, [...])
+|   register_rest_route(self::NS, '/users/(?P<slug>' . OtherClass::HANDLE_PATTERN . ')/groups', [...])
 |
 | Class constants in the same file are resolved via a same-file
-| `const NAME = '...'` lookup; cross-file constants are emitted as
-| UNRESOLVED with a warning.
+| `const NAME = '...'` lookup. Cross-file class constants (`OtherClass::CONST`)
+| are resolved via a one-pass-walk-of-all-files map built up front.
+| Anything still unresolved emits a warning.
 */
 
 /**
- * @return list<array{file: string, lineno: int, namespace: string, path: string, methods: list<string>, unresolved: bool}>
+ * Yield every in-scope PHP file under `$pluginRoots`, skipping vendored
+ * dependencies. Shared by parse_php_routes() and
+ * collect_all_class_constants() so both walk exactly the same file set.
+ *
+ * @param list<string> $pluginRoots
+ * @return iterable<string>
  */
-function parse_php_routes(array $pluginRoots): array {
-    $routes = [];
+function iterate_plugin_php_files(array $pluginRoots): iterable {
     foreach ($pluginRoots as $root) {
         if (!is_dir($root)) {
             continue;
@@ -147,9 +153,8 @@ function parse_php_routes(array $pluginRoots): array {
         $iter = new RecursiveIteratorIterator(
             new RecursiveCallbackFilterIterator(
                 new RecursiveDirectoryIterator($root, RecursiveDirectoryIterator::SKIP_DOTS),
-                static function ($current, $key, $iterator) {
+                static function ($current) {
                     $path = (string) $current->getPathname();
-                    // Skip vendored deps and tests.
                     if (strpos($path, DIRECTORY_SEPARATOR . 'vendor' . DIRECTORY_SEPARATOR) !== false) {
                         return false;
                     }
@@ -165,18 +170,130 @@ function parse_php_routes(array $pluginRoots): array {
             if (substr($fpath, -4) !== '.php') {
                 continue;
             }
-            foreach (extract_routes_from_file($fpath) as $r) {
-                $routes[] = $r;
-            }
+            yield $fpath;
+        }
+    }
+}
+
+/**
+ * @param list<string> $pluginRoots
+ * @param array<string, array<string, string>> $crossFileConstants  ClassName => [CONST => value]
+ * @return list<array{file: string, lineno: int, namespace: string, path: string, methods: list<string>, unresolved: bool}>
+ */
+function parse_php_routes(array $pluginRoots, array $crossFileConstants): array {
+    $routes = [];
+    foreach (iterate_plugin_php_files($pluginRoots) as $fpath) {
+        foreach (extract_routes_from_file($fpath, $crossFileConstants) as $r) {
+            $routes[] = $r;
         }
     }
     return $routes;
 }
 
 /**
+ * One-pass walk of every plugin PHP file collecting `ClassName::CONST = 'literal'`
+ * declarations. Used to resolve cross-file constant references in
+ * `register_rest_route()` paths (e.g. `OtherEndpoint::HANDLE_PATTERN`).
+ *
+ * @param list<string> $pluginRoots
+ * @return array<string, array<string, string>>  ClassName => [CONST => value]
+ */
+function collect_all_class_constants(array $pluginRoots): array {
+    $map = [];
+    foreach (iterate_plugin_php_files($pluginRoots) as $fpath) {
+        foreach (extract_class_constants_from_file($fpath) as $className => $constMap) {
+            if (!isset($map[$className])) {
+                $map[$className] = [];
+            }
+            // Last writer wins on duplicate ClassName across files; rare in
+            // practice (different namespaces would normally use different
+            // short names too).
+            foreach ($constMap as $name => $value) {
+                $map[$className][$name] = $value;
+            }
+        }
+    }
+    return $map;
+}
+
+/**
+ * Extract `ClassName => [CONST => value]` from a single file. Tracks
+ * class scope via brace counting after the `class X` declaration, so
+ * top-level `const` statements outside classes (rare) are ignored.
+ *
+ * @return array<string, array<string, string>>
+ */
+function extract_class_constants_from_file(string $fpath): array {
+    $src = (string) file_get_contents($fpath);
+    if (strpos($src, 'class ') === false) {
+        return [];
+    }
+    $tokens = token_get_all($src);
+    $n = count($tokens);
+
+    $identifierTokens = [
+        T_STRING, T_NAMESPACE, T_CLASS, T_INTERFACE, T_TRAIT, T_FUNCTION,
+        T_PRINT, T_ECHO, T_LIST, T_ARRAY,
+    ];
+
+    $result = [];
+    $i = 0;
+    while ($i < $n) {
+        $t = $tokens[$i];
+        if (is_array($t) && $t[0] === T_CLASS) {
+            // Class declaration: T_CLASS, ws, T_STRING (name), ..., {
+            $j = skip_ws($tokens, $i + 1, $n);
+            if ($j >= $n || !is_array($tokens[$j]) || $tokens[$j][0] !== T_STRING) {
+                $i++;
+                continue;
+            }
+            $className = $tokens[$j][1];
+            // Find the opening brace of the class body.
+            $k = $j + 1;
+            while ($k < $n && $tokens[$k] !== '{') {
+                $k++;
+            }
+            if ($k >= $n) {
+                $i++;
+                continue;
+            }
+            // Walk class body, collecting depth-1 const declarations.
+            $depth = 1;
+            $k++;
+            while ($k < $n && $depth > 0) {
+                $tt = $tokens[$k];
+                if ($tt === '{') {
+                    $depth++;
+                } elseif ($tt === '}') {
+                    $depth--;
+                } elseif (is_array($tt) && $tt[0] === T_CONST && $depth === 1) {
+                    $m = skip_ws($tokens, $k + 1, $n);
+                    if ($m < $n && is_array($tokens[$m]) && in_array($tokens[$m][0], $identifierTokens, true)) {
+                        $constName = $tokens[$m][1];
+                        $p = skip_ws($tokens, $m + 1, $n);
+                        if ($p < $n && $tokens[$p] === '=') {
+                            $q = skip_ws($tokens, $p + 1, $n);
+                            if ($q < $n && is_array($tokens[$q]) && $tokens[$q][0] === T_CONSTANT_ENCAPSED_STRING) {
+                                $result[$className][$constName] = trim($tokens[$q][1], "'\"");
+                            }
+                        }
+                    }
+                }
+                $k++;
+            }
+            $i = $k;
+            continue;
+        }
+        $i++;
+    }
+    return $result;
+}
+
+/**
+ * @param array<string, array<string, string>> $crossFileConstants
  * @return list<array{file: string, lineno: int, namespace: string, path: string, methods: list<string>, unresolved: bool}>
  */
-function extract_routes_from_file(string $fpath): array {
+function extract_routes_from_file(string $fpath, array $crossFileConstants): array {
     $src = (string) file_get_contents($fpath);
     if (strpos($src, 'register_rest_route') === false) {
         return [];
@@ -195,8 +312,8 @@ function extract_routes_from_file(string $fpath): array {
             if ($j < $n && $tokens[$j] === '(') {
                 $args = parse_call_args($tokens, $j + 1, $n);
                 if (count($args) >= 2) {
-                    $namespace = resolve_string_arg($args[0], $constants);
-                    $path      = resolve_string_arg($args[1], $constants);
+                    $namespace = resolve_string_arg($args[0], $constants, $crossFileConstants);
+                    $path      = resolve_string_arg($args[1], $constants, $crossFileConstants);
                     $methods   = isset($args[2])
                         ? resolve_methods_arg($args[2], $constants)
                         : ['*'];
@@ -302,17 +419,20 @@ function same_file_string_constants(array $tokens): array {
 /**
  * Resolve an argument expression to a string, handling:
  *   - 'literal'
- *   - self::CONST  (same-file constant)
- *   - 'a' . 'b' . self::CONST . 'c'  (concatenation of the above)
+ *   - self::CONST       (same-file constant)
+ *   - OtherClass::CONST (cross-file class constant, via $crossFileConstants)
+ *   - 'a' . 'b' . self::CONST . OtherClass::CONST . 'c'  (concatenation)
  *
- * Returns null when any sub-part can't be resolved (e.g. a $variable or
- * cross-file constant). Partial resolution is intentionally NOT done —
- * a half-resolved path is worse than an honest "unresolved".
+ * Returns null when any sub-part can't be resolved (e.g. a $variable
+ * or a constant the parser couldn't find). Partial resolution is
+ * intentionally NOT done — a half-resolved path is worse than an
+ * honest "unresolved".
  *
  * @param list<mixed> $argTokens
- * @param array<string, string> $constants
+ * @param array<string, string> $constants  same-file `const NAME = '...'` declarations
+ * @param array<string, array<string, string>> $crossFileConstants  ClassName => [CONST => value]
  */
-function resolve_string_arg(array $argTokens, array $constants): ?string {
+function resolve_string_arg(array $argTokens, array $constants, array $crossFileConstants = []): ?string {
     $parts      = [];
     $unresolved = false;
     $n          = count($argTokens);
@@ -357,11 +477,27 @@ function resolve_string_arg(array $argTokens, array $constants): ?string {
                     $k++;
                 }
                 if ($k < $n && is_array($argTokens[$k]) && in_array($argTokens[$k][0], $identifierTokens, true)) {
+                    $qualifier = $t[1];           // e.g. 'self', 'static', or a class name
                     $constName = $argTokens[$k][1];
-                    if (isset($constants[$constName])) {
-                        $parts[] = $constants[$constName];
+                    $resolved  = null;
+
+                    if ($qualifier === 'self' || $qualifier === 'static') {
+                        // Same-file lookup.
+                        $resolved = $constants[$constName] ?? null;
                     } else {
-                        $unresolved = true; // cross-file constant
+                        // Cross-file class lookup. Fall back to same-file
+                        // if the explicit class match misses — covers the
+                        // edge case where someone writes `ThisClass::FOO`
+                        // referring to the current file's class.
+                        $resolved = $crossFileConstants[$qualifier][$constName]
+                            ?? $constants[$constName]
+                            ?? null;
+                    }
+
+                    if ($resolved !== null) {
+                        $parts[] = $resolved;
+                    } else {
+                        $unresolved = true;
                     }
                     $i = $k + 1;
                     continue;
@@ -507,8 +643,9 @@ function wp_rest_method_constant_to_methods(string $token): array {
 |--------------------------------------------------------------------------
 */
 
-$contractEndpoints = parse_contract_endpoints($CONTRACT_PATH);
-$phpRoutes         = parse_php_routes($PLUGIN_ROOTS);
+$contractEndpoints   = parse_contract_endpoints($CONTRACT_PATH);
+$crossFileConstants  = collect_all_class_constants($PLUGIN_ROOTS);
+$phpRoutes           = parse_php_routes($PLUGIN_ROOTS, $crossFileConstants);
 
 // Build a set of code-registered endpoints in scope: { (method, full-path) }
 // where full-path = /{namespace}/{path-normalized}, restricted to

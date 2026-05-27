@@ -109,14 +109,15 @@ background audits, worktree-based parallelism), see
 - `scripts/contract-parity-guard.php` — diffs every endpoint declared
   in `docs/api-contract-v1.md` §4 (`#### \`METHOD /path\`` headers)
   against every `register_rest_route()` call in the bcc-* plugins.
-  Resolves same-file class constants + string concatenation +
-  reserved-word const names (`NAMESPACE`, `CLASS`, etc.). Reports
-  missing endpoints (contract claims, no code) as FAIL and
-  undocumented endpoints (code, no contract entry) as WARN. **Exits 1
-  on existing drift** — the 2026-05-26 first run flagged 5 real items
-  captured in `docs/TODO.md` Backend / Contract for one-way decisions
-  (locals endpoint-name drift, admin/ranks documented-but-not-built);
-  fix those before wiring this into a blocking CI check.
+  Resolves same-file class constants, **cross-file class constants
+  via a one-pass collection of every `ClassName::CONST = 'literal'`
+  in the plugin tree**, string concatenation, and reserved-word
+  const names (`NAMESPACE`, `CLASS`, etc.). Reports missing
+  endpoints (contract claims, no code) as FAIL and undocumented
+  endpoints (code, no contract entry) as WARN. **Currently exits 0**
+  — all drift surfaced by the 2026-05-26 first run was addressed
+  (contract v1.22 locals retraction + v1.23 admin/ranks retraction);
+  safe to wire into a blocking CI check now.
 
 ### Subagents (invoke via the Agent tool)
 
