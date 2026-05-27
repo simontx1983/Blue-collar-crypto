@@ -16,10 +16,6 @@ section at the bottom. Don't pad the active list.
 - [ ] [`BlogComposer.tsx:16`](../bcc-frontend/src/components/blog/BlogComposer.tsx#L16) — wire `?edit=<id>` initialValues fetch for blog-post-edit hydration (tagged V1.5).
 - [ ] [`RightSidebar.tsx:12`](../bcc-frontend/src/components/layout/RightSidebar.tsx#L12) — replace static placeholders (Top Directories / Trending / Suggested Members) with TanStack Query hooks (tagged Phase 2 API integration).
 
-## Backend / Contract
-
-- [ ] Audit other plugins' `new WP_Error('<not-bcc_*>', ...)` first-args — verify each emits a §1.4.6 stable code. Today only `TrustRestController` has been audited; `bcc-search`, `bcc-core`, and the disputes/onchain controllers haven't been swept.
-
 ## Observability
 
 - [ ] Holder-group provisioning sweep retries — pending `DegradationMetric` wiring. Listed under "Pending wirings" in [`pattern-registry.md`](pattern-registry.md).
@@ -39,6 +35,7 @@ section at the bottom. Don't pad the active list.
 Once an item ships, move it here with a date + commit hash so the
 file documents recent flow. Trim entries older than ~30 days.
 
+- 2026-05-26 — Cross-plugin §γ stable-code migration complete (3 commits). **bcc-search** (`aaedf42`): 11 sites in SearchController + UserSearchController + GroupSearchController — `rate_limit_exceeded` / `categories_unavailable` / `rebuild_in_progress` / `score_enrichment_failed` / `temporarily_overloaded` / `user_search_unavailable` / `group_search_unavailable` → standard §1.4.6 codes (`bcc_rate_limited`, `bcc_upstream_unavailable`, `bcc_internal`). **bcc-trust REST surfaces** (`98a26da`): 11 sites in XController, GitHubController, PageEndpoint, EntityClaimEndpoint, FlagEndpoint — `x_error`, `github_error`, `rate_limited`, `not_found` → standard codes. Bonus: EntityClaimEndpoint and FlagEndpoint weren't in the original audit. **bcc-trust legacy `error()` helpers** (`657f212`): AdminStatsController (8 sites, helper deleted) + UserStatusController (4 sites, helper deleted) migrated to `errorWithCode()` pattern. Bonus: IndexerTickEndpoint `bcc_misconfigured`/`bcc_indexer_failed` → `bcc_internal`. **Out of scope** (documented as service-layer infrastructure, not REST drift): bcc-core SafeHttpClient (6 SSRF codes) + bcc-trust BlockchainQueryService (5 wallet SSRF codes). No new contract codes needed; every drift mapped to existing §1.4.6 entries. All four guardrails green throughout.
 - 2026-05-26 — Full TrustRestController migration to `errorWithCode()` complete. All 9 remaining `self::error()` sites mapped to §1.4.6 stable codes (`bcc_internal`, `bcc_invalid_request`, `bcc_rate_limited`, `bcc_forbidden`). The legacy `error()` helper deleted entirely (no callers left). Dead 503 branch in `safeExceptionError` deleted under fresh-install policy (no exception in bcc-trust throws with code 503; the docblock literally said "reserved"). Controller is now 100 % §γ-compliant.
 - 2026-05-26 — Envelope drift "sweep" turned out to be a doc-only correction (contract v1.21). Live curl of `/chains` proved both endpoints were ALWAYS enveloped by `Envelope::wrap()`; the v1.19 "raw-array drift flagged" notes were authored from a wrong reading of the controller code. No server-side change. Bonus discovery: contract claims aren't verified against runtime — added a sibling parity-probe to Active.
 - 2026-05-26 — Subsystem-count guard (`scripts/subsystem-count-guard.php`) — diffs canonical map in `bcc-core.php` against `pattern-registry.md` + `GOLDEN_PATHS.md`. First run caught two undetected drifts: `audit_log_swallow` docs claimed 4 events but canonical had 3 (my earlier "fix" had aligned to the wrong source); `account_security_mail` docs lagged behind the 2026-05-16 Tier D sixth-event addition. Both fixed.
