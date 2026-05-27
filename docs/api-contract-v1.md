@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.21 · 2026-05-26 · Phase 1 deliverable
+**Status:** Draft v1.22 · 2026-05-26 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2150,9 +2150,9 @@ List of available Locals (PeepSo Groups in BCC clothing).
 
 **Pagination:** uses **offset** envelope per §1.5 (Locals is a directory, not a time-ordered feed). Cursor pagination is reserved for `/feed`, `/feed/hot`, `/me/watching` (and its legacy alias `/me/binder` during the §1.1.1 deprecation window).
 
-#### `POST /bcc/v1/me/locals/:id/join`
+#### `POST /bcc/v1/me/locals/:id/membership`
 
-Join a Local.
+Join a Local. The join/leave verb is `/membership` — same path, two methods.
 
 - **Auth:** Bearer
 - **Body:** `{ "set_as_primary": false }` (optional, default false)
@@ -2173,16 +2173,16 @@ Join a Local.
 - **Rate limit:** 10/hour/user
 - **Mapping:** PeepSo group join + `bcc_user_locals` insert. Emits `bcc_local_joined` (§A3 async).
 
-#### `DELETE /bcc/v1/me/locals/:id`
+#### `DELETE /bcc/v1/me/locals/:id/membership`
 
-Leave a Local.
+Leave a Local. Sibling of the join above.
 
 - **Auth:** Bearer
 - **Response 200:** `{ "left": true }`
 - **Errors:** `bcc_unauthorized`, `bcc_not_found`
-- **Mapping:** PeepSo group leave + cascade `bcc_user_locals`. If the user was using this Local as primary, `primary_local` becomes `null` until they pick another. Emits `bcc_local_left`.
+- **Mapping:** PeepSo group leave + cascade `bcc_user_locals`. If the user was using this Local as primary, `primary_local` becomes `null` until they pick another (or until they explicitly clear via `DELETE /me/locals/primary`). Emits `bcc_local_left`.
 
-#### `PUT /bcc/v1/me/locals/:id/primary`
+#### `POST /bcc/v1/me/locals/:id/primary`
 
 Mark a Local as the user's primary.
 
@@ -2193,8 +2193,21 @@ Mark a Local as the user's primary.
     "primary_local": { "...": "Local view-model" }
   }
   ```
-- **Errors:** `bcc_unauthorized`, `bcc_not_found` (not a member of this Local)
+- **Errors:** `bcc_unauthorized`, `bcc_forbidden` (not a member of this Local)
 - **Mapping:** Updates `bcc_user_locals.is_primary` (singleton — exactly one row per user has `is_primary: true`). Emits `bcc_local_primary_changed`.
+
+#### `DELETE /bcc/v1/me/locals/primary`
+
+Clear the user's primary-Local pointer. Note the path is bare `/primary`
+(no `:id`) — clearing is identity-only since exactly one row per user
+ever carries `is_primary: true`.
+
+- **Auth:** Bearer
+- **Response 200:** `{ "cleared": true }`
+- **Errors:** `bcc_unauthorized`
+- **Mapping:** Sets `bcc_user_locals.is_primary = 0` for the row that
+  currently holds it (if any). Idempotent — calling when no primary is
+  set still returns 200 with `cleared: true`. Emits `bcc_local_primary_changed`.
 
 #### Local detail page — composition note (no new REST surface)
 
@@ -4547,6 +4560,27 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.22 — 2026-05-26
+
+- **§4.7 — Locals mutation endpoints corrected to match code
+  (doc-only).** The first run of `scripts/contract-parity-guard.php`
+  surfaced four pieces of drift on `/me/locals/*`:
+  - `POST /me/locals/:id/join` → actual code path is
+    `POST /me/locals/:id/membership` (join + leave share a path, two
+    methods).
+  - `DELETE /me/locals/:id` → actual code path is
+    `DELETE /me/locals/:id/membership`.
+  - `PUT /me/locals/:id/primary` → actual method is `POST`.
+  - `DELETE /me/locals/primary` (no `:id`) — clear-primary endpoint
+    existed in code but wasn't documented anywhere in §4.7.
+  Set-primary error code corrected: `bcc_not_found` →
+  `bcc_forbidden` (the handler treats "not a member" as an
+  authorization failure, not a missing resource — per
+  [LocalsEndpoint.php docblock](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/REST/LocalsEndpoint.php)).
+  No server-side behavior change; this is doc-only alignment with
+  the existing implementation. Precedent for doc-only bumps: v1.21
+  envelope-drift retraction (2026-05-26).
 
 ### v1.21 — 2026-05-26
 
