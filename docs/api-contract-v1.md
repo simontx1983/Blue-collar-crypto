@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.22 · 2026-05-26 · Phase 1 deliverable
+**Status:** Draft v1.23 · 2026-05-26 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2508,51 +2508,28 @@ The rank catalog and the viewer's current rank.
   }
   ```
 - **Cache:** `Cache-Control: public, max-age=300`
-- **Mapping:** Static rank catalog from `bcc_options`. `viewer.*` from `bcc_user_ranks`. `auto_derived_rank` may differ from `current_rank` if an admin-conferred rank was revoked — the user drops to `auto_derived_rank` per §E2 revocation rule.
+- **Mapping:** Static rank catalog from `bcc_options`. `viewer.*` from `bcc_user_ranks`. `current_rank` and `auto_derived_rank` are always equal in V1 (see deferral note below); they're separate fields because the data layer can already store admin-conferred rank rows — only the REST mutation surface is deferred.
 
-#### `POST /bcc/v1/admin/ranks/award`
+#### Admin-conferral REST surface — deferred (V1 ships auto-derivation only)
 
-Confers a rank (admin-only; Foreman+).
+V1 contract previously documented `POST /admin/ranks/award` and
+`DELETE /admin/ranks/:rank/:user_id` for admin-conferred ranks. Those
+endpoints were never registered in `register_rest_route` and have no
+frontend caller. V1 ranks are **fully auto-derived** from tier/trust
+score by [`RankProgressionListener::run`](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/RankProgressionListener.php),
+which fires `bcc_rank_awarded` on real promotions; admin override is
+not a V1 capability.
 
-- **Auth:** Bearer + admin capability (`bcc_admin_award_ranks`)
-- **Body:**
-  ```json
-  {
-    "user_id": 42,
-    "rank": "foreman",
-    "reason": "Sustained governance leadership in the Cosmos hub."
-  }
-  ```
-- **Response 201:**
-  ```json
-  {
-    "awarded": true,
-    "user_id": 42,
-    "rank": "foreman",
-    "awarded_by": 1,
-    "awarded_at": "2026-04-27T14:50:00Z"
-  }
-  ```
-- **Errors:** `bcc_permission_denied` (not admin), `bcc_invalid_request` (bad rank, auto-assignable rank passed), `bcc_conflict` (already at rank)
-- **Rate limit:** 30/day/admin
-- **Mapping:** Insert into `bcc_user_ranks`. Emits `bcc_rank_awarded`.
+The read-side artifacts kept around for future-build readiness:
+- `is_admin_conferred` in `GET /ranks` is in the contract but always
+  `false` in V1 (no path sets a non-auto rank).
+- The `auto_assigned: false` flag on certain rank catalog entries
+  (e.g. `foreman`) is design intent, not enforced today.
 
-#### `DELETE /bcc/v1/admin/ranks/:rank/:user_id`
-
-Revokes a rank.
-
-- **Auth:** Bearer + admin
-- **Response 200:**
-  ```json
-  {
-    "revoked": true,
-    "user_id": 42,
-    "rank": "foreman",
-    "user_drops_to": "journeyman"
-  }
-  ```
-- **Errors:** `bcc_permission_denied`, `bcc_not_found`
-- **Mapping:** Sets `bcc_user_ranks.revoked_at`. User's `current_rank` is recomputed and returned as `user_drops_to` (= `auto_derived_rank` per §E2). Emits `bcc_rank_revoked`. **No Heavy celebration** for negative events (§E2 + §O1.2).
+When admin-conferral becomes a real feature, the REST surface gets
+designed against the contract at that point — not resurrected from
+this retracted spec, which the parity guard correctly flagged as
+documenting endpoints that don't exist.
 
 ### 4.9 Directory (§G1 / §G2)
 
@@ -4560,6 +4537,24 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.23 — 2026-05-26
+
+- **§4.8 — admin/ranks REST surface retracted (doc-only).** Second
+  finding from the 2026-05-26 `scripts/contract-parity-guard.php`
+  first-run: the contract documented `POST /admin/ranks/award` and
+  `DELETE /admin/ranks/:rank/:user_id` for admin-conferred ranks,
+  but neither endpoint was ever wired into `register_rest_route`.
+  Zero frontend callers, zero PHP handlers. V1 ranks are fully
+  auto-derived from tier/trust score by
+  `RankProgressionListener::run`; admin-override is not a V1
+  feature. Replaced the two `####` headers with a "deferred" note
+  in §4.8 explaining what stays (read-side `is_admin_conferred`
+  field, catalog `auto_assigned: false` design intent) and what
+  doesn't (the mutation REST surface). When admin-conferral
+  becomes a real feature, the new endpoints get designed at that
+  point — not resurrected from this retracted spec. Per fresh-
+  install policy, the contract aligns with shipping reality.
 
 ### v1.22 — 2026-05-26
 
