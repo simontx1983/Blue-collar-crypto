@@ -96,6 +96,28 @@ background audits, worktree-based parallelism), see
   that adds or modifies operator-facing copy. See
   [docs/cadence-pressure-policy.md](docs/cadence-pressure-policy.md).
 
+- `scripts/subsystem-count-guard.php` — diffs the canonical
+  `DegradationMetric` subsystem map in `bcc-core/bcc-core.php` against
+  the event-count claims in `docs/pattern-registry.md` and
+  `docs/GOLDEN_PATHS.md`. Token-walks the PHP map (so comments don't
+  confuse parsing) and regex-scans the docs for `name (N events)` and
+  `name / N events`. Catches the failure mode where a new event is
+  added to a subsystem but only one of the docs gets updated. Exit 0
+  = match, exit 1 = drift; runs against checked-in state, no live site
+  needed.
+
+- `scripts/contract-parity-guard.php` — diffs every endpoint declared
+  in `docs/api-contract-v1.md` §4 (`#### \`METHOD /path\`` headers)
+  against every `register_rest_route()` call in the bcc-* plugins.
+  Resolves same-file class constants + string concatenation +
+  reserved-word const names (`NAMESPACE`, `CLASS`, etc.). Reports
+  missing endpoints (contract claims, no code) as FAIL and
+  undocumented endpoints (code, no contract entry) as WARN. **Exits 1
+  on existing drift** — the 2026-05-26 first run flagged 5 real items
+  captured in `docs/TODO.md` Backend / Contract for one-way decisions
+  (locals endpoint-name drift, admin/ranks documented-but-not-built);
+  fix those before wiring this into a blocking CI check.
+
 ### Subagents (invoke via the Agent tool)
 
 **Reviewers** (verify, never edit):
