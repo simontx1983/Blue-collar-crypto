@@ -1575,6 +1575,8 @@ Verifies a signed nonce and links the wallet to the authenticated user.
 
 **Mapping:** verifier → existing `bcc-core` `WalletVerifier`. Storage → `bcc_wallet_links` table. Nonce → `bcc-core` challenge service. First-link flag → `wp_usermeta.bcc_first_wallet_link`.
 
+**Supported `chain_type` values:** `evm` (MetaMask / any EIP-1193 EVM wallet), `solana` (Phantom), `cosmos` (Keplr — ADR-036 secp256k1; covers Cosmos Hub / Osmosis / Injective / Juno / Stargaze / THORChain), `polkadot` (Polkadot.js / Talisman / SubWallet / Nova — sr25519 default, ed25519 / ecdsa accepted). Polkadot signature verification is delegated to the bcc-frontend Next.js app's `@polkadot/util-crypto` via an internal authenticated route (PHP has no native schnorrkel); same trust domain, same `WalletVerifier::verify` surface to callers.
+
 #### `GET /bcc/v1/auth/wallet-nonce`
 
 Issues a single-use challenge nonce for **anonymous** wallet signing. Public sibling of `/auth/nonce`. Drives `/auth/wallet-login` and `/auth/wallet-signup`. Stored in a separate transient keyspace from the authed nonce, so an anonymous nonce can never be replayed against `/auth/wallet-link` or vice versa.

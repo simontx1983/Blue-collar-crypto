@@ -111,7 +111,7 @@ Bottom of Health page shows the 18-subsystem table. Hot rows (nonzero current OR
 | `gated_group_provision.group_create_failed` | `new PeepSoGroup` returned 0-id | PeepSo Groups subsystem unhealthy even though class loaded — investigate PeepSo |
 | `helius_dedup.replay_skipped` | Helius webhook replayed | Either legitimate Helius double-send, or attacker replaying with stolen auth header. Check Webhooks page for delivery patterns + source IPs. |
 | `polkadot_verify.secret_missing` | `BCC_INTERNAL_VERIFY_SECRET` not defined | Add to wp-config.php |
-| `polkadot_verify.frontend_url_missing` | `BCC_FRONTEND_INTERNAL_URL` not defined | Add to wp-config.php |
+| `polkadot_verify.frontend_url_missing` | `BCC_FRONTEND_ORIGIN` not defined | Add to wp-config.php (canonical-mint value — first entry of the comma-separated allowlist) |
 | `polkadot_verify.route_unreachable` | Next.js verify route not reachable | Frontend down or wrong URL pinned in wp-config |
 | `polkadot_verify.route_error_status` | Verify route returned non-200 | Check Next.js logs |
 | `polkadot_verify.route_malformed_body` | Response shape mismatch | Next.js verify route changed contract — sync with frontend |

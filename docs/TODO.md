@@ -64,6 +64,7 @@ becomes a candidate.
 - **Trust attestation Phase 1.5+** (profile-scoped disputes, reliability badges, validator/builder gauges, meta-dispute flow) → [`trust-attestation-phase-1-plan.md`](trust-attestation-phase-1-plan.md). Design-gated.
 - **Acceptable post-MVP debt** (V-07 dual-namespace REST shim collapse, `bcc_project_*` table-prefix rename, ERROR_COPY centralization across 19 components) → [`stabilization-plan-2026-05-13.md`](stabilization-plan-2026-05-13.md) (frozen).
 - **Mid-bake forbidden** (NFT observability X1–X5 / F2 / F6 expansion, Stabilization Phase D, frontend gap-audit D2-full / D3 / D4) → tracked in Claude memory; do not start without explicit approval.
+- **SS58 prefix canonicalisation** — same Polkadot key encoded with different network prefixes (Polkadot=0, Kusama=2, generic-substrate=42) currently links as distinct rows. Deferred from the Polkadot signature-verifier branch; revisit if duplicate-link reports appear.
 
 ---
 
