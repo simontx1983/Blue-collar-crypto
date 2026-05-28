@@ -129,6 +129,7 @@ Bottom of Health page shows the 18-subsystem table. Hot rows (nonzero current OR
 | 3 | If lots of `processed` rows with 0 events: Helius is sending pings (empty payloads) which is normal. Real activity should show non-zero `events` column. |
 | 4 | If "Webhook secret: NOT CONFIGURED" — `BCC_HELIUS_WEBHOOK_SECRET` is missing in wp-config. Add it (and configure the same value on Helius side). |
 | 5 | Cross-reference with the `helius_dedup.replay_skipped` DegradationMetric. Sustained nonzero = either Helius is double-sending (their side) or attacker replays (our side). |
+| 6 | Confirm the Helius webhook is configured to forward `confirmed` or `finalized` commitment level (not `processed`). Pre-finalized commitments can be reorged; an attacker who can briefly produce a reorged tx could land a transient holdings row. One-time provider-side config — verify on `https://dashboard.helius.dev/webhooks` if drift is suspected. |
 
 ---
 
