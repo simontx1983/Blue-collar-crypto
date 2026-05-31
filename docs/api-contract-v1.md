@@ -1674,6 +1674,59 @@ Verifies a signed nonce, creates a new user (placeholder email if none supplied)
 - **Side effects:** sets `wp_set_auth_cookie`, fires `bcc_wallet_verified` (seeds trust-engine + onchain-signals rows just like `verifyAndLink`), emits `user_signup` audit row, fires `bcc_user_signup` action. **Note:** does NOT emit the `bcc_first_wallet_link` celebration on the response — celebration delivery for wallet-signup is reserved for a future contract revision.
 - **Race protection:** if a concurrent signup wins the wallet-link race between the `existsForOtherUser` check and the actual link write, the inserted user is rolled back (`wp_delete_user`) and `bcc_wallet_already_linked` is returned. No orphan user is left behind.
 
+#### `POST /bcc/v1/auth/forgot-password`
+
+Requests a password-reset email. **Always returns `ok: true`** regardless of whether the email matches a registered account — this is the anti-enumeration contract; callers cannot use response shape or timing to discover which emails exist.
+
+- **Auth:** Anonymous
+- **Body:**
+  ```json
+  { "email": "alice@example.com" }
+  ```
+- **Response 200:**
+  ```json
+  { "ok": true }
+  ```
+- **Errors:**
+  - `bcc_invalid_request` 422 — missing/malformed email field.
+  - `bcc_rate_limited` 429 — IP throttle tripped.
+- **Rate limit:** IP-bucketed `FORGOT_PASSWORD_RATE_LIMIT`/hour (default 3) — caps email-bomb spam against any single inbox from one source.
+- **Cache:** `Cache-Control: no-store`
+- **Side effects (only when email matches a real user):**
+  - `get_password_reset_key($user)` writes the WP-native reset key into `user_activation_key` (24h TTL via the `password_reset_expiration` filter — WP default).
+  - `AccountSecurityMailer::passwordResetRequested($userId, $resetUrl)` sends a plain-text email to the user. URL built via `FrontendRedirect::defaultReturn('/reset-password?key=…&login=…')` so the link lands on `BCC_FRONTEND_ORIGIN`.
+  - `AuditLogger::log('password_reset_requested', $userId, {email_hash: sha1(email)}, 'user', $userId)`.
+  - On `wp_mail` failure, `DegradationMetrics::record('account_security_mail', 'password_reset_requested_send_failed')` fires. The endpoint still returns ok=true.
+
+#### `POST /bcc/v1/auth/reset-password`
+
+Consumes a reset key issued by `/auth/forgot-password` and sets a new password. Backed by WordPress's native `check_password_reset_key()` + `reset_password()` primitives — no custom token storage. The user is NOT auto-logged-in; they must sign in fresh on `/login`.
+
+- **Auth:** Anonymous
+- **Body:**
+  ```json
+  {
+    "key":      "<20-char key from the reset email>",
+    "login":    "<wp user_login>",
+    "password": "<new password, min 8 chars>"
+  }
+  ```
+- **Response 200:**
+  ```json
+  { "ok": true }
+  ```
+- **Errors:**
+  - `bcc_invalid_request` 422 — missing field.
+  - `bcc_weak_password` 422 — password shorter than `SIGNUP_MIN_PASSWORD_LENGTH` (8).
+  - `bcc_invalid_reset_token` 400 — key is expired, single-use already consumed, or never existed. Generic for both "expired" and "wrong key" to avoid leaking which failed.
+  - `bcc_rate_limited` 429 — IP throttle tripped.
+- **Rate limit:** IP-bucketed `RESET_PASSWORD_RATE_LIMIT`/hour (default 10) — defense in depth against key brute force; WP keys are ~20 random chars so this is bug-or-misuse insurance, not an active budget.
+- **Cache:** `Cache-Control: no-store`
+- **Side effects:**
+  - `reset_password($user, $password)` hashes the new password, clears `user_activation_key` (single-use), fires the `password_reset` action — other plugins listening invalidate sessions for this user.
+  - `AccountSecurityMailer::passwordChanged($userId)` canary email (same one fired by the in-app password change in `/me/account`).
+  - `AuditLogger::log('password_reset_completed', $userId, [], 'user', $userId)`.
+
 ### 4.2 Cards
 
 #### `GET /bcc/v1/cards/:type/:id`
