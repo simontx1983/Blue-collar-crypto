@@ -1186,6 +1186,42 @@ two rendering contexts (Floor vs. Blog tab). Body shape stabilized
 - `wp_post_id` is the canonical wp_post identifier; clients use it
   for the `PATCH /posts/{id}` edit path.
 
+**Blog-edit view-model (`GET /posts/{id}`)** — owner-only edit-read
+backing the composer's `?edit=<id>` cold-load / deep-link path (added
+2026-06-04). Returns the §3.3.8 body fields **flat** (not wrapped in a
+FeedItem) plus a `status` field:
+
+```json
+{
+  "title": "Why I'm rotating out of Cosmos validators",
+  "excerpt": "The set is becoming concentrated…",
+  "full_text": "The set is becoming concentrated…",
+  "wp_post_id": 4929,
+  "category": "analysis",
+  "tags": ["staking", "decentralization"],
+  "chain_tags": [
+    {"id": 8, "slug": "cosmos", "name": "Cosmos Hub", "color": null, "icon_url": null}
+  ],
+  "disclosure": {"tickers": ["ATOM", "AKT"], "note": "Author holds ATOM and AKT."},
+  "cover_image_url": "https://example.com/wp-content/uploads/2026/05/cover.jpg",
+  "cover_image_id": 4930,
+  "sources": ["https://example.com/source"],
+  "status": "publish"
+}
+```
+
+- `status` is `"draft" | "publish"`. **Drafts are returned to their
+  author** — a draft has no `peepso_activities` row so it never appears
+  on `/users/:handle/blog`; this read is the only way to hydrate one for
+  editing.
+- **Not a FeedItem** — no reactions / social_proof / permissions /
+  links. The composer only consumes body fields + status; the full
+  FeedItem path can't represent a draft (no activity row) anyway.
+- Auth: signed-in (`current_user_can('read')`); the service enforces
+  `post_author === viewer`. Errors: `bcc_forbidden` (not the author),
+  `bcc_not_found` (missing, or not a `_bcc_activity_module='blog'`
+  `peepso-post`). Same identify + ownership guards as `PATCH /posts/{id}`.
+
 **3.3.9 `photo`** — v1.5 photo post. Single image per post, optional caption. Underlying storage is PeepSo's photo module (act_module_id = 4), so multi-photo / album / GIF backgrounds inherit any future PeepSo capability without a contract change.
 
 **Body shape:**
@@ -4585,6 +4621,14 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
     revisions table). `bcc_not_found` when the post doesn't exist
     or isn't a blog post; `bcc_forbidden` when viewer is not the
     post_author.
+  - `GET /posts/{id}` (added 2026-06-04) — owner-only edit-read backing
+    the composer's `?edit=<id>` cold-load / deep-link path. Returns the
+    flat blog-edit view-model (§3.3.8 body fields + `status`), **not** a
+    FeedItem. Drafts are returned to their author (drafts have no
+    activity row, so they're unreachable via `/users/:handle/blog`).
+    Same identify + ownership guards as `PATCH /posts/{id}`:
+    `bcc_forbidden` when viewer is not the post_author, `bcc_not_found`
+    when missing or not a blog post. `Cache-Control: no-store`.
   - `POST /blog/cover-image` (added 2026-05-15) — multipart
     cover-image upload. Wraps `wp_handle_upload` +
     `wp_insert_attachment`. Accepts `image/jpeg|png|webp|gif`, ≤ 8
