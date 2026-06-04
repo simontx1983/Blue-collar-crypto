@@ -362,6 +362,7 @@ The single most important shared type. Encodes §N7 (always visible, disabled wi
     "can_stand_behind":     { "allowed": false, "unlock_hint": "Reach Level 2 to use the Stand-behind reaction." },
     "can_post_as_entity":   { "allowed": false, "unlock_hint": null },
     "can_edit_bio":         { "allowed": false, "unlock_hint": null },
+    "can_edit_image":       { "allowed": false, "unlock_hint": null, "reason_code": "not_claimer" },
     "can_attach_card":      { "allowed": true,  "unlock_hint": null },
     "can_open_dispute":     { "allowed": false, "unlock_hint": "Reach Level 3 to open disputes." }
   }
@@ -2165,6 +2166,39 @@ Claims a validator/creator/project page using a wallet signature (§B5, §N8).
   - Emits `bcc_page_claimed` (§A3 async)
   - Lost-wallet edge case (§B5): if the page is in `claim_recovery_pending` state, this endpoint returns 409 with a recovery hint — the user must use the admin recovery flow.
 
+#### `POST /bcc/v1/pages/:id/avatar`
+
+Claimer uploads a custom image for a claimed page (validator/project/creator),
+overriding the auto-imported logo. Gated by the card's `can_edit_image`
+permission.
+
+- **Auth:** Bearer; caller MUST hold a **verified `page` claim** on `:id`.
+- **Path:** `id` (the `peepso-page` post id)
+- **Body:** `multipart/form-data` with field `avatar` (JPEG/PNG/WebP/GIF, ≤8 MiB; MIME validated from file magic, not the header).
+- **Response 200:**
+  ```json
+  { "page_id": 1842, "image_url": "https://…/wp-content/uploads/…png" }
+  ```
+- **Errors:** `bcc_unauthorized` (401, not signed in), `bcc_forbidden` (403, not the verified claimer), `bcc_not_found` (404), `bcc_invalid_request` (400, missing/oversized/wrong-type file), `bcc_rate_limited` (429), `bcc_unavailable` (503, storage failure).
+- **Cache:** `Cache-Control: no-store`.
+- **Mapping:** persists via `BlogCoverImageWriter` (uploader-owned attachment) → `set_post_thumbnail`. The crest resolver ranks the page thumbnail **above** the auto-imported `bcc_onchain_validators.logo_url`, so the upload wins. Refetch the card (or `/cards/:type/:id`) to get the updated `crest.image_url`.
+
+#### `DELETE /bcc/v1/pages/:id/avatar`
+
+Claimer removes their uploaded image, reverting to the auto-imported logo (or
+the initials crest).
+
+- **Auth:** Bearer; verified `page` claimer only (same gate as POST).
+- **Response 200:** `{ "page_id": 1842, "image_url": null }`
+- **Errors:** same gate errors as POST (`bcc_unauthorized`, `bcc_forbidden`, `bcc_not_found`).
+- **Mapping:** `delete_post_thumbnail`; the next card read falls back through the crest precedence (auto logo → initials).
+
+**Permission note (`can_edit_image`):** present on every Card's `permissions`.
+`{allowed:true}` only for the verified claimer of a validator/project/creator
+page; `{allowed:false, reason_code:"not_claimer"}` for other authenticated
+viewers, `signin_required` when anonymous, and `not_applicable` on member cards
+(member self-avatars use `POST /me/profile/avatar`).
+
 ### 4.7 Locals
 
 #### `GET /bcc/v1/locals`
@@ -2598,11 +2632,15 @@ Paginated list of Cards filtered + sorted server-side. Backs `/directory`.
 - **Query:**
   - `kind` ∈ {`validator`, `project`, `creator`} — optional; omitted = all kinds (member excluded — members aren't browsed here)
   - `tier` ∈ {`legendary`, `rare`, `uncommon`, `common`} — optional; canonical card-tier values per §C1. Risky tier is intentionally not selectable (entity hidden from card UI per §C1).
-  - `sort` ∈ {`trust`, `newest`, `endorsements`, `followers`} — optional; default `trust`
+  - `sort` ∈ {`trust`, `newest`, `endorsements`, `followers`, `self_stake`} — optional; default `trust`. `self_stake` (bonded self-stake, DESC) is **validator-only** — see the validator-axis note below.
   - `q` (search string) — optional; passed verbatim to the underlying `PageDiscoveryService`
   - `good_standing_only` (`1`|`true`|`on`|`yes` → true; anything else → false) — optional; default false. When true, restricts results to operators in good standing per §E1 (`reputation_tier ∈ {neutral, trusted, elite}`). Composes with `tier` via AND server-side, so `tier=common&good_standing_only=1` is a vacuously empty intersection rather than an error.
+  - `chain` (chain slug, e.g. `cosmos`) — optional; **validator-only**. Unknown slugs → `bcc_invalid_request` 400 (rejected at the boundary so a typo never silently returns empty).
+  - `status` ∈ {`active`, `jailed`, `inactive`} — optional; **validator-only** on-chain status. `unknown` is intentionally not selectable.
+  - `min_self_stake` (number ≥ 0) — optional; **validator-only**. Lower bound on bonded self-stake; validators below the floor (and those with no stake reading) are excluded. Negative → `bcc_invalid_request` 400.
   - `page` (1..20) — optional; default 1. The hard ceiling protects against unbounded `OFFSET` filesort
   - `per_page` (1..50) — optional; default 24
+  - **Validator-axis note:** `chain`, `status`, `min_self_stake`, and `sort=self_stake` are served by the read-model query path's validator JOIN (through the `_bcc_onchain_validator_id` post-meta → `bcc_onchain_validators`). They are no-ops/empty on non-validator kinds and are **not** implemented by the legacy posts-table fallback (active only before the read model is populated).
 - **Response 200:**
   ```json
   {
@@ -2615,7 +2653,7 @@ Paginated list of Cards filtered + sorted server-side. Backs `/directory`.
     }
   }
   ```
-- **Errors:** `bcc_invalid_request` (bad `kind`, `tier`, `sort`, or `page > 20`)
+- **Errors:** `bcc_invalid_request` (bad `kind`, `tier`, `sort`, `chain`, `status`, negative `min_self_stake`, or `page > 20`)
 - **Cache:** `Cache-Control: private, max-age=15`. Underlying `PageDiscoveryService` query is server-cached for 30s with a stampede lock; the short client TTL is courtesy for back-button nav.
 - **Mapping:**
   - Filter SQL ← `PageDiscoveryService::query()`. (`/bcc/v1/discover` was retired 2026-05-15 along with the legacy bcc-page-slider Gutenberg block it served; `PageDiscoveryService` is now used solely by this endpoint.)
@@ -2623,6 +2661,7 @@ Paginated list of Cards filtered + sorted server-side. Backs `/directory`.
   - Server translates canonical card-tier → reputation tier (legendary→elite, rare→trusted, uncommon→neutral, common→caution)
   - The `good_standing_only` `IN`-clause sources its tier list from `UserViewService::GOOD_STANDING_TIERS` — the same constant `isInGoodStanding()` (and therefore the per-row `is_in_good_standing` stamp + the `/auth/*` response `in_good_standing` flag) reads from. The filter chip and the per-row stamp can never disagree.
   - Each row hydrated through `CardViewService::getCard()` so the per-item shape is identical to `GET /cards/:type/:id`
+  - `status` / `min_self_stake` / `sort=self_stake` read `bcc_onchain_validators.{status,self_stake}` via the validator JOIN. `sort=self_stake` orders DESC; MySQL sorts NULL last, so validators with no stake reading fall to the bottom.
 
 #### `GET /bcc/v1/cards/search`
 
