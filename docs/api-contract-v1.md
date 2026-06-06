@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.23 · 2026-05-26 · Phase 1 deliverable
+**Status:** Draft v1.24 · 2026-06-06 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1821,9 +1821,11 @@ Anonymous-friendly trending feed (§F2 zero-follow fallback).
 - **Cache:** `Cache-Control: public, max-age=15, stale-while-revalidate=30`
 - **Mapping:** `BccFeedRankingService` with global trending profile. The same service serves all feed surfaces (§F3) — no separate hot-feed code path.
 
-#### Server-side group-privacy filter (applies to both `/feed` and `/feed/hot`)
+#### Server-side group-privacy + visibility filter (applies to both `/feed` and `/feed/hot`)
 
-Posts authored inside non-open PeepSo groups (`peepso_group_privacy ∈ {1, 2}` — closed or secret, including NFT-gated holder groups, which are closed + sidecar-marked) the viewer is NOT a member of are dropped from the candidate set at the SQL layer. Anonymous viewers see no posts from any non-open group. Members of a non-open group continue to see that group's posts in their main feed.
+**Group-post syndication (v1.24):** a group-tagged post (one carrying `peepso_group_id` post-meta) appears in the global feed ONLY when its `_bcc_post_visibility` post-meta is `public_all` (the opt-in chosen at compose time via the §4.14 / §4.15 `visibility` field). `members_only` and `public_group` group posts — and any group post with no visibility meta — never enter the global candidate set, for members and non-members alike. (Previously open-group posts leaked into the global feed regardless of intent; now only `public_all` group posts syndicate.) Non-group posts are unaffected and continue to flow into the feed as before.
+
+Posts authored inside non-open PeepSo groups (`peepso_group_privacy ∈ {1, 2}` — closed or secret, including NFT-gated holder groups, which are closed + sidecar-marked) the viewer is NOT a member of are dropped from the candidate set at the SQL layer. Anonymous viewers see no posts from any non-open group. Members of a non-open group continue to see that group's `public_all` posts in their main feed.
 
 The filter mirrors the existing `excludedAuthorIds` (§O4.1 caution/risky shadow-limit) and `excludedActIds` (§K1-C moderation hide) channels: `FeedRankingService` computes `excludedGroupIds = (non-open group ids) - (viewer membership ids)` and forwards it to `bcc-core`'s `PeepSoActivityRepository::getActivities`, which appends a `LEFT JOIN postmeta gx_pm ON gx_pm.post_id = p.ID AND gx_pm.meta_key = 'peepso_group_id'` plus `WHERE (gx_pm.meta_value IS NULL OR gx_pm.meta_value NOT IN (...))`. Non-group posts pass through (the LEFT JOIN preserves them with NULL); only posts inside excluded groups drop. The IN list is bounded at 500 (matching the candidate-pool cap on `getNonOpenGroupIds`).
 
@@ -2341,6 +2343,8 @@ A Local is a semantic wrapper around a PeepSo group; the slug is identical on bo
 - `GET /bcc/v1/locals/:slug` → header, membership pill, join/leave controls (this section).
 - `GET /bcc/v1/groups/:slug` → `GroupDetailResponse` with the server-authoritative `feed_visible` + `permissions.can_read_feed.unlock_hint` gate consumed by `<GroupFeedSection>` (§4.7.5).
 - `GET /bcc/v1/groups/:id/feed` → cursor-paginated feed entries inside `<GroupFeedSection>` via `useGroupFeed` (§4.7.6).
+
+**Group-feed visibility filter (§4.7.6, v1.24):** `GET /bcc/v1/groups/:id/feed` now returns a feed for non-members of non-secret groups instead of refusing them. Members get the **full** feed (all visibilities). Non-members of an `nft` / `closed` / `open` (non-secret) group get a **public-only filtered feed** — only `public_group` + `public_all` posts (per the `_bcc_post_visibility` post-meta set at compose time; see §4.14 / §4.15); `members_only` posts, and any post with no visibility meta, are never returned to non-members. This is the read-only teaser surface. **Secret groups are unchanged**: non-members still get `bcc_not_found 404` (existence never leaks). Consequently the §4.7.5 `GroupDetailResponse` now reports `feed_visible: true` and `permissions.can_read_feed.allowed: true` for non-members of `nft` / `closed` groups, so `<GroupFeedSection>` renders the teaser feed rather than a locked notice. (Previously non-members of NFT/closed groups received `403 bcc_permission_denied` from the feed endpoint and `feed_visible: false` from the detail view-model.)
 
 No `/bcc/v1/locals/:slug/feed` endpoint exists or is planned. The two read calls are independent: a failed `/groups/:slug` read does not 500 the page — the header still renders and the feed slot shows a non-blocking notice. A 404 from `/locals/:slug` is still authoritative for page existence (Next `notFound()`).
 
@@ -3257,6 +3261,7 @@ Create a photo post on the viewer's own wall. Single photo per post; optional ca
   - `photo` (file, required) — single image. Allowed mime types: `image/jpeg`, `image/png`, `image/webp`, `image/gif`. Hard size cap: 5 MB. Mime is sniffed via `wp_check_filetype_and_ext` (the browser-supplied Content-Type is not trusted).
   - `caption` (string, optional, 0–500 chars after trim) — accompanying text. Empty/missing → photo-only post.
   - `group_id` (integer, optional, > 0) — §4.7.6 group-scope. When present, the post lands inside that PeepSo group's wall (server stamps `peepso_group_id` post-meta on the new wp_post + fires `peepso_groups_new_post`). Viewer MUST be an active member: server returns `bcc_not_found 404` when the group is missing OR `secret` and the viewer isn't a member (defense-in-depth — never leaks existence), `bcc_permission_denied 403` when the viewer is not a member of an open/closed group (`error.message` is the server-pinned unlock hint, filterable via `bcc_group_post_membership_required`). Omit/0 → posts to viewer's own wall (existing behavior).
+  - `visibility` (string, optional, default `members_only`) — enum `members_only` | `public_group` | `public_all`. **Only honored when `group_id` is present** (silently ignored on own-wall posts). Controls the group post's reach: `members_only` — only group members read it (group feed only); `public_group` — members plus non-members reading the group page (read-only teaser per §4.7.6), but NOT in the global `/feed`; `public_all` — group feed AND the global `/feed` (the only way a group post syndicates to the global feed; see §4.3). Stored server-side as `_bcc_post_visibility` post-meta. No response-shape change.
 - **Rate limit:** burst seatbelt — `BCC_TRUST_RATE_LIMIT_STATUS_POST` (5) per `BCC_TRUST_RATE_WINDOW_STATUS_POST` (120s) per author. Same as status / blog.
 - **Storage:** PeepSo owns the photo plumbing under the hood — wp_post (peepso-post CPT), peepso_activities row stamped with `act_module_id = 4` (PeepSoSharePhotos::MODULE_ID), peepso_photos row + thumbnail variants + Imagick metadata strip + JPEG compression. BCC's `PeepSoPhotoWriter` drives this via PeepSo's documented filter+hook surface; no parallel image pipeline.
 - **Response 200 data shape:**
@@ -3303,6 +3308,7 @@ Create a GIF post on the viewer's own wall. Single GIF per post; optional captio
   - `url` (string, required) — Giphy CDN URL. Server-side validation requires the URL contain the substring `giphy.com` (matches PeepSo's own check at `peepso/classes/giphy.php`).
   - `caption` (string, optional, 0–500 chars after trim) — accompanying text.
   - `group_id` (integer, optional, > 0) — §4.7.6 group-scope. Same gate matrix as `POST /posts/photo` (404 missing-or-secret, 403 non-member, server-pinned unlock hint in `error.message`). Omit/0 → viewer's own wall.
+  - `visibility` (string, optional, default `members_only`) — enum `members_only` | `public_group` | `public_all`. Same semantics as `POST /posts/photo` (only honored when `group_id` is present; controls group-feed / public-teaser / global-feed reach; stored as `_bcc_post_visibility` post-meta). No response-shape change.
 - **Rate limit:** burst seatbelt — `BCC_TRUST_RATE_LIMIT_STATUS_POST` (5) per `BCC_TRUST_RATE_WINDOW_STATUS_POST` (120s) per author. Same as status / photo.
 - **Storage:** PeepSo handles the post_meta write under the hood. BCC's `PeepSoGifWriter` drives PeepSo's `PeepSoGiphy::after_add_post` hook by setting `$_POST['type'] = 'giphy'` + `$_POST['giphy'] = <url>` before calling `PeepSoActivity::add_post`. The activity row gets `act_module_id = 1` (status); the `peepso_giphy` post_meta on the wp_post is what discriminates this as a GIF post at hydration time (see §3.3.11).
 - **Response 200 data shape:**
@@ -4642,7 +4648,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
     Returns `{items: [{id, slug, name, color, icon_url}, ...]}`
     from `ChainRepository::getActive()`. `Cache-Control: public,
     max-age=3600` (the chain registry changes rarely).
-  - `POST /reactions` accepts §D5 kinds `'solid' | 'vouch' | 'stand_behind'` (locked). Routes through bcc-core's `PeepSoReactionWriter` (single-graph rule). Throttled at 60/minute per viewer. Returns the post-mutation `{counts, viewer_reaction}` shape so the frontend patches its cache without a feed refetch. `DELETE /reactions/:feed_id` also registered.
+  - `POST /reactions` accepts §D5 kinds `'solid' | 'vouch' | 'stand_behind'` (locked). Routes through bcc-core's `PeepSoReactionWriter` (single-graph rule). Throttled at 60/minute per viewer. Returns the post-mutation `{counts, viewer_reaction}` shape so the frontend patches its cache without a feed refetch. `DELETE /reactions/:feed_id` also registered. **Group-membership gate (v1.24):** a reaction on a group-scoped post (parent carries `peepso_group_id` post-meta) requires active group membership; non-members get `bcc_permission_denied 403`. Applies to both `POST /reactions` and `DELETE /reactions/:feed_id`. This mirrors the existing comment-create gate (§4.13 `POST /posts/:feed_id/comments`, which enforces the same membership requirement — note that the comment path returns `bcc_forbidden 403` for the analogous refusal).
   - Bonus: `DELETE /me/reviews/:id` is also live and routes through `PostsService::removeReview`.
 - **Onboarding endpoints** — all four fully wired:
   - `POST /auth/signup` — email / password / handle account creation. Rate-limited; validates handle availability; maps `db_insert_error` race conditions to `bcc_conflict`/409.
@@ -4675,6 +4681,39 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.24 — 2026-06-06
+
+- **Group-post visibility — new optional `visibility` request field
+  (additive).** `POST /bcc/v1/posts` (`kind=status`),
+  `POST /bcc/v1/posts/photo`, and `POST /bcc/v1/posts/gif` gained an
+  optional `visibility` enum (`members_only` | `public_group` |
+  `public_all`, default `members_only`). Only honored when `group_id`
+  is present (silently ignored on own-wall posts and for
+  `kind=review`/`kind=blog`). Stored as `_bcc_post_visibility`
+  post-meta. No response-shape change. See §4.14 / §4.15 / §8.2.
+- **§4.7.6 group feed (`GET /bcc/v1/groups/:id/feed`) — behavior
+  change.** Non-members of `nft` / `closed` / `open` (non-secret)
+  groups now get `200` with a **public-only filtered feed**
+  (`public_group` + `public_all` posts only; `members_only` and
+  visibility-less posts are never returned to non-members), instead of
+  the previous `403 bcc_permission_denied`. Members still get the full
+  feed (all visibilities). **Secret groups unchanged** — non-members
+  still get `404 bcc_not_found`. The §4.7.5 `GroupDetailResponse` now
+  reports `feed_visible: true` / `permissions.can_read_feed.allowed:
+  true` for non-members of `nft` / `closed` groups so the client
+  renders the teaser feed instead of a locked notice.
+- **Global feed (`GET /feed`, `GET /feed/hot`) — behavior change
+  (§4.3).** A group-tagged post now appears in the global feed ONLY if
+  `visibility = public_all`. Previously open-group posts leaked into
+  the global feed regardless of intent; now only `public_all` group
+  posts syndicate. Non-group posts are unaffected.
+- **Reactions membership gate (§8.2).** `POST /bcc/v1/reactions` and
+  `DELETE /bcc/v1/reactions/:feed_id` now require active group
+  membership when the parent post is group-scoped; non-members get
+  `403 bcc_permission_denied`. Mirrors the existing comment-create
+  gate (§4.13). No endpoints added or removed — request fields +
+  behavior only.
 
 ### v1.23 — 2026-05-26
 
@@ -5212,10 +5251,16 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
   the server-pinned unlock hint in `error.message` (filterable via
   `bcc_group_post_membership_required`). Omit/0 → posts to viewer's
   own wall (existing behavior). Same field added implicitly to
-  `POST /bcc/v1/posts` (status JSON body) — covered by the same
-  validation matrix; `kind=blog + group_id > 0` returns 400
+  `POST /bcc/v1/posts` (status JSON body, `kind=status`) — covered by
+  the same validation matrix; `kind=blog + group_id > 0` returns 400
   `bcc_invalid_request` (V1 scope-fence: long-form blogs target the
-  author's own wall only). Implementation: `PostsService::gateGroupPost`
+  author's own wall only). The optional `visibility` enum
+  (`members_only` | `public_group` | `public_all`, default
+  `members_only`; see §4.14 / §4.15 / §4.3) rides the same three
+  status / photo / GIF write paths and is only honored when
+  `group_id > 0` and `kind=status` (ignored on own-wall posts and for
+  `kind=review`/`kind=blog`); stored as `_bcc_post_visibility`
+  post-meta. Implementation: `PostsService::gateGroupPost`
   reuses `GroupsService::resolveGroupAccess` (single source of truth
   for the group-existence + active-membership decision across §4.7.5,
   §4.7.6, §4.7.7, and now write paths); `PeepSoStatusWriter::attachToGroup`
