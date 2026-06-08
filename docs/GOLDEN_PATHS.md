@@ -805,7 +805,7 @@ foreach (($dm["degradation_metrics"]["subsystems"] ?? []) as $name => $events) {
 - `read_model_fallback` (1 event)
 - `audit_log_swallow` (3 events)
 - `legacy_ajax` (3 events — was 9; 6 wallet/collection AJAX handlers retired 2026-05-25)
-- `account_security_mail` (6 events — Tier D `sessions_revoked_all_send_failed` added 2026-05-16)
+- `account_security_mail` (7 events — Tier D `sessions_revoked_all_send_failed` added 2026-05-16; `password_reset_requested_send_failed` added 2026-05-30)
 - `cron_dispatch` (2 events — soft wp_schedule_single_event / AsyncDispatcher enqueue failures on the unrecoverable trust async surface)
 - `helius_dedup` (1 event — Helius webhook replay-protection activations; sustained = double-send or replay attempt)
 - `gated_group_provision` (3 events — `bcc_gated_group_provision` cron sweep failure modes; sustained = retry path not catching up)
