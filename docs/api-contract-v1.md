@@ -1897,6 +1897,45 @@ Most-used hashtags, ordered most-used first. Non-personalized.
 - **Cache:** `Cache-Control: public, max-age=300` (non-personalized, share-cacheable)
 - **Mapping:** read-only projection over PeepSo's `peepso_hashtags` (`ht_name`, `ht_count`), `WHERE ht_count > 0 ORDER BY ht_count DESC, ht_id DESC`. PeepSo owns the write path / counter — no parallel BCC tag counter (§11).
 
+#### `GET /bcc/v1/suggestions/users`
+
+Personalized "who to follow" recommender. **Relevance/affinity-based, NOT popularity** — by hard product rule the ranking has no trust-score term and no follower-count term (same discovery doctrine as the cold-start surface). Reputation enters only as an exclusion.
+
+- **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized 401`. The result is personalized to the current viewer's follow graph, group memberships, and validator backing, so there is no anonymous variant.
+- **Query:**
+  - `limit` (optional, default 12, min 1, max 24)
+- **Response 200:**
+  ```json
+  {
+    "data": {
+      "items": [
+        {
+          "id": 412,
+          "handle": "ramona",
+          "display_name": "Ramona V.",
+          "avatar_url": "https://.../avatar.jpg",
+          "card_tier": "rare",
+          "tier_label": "Rare",
+          "rank_label": "Journeyman",
+          "is_in_good_standing": true,
+          "suggestion_reason": { "code": "mutual_follows", "label": "Followed by 3 you follow" }
+        }
+      ]
+    }
+  }
+  ```
+  - Items are ordered **best-first** by the affinity score.
+  - `card_tier` ∈ `legendary | rare | uncommon | common | null` (mirrors §C1; `null` for risky-tier — but risky users are excluded from this surface anyway).
+  - `tier_label` is the pre-rendered §A2 display string (or `null`).
+  - `suggestion_reason` is the single highest-CONTRIBUTING affinity signal, or `null` for civic cold-start fallback rows. `code` ∈ `follows_you | mutual_follows | co_local | co_validator | co_nft_community`; `label` is a server-rendered §A2 string (e.g. `"Follows you"`, `"Followed by N you follow"`, `"In Local 34 — Brooklyn with you"`, `"Backs Stakecito too"`, `"In Bored Apes with you"`).
+- **Scoring (affinity only):** `W_RECIP·followsViewer + W_MUTUAL·min(mutualFollows, MUTUAL_CAP) + W_LOCAL·sharedLocals + W_VALIDATOR·sharedValidatorBacking + W_NFT·sharedHolderCommunities`. Weights are server constants (tunable). **No popularity/trust term participates in ranking.**
+- **Exclusions (security-sensitive):** self; already-following; caution/risky reputation tier; active suspensions; mutual blocks (either direction); and any candidate who hid their watching graph (`watching_hidden`).
+- **Cold-start fallback:** when fewer than `limit` candidates survive scoring + exclusions (the dominant empty-graph case), the response tops up from the same civic recent-operators source the cold-start feed uses (recency + stable daily shuffle, NOT ranked), with `suggestion_reason: null`.
+- **Errors:** `bcc_unauthorized` (anonymous)
+- **Rate limit:** 60/min/user
+- **Cache:** `Cache-Control: private, max-age=120`; `Vary: Authorization, Cookie` (per-viewer personalization — no shared cache)
+- **Mapping:** candidate union from `peepso_user_followers` (reciprocity + 2nd-degree mutual counts), `peepso_group_members` (shared Locals + holder communities), and `bcc_onchain_delegations` ⋈ `bcc_wallet_links` (shared validator backing, verified wallets only). Member view-model fields composed via `UserViewService::getSummary` with the shared `MemberSummaryPrefetcher` batch (no parallel hydration). Validator monikers resolved via `bcc_onchain_validators`.
+
 ### 4.4 Users
 
 #### `GET /bcc/v1/users/:handle`
