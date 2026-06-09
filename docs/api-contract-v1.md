@@ -1847,7 +1847,22 @@ Anonymous-friendly trending feed (§F2 zero-follow fallback).
 - **Cache:** `Cache-Control: public, max-age=15, stale-while-revalidate=30`
 - **Mapping:** `BccFeedRankingService` with global trending profile. The same service serves all feed surfaces (§F3) — no separate hot-feed code path.
 
-#### Server-side group-privacy + visibility filter (applies to both `/feed` and `/feed/hot`)
+#### `GET /bcc/v1/feed/tag`
+
+Anonymous-friendly hashtag feed — the hot feed narrowed to a single tag.
+
+- **Auth:** Anonymous OR Bearer
+- **Query:**
+  - `tag` (**required**) — the hashtag text; a leading `#` is stripped server-side
+  - `cursor` (optional)
+  - `limit` (optional, default 20, min 1, max 50)
+- **Response 200:** `CursorEnvelope<FeedItem>` — **identical shape to `/feed` and `/feed/hot`**: `data = { items: FeedItem[], pagination: { next_cursor: string|null, has_more: bool } }`
+- **Errors:** `bcc_invalid_request` (missing/empty `tag`)
+- **Rate limit:** 60/min/IP (anon), 60/min/user (authed)
+- **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
+- **Mapping:** Same `FeedRankingService` single brain (§F3) as `/feed/hot` — identical visibility gates (caution/risky shadow-limit, moderation hide, non-open group exclusion at the anonymous posture, and the global `public_all` visibility gate). The candidate set is then narrowed by `peepso_activities` → `wp_posts.post_content LIKE '%#<tag>%'` (the same substring association PeepSo uses for its `ht_count`). The narrowing predicate can only remove posts from the gated set — the tag feed never surfaces a post `/feed/hot` would not.
+
+#### Server-side group-privacy + visibility filter (applies to `/feed`, `/feed/hot`, and `/feed/tag`)
 
 **Group-post syndication (v1.24):** a group-tagged post (one carrying `peepso_group_id` post-meta) appears in the global feed ONLY when its `_bcc_post_visibility` post-meta is `public_all` (the opt-in chosen at compose time via the §4.14 / §4.15 `visibility` field). `members_only` and `public_group` group posts — and any group post with no visibility meta — never enter the global candidate set, for members and non-members alike. (Previously open-group posts leaked into the global feed regardless of intent; now only `public_all` group posts syndicate.) Non-group posts are unaffected and continue to flow into the feed as before.
 
@@ -1856,6 +1871,31 @@ Posts authored inside non-open PeepSo groups (`peepso_group_privacy ∈ {1, 2}` 
 The filter mirrors the existing `excludedAuthorIds` (§O4.1 caution/risky shadow-limit) and `excludedActIds` (§K1-C moderation hide) channels: `FeedRankingService` computes `excludedGroupIds = (non-open group ids) - (viewer membership ids)` and forwards it to `bcc-core`'s `PeepSoActivityRepository::getActivities`, which appends a `LEFT JOIN postmeta gx_pm ON gx_pm.post_id = p.ID AND gx_pm.meta_key = 'peepso_group_id'` plus `WHERE (gx_pm.meta_value IS NULL OR gx_pm.meta_value NOT IN (...))`. Non-group posts pass through (the LEFT JOIN preserves them with NULL); only posts inside excluded groups drop. The IN list is bounded at 500 (matching the candidate-pool cap on `getNonOpenGroupIds`).
 
 Defense-in-depth: the per-row `hydrateCommentCounts` membership gate is retained — a single bad caller path that bypasses the SQL exclusion would still see comment counts zeroed for gated-group items. The two layers compose; neither is sufficient alone.
+
+#### `GET /bcc/v1/hashtags/trending`
+
+Most-used hashtags, ordered most-used first. Non-personalized.
+
+- **Auth:** Anonymous OR Bearer
+- **Query:**
+  - `limit` (optional, default 8, min 1, max 20)
+- **Response 200:**
+  ```json
+  {
+    "data": {
+      "items": [
+        { "tag": "blockchain", "count": 42 },
+        { "tag": "validators", "count": 17 }
+      ]
+    }
+  }
+  ```
+  - `tag` — the hashtag text **without** the leading `#`
+  - `count` — number of posts PeepSo has counted for the tag (`int`)
+- **Errors:** none beyond the standard envelope
+- **Rate limit:** 60/min/IP (anon), 60/min/user (authed)
+- **Cache:** `Cache-Control: public, max-age=300` (non-personalized, share-cacheable)
+- **Mapping:** read-only projection over PeepSo's `peepso_hashtags` (`ht_name`, `ht_count`), `WHERE ht_count > 0 ORDER BY ht_count DESC, ht_id DESC`. PeepSo owns the write path / counter — no parallel BCC tag counter (§11).
 
 ### 4.4 Users
 
