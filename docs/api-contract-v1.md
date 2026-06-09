@@ -847,6 +847,7 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
   "viewer_has_endorsed": false,
   "endorse_unlock_hint": null,
   "chains": null,
+  "member_dossier": null,
   "crest": { "...": "see §2.9" },
   "stats": [ "...": "see per-kind below" ],
   "social_proof": { "...": "see §2.2" },
@@ -862,6 +863,28 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
 - `is_claimed` is meaningful for `validator` / `project` / `creator`. For `member`, `is_claimed: true` always (members are their own pages).
 - `claim_target` (per §N8) — non-null only when the page is unclaimed AND a claim target resolves. Drives the four-step claim modal.
 - `chains` (per §K3) — list of `CardChain` objects when 2+ chains back the same page; `null` otherwise. V1.5 validator-only; creator gallery filter is V2.
+- `rank_label` — **populated on `member` cards** (mapped from `bcc_user_ranks` + auto-derived activity, via `UserViewService::getSummary`); may be `""` when the member has no derived rank yet. `null` on page kinds (`validator`/`project`/`creator`) — §E2 ranks are member-only. The field is always present (the union is `string | null`).
+- `member_dossier` — **non-null object on `member` cards, `null` on page kinds** (always present for shape uniformity, like `chains`). Carries the back-of-card signal blocks the `/members`, watchers, and followers/following lists previously emitted as a bare `MemberSummary`. Server-composed from the same `UserViewService::getSummary` resolution (no parallel query). Shape:
+  ```json
+  "member_dossier": {
+    "verifications": {
+      "x_verified": true,
+      "x_username": "blacksmith",
+      "github_verified": false,
+      "github_username": null,
+      "wallets_verified": 3
+    },
+    "engagement": {
+      "endorsements_received": 12,
+      "solids_received": 7,
+      "reviews_written": 8,
+      "disputes_signed": 1
+    },
+    "owned_pages_by_type": { "validator": 1, "project": 0, "nft": 0, "dao": 0 },
+    "primary_local": { "id": 342, "slug": "iron-local-342", "name": "Iron Local 342", "number": 342 }
+  }
+  ```
+  `primary_local` is `null` when the member has no primary Local; `primary_local.number` is `null` when the Local name has no parseable number.
 - `card_tier` may be `null` only when the entity is risky-tier (per §C1) — and in that case the entity should not appear in card UIs at all. If a card response returns `card_tier: null`, the frontend renders nothing visible (treat as a 404 from the UI perspective).
 - `permissions.can_watch.allowed` is `false` when (a) viewer is anonymous, (b) viewer is the card subject (you can't follow yourself), or (c) the card is hidden (risky tier). In cases (a) and (c), `unlock_hint` is `null` — these aren't hints the user can resolve. (Legacy permission key `permissions.can_pull` is emitted alongside `can_watch` during the §1.1.1 deprecation window.)
 - `viewer_has_reviewed` / `viewer_has_endorsed` (per §D2 / §V1.5) — drives "WRITE A REVIEW" → "REMOVE YOUR REVIEW" CTA swaps. Always `false` for anonymous viewers and on member cards.
@@ -891,10 +914,13 @@ V1 emits a single shared stat shape for all entity card kinds. On-chain–derive
 
 ```json
 "stats": [
-  { "key": "trust",           "label": "Trust",   "value": "78", "format": "score", "raw": 78 },
-  { "key": "reviews_written", "label": "Reviews", "value": "8",  "format": "count", "raw": 8 }
+  { "key": "trust",           "label": "Trust",    "value": "78", "format": "score", "raw": 78 },
+  { "key": "reviews_written", "label": "Reviews",  "value": "8",  "format": "count", "raw": 8 },
+  { "key": "watchers",        "label": "Watchers", "value": "31", "format": "count", "raw": 31 }
 ]
 ```
+
+The `watchers` stat is the member's follower count (sourced from the same `UserViewService::getSummary` `followers_count` the `member_dossier` resolution already reads — no extra query), giving the member card the full 3-column stat panel.
 
 **3.2.3 Per-kind stat expansion — Deferred to V1.5:**
 
@@ -1894,7 +1920,7 @@ Full User view-model.
 
 #### `GET /bcc/v1/members`
 
-Paginated directory of human members. Sibling to §4.9 `/cards` (entity-card directory). Slim list-shape — drops the heavy blocks `/users/:handle` carries (counts, locals, wallets, permissions, privacy, viewer_blocking, plus self-only `living`/`progression`/`feature_access`/`ux_helpers` bundles). Click-through navigates to `/u/:handle` for the full profile.
+Paginated directory of human members. Sibling to §4.9 `/cards` (entity-card directory). **Each item is a full member `Card` view-model (§3.2, `card_kind: "member"`)** so the frontend renders directory rows through the canonical `<CardFactory>` — the same component the entity-card directory uses. The per-member back-of-card signal blocks (verifications, engagement, owned-page typed counts, primary Local) ride along on the card's `member_dossier` block; nothing the older slim `MemberSummary` shape carried is lost. Click-through navigates to `/u/:handle` for the full profile.
 
 - **Auth:** Anonymous OR Bearer (privacy-filtered — `real_name_hidden` honored)
 - **Query:** `page` (1-indexed, default 1), `per_page` (default 20, max 50), `q` (optional — bounded to 64 chars, matched against `user_login` + `display_name` + `user_nicename`), `type` (optional — one of `validator | project | nft | dao`; restricts results to users with ≥1 owned page of that canonical type, intersecting with `q` when both are present)
@@ -1902,66 +1928,33 @@ Paginated directory of human members. Sibling to §4.9 `/cards` (entity-card dir
   ```json
   {
     "items": [
-      {
-        "id": 42,
-        "handle": "phillips",
-        "display_name": "u_phillips",
-        "avatar_url": "https://bluecollar.crypto/wp-content/uploads/peepso/users/42/abc123-avatar.jpg",
-        "joined_at": "2026-04-12T18:30:00Z",
-        "card_tier": "uncommon",
-        "tier_label": "Uncommon",
-        "rank_label": "Journeyman",
-        "is_in_good_standing": true,
-        "flags": [],
-        "trust_score": 78,
-        "followers_count": 42,
-        "primary_local": {
-          "id": 1138,
-          "slug": "local-34-brooklyn",
-          "name": "Local 34 — Brooklyn",
-          "number": 34
-        },
-        "owned_pages_count": 2,
-        "owned_pages_by_type": {
-          "validator": 1,
-          "project": 1,
-          "nft": 0,
-          "dao": 0
-        },
-        "cover_photo_url": "https://bluecollar.crypto/wp-content/uploads/peepso/users/42/abc123-cover.jpg",
-        "verifications": {
-          "x_verified": true,
-          "x_username": "phillips_eth",
-          "github_verified": true,
-          "github_username": "phillips",
-          "wallets_verified": 2
-        },
-        "engagement": {
-          "endorsements_received": 17,
-          "solids_received": 38,
-          "reviews_written": 12,
-          "disputes_signed": 3
-        }
-      }
+      { "...": "member Card view-model per §3.2 — card_kind: \"member\", with member_dossier populated and rank_label a string" }
     ],
     "pagination": { "page": 1, "per_page": 20, "total": 124, "total_pages": 7 },
     "type_counts": { "validator": 5, "project": 5, "nft": 5, "dao": 2 }
   }
   ```
+  Each item carries the full §3.2 member-card envelope (`id`, `name`, `handle`, `card_kind: "member"`, `trust_score`, `card_tier`, `tier_label`, `rank_label`, `crest`, `stats`, `permissions`, `actions`, …) plus the `member_dossier` block:
+  ```json
+  "member_dossier": {
+    "verifications":       { "x_verified": true, "x_username": "phillips_eth", "github_verified": true, "github_username": "phillips", "wallets_verified": 2 },
+    "engagement":          { "endorsements_received": 17, "solids_received": 38, "reviews_written": 12, "disputes_signed": 3 },
+    "owned_pages_by_type": { "validator": 1, "project": 1, "nft": 0, "dao": 0 },
+    "primary_local":       { "id": 1138, "slug": "local-34-brooklyn", "name": "Local 34 — Brooklyn", "number": 34 }
+  }
+  ```
 - **Errors:** `bcc_validation` (invalid `page` / `per_page`)
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - **Pagination envelope:** offset (`OffsetPagination` per §1.5) — `total_pages` is the canonical field; clients derive "has more" as `page < total_pages`.
-- **Mapping:** `WP_User_Query` ordered by `user_registered DESC`; results composed via `UserViewService::getSummary` (one call per user, but `UsersEndpoint::members` prefetches eleven batched maps — followers count, primary-Local resolution, owned-page count, owned-page typed counts, endorsements received, solids received, reviews written, disputes signed, verified-wallet count, X connections, GitHub connections — before the per-row loop, so the total query budget is bounded regardless of `per_page`). `card_tier` mirrors the §C1 slug (`legendary|rare|uncommon|common|null`); null only for risky-tier users (entity hidden from card UI per §C1). `tier_label` is the pre-rendered §A2 display string. Frontends should encode the tier as a color/border treatment on the rank chip rather than rendering `tier_label` as a duplicate word next to `rank_label`.
-- **Field rules:**
-    - `trust_score` ∈ [0, 100] per §D5. Augmented score = base reputation_score + clamped lifetime participation bonus (`DisputeParticipationRepository::getEarnedLifetimeTrust`). Clamped at the boundary; clients render as a stencil number, never derive.
-    - `followers_count` is the passive side of `peepso_follower` (people who follow this user). The full /users/:handle response carries both `followers` and `following`; the directory ships the followers count only — `following` isn't a meaningful directory signal and the second SQL isn't worth the cost.
-    - `primary_local` shape matches `MemberProfile.primary_local`. `number` is parsed from `name` via the `^Local\s+(\d+)\b` convention; null when the title doesn't follow the pattern. Frontends render display strings client-side from `name`/`number`.
-    - `owned_pages_count` counts rows where `peepso_page_members.pm_user_status = 'member_owner'`. `> 0` indicates a builder/operator.
-    - `owned_pages_by_type` is a per-canonical-type count of `member_owner` pages, derived from the PeepSo page-categories taxonomy (`peepso_page_categories` joined to the `peepso-page-cat` CPT). The four type keys (`validator`, `project`, `nft`, `dao`) are stable wire identifiers — decoupled from the underlying PeepSo category slugs (which are admin-controlled and may include legacy typos like `vaildators`). PeepSo pages are tag-shaped, not type-shaped: a single page can carry multiple categories, so the sum across the four buckets MAY exceed `owned_pages_count` for a multi-categorized portfolio. Conversely, pages with no recognized category contribute to `owned_pages_count` but to none of the typed buckets. Frontends should render one badge per non-zero bucket (`6 PROJECTS`, `5 NFT COLLECTIONS`, `1 VALIDATOR`) — `owned_pages_count` is informational. New canonical types require a contract amendment + a new key in the response shape; we don't fall back to an "OTHER" bucket for unrecognized categories.
-    - `type_counts` is the **global** count of distinct users with ≥1 owned page per canonical type. Independent of the active `q` and `type` filters by design — the chip-strip's `VALIDATORS · 5` numbers shouldn't shift around as a viewer types in the search box. Same four keys as `owned_pages_by_type`. Always emitted (even on the type-empty short-circuit) so a filter-specific empty state can suggest alternative chips with non-zero counts.
-    - `cover_photo_url` mirrors `MemberProfile.cover_photo_url` (PeepSo cover photo, absolute URL, `null` when no custom cover set). Drives the directory card's flippable front-face cover area. Frontends render a tier-tinted gradient fallback when `null` so cold-start accounts still get a presentable card.
-    - `verifications` carries connection presence + provider username for the social-proof panel on the back of the directory card. `x_verified` / `github_verified` are `true` only when an active row exists in `bcc_trust_user_verifications` AND `verified_at` is non-null — token presence alone does not count. `x_username` / `github_username` are the public handles for click-through display (`@phillips` etc.); never decrypt tokens into this payload. `wallets_verified` is the count of `bcc_wallet_links` rows where `verified_at IS NOT NULL` — the per-wallet detail (chain, address) lives on `MemberProfile.wallets`.
-    - `engagement` carries lifetime activity counts for the back-of-card "ON THE FLOOR" panel. `endorsements_received` is summed across every page the user owns (`peepso_page_members.pm_user_status = 'member_owner'` JOINed to `bcc_trust_endorsements` on `page_id`); a multi-page operator's endorsement count is the union of endorsements on all their pages. `solids_received` counts `peepso_reactions` rows of kind `KIND_SOLID` on activities the user owns; returns 0 when the reaction set isn't seeded yet (`ReactionTypeRegistry::solidId() === null`). `reviews_written` mirrors `MemberCounts.reviews_written` (count via `VoteRepository::countByVoter`). `disputes_signed` mirrors `MemberCounts.disputes_signed` (count via `FlagsRepository::countByFlagger`).
+- **Mapping:** `WP_User_Query` ordered by `user_registered DESC`; each row composed via `CardViewService::getMemberCardForList` (one call per user). `UsersEndpoint::members` prefetches eleven batched maps — followers count, primary-Local resolution, owned-page count, owned-page typed counts, endorsements received, solids received, reviews written, disputes signed, verified-wallet count, X connections, GitHub connections — via `MemberSummaryPrefetcher::primeFor` before the per-row loop; the card builder delegates the dossier resolution to `UserViewService::getSummary($userId, $viewerId, $prefetched)` so the total query budget stays bounded regardless of `per_page` (no parallel dossier query — same resolution as before, now wrapped in the Card shape). `card_tier` mirrors the §C1 slug (`legendary|rare|uncommon|common|null`); null only for risky-tier users (entity hidden from card UI per §C1). `tier_label` is the pre-rendered §A2 display string. Frontends should encode the tier as a color/border treatment on the rank chip rather than rendering `tier_label` as a duplicate word next to `rank_label`.
+- **Field rules** (the `member_dossier` sub-blocks; the rest follow the §3.2 Card rules):
+    - `trust_score` ∈ [0, 100] per §D5. Augmented score = base reputation_score + clamped lifetime participation bonus (`DisputeParticipationRepository::getEarnedLifetimeTrust`). Clamped at the boundary; clients render as a stencil number, never derive. (Top-level card field per §3.2.)
+    - `stats[].watchers` (the member-card third stat per §3.2.2) is the passive side of `peepso_follower` (people who follow this user), sourced from `UserViewService::getSummary`'s `followers_count`. The full `/users/:handle` response carries both `followers` and `following`; the directory ships the followers count only — `following` isn't a meaningful directory signal and the second SQL isn't worth the cost.
+    - `member_dossier.primary_local` shape matches `MemberProfile.primary_local`. `number` is parsed from `name` via the `^Local\s+(\d+)\b` convention; null when the title doesn't follow the pattern. Frontends render display strings client-side from `name`/`number`. `null` when the member has no primary Local.
+    - `member_dossier.owned_pages_by_type` is a per-canonical-type count of `member_owner` pages, derived from the PeepSo page-categories taxonomy (`peepso_page_categories` joined to the `peepso-page-cat` CPT). The four type keys (`validator`, `project`, `nft`, `dao`) are stable wire identifiers — decoupled from the underlying PeepSo category slugs (which are admin-controlled and may include legacy typos like `vaildators`). PeepSo pages are tag-shaped, not type-shaped: a single page can carry multiple categories. Frontends should render one badge per non-zero bucket (`6 PROJECTS`, `5 NFT COLLECTIONS`, `1 VALIDATOR`). New canonical types require a contract amendment + a new key in the response shape; we don't fall back to an "OTHER" bucket for unrecognized categories.
+    - `type_counts` is the **global** count of distinct users with ≥1 owned page per canonical type. Independent of the active `q` and `type` filters by design — the chip-strip's `VALIDATORS · 5` numbers shouldn't shift around as a viewer types in the search box. Same four keys as `member_dossier.owned_pages_by_type`. Always emitted (even on the type-empty short-circuit) so a filter-specific empty state can suggest alternative chips with non-zero counts.
+    - `member_dossier.verifications` carries connection presence + provider username for the social-proof panel on the back of the directory card. `x_verified` / `github_verified` are `true` only when an active row exists in `bcc_trust_user_verifications` AND `verified_at` is non-null — token presence alone does not count. `x_username` / `github_username` are the public handles for click-through display (`@phillips` etc.); never decrypt tokens into this payload. `wallets_verified` is the count of `bcc_wallet_links` rows where `verified_at IS NOT NULL` — the per-wallet detail (chain, address) lives on `MemberProfile.wallets`.
+    - `member_dossier.engagement` carries lifetime activity counts for the back-of-card "ON THE FLOOR" panel. `endorsements_received` is summed across every page the user owns (`peepso_page_members.pm_user_status = 'member_owner'` JOINed to `bcc_trust_endorsements` on `page_id`); a multi-page operator's endorsement count is the union of endorsements on all their pages. `solids_received` counts `peepso_reactions` rows of kind `KIND_SOLID` on activities the user owns; returns 0 when the reaction set isn't seeded yet (`ReactionTypeRegistry::solidId() === null`). `reviews_written` mirrors `MemberCounts.reviews_written` (count via `VoteRepository::countByVoter`). `disputes_signed` mirrors `MemberCounts.disputes_signed` (count via `FlagsRepository::countByFlagger`).
 
 #### `GET /bcc/v1/users/mention-search` (v1.5)
 
