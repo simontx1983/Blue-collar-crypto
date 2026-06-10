@@ -68,6 +68,54 @@ const IN_SCOPE_NAMESPACES = ['bcc/v1', 'bcc-trust/v1'];
 
 /*
 |--------------------------------------------------------------------------
+| EXEMPT INTERNAL ROUTES
+|--------------------------------------------------------------------------
+| Routes registered in-scope but intentionally NOT part of the public
+| api-contract-v1.md surface: operator/admin endpoints (manage_options /
+| admin_permission_check) and machine endpoints (shared-secret webhooks,
+| OAuth browser-redirect callbacks, liveness probes). Each was classified
+| and its permission posture verified in docs/route-audit-2026-06-10.md.
+|
+| Keys are 'METHOD /namespace/path' in the SAME normalized form this guard
+| emits (path params as :name). Each entry carries a one-line reason.
+|
+| Anything registered, undocumented, AND not on this list is a real §γ
+| contract gap — that is the signal the allowlist preserves. Keep it tight:
+| do NOT add public/member-facing routes here to silence the WARN; document
+| those in §4 instead. Stale entries (route deleted, or since documented)
+| are reported below so the list stays honest.
+*/
+const EXEMPT_INTERNAL = [
+    // — Admin (manage_options / admin_permission_check) —
+    'GET /bcc/v1/system/health'                 => 'admin: health aggregate',
+    'GET /bcc-trust/v1/health/read-model'       => 'admin: read-model coverage/drift',
+    'GET /bcc-trust/v1/fraud/stats'             => 'admin: fraud dashboard',
+    'GET /bcc-trust/v1/users/high-risk'         => 'admin: fraud dashboard',
+    'GET /bcc-trust/v1/activity/fraud'          => 'admin: fraud dashboard',
+    'GET /bcc-trust/v1/stats/trust-trend'       => 'admin: analytics',
+    'GET /bcc-trust/v1/stats/risk-distribution' => 'admin: analytics',
+    'GET /bcc-trust/v1/stats/fraud-trend'       => 'admin: analytics',
+    'GET /bcc-trust/v1/stats/devices'           => 'admin: analytics',
+    'POST /bcc-trust/v1/analyze-user/:id'       => 'admin: on-demand fraud analysis',
+    'POST /bcc/v1/admin/digest/run-now'         => 'admin: digest trigger (in-handler manage_options)',
+    'GET /bcc/v1/admin/reports'                 => 'admin: moderation queue (in-handler manage_options)',
+    'POST /bcc/v1/admin/reports/:id/resolve'    => 'admin: moderation resolve',
+    'POST /bcc/v1/admin/reports/undo'           => 'admin: moderation undo (token-gated)',
+    'GET /bcc/v1/disputes/health'               => 'admin: dispute-system health',
+    'POST /bcc/v1/disputes/:id/resolve'         => 'admin: force-resolve dispute',
+    'POST /bcc/v1/onchain/:page_id/refresh'     => 'admin: force on-chain re-fetch',
+
+    // — Machine (shared-secret / OAuth callback / liveness) —
+    'GET /bcc/v1/system/ping'                   => 'machine: public liveness probe (no sensitive data)',
+    'GET /bcc/v1/digest/unsubscribe'            => 'machine: HMAC-token email unsubscribe link',
+    'GET /bcc-trust/v1/github/callback'         => 'machine: GitHub OAuth redirect (CSRF state)',
+    'GET /bcc-trust/v1/x/callback'              => 'machine: X OAuth redirect (CSRF state)',
+    'POST /bcc/v1/onchain/helius/webhook'       => 'machine: Helius webhook (hash_equals secret)',
+    'POST /bcc/v1/internal/indexer/tick'        => 'machine: Vercel cron (hash_equals secret)',
+];
+
+/*
+|--------------------------------------------------------------------------
 | CONTRACT PARSER — extract declared endpoints from api-contract-v1.md
 |--------------------------------------------------------------------------
 | Endpoint declarations look like:
@@ -90,7 +138,12 @@ function parse_contract_endpoints(string $path): array {
 
     // Match: #### `METHOD /path` (path may contain `{x}`, `:x`, or literal segments)
     // The trailing backtick must close before optional descriptive text (e.g. "(v1.5)").
-    $pattern = '/^####\s+`(GET|POST|PUT|PATCH|DELETE)\s+(\/\S+?)`/';
+    //
+    // An optional section-label may precede the backtick — the §J.* endpoints are
+    // headed `#### §J.5 \`GET /bcc/v1/me/reliability\``. The `(?:[^`]*\s+)?` group
+    // consumes such a label (anything up to the opening backtick) so those headers
+    // are recognized as real documentation, not false-flagged as undocumented.
+    $pattern = '/^####\s+(?:[^`]*\s+)?`(GET|POST|PUT|PATCH|DELETE)\s+(\/\S+?)`/';
 
     foreach ($lines as $idx => $line) {
         if (preg_match($pattern, $line, $m) === 1) {
@@ -687,6 +740,7 @@ foreach ($contractEndpoints as $ce) {
     $contractPathSet[$ce['method'] . ' ' . $ce['path']] = true;
 }
 $undocumented = [];
+$exemptMatched = [];
 foreach ($codeSet as $key => $r) {
     // Strip method prefix
     if (!isset($contractPathSet[$key])) {
@@ -700,8 +754,30 @@ foreach ($codeSet as $key => $r) {
             }
         }
         if (!$anyMethodMatch) {
-            $undocumented[] = $key;
+            // Intentionally-internal (admin/machine) routes are allowlisted
+            // and don't belong in the public contract. Everything else is a
+            // real §γ gap.
+            if (array_key_exists($key, EXEMPT_INTERNAL)) {
+                $exemptMatched[$key] = true;
+            } else {
+                $undocumented[] = $key;
+            }
         }
+    }
+}
+
+// Allowlist hygiene: an EXEMPT_INTERNAL entry is stale if its route is no
+// longer registered (renamed/deleted) or has since been documented in the
+// contract (redundant). Either way the entry should be pruned so the list
+// keeps meaning what it says.
+$staleExempt = [];
+foreach (EXEMPT_INTERNAL as $exemptKey => $_reason) {
+    $registered = isset($codeSet[$exemptKey]);
+    $documented = isset($contractPathSet[$exemptKey]);
+    if (!$registered) {
+        $staleExempt[$exemptKey] = 'no longer registered — remove from allowlist';
+    } elseif ($documented) {
+        $staleExempt[$exemptKey] = 'now documented in §4 — remove from allowlist';
     }
 }
 
@@ -734,13 +810,26 @@ if ($missing !== []) {
     echo "PASS: every contract-declared endpoint has a matching register_rest_route() in PHP.\n\n";
 }
 
+echo "Exempt internal routes (allowlisted admin/machine — see EXEMPT_INTERNAL): " . count($exemptMatched) . "\n\n";
+
+if ($staleExempt !== []) {
+    echo "WARN: " . count($staleExempt) . " stale EXEMPT_INTERNAL allowlist entr(y/ies) — prune:\n";
+    foreach ($staleExempt as $k => $why) {
+        echo "  - {$k}  ({$why})\n";
+    }
+    echo "\n";
+}
+
 if ($undocumented !== []) {
-    echo "WARN: " . count($undocumented) . " in-scope route(s) registered in PHP but NOT declared in docs/api-contract-v1.md §4:\n";
+    echo "WARN: " . count($undocumented) . " in-scope route(s) registered in PHP, undocumented in §4, and NOT allowlisted.\n";
+    echo "Each is a real §γ gap: document it in docs/api-contract-v1.md §4, or — if genuinely\n";
+    echo "internal — add it to the EXEMPT_INTERNAL allowlist with a reason.\n";
     foreach ($undocumented as $u) {
         echo "  - {$u}\n";
     }
-    echo "\nThese are typically internal/admin routes that don't belong in the public contract,\n";
-    echo "but each one should be verified — undocumented public surfaces are a §γ contract gap.\n";
+    echo "\n";
+} else {
+    echo "PASS: every undocumented in-scope route is accounted for by the EXEMPT_INTERNAL allowlist.\n\n";
 }
 
 if ($unresolved !== []) {
