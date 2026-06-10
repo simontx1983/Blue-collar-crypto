@@ -29,8 +29,8 @@ REST endpoints live under two namespaces, by deliberate split:
 
 | Namespace | Purpose | Examples |
 |---|---|---|
-| `/wp-json/bcc/v1/` | Shared cross-plugin **read** API + cross-plugin mutations consumed by blocks, bcc-search, and the headless frontend | `GET /page/{id}`, `GET /feed`, `GET /users/:handle`, `POST /disputes`, `POST /flag`, `POST /claim` |
-| `/wp-json/bcc-trust/v1/` | Trust-engine-internal **mutations** (vote/endorse/revoke), user status, admin stats, OAuth callbacks | `POST /vote`, `POST /endorse`, `POST /remove-vote`, `POST /revoke-endorsement`, `GET /user/status`, `GET /github/*`, `GET /x/*` |
+| `/wp-json/bcc/v1/` | Shared cross-plugin **read** API + cross-plugin mutations consumed by bcc-search and the headless frontend | `GET /cards/:type/:id`, `GET /feed`, `GET /users/:handle`, `POST /disputes`, `POST /posts`, `POST /reactions` |
+| `/wp-json/bcc-trust/v1/` | Trust-engine-internal **mutations** (endorse/revoke/device-fingerprint), admin stats, OAuth | `POST /endorse`, `POST /revoke-endorsement`, `POST /device-fingerprint`, `GET /fraud/stats`, `GET /github/*`, `GET /x/*` |
 
 The host is the WordPress site. The Next.js app proxies cross-origin via its API client. The split is enforced by convention (see `bcc-trust/app/Domain/Core/Plugin.php::registerRoutes` docblock): new reads → `bcc/v1`; new trust-engine mutations → `bcc-trust/v1`.
 
@@ -1790,6 +1790,92 @@ Consumes a reset key issued by `/auth/forgot-password` and sets a new password. 
   - `AccountSecurityMailer::passwordChanged($userId)` canary email (same one fired by the in-app password change in `/me/account`).
   - `AuditLogger::log('password_reset_completed', $userId, [], 'user', $userId)`.
 
+#### `POST /bcc/v1/auth/signup`
+
+Creates an email/password account with a public handle. Mints no JWT — the account is marked pending email verification and the user must complete `/auth/verify-email` (or sign in after verifying) before `/auth/login` will issue a token.
+
+- **Auth:** Anonymous (no token)
+- **Body:**
+  ```json
+  { "email": "alice@example.com", "password": "<min 8 chars>", "handle": "alice", "display_name": "Alice" }
+  ```
+  `email`, `password`, `handle` required; `display_name` optional (defaults to the handle). `handle` is lowercased + trimmed and validated per §B6 (3–20 chars, lowercase letters / digits / hyphens, no leading / trailing / consecutive hyphens).
+- **Response 201:**
+  ```json
+  { "ok": true, "email": "alice@example.com" }
+  ```
+  Deliberately carries **no JWT** — the frontend routes to `/verify-email?email=…`.
+- **Errors:** `bcc_invalid_request` 400 (missing/malformed email or password < 8) · `bcc_invalid_handle` 422 (fails §B6) · `bcc_handle_reserved` 422 · `bcc_conflict` 409 (handle taken or email already registered) · `bcc_rate_limited` 429 · `bcc_internal_error` 500 (`wp_insert_user` failure)
+- **Rate limit:** IP-bucketed, 5 / 60s (before any DB write)
+- **Cache:** `Cache-Control: no-store`
+- **Mapping:** writes a `subscriber` `wp_users` row (`wp_insert_user`, internal login `u_<handle>`), sets `bcc_handle` + `_bcc_email_verified='0'`, stores an HMAC-hashed 6-digit OTP (15-min transient) + single-use verify token (24-h transient), dispatches the verification email (`AuthMailer::sendVerificationEmail`, best-effort — a mail failure does NOT roll back the account), emits the `user_signup` audit log, fires `do_action('bcc_user_signup', …)`. Handler `AuthEndpoint::signup` (route `AuthEndpoint.php:229`). Standard envelope per §1.4.
+
+#### `POST /bcc/v1/auth/login`
+
+Exchanges email + password for a JWT. Gated on email verification: accounts explicitly pending verification (`_bcc_email_verified='0'`) are blocked; legacy accounts with no flag and verified accounts are allowed.
+
+- **Auth:** Anonymous (no token)
+- **Body:**
+  ```json
+  { "email": "alice@example.com", "password": "<password>" }
+  ```
+- **Response 200:**
+  ```json
+  { "user_id": 42, "handle": "alice", "token": "<JWT>", "expires_in": 604800, "token_type": "Bearer", "in_good_standing": true }
+  ```
+  `expires_in` is the 7-day JWT TTL (`JwtToken::TTL_SECONDS`). `in_good_standing` is the server-derived reputation-tier stamp (§A2; fails open to `true` on lookup error).
+- **Errors:** `bcc_invalid_request` 422 (missing/malformed email or empty password) · `bcc_invalid_credentials` 401 (user-not-found OR wrong password — generic, anti-enumeration) · `bcc_email_not_verified` 403 · `bcc_invalid_state` 409 (account has no handle) · `bcc_rate_limited` 429
+- **Rate limit:** IP-bucketed, 5 / 60s (before the bcrypt compare)
+- **Cache:** `Cache-Control: no-store`
+- **Mapping:** reads `wp_users` by email + `wp_check_password`, reads `bcc_handle` + `_bcc_email_verified`, sets the WP auth cookie, mints the JWT (`JwtToken::encode`), emits the `user_login` audit log, fires `do_action('bcc_user_login', …)`. Handler `AuthEndpoint::login` (route `AuthEndpoint.php:303`). Standard envelope per §1.4.
+
+#### `POST /bcc/v1/auth/refresh`
+
+Silent-refresh seam: exchanges a recently-expired (or near-expiry) Bearer JWT for a fresh one within the `REFRESH_GRACE_SECONDS` (86400 / 24-h) grace window. Clients SHOULD invoke this once on a `bcc_token_expired` 401 before signing the user out (see §β.3). Every JWT check other than `exp` — signature, issuer, audience, version/revocation — is enforced identically to the canonical decode, so a rotated-key, revoked, or `revokeAllForUser`-nuked token can never refresh.
+
+- **Auth:** Bearer required (the expired-or-near-expiry JWT in `Authorization: Bearer <jwt>`, NOT a cookie); checked in-handler via `JwtToken::decodeForRefresh`
+- **Body:** none (token from the `Authorization` header)
+- **Response 200:**
+  ```json
+  { "token": "<fresh JWT>", "expires_in": 604800, "token_type": "Bearer" }
+  ```
+  Unlike `/auth/login`, omits `user_id` / `handle` / `in_good_standing`.
+- **Errors:** `bcc_unauthorized` 401 (missing/malformed Bearer, decode failed, grace window exceeded, or invalid `user_id` claim — collapsed to one code) · `bcc_forbidden` 403 (suspended) · `bcc_invalid_state` 409 (no handle) · `bcc_rate_limited` 429
+- **Rate limit:** IP-bucketed, 30 / 60s
+- **Cache:** `Cache-Control: no-store`
+- **Mapping:** decodes via `JwtToken::decodeForRefresh`, re-reads `bcc_handle` from authoritative storage (a handle change since the original mint is reflected; the JWT payload is not trusted), mints a fresh JWT, emits the `token_refreshed` audit log. No cookie set, no DB mutation beyond the audit row. Handler `AuthEndpoint::refresh` (route `AuthEndpoint.php:292`). Standard envelope per §1.4.
+
+#### `POST /bcc/v1/auth/verify-email`
+
+Confirms email ownership and completes signup via either an OTP code or a one-shot link token, then signs the user in by returning a JWT (no separate `/auth/login` roundtrip).
+
+- **Auth:** Anonymous (no token)
+- **Body:** one of two shapes (token path wins when both present):
+  ```json
+  { "email": "alice@example.com", "code": "482915" }
+  ```
+  ```json
+  { "token": "<64-hex one-shot token>" }
+  ```
+  OTP `code` = 6-digit email code (15-min TTL); `token` = self-identifying single-use link token (24-h TTL). The handler requires either `token` or both `email` and `code`.
+- **Response 200:** identical shape to `/auth/login` (`{ user_id, handle, token, expires_in, token_type, in_good_standing }`) so the frontend treats both uniformly.
+- **Errors:** `bcc_invalid_request` 422 (neither token nor email+code) · `bcc_invalid_verify_token` 400 (token expired/used) · `bcc_invalid_otp` 400 (email unknown — generic; or code wrong/expired) · `bcc_already_verified` 409 (OTP path only) · `bcc_invalid_state` 409 (no handle) · `bcc_rate_limited` 429 · `bcc_internal_error` 500
+- **Rate limit:** IP-bucketed, 10 / 3600s
+- **Cache:** `Cache-Control: no-store`
+- **Mapping:** token path consumes the `bcc_vt_<token>` transient (single-use); OTP path resolves by email, checks `_bcc_email_verified`, timing-safely (`hash_equals`) consumes the HMAC-hashed `bcc_otp_<userId>` transient. Both converge on `finalizeVerification` → sets `_bcc_email_verified='1'`, sets the auth cookie, mints the JWT, emits `email_verified` audit, fires `do_action('bcc_email_verified', …)`. Handler `AuthEndpoint::verifyEmail` (route `AuthEndpoint.php:487`). Standard envelope per §1.4.
+
+#### `POST /bcc/v1/auth/resend-verification`
+
+Re-sends a fresh verification OTP + link to an unverified account. Always returns `ok: true` regardless of whether the email matches a registered unverified account (anti-enumeration; mirrors `/auth/forgot-password`).
+
+- **Auth:** Anonymous (no token)
+- **Body:** `{ "email": "alice@example.com" }`
+- **Response 200:** `{ "ok": true }` (identical whether or not the email matches an account)
+- **Errors:** `bcc_invalid_request` 422 (missing/malformed email) · `bcc_rate_limited` 429
+- **Rate limit:** IP-bucketed, 3 / 3600s
+- **Cache:** `Cache-Control: no-store`
+- **Mapping:** resolves by email; only when `_bcc_email_verified === '0'` generates + stores a fresh HMAC-hashed OTP (overwriting the prior `bcc_otp_<userId>` transient) + verify token, then dispatches the email. Already-verified / legacy accounts are silently skipped. Handler `AuthEndpoint::resendVerification` (route `AuthEndpoint.php:521`). Standard envelope per §1.4.
+
 ### 4.2 Cards
 
 #### `GET /bcc/v1/cards/:type/:id`
@@ -2066,9 +2152,144 @@ Slim prefix-search endpoint backing the composer's `@`-mention autocomplete (§3
 - **Side effects:** none. Pure read; no notification, no logging beyond the rate-limit counter.
 - **Sister endpoints:** the composer's full-name → user_id resolution at submit time is **not** exposed as a separate endpoint — the picker emits the wire-format token `@peepso_user_<id>(name)` directly into the post body using `user_id` from this response, and the server's `MentionPolicy` re-validates on `POST /posts*` (§3.3.12 server-side enforcement). A user picked from the dropdown but who turns hidden between picker-select and submit gets rejected at write-time with `bcc_invalid_mention_target` — picker results are advisory, not authoritative.
 
+#### `GET /bcc/v1/users/:handle/blog`
+
+The member's long-form blog posts (§D6 blog tab), newest-first, cursor-paginated.
+
+- **Auth:** Anonymous OR Bearer (V1 blog rows are public; `$viewerId` unused — reactions/permissions hydrate as defaults)
+- **Path:** `handle`
+- **Query:** `cursor` (optional, opaque base64url `{t,id}`, same family as `/feed`) · `limit` (optional, default 20, min 1, max 50)
+- **Response 200:** `CursorEnvelope<FeedItem>` — same shape as `/feed`: `data = { items: FeedItem[] (§3.3), pagination: { next_cursor: string|null, has_more: bool } }`, scoped to `act_user_id = handle AND act_module_id = 'blog'`. The blog body carries the full `full_text` (the Floor variant omits it): `{ excerpt, full_text, wp_post_id, title, category (string|null), tags (string[]), chain_tags ([{id, slug, name, color, icon_url}]), disclosure ({tickers, note}|null), cover_image_url (string|null), cover_image_id (int|null), sources (string[]) }`.
+- **Errors:** `bcc_not_found` (handle missing)
+- **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
+- **Mapping:** `BlogService::getUserBlog` → `PeepSoActivityRepository::getActivities` (over-fetch-by-1 `has_more`, moderation-hidden excluded per §K1-C); body via `BlogService::hydrateForPostId(..., includeFullText: true)`. Handler `UsersEndpoint::blog` (route `UsersEndpoint.php:172`).
+
+#### `GET /bcc/v1/users/:handle/reviews`
+
+Reviews this member has written (§V1.5 reviews-on-file tab), offset-paginated.
+
+- **Auth:** Anonymous OR Bearer (privacy-filtered — `reviews_hidden` honored for non-self viewers)
+- **Path:** `handle`
+- **Query:** `page` (1-indexed, default 1), `per_page` (default 20, max 50)
+- **Response 200:**
+  ```json
+  {
+    "items": [ { "id": 481, "grade": "A", "subject": "Acme Validator", "subject_handle": "acme-validator", "text": "Reliable signing.", "scope_label": "PAGE", "posted_at_label": "3d ago" } ],
+    "pagination": { "page": 1, "per_page": 20, "total": 12, "total_pages": 1 },
+    "hidden": false
+  }
+  ```
+  `grade` ∈ `A|B|C` (from `vote_type` 1/0/-1). When the target hides reviews and the viewer isn't the owner: `items: []`, totals `0`, `hidden: true`.
+- **Errors:** `bcc_not_found` (handle missing)
+- **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
+- **Pagination envelope:** offset (§1.5); `total_pages` is `0` (not 1) on empty/hidden.
+- **Mapping:** `UserReviewsService::getReviews` → `VoteRepository::countByVoter` + `findByVoterPaginated`; `posted_at_label` server-rendered (§A2). Handler `UsersEndpoint::reviews` (route `UsersEndpoint.php:203`).
+
+#### `GET /bcc/v1/users/:handle/disputes`
+
+Disputes this member has signed (§V1.5 disputes-signed tab), offset-paginated.
+
+- **Auth:** Anonymous OR Bearer (privacy-filtered — `disputes_hidden` honored for non-self viewers)
+- **Path:** `handle`
+- **Query:** `page` (1-indexed, default 1), `per_page` (default 20, max 50)
+- **Response 200:**
+  ```json
+  {
+    "items": [ { "id": 91, "status": "open", "status_label": "OPEN", "subject": "Acme Validator", "body": "Double-signed at height 4.2M.", "scope_label": "PAGE", "posted_at_label": "Jan 2026" } ],
+    "pagination": { "page": 1, "per_page": 20, "total": 3, "total_pages": 1 },
+    "hidden": false
+  }
+  ```
+  `status` ∈ `open|resolved|dismissed` (from `bcc_trust_flags.status` 0/1/2; unknown → `open`). `subject` falls back to `"Page removed"`; `scope_label` is `PAGE` or `UNKNOWN`. Hidden behaves as reviews (`items: []`, totals `0`, `hidden: true`).
+- **Errors:** `bcc_not_found` (handle missing)
+- **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
+- **Pagination envelope:** offset (§1.5); `total_pages` is `0` on empty/hidden.
+- **Mapping:** `UserDisputesService::getDisputes` → `FlagsRepository::countByFlagger` + `findByFlagger`. Handler `UsersEndpoint::disputes` (route `UsersEndpoint.php:215`).
+
+#### `GET /bcc/v1/users/:handle/activity`
+
+Per-member activity wall — a single-author slice of the same activity stream that backs the Floor feed. Cursor-paginated.
+
+- **Auth:** Anonymous OR Bearer (privacy-filtered — caution/risky shadow-limit, mutual-block invisibility, moderation hide, and the author-wall closed/secret/NFT-gated group leak gate apply per-viewer)
+- **Path:** `handle`
+- **Query:** `cursor` (optional, same family as `/feed`) · `limit` (optional, default 20, min 1, max 50)
+- **Response 200:** `CursorEnvelope<FeedItem>` — identical shape to `/feed`/`/feed/hot`/`/feed/tag`: `data = { items: FeedItem[] (§3.3), pagination: { next_cursor, has_more } }`, fully hydrated (bodies, viewer reactions, author badges/ranks, social proof, permissions, group context, comment counts).
+- **Errors:** `bcc_not_found` (handle missing)
+- **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
+- **Mapping:** `FeedRankingService::getActivityForAuthor($authorId, $viewerId, …)` — the single-brain feed composition scoped to one author; `excludedGroupIds = (non-open group ids) − (viewer membership ids)` forwarded to the SQL so wall posts in groups the viewer can't see are dropped. Handler `UsersEndpoint::activity` (route `UsersEndpoint.php:228`).
+
+#### `GET /bcc/v1/users/:slug/followers`
+
+"Being Watched" — the members who follow this member (§3.1 Watching tab). Offset-paginated.
+
+- **Auth:** Anonymous OR Bearer (privacy-filtered — `watching_hidden` gates non-self viewers across BOTH followers and following)
+- **Path:** `slug` (sanitized via `sanitize_user`)
+- **Query:** `offset` (default 0), `limit` (default 24, max 100)
+- **Response 200:**
+  ```json
+  {
+    "items": [ { "...": "member Card view-model per §3.2 — card_kind: \"member\", member_dossier populated" } ],
+    "pagination": { "offset": 0, "limit": 24, "total": 57, "has_more": true }
+  }
+  ```
+  Each item is a full member `Card` (§3.2, `card_kind: "member"`) — same shape as `/members`. Rows for deleted users are silently skipped (so `items.length` may momentarily be < page size while `total` reflects the raw follow-edge count).
+- **Errors:** `bcc_not_found` (slug missing) · `bcc_permission_denied` 403 (`watching_hidden`)
+- **Cache:** `Cache-Control: private, max-age=30`
+- **Pagination envelope:** offset with `has_more` (§1.5) — `offset`/`limit`/`total`/`has_more`, NOT the `page`/`per_page`/`total_pages` shape.
+- **Mapping:** `UserFollowsService::listFollowers` → `PeepSoFollowerRepository::getCounts` + `getFollowers`; cards via `CardViewService::getMemberCardForList` over a `MemberSummaryPrefetcher::primeFor` batch. Handler `UserFollowsEndpoint::listFollowers` (route `UserFollowsEndpoint.php:49`).
+
+#### `GET /bcc/v1/users/:slug/following`
+
+"Keeping Tabs" — the members this member follows (§3.1 Watching tab). Offset-paginated.
+
+- **Auth:** Anonymous OR Bearer (privacy-filtered — same `watching_hidden` gate as `/followers`)
+- **Path:** `slug` (sanitized via `sanitize_user`)
+- **Query:** `offset` (default 0), `limit` (default 24, max 100)
+- **Response 200:** identical envelope to `/followers` — `{ items: Card[] (§3.2, member), pagination: { offset, limit, total, has_more } }`. `total` is the *following* count.
+- **Errors:** `bcc_not_found` (slug missing) · `bcc_permission_denied` 403 (`watching_hidden`)
+- **Cache:** `Cache-Control: private, max-age=30`
+- **Pagination envelope:** offset with `has_more` (§1.5)
+- **Mapping:** `UserFollowsService::listFollowing` → `PeepSoFollowerRepository::getCounts` + `getFollowing`; same card hydration as `/followers`. Handler `UserFollowsEndpoint::listFollowing` (route `UserFollowsEndpoint.php:60`).
+
+#### `GET /bcc/v1/users/:slug/albums`
+
+The member's PeepSo photo albums (§3.1 Photos tab → Albums sub-tab), privacy-filtered per-album.
+
+- **Auth:** Anonymous OR Bearer (per-album privacy filtered in-handler: public always; members-only to logged-in; friends-only to friends + owner when the PeepSo Friends plugin is loaded, else treated as private; private to owner only)
+- **Path:** `slug` (sanitized via `sanitize_user`)
+- **Query:** none (full filtered set, bounded by a repository hard cap)
+- **Response 200:**
+  ```json
+  {
+    "items": [ { "id": 1201, "title": "Floor Photos", "description": null, "photo_count": 14, "cover_url": "https://…/cover.jpg", "privacy": "public", "privacy_label": "Public", "is_system_album": true, "created_at": "2026-05-01 14:30:00" } ]
+  }
+  ```
+  No pagination block. `privacy` ∈ `public|site_members|friends_only|only_me`; `privacy_label` server-rendered (§A2). `cover_url` is `""` when unresolvable. System-album titles remapped to BCC vocabulary ("Stream Photos" → "Floor Photos").
+- **Errors:** `bcc_not_found` (slug missing). Albums the viewer can't see are silently filtered (never 403).
+- **Cache:** `Cache-Control: private, max-age=30`
+- **Mapping:** `PeepSoAlbumRepository::getAlbumsByOwner` filtered through `PeepSoAlbumAccess::canView` (+ `PeepSoFriendGate`); cover via `PhotoRepository::resolvePhotoUrl`. Handler `UserAlbumsEndpoint::getList` (route `UserAlbumsEndpoint.php:54`).
+
+#### `GET /bcc/v1/users/:slug/albums/:album_id/photos`
+
+Photos inside a single album (§3.1 Photos drill-down). Album access is re-checked server-side so a stale `album_id` can't be replayed after a viewer loses access.
+
+- **Auth:** Anonymous OR Bearer (the album's `pho_album_acc` is re-evaluated with the `/albums` access matrix; a denied album returns 404, not 403, so existence isn't leaked)
+- **Path:** `slug` (sanitized via `sanitize_user`), `album_id` (positive int, `absint`)
+- **Query:** none (every photo in the album, bounded by a repository hard cap)
+- **Response 200:**
+  ```json
+  {
+    "items": [ { "id": 88123, "photo_url": "https://…/photo.jpg", "source_post": { "id": 55012, "url": "https://…/?p=55012" } } ]
+  }
+  ```
+  No pagination block. `photo_url` is `""` when unresolvable (S3 fallback). `source_post` is `{ id, url }` deep-linking the parent post, or `null`.
+- **Errors:** `bcc_not_found` — slug missing, `album_id` ≤ 0, album not owned by the user, OR album exists but viewer lacks access (all collapse to one 404 message to avoid leaking existence)
+- **Cache:** `Cache-Control: private, max-age=30`
+- **Mapping:** `PeepSoAlbumRepository::findOneByIdAndOwner` → `PeepSoAlbumAccess::canView` → `PhotoRepository::findByAlbumId`; per-photo URL via `PhotoRepository::resolvePhotoUrl`. Handler `UserAlbumPhotosEndpoint::getList` (route `UserAlbumPhotosEndpoint.php:52`).
+
 ### 4.5 Watching
 
-> **2026-05-13 rename:** these routes replaced `/me/binder/*` under the §1.1.1 additive-deprecation pattern. The legacy routes remain available with `Deprecation`/`Sunset` headers for one release — see §4.5.1.
+> **2026-05-13 rename:** these routes replaced `/me/binder/*` under the §1.1.1 additive-deprecation pattern. The legacy `/me/binder/*` **routes were removed 2026-06-10** (one release early — they had no remaining consumers; canonical `/me/watching/*` is the only path). The response-field aliases survive on the canonical routes through their own runway — see §4.5.1.
 
 #### `GET /bcc/v1/me/watching`
 
@@ -2198,32 +2419,26 @@ Stops watching a card (= PeepSo unfollow).
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** PeepSo unfollow + cascade `bcc_pull_meta`. **Does not** edit any prior feed post per §C3.
 
-### 4.5.1 Deprecated: `/me/binder/*` (removed in release N+1)
+### 4.5.1 Removed: `/me/binder/*` routes (use `/me/watching/*`)
 
-Legacy routes kept alive for one release under the §1.1.1 additive-deprecation runway. They return **identical** payloads to their `/me/watching/*` counterparts, with the following back-compat aliases:
+The legacy `/me/binder/*` **routes were removed 2026-06-10** — one release early, under
+the fresh-install / no-backcompat policy (they were pure aliases of `/me/watching/*` with
+zero remaining consumers). Old route → use instead:
 
-- `watched_at` ↔ legacy `pulled_at`
-- `card_tier_at_watch` ↔ legacy `card_tier_at_pull`
-- `tier_label_at_watch` ↔ legacy `tier_label_at_pull`
-- `watching_size` ↔ legacy `binder_size`
-- `already_watching` ↔ legacy `already_in_binder`
-- Celebration `label`: `"Pulled <name>."` (legacy) replaced with `"Now watching <name>."` (canonical). The canonical route returns the new copy; the deprecated route returns the legacy copy unchanged so old clients render the wording they expect.
-- Celebration `icon`: `"pull"` (legacy) ↔ `"watch"` (canonical), same one-for-one alias rule.
-
-| Legacy route | Canonical replacement |
+| Removed route | Use instead |
 |---|---|
 | `GET /bcc/v1/me/binder` | `GET /bcc/v1/me/watching` |
 | `GET /bcc/v1/me/binder/summary` | `GET /bcc/v1/me/watching/summary` |
 | `POST /bcc/v1/me/binder/pull` | `POST /bcc/v1/me/watching/watch` |
 | `DELETE /bcc/v1/me/binder/:follow_id` | `DELETE /bcc/v1/me/watching/:follow_id` |
 
-**Deprecation headers (required on every response from these routes):**
-
-- `Deprecation: true`
-- `Sunset: <RFC 7231 HTTP-date>` — exact removal date, set by the release N+1 cut.
-- `Link: <https://docs/api-contract-v1.md#45-watching>; rel="deprecation"`
-
-The legacy `bcc_card_pulled` event is also emitted in parallel with `bcc_card_watched` during the deprecation window and removed in release N+1.
+The §1.1.1 **response-field** aliases are independent of the routes and still ride the
+**canonical** `/me/watching/*` + `/users/*` responses through their own runway (removed in
+release N+1): `watched_at`↔`pulled_at`, `card_tier_at_watch`↔`card_tier_at_pull`,
+`tier_label_at_watch`↔`tier_label_at_pull`, `watching_size`↔`binder_size`,
+`already_watching`↔`already_in_binder`; the `links.binder` profile-link alias; and the
+`bcc_card_pulled` event emitted in parallel with `bcc_card_watched`. Canonical celebration
+copy is `"Now watching <name>."` (icon `watch`).
 
 ### 4.6 Pages (claim flow)
 
@@ -2347,7 +2562,7 @@ List of available Locals (PeepSo Groups in BCC clothing).
 - Authenticated non-member: `{ "is_member": false, "is_primary": false, "joined_at": null }`.
 - Authenticated member: `{ "is_member": true, "is_primary": <bool>, "joined_at": "<iso8601>" }`.
 
-**Pagination:** uses **offset** envelope per §1.5 (Locals is a directory, not a time-ordered feed). Cursor pagination is reserved for `/feed`, `/feed/hot`, `/me/watching` (and its legacy alias `/me/binder` during the §1.1.1 deprecation window).
+**Pagination:** uses **offset** envelope per §1.5 (Locals is a directory, not a time-ordered feed). Cursor pagination is reserved for `/feed`, `/feed/hot`, and `/me/watching`.
 
 #### `POST /bcc/v1/me/locals/:id/membership`
 
@@ -3534,7 +3749,7 @@ These all return `Cache-Control: no-store` and respect `bcc_unauthorized` (401),
 
 ### 4.17 NFT pieces (V2 Phase 6 / §H1)
 
-Promotes the §8 deferred `GET /collections/:id/pieces` placeholder to a real per-piece detail surface. The list-form gallery endpoint (`GET /creators/:slug/gallery`) remains deferred — V2 Phase 6 ships the detail view only.
+Promotes the §8 deferred `GET /collections/:id/pieces` placeholder to a real per-piece detail surface. (The per-creator list-form gallery `GET /creators/:slug/gallery` is now **live** — see §4.29.)
 
 #### `GET /bcc/v1/nft-pieces/{chainSlug}/{contractAddress}/{tokenId}`
 
@@ -4423,10 +4638,11 @@ Unlinks a wallet owned by the current user. Idempotent — a double-tap unlink a
   ```json
   { "ok": true, "id": 142, "removed": true }
   ```
-- **Errors:** `bcc_unauthorized` 401, `bcc_invalid_request` 400 (id missing), `bcc_rate_limited` 429.
+- **Errors:** `bcc_unauthorized` 401, `bcc_invalid_request` 400 (id missing), `bcc_last_recovery_method` 409 (see lockout guard below), `bcc_rate_limited` 429.
 - **Rate limit:** 10/min/user.
 - **Cache:** `Cache-Control: no-store`.
-- **Side effects on a true state transition (`removed: true` for an own-wallet):** writes `wallet_unlinked` audit row (`AuditLogger::log`) and fires `AccountSecurityMailer::walletUnlinked` (§4.23 side-channel). The trust-engine domain event `bcc_wallet_disconnected` fires from the underlying `WalletIdentityService::unlinkWallet`, triggering `BonusService::handleWalletDisconnect` and Helius unsubscribe (Solana only).
+- **Lockout guard (`bcc_last_recovery_method` 409):** the request is refused — and the wallet is NOT removed — when it would delete the caller's **last verified wallet** on an account with no real recovery email (i.e. only the synthetic `@noreply.bcc.local` placeholder). Such an account's wallet is its sole credential, so removing it would be a permanent self-lockout. Clients should prompt the user to add a recovery email or link a second wallet first. Accounts with a real recovery email, or with a second verified wallet, are never blocked.
+- **Side effects on a true state transition (`removed: true` for an own-wallet):** removes the wallet's per-wallet on-chain data (NFT holdings + profile selections keyed on the `wallet_link_id`); writes a `wallet_unlinked` audit row (`AuditLogger::log`); fires `AccountSecurityMailer::walletUnlinked` (§4.23 side-channel); and dispatches the trust-engine domain event `bcc_wallet_disconnected` **directly from this endpoint** (this REST path deletes the row itself rather than routing through `WalletIdentityService::unlinkWallet`). Listeners on that event perform claim revocation + trust-score recalc (`BonusService::handleWalletDisconnect`), trust-signal teardown for the wallet's chain (`WalletSignalRepository::disconnect`), and Helius unsubscribe (Solana only).
 
 #### `GET /bcc/v1/wallets/project/{post_id}`
 
@@ -4463,6 +4679,764 @@ Returns the enabled-chain catalog. Public; consumed by the wallet-link selector 
 - **Rate limit:** 30/min/IP.
 
 ---
+
+### 4.25 Social connections & trust actions (GitHub / X / endorsements / device signal)
+
+> **Envelope note (applies to every endpoint in §4.25):** these routes live in the `bcc-trust/v1` namespace, which returns the **legacy** `{ "success": true, "data": {...} }` envelope — **not** the standard `bcc/v1` `{ data, _meta }` envelope of §1.4. Errors are `WP_Error` (HTTP status from the error's `status`, `error.code` = the stable code, `error.message` = the message; soft-gate data like `unlock_hint` rides `error.data`). The frontend talks to these via the dedicated `bccTrustFetch` helper, which understands the older shape. All routes are bearer-JWT authed via the bcc-trust `BearerAuth` filter. The browser-redirect `GET /github/callback` + `GET /x/callback` routes are **internal** (server-to-browser OAuth round-trip) and intentionally undocumented.
+
+#### `GET /bcc-trust/v1/github/auth`
+
+Mint a GitHub OAuth authorize URL for the current user to redirect to. The caller is responsible for `window.location.href = data.auth_url`.
+
+- **Auth:** Bearer **required** (`Permissions::restCallback`). Anonymous → auth failure.
+- **Query:** `return_to` (optional) — a fully-qualified URL on the `BCC_FRONTEND_ORIGIN` allowlist (validated via `FrontendRedirect::validateReturnTo`; persisted to user meta `_bcc_github_return_to` for the callback). Off-allowlist input is silently rejected (callback falls back to `/settings/identity`).
+- **Response 200:** `{ "success": true, "data": { "auth_url": string } }`
+- **Errors:** `github_not_configured` (500) · `bcc_internal` (500)
+- **Rate limit:** none (the rate-limited surface is the unauthenticated `/github/callback`, 10/min/IP)
+- **Cache:** none (per-user, side-effecting via user-meta write)
+- **Mapping:** `GitHubController::getAuthUrl` (route `GitHubController.php:36`) → `GitHubVerificationService::getAuthUrl`. FE `oauth-endpoints.ts:getGitHubAuthUrl`.
+
+#### `GET /bcc-trust/v1/github/status`
+
+Per-user GitHub connection status.
+
+- **Auth:** Bearer **required**
+- **Response 200:** discriminated on `connected`: disconnected `{ "success": true, "data": { "connected": false } }`; connected `{ "success": true, "data": { "connected": true, "username": string, "verified_at": string|null, "last_synced": string|null, "followers": int, "repos": int, "orgs": int } }`
+- **Errors:** `bcc_internal` (500)
+- **Cache:** none (per-user identity state; treat as private/no-store)
+- **Mapping:** `GitHubController::getStatus` (route `GitHubController.php:48`) → `GitHubVerificationService::getStatus`. FE `oauth-endpoints.ts:getGitHubStatus`.
+
+#### `POST /bcc-trust/v1/github/disconnect`
+
+Disconnect the current user's GitHub account. Re-locks the `verify_github` quest and removes the GitHub score impact from the user's pages. Bearer JWT is the CSRF guard (no `X-WP-Nonce`).
+
+- **Auth:** Bearer **required**
+- **Body:** none (ignored)
+- **Response 200:** `{ "success": true, "data": { "disconnected": true, "username": string|null } }`
+- **Errors:** `bcc_internal` (500)
+- **Side effects:** revokes `verify_github` quest signal; reverses trust-boost / fraud-reduction on owned pages.
+- **Mapping:** `GitHubController::disconnect` (route `GitHubController.php:54`) → `GitHubVerificationService::disconnect`. FE `oauth-endpoints.ts:disconnectGitHub`.
+
+#### `POST /bcc-trust/v1/github/refresh`
+
+Re-fetch the current user's GitHub stats, persist them, and recompute the trust-boost / fraud-reduction page impact.
+
+- **Auth:** Bearer **required**
+- **Body:** none (ignored)
+- **Response 200:** `{ "success": true, "data": { "refreshed": true, "username": string, "trust_boost": number, "fraud_reduction": number } }`
+- **Errors:** `bcc_internal` (500 — covers "GitHub not connected" / token-missing, plus unexpected)
+- **Side effects:** overwrites the stored GitHub connection row; re-applies trust/fraud delta; clears transient `bcc_trust_github_{userId}`.
+- **Mapping:** `GitHubController::refreshData` (route `GitHubController.php:60`) → `GitHubVerificationService::refresh`. FE `oauth-endpoints.ts:refreshGitHub`.
+
+#### `GET /bcc-trust/v1/x/auth`
+
+Mint an X (Twitter) OAuth authorize URL for the current user. Caller redirects via `data.auth_url`.
+
+- **Auth:** Bearer **required**
+- **Query:** `return_to` (optional) — allowlisted fully-qualified URL, validated + persisted to `_bcc_x_return_to`; off-allowlist silently rejected.
+- **Response 200:** `{ "success": true, "data": { "auth_url": string } }`
+- **Errors:** `x_not_configured` (500) · `bcc_internal` (500)
+- **Cache:** none (side-effecting — clears stale OAuth state meta, then writes `_bcc_x_return_to`)
+- **Mapping:** `XController::getAuthUrl` (route `XController.php:36`) → `XVerificationService::getAuthUrl`. FE `oauth-endpoints.ts:getXAuthUrl`.
+
+#### `GET /bcc-trust/v1/x/status`
+
+Per-user X connection status (narrower than GitHub — no follower/repo counts).
+
+- **Auth:** Bearer **required**
+- **Response 200:** disconnected `{ "success": true, "data": { "connected": false } }`; connected `{ "success": true, "data": { "connected": true, "username": string, "verified_at": string|null, "last_synced": string|null } }`
+- **Errors:** `bcc_internal` (500)
+- **Mapping:** `XController::getStatus` (route `XController.php:48`) → `XVerificationService::getStatus`. FE `oauth-endpoints.ts:getXStatus`.
+
+#### `POST /bcc-trust/v1/x/disconnect`
+
+Disconnect the current user's X account. Bearer JWT is the CSRF guard.
+
+- **Auth:** Bearer **required**
+- **Body:** none (ignored)
+- **Response 200:** `{ "success": true, "data": { "disconnected": true, "username": string|null } }`
+- **Errors:** `bcc_internal` (500)
+- **Mapping:** `XController::disconnect` (route `XController.php:54`) → `XVerificationService::disconnect`. FE `oauth-endpoints.ts:disconnectX`.
+
+#### `POST /bcc-trust/v1/x/verify-share`
+
+Verify that the current user shared their BCC profile on X (searches the user's recent tweets for the site URL via the stored X token; on a real match fires the `share_x` quest). Idempotent: an already-complete quest returns `already_done: true` without re-searching.
+
+- **Auth:** Bearer **required**
+- **Body:** none
+- **Response 200:** already complete `{ "success": true, "data": { "verified": true, "already_done": true } }`; newly verified `{ "success": true, "data": { "verified": true, "message": "Thanks for sharing! Quest complete." } }`
+- **Errors:** `bcc_rate_limited` (429) · `share_not_found` (400, no matching tweet) · `bcc_internal` (500)
+- **Rate limit:** 5 / 60s / user (`RateLimiter::allow('x_verify_share', 5, 60)`)
+- **Side effects:** fires `do_action('bcc_trust_quest_signal', $userId, 'share_x')`; authoritative validation is server-side in `QuestValidator::validateShareX` (live X-API search) — the controller never pre-sets the meta.
+- **Mapping:** `XController::verifyShare` (route `XController.php:60`). FE `oauth-endpoints.ts:verifyXShare`.
+
+#### `POST /bcc-trust/v1/endorse`
+
+Endorse a PeepSo page. Thin controller → `EndorsementService::endorsePage` (owns rate-limiting, eligibility gating, cache invalidation).
+
+- **Auth:** Bearer **required** (`is_user_logged_in()` AND `Permissions::is_not_suspended()`)
+- **Query/Body:** `page_id` (**required**, int, `absint`) · `context` (optional, string, default `"general"`, **enum `["general"]`**, `sanitize_key`) · `reason` (optional, string, capped) · `fingerprint` (optional, passthrough anti-fraud signal)
+- **Response 200:** `{ "success": true, "data": { "action": "endorse", "page_id": int, "vote": null, "endorsement": { "endorsement_id": int, "page_title": string, "context": string, "weight": number } | null, "score": <PageScore>, "votes_up": int, "votes_down": int, "endorsement_count": int } }`. FE reads `endorsement_count` and ignores server-only fraud fields.
+- **Errors:** `bcc_invalid_request` (400) · `bcc_unauthorized` (401) · `bcc_endorse_self` (403) · `bcc_conflict` (409, already endorsed) · `bcc_fraud_locked` (403) · `bcc_rate_limited` (429) · `bcc_permission_denied` (403, soft gate — message + `error.data.unlock_hint` per §1.4.5) · `bcc_internal` (500)
+- **Rate limit:** 10 / 300s / user (`BCC_TRUST_RATE_LIMIT_ENDORSE`), plus per-page daily/velocity caps in the service.
+- **Mapping:** `TrustRestController::endorse` (route `TrustRestController.php:99`) → `EndorsementService::endorsePage`. FE `endorse-endpoints.ts:endorsePage`. Canonical UX gate is the server-rendered `permissions.can_endorse` + `unlock_hint`; the 4xx codes are the race/direct-call fallback.
+
+#### `POST /bcc-trust/v1/revoke-endorsement`
+
+Revoke a previously-given endorsement. Same controller/service split and response shape as `/endorse` with `action: "revoke_endorsement"`.
+
+- **Auth:** Bearer **required** (logged-in + not-suspended)
+- **Query/Body:** `page_id` (**required**, int, `absint`) · `context` (optional, string, default `"general"`, `sanitize_key`; no enum restriction here)
+- **Response 200:** identical envelope/shape to `/endorse` with `"action": "revoke_endorsement"`; `endorsement` is `null`, `endorsement_count` reflects the post-revoke count.
+- **Errors:** `bcc_unauthorized` (401) · `bcc_rate_limited` (429) · `bcc_not_found` (404, endorsement not found) · `bcc_internal` (500)
+- **Rate limit:** 5 / 60s / user (`RateLimiter::enforce('revoke_endorse', 5, 60)`)
+- **Mapping:** `TrustRestController::revoke_endorsement` (route `TrustRestController.php:109`) → `EndorsementService::revokePageEndorsement`. FE `endorse-endpoints.ts:revokeEndorsement`.
+
+#### `POST /bcc-trust/v1/device-fingerprint`
+
+Client anti-fraud signal submission. Fire-and-forget — the FE caller swallows errors (it is a fraud signal, never a UX gate). Delegates to `UserStatusController::store_fingerprint`.
+
+- **Auth:** Bearer **required** (logged-in + not-suspended; handler re-checks `get_current_user_id()`)
+- **Body (JSON):** `fingerprint.hash` (**required**, hex, length 32–128, `/^[a-f0-9]+$/i` — FE sends a 64-char SHA-256) · `data` (optional object — coarse browser signals; stored to `bcc_last_fingerprint_data` only if ≤ 10240 bytes, else silently dropped)
+- **Response 200:** `{ "success": true, "data": { "stored": true } }` — **deliberately opaque** (no fraud verdict / account-count / automation score, to deny attacker feedback).
+- **Errors:** `bcc_rate_limited` (429) · `bcc_invalid_request` (400 — not-authenticated / invalid fingerprint data / invalid format; other exceptions return the generic message under the same code)
+- **Rate limit:** shared `api` bucket (`RateLimiter::allow('api')`)
+- **Side effects (server-only, not surfaced):** the client hash is NOT the identity — the server computes its own server-side fingerprint (server signals + `wp_salt('auth')`, SHA-256) as the shared-device bucket; > 3 accounts → `multiple_accounts_detected` audit + alert; automation confidence > 70 → `automation_detected` audit + fraud-score increment + alert.
+- **Mapping:** route `TrustRestController.php:129` → `UserStatusController::store_fingerprint`. FE `fingerprint-endpoints.ts:postFingerprint`.
+
+### 4.26 Profile editing, privacy & blocks
+
+Self-only settings surface for the signed-in viewer. Every route here is **Bearer-required** with the auth check performed **in-handler** (`permission_callback => '__return_true'`, then `get_current_user_id() <= 0 → bcc_unauthorized 401`). No admin-override surface — all routes operate on `get_current_user_id()`. All responses use the standard envelope (§1.4) and `Cache-Control: no-store`.
+
+#### `PATCH /bcc/v1/me/profile`
+
+Update text profile fields. Registered as `WP_REST_Server::EDITABLE` (also accepts POST/PUT). Bio is the only supported field in V1.
+
+- **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized 401`.
+- **Body (JSON):** `bio` (**required**, string) — `sanitize_textarea_field` (strips all tags), length-capped at **500**; stored to `wp_users.description`.
+- **Response 200:** the full updated **User view-model** (§3.1, own variant).
+- **Errors:** `bcc_unauthorized` (401) · `bcc_invalid_request` (422 — `bio` omitted / not a string / > 500) · `bcc_internal_error` (500)
+- **Mapping:** `MyProfileEndpoint::patch` (route `MyProfileEndpoint.php:92`, EDITABLE) → `UserViewService::getUser($userId, $userId)`. FE `profile-endpoints.ts:patchProfile`.
+
+#### `POST /bcc/v1/me/profile/avatar`
+
+Upload a custom avatar. PeepSo owns the image pipeline; this route wraps `PeepSoUser::move_avatar_file`.
+
+- **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized 401`.
+- **Body (`multipart/form-data`):** `avatar` (**required**, file) — size ≤ **2 MB**; MIME detected from file contents via `wp_check_filetype_and_ext` (request Content-Type never trusted); must be `image/jpeg|png|webp`.
+- **Response 200:** full updated **User view-model** (§3.1, own variant).
+- **Errors:** `bcc_unauthorized` (401) · `bcc_peepso_unavailable` (503, PeepSo not loaded) · `bcc_invalid_request` (422, field missing / empty / > 2 MB / bad MIME) · `bcc_upload_failed` (422 PHP upload error; 500 on PeepSo throw)
+- **Mapping:** `MyProfileEndpoint::uploadAvatar` (route `MyProfileEndpoint.php:103`, CREATABLE). FE `profile-endpoints.ts:uploadAvatar`.
+
+#### `DELETE /bcc/v1/me/profile/avatar`
+
+Remove the custom avatar (revert to default). Idempotent — a failed PeepSo delete is logged and still returns success.
+
+- **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized 401`.
+- **Response 200:** full updated **User view-model** (§3.1, own variant).
+- **Errors:** `bcc_unauthorized` (401) · `bcc_peepso_unavailable` (503) · `bcc_internal_error` (500, only if the post-delete view-model load fails)
+- **Mapping:** `MyProfileEndpoint::deleteAvatar` (route `MyProfileEndpoint.php:114`, DELETABLE) → `PeepSoUser::delete_avatar()`. FE `profile-endpoints.ts:deleteAvatar`.
+
+#### `POST /bcc/v1/me/profile/cover`
+
+Upload a cover photo. Wraps `PeepSoUser::move_cover_file` (resize + write + meta in one call).
+
+- **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized 401`.
+- **Body (`multipart/form-data`):** `cover` (**required**, file) — size ≤ **5 MB**; MIME detected from contents; must be `image/jpeg|png|webp`.
+- **Response 200:** full updated **User view-model** (§3.1, own variant).
+- **Errors:** same set as `POST /me/profile/avatar` (only the `cover` field name + 5 MB cap differ): `bcc_unauthorized` (401) · `bcc_peepso_unavailable` (503) · `bcc_invalid_request` (422) · `bcc_upload_failed` (422/500)
+- **Mapping:** `MyProfileEndpoint::uploadCover` (route `MyProfileEndpoint.php:125`, CREATABLE). FE `profile-endpoints.ts:uploadCover`.
+
+#### `DELETE /bcc/v1/me/profile/cover`
+
+Remove the cover photo. Idempotent.
+
+- **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized 401`.
+- **Response 200:** full updated **User view-model** (§3.1, own variant).
+- **Errors:** `bcc_unauthorized` (401) · `bcc_peepso_unavailable` (503) · `bcc_internal_error` (500, only if the post-delete view-model load fails)
+- **Mapping:** `MyProfileEndpoint::deleteCover` (route `MyProfileEndpoint.php:136`, DELETABLE) → `PeepSoUser::delete_cover_photo()`. FE `profile-endpoints.ts:deleteCover`.
+
+#### `PATCH /bcc/v1/me/profile/cover/position`
+
+Set the cover-photo crop position (drag-to-position). Registered as `WP_REST_Server::EDITABLE` (also POST/PUT). Values are percentages, clamped server-side.
+
+- **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized 401`.
+- **Body (JSON):** `x` (**required**, number 0–100) · `y` (**required**, number 0–100). Both clamped to 0–100; stored as integer strings to `peepso_cover_position_x`/`_y`.
+- **Response 200:** full updated **User view-model** (§3.1, own variant).
+- **Errors:** `bcc_unauthorized` (401) · `bcc_invalid_request` (422, `x`/`y` missing or non-numeric) · `bcc_internal_error` (500)
+- **Mapping:** `MyProfileEndpoint::patchCoverPosition` (route `MyProfileEndpoint.php:147`, EDITABLE). FE `profile-endpoints.ts:patchCoverPosition`.
+
+#### `GET /bcc/v1/me/privacy`
+
+Read the signed-in viewer's privacy toggles (§K2 + §G1 discovery opt-out).
+
+- **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized 401`.
+- **Response 200:** `data` is a flat map of **9 boolean** keys (`PrivacySettings::ALL_KEYS`), missing meta defaults to `false`:
+  ```json
+  { "data": { "binder_hidden": false, "watching_hidden": false, "reviews_hidden": false, "disputes_hidden": false, "delegations_hidden": false, "follower_count_hidden": false, "real_name_hidden": false, "email_hidden": false, "discovery_optout": false } }
+  ```
+  - `binder_hidden` is a legacy mirror of `watching_hidden` (§1.1.1 deprecation runway — same value; removed in release N+1). `discovery_optout` (§G1) is owner-only and appears ONLY here (the other 7 also surface inside the User view-model).
+- **Errors:** `bcc_unauthorized` (401)
+- **Mapping:** `MyPrivacyEndpoint::get` (route `MyPrivacyEndpoint.php:48`, READABLE) → `PrivacySettings::readAll`. FE `privacy-endpoints.ts:getMyPrivacy`.
+
+#### `PATCH /bcc/v1/me/privacy`
+
+Partial-update privacy toggles. Registered as `WP_REST_Server::EDITABLE` (also POST/PUT). Only keys present in the body change.
+
+- **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized 401`.
+- **Body (JSON):** a partial bag — every key optional, each a boolean (coerced via `FILTER_VALIDATE_BOOLEAN`). Accepted keys = `PrivacySettings::ALL_KEYS` (the 9 above). Unknown keys silently dropped. A `binder_hidden` write funnels to the canonical `watching_hidden` meta.
+- **Response 200:** the full post-write state — identical shape to `GET /me/privacy` (all 9 keys).
+- **Errors:** `bcc_unauthorized` (401) · `bcc_invalid_request` (422, no recognized keys)
+- **Mapping:** `MyPrivacyEndpoint::patch` (route `MyPrivacyEndpoint.php:61`, EDITABLE) → `PrivacySettings::writePartial` then `readAll`. FE `privacy-endpoints.ts:updateMyPrivacy`.
+
+#### `GET /bcc/v1/me/blocks`
+
+Paginated list of users the signed-in viewer has blocked (§K1 Phase A). Owner-only.
+
+- **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized 401`.
+- **Query:** `page` (optional, default 1, min 1) · `per_page` (optional, default 20, min 1, max 50)
+- **Response 200:** offset-paginated, each item hydrated with handle + display name + avatar:
+  ```json
+  { "data": { "items": [ { "user_id": 412, "handle": "ramona", "display_name": "Ramona V.", "avatar_url": "https://…", "profile_url": "/u/ramona" } ], "pagination": { "page": 1, "per_page": 20, "total": 1, "total_pages": 1 } } }
+  ```
+- **Errors:** `bcc_unauthorized` (401)
+- **Mapping:** `MyBlocksEndpoint::list` (route `MyBlocksEndpoint.php:48`, READABLE entry) → `MyBlocksService::getMyBlocks` → `PeepSoBlockRepository`. FE `blocks-endpoints.ts:getMyBlocks`.
+
+#### `POST /bcc/v1/me/blocks`
+
+Block a target user. Idempotent — re-blocking returns `state: "existing"`.
+
+- **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized 401`.
+- **Body (JSON):** `user_id` (**required**, int ≥ 1, `absint`)
+- **Response 200:** `{ "data": { "ok": true, "user_id": 412, "state": "created" } }` — `state` ∈ `created | existing`.
+- **Errors:** `bcc_unauthorized` (401) · `bcc_rate_limited` (429, > 20 creates/60s, checked before target resolution) · `bcc_invalid_request` (400, `user_id` ≤ 0 or self-block) · `bcc_not_found` (404, target missing) · `bcc_unavailable` (503, insert failed)
+- **Audit:** `user_blocked` fires only on the `created` transition.
+- **Rate limit:** 20/60s/viewer
+- **Mapping:** `MyBlocksEndpoint::create` (route `MyBlocksEndpoint.php:48`, CREATABLE entry) → `PeepSoBlockWriter::block` (fires `peepso_user_blocked` + `bcc_user_blocked` on create). FE `blocks-endpoints.ts:blockUser`.
+
+#### `DELETE /bcc/v1/me/blocks/:user_id`
+
+Unblock a target user. Idempotent — `removed: false` when nothing was blocked.
+
+- **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized 401`.
+- **Path:** `user_id` (**required**, int ≥ 1, `\d+` / `absint`)
+- **Response 200:** `{ "data": { "ok": true, "user_id": 412, "removed": true } }`
+- **Errors:** `bcc_unauthorized` (401) · `bcc_rate_limited` (429, > 20 unblocks/60s) · `bcc_invalid_request` (400, `user_id` ≤ 0)
+- **Audit:** `user_unblocked` fires only when a row was actually deleted.
+- **Rate limit:** 20/60s/viewer
+- **Mapping:** `MyBlocksEndpoint::remove` (route `MyBlocksEndpoint.php:90`, DELETABLE) → `PeepSoBlockWriter::unblock`. FE `blocks-endpoints.ts:unblockUser`.
+
+### 4.27 Highlights, badges, reports, messaging prefs & onboarding
+
+Per-viewer "me" surfaces backing the feed highlight strip, the coalesced badge poll, content reporting, DM-gating preferences, and the post-signup onboarding wizard. Every endpoint here is **Bearer-required** with auth checked **inside the handler** (`permission_callback` is `__return_true`), so anonymous calls get the canonical `{ "error": {...} }` envelope (§1.4). Success bodies are wrapped in `{ "data": ... }` by `ApiResponse::ok`.
+
+#### `GET /bcc/v1/me/highlights`
+
+The feed highlight strip — "what to care about RIGHT NOW" (§O2 / §O2.1). Read-side of the §3.4 `HighlightStrip` view-model.
+
+- **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401. The frontend hides the HighlightStrip for unauthenticated viewers.
+- **Response 200:**
+  ```json
+  { "data": { "items": [ { "id": "h-positive-reviews_today-2026-06-10-412", "slot": "positive", "category": "reviews_today", "title": "You wrote a review today.", "body": "It's on the record.", "cta": { "label": "View profile", "href": "/u/ramona" }, "actions": { "dismiss": { "method": "POST", "href": "/wp-json/bcc/v1/me/highlights/<id>/dismiss", "idempotent": true, "requires_auth": true } } } ] } }
+  ```
+  - `items` — 0–3 entries in strict §O2.1 slot order (negative → positive → external); empty slots collapse.
+  - `slot` — string ∈ `negative | positive | external`. `category` — per-slot signal key. `title`/`body` are server-rendered §A2 strings. `cta` — `{ label, href }`.
+- **V1.0/V1.5 reality:** POSITIVE + EXTERNAL slot scorers are live; NEGATIVE is a production stub (returns `null`). `BCC_HIGHLIGHTS_DEMO` (never defined in prod) returns contract-shaped placeholders.
+- **Errors:** `bcc_unauthorized` 401
+- **Cache:** `Cache-Control: private, no-store`
+- **Mapping:** `HighlightsEndpoint::list` (route `HighlightsEndpoint.php:46`) → `HighlightsService::getHighlights`; dismissed ids filtered via `wp_usermeta.bcc_highlights_dismissed_until`. **Drift vs §3.4:** the live shape is `data.items[]` (not `data.highlights[]`), `slot` is a string (not int), and `severity`/`source_event_id`/`score`/`dismissable`/`dismiss_kind` from the §3.4 sample are not emitted. Treat the live shape as authoritative; §3.4 documents the intended fuller view-model.
+
+#### `POST /bcc/v1/me/highlights/:id/dismiss`
+
+Dismiss a single highlight. Idempotent — re-dismissing extends the per-slot TTL.
+
+- **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
+- **Path:** `id` — route-constrained to `[A-Za-z0-9_-]{1,128}`; the service extracts the slot from the `h-{slot}-…` prefix.
+- **Response 200:** `{ "data": { "status": "dismissed", "id": "...", "expires_at": "2026-06-11T00:00:00Z" } }` — TTL by slot: negative 30 days, positive/external 24h.
+- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (empty/over-length id, or unresolvable slot prefix)
+- **Cache:** `Cache-Control: no-store`
+- **Mapping:** `HighlightsEndpoint::dismiss` (route `HighlightsEndpoint.php:56`) → `HighlightsService::dismiss`.
+
+#### `GET /bcc/v1/me/badges`
+
+Coalesced per-viewer badge payload. Replaces three previously-uncached polling endpoints (messages-unread, notifications-unread, per-conversation poll) with one cached read driving `useBadges`.
+
+- **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
+- **Query:** `open_threads` (optional) — comma-separated conversation root ids; non-numeric tokens dropped; capped at **5**. Threads the viewer isn't a participant of are silently absent.
+- **Response 200:**
+  ```json
+  { "data": { "messages_unread": 3, "notifications_unread": 1, "open_thread_hints": { "12": { "latest_message_id": 9981, "posted_at": "2026-06-10T14:03:11Z" } }, "polled_at": "2026-06-10T14:05:00Z" } }
+  ```
+  `open_thread_hints` lets an open conversation refetch only when `latest_message_id` advances. `polled_at` refreshes even on a cache hit (counts may be up to 15s older than `polled_at`).
+- **Errors:** `bcc_unauthorized` 401
+- **Cache:** `Cache-Control: private, max-age=10`. Server-side: 15s payload cache via the §5 generation-counter pattern (group `bcc_badges`), bumped on bell-row create, mark-read, DM send, DM view.
+- **Mapping:** `MeBadgesEndpoint::get` (route `MeBadgesEndpoint.php:50`) → `BadgesService::getBadges` (← `MessagesService` + `NotificationRepository` + `PeepSoMessageRepository`). Relates to §4.19.
+
+#### `POST /bcc/v1/me/reports`
+
+File a content report against a feed item (§K1 Phase B). Idempotent per (reporter, target).
+
+- **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
+- **Body (JSON):** `target_kind` (**required**, V1 only `feed_item`) · `target_id` (**required**, int ≥ 1, the `act_id`) · `reason_code` (**required**, ∈ `spam|harassment|hate|violence|misinformation|other`) · `comment` (optional, ≤ 500 chars; **required when `reason_code = other`**)
+- **Response 200:** `{ "data": { "ok": true, "report_id": 5512, "status": "created" } }` — `status` ∈ `created | existing` (UNIQUE `(reporter, target_kind, target_id)` blocks a second row; `existing` returns `report_id: 0`).
+- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (bad kind/id/reason, comment > 500, missing comment for `other`, or self-report) · `bcc_rate_limited` 429 (FLAG limits, 5 / 5 min / reporter) · `bcc_unavailable` 503
+- **Mapping:** `MyReportsEndpoint::create` (route `MyReportsEndpoint.php:38`) → `ContentReportService::fileReport`; fires `do_action('bcc_content_reported', …)` for async Phase C subscribers.
+
+#### `POST /bcc/v1/report-user`
+
+Report another **member** (distinct from `POST /me/reports`, which reports a `feed_item`). Member-report → wp-admin "User Reports" moderation tab → admin "penalize" applies a trust-score deduction (`bcc.trust.admin_report_penalty`). This is the BCC trust-engine member-report path; it is independent of PeepSo's native flag-only profile report. Registered in `DisputeController` (`bcc/v1` namespace). **Implemented + admin-wired; the headless frontend does not yet surface a "report member" button — V1.5 frontend work.**
+
+- **Auth:** Bearer **required** (`is_user_logged_in() && Permissions::is_not_suspended(null, false)`).
+- **Body (JSON):** `reported_user_id` (**required**, int ≥ 1) · `reason_key` (**required**) ∈ `spam|harassment|fraud|misinformation|inappropriate|impersonation|other` (`sanitize_key`) · `reason_detail` (optional, string, ≤ 1000, `sanitize_textarea_field`, default `""`; **required ≥ `BCC_DISPUTES_MIN_DETAIL_LENGTH` chars when `reason_key = other`**)
+- **Response 200:** `{ "data": { "message": "Your report has been submitted. Our team will review it shortly." }, "_meta": {...} }`
+- **Errors (bare codes, not `bcc_`-prefixed — consistent with the other `DisputeController` routes):** `rate_limited` 429 (60s submit throttle) · `cannot_self_report` 400 · `user_not_found` 404 · `detail_required` 400 (`other` with too-short detail) · `report_limit_reached` 429 (reporter ≥ 5/day) · `already_reported` 409 (active report already exists reporter→reported) · `target_report_limit` 429 (target already has ≥ 10 active reports — anti-brigading) · `db_error` 500
+- **Rate limit:** 1 / 60s / reporter, plus the 5/day reporter cap and the 10-active-against-target ceiling above.
+- **Side effects:** inserts a `bcc_user_reports` row (`DisputeRepository::createReport`); enqueues two async emails (`bcc_disputes_email_reported_user`, `bcc_disputes_email_admin_report`) — enqueue failures are isolated so the 200 still returns and the row remains for a later retry; `CoreLogger::audit('user_reported', …)`.
+- **Cache:** `no-store`.
+- **Mapping:** `DisputeController::report_user` (route `DisputeController.php:82`) → `DisputeRepository::createReport` (+ guards `hasActiveReport` / `countRecentReportsByReporter` / `countActiveReportsAgainst`). Admin adjudication: wp-admin "User Reports" tab (`DisputeAdmin` + `ReportListTable`) → `updateReportStatus` + `bcc.trust.admin_report_penalty`.
+
+#### `GET /bcc/v1/me/messages-prefs`
+
+Read the viewer's DM-gating preferences (PeepSo-backed). Relates to §4.19. Self-only.
+
+- **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
+- **Response 200:** `{ "data": { "chat_enabled": true, "chat_friends_only": false } }` — `chat_enabled` defaults **true**, `chat_friends_only` defaults **false** when no meta row exists.
+- **Errors:** `bcc_unauthorized` 401
+- **Cache:** `Cache-Control: no-store`
+- **Mapping:** `MyMessagesPrefsEndpoint::get` (route `MyMessagesPrefsEndpoint.php:66`, READABLE) → reads `peepso_chat_enabled` + `peepso_chat_friends_only`. FE `messages-prefs-endpoints.ts`.
+
+#### `PATCH /bcc/v1/me/messages-prefs`
+
+Partial update of the viewer's DM-gating preferences. Registered as `WP_REST_Server::EDITABLE` (also POST/PUT). Omitted keys untouched.
+
+- **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
+- **Body (JSON, every field optional):** `chat_enabled` (bool) · `chat_friends_only` (bool) — coerced via `FILTER_VALIDATE_BOOLEAN`, stored as `"1"`/`"0"`.
+- **Response 200:** same shape as the GET (full re-read after write).
+- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 422 (no recognized field)
+- **Cache:** `Cache-Control: no-store`
+- **Mapping:** `MyMessagesPrefsEndpoint::patch` (route `MyMessagesPrefsEndpoint.php:76`, EDITABLE) → `update_user_meta` on the two PeepSo keys, then re-read.
+
+#### `GET /bcc/v1/onboarding/suggestions`
+
+Admin-curated first-pull follow candidates for the post-signup wizard (§B4). **Auth-gated despite the public-looking path.**
+
+- **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
+- **Response 200:** three named buckets, each a list of polymorphic §L5/§3.2 Card view-models:
+  ```json
+  { "data": { "validators": [ { "card_kind": "validator", "...": "..." } ], "projects": [ { "card_kind": "project", "...": "..." } ], "creators": [ { "card_kind": "creator", "...": "..." } ] } }
+  ```
+  Each bucket holds up to **4** cards; buckets present even when empty. Bucket→type→kind map locked in `OnboardingEndpoint::BUCKETS`.
+- **Errors:** `bcc_unauthorized` 401
+- **Cache:** `Cache-Control: private, max-age=60`
+- **Mapping:** `OnboardingEndpoint::suggestions` (route `OnboardingEndpoint.php:119`) → `PageDiscoveryService::query` (§F1 ranker) re-hydrated through `CardViewService::getCard`. FE `onboarding-endpoints.ts`.
+
+#### `POST /bcc/v1/me/onboarding/complete`
+
+Flip the onboarding-completion flag (and optionally persist the wizard's home-chain pick).
+
+- **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
+- **Body (JSON):** `home_chain` (optional) — lowercased + trimmed, allowlist-checked against `cosmos|osmosis|injective|ethereum|solana|polkadot|thorchain|near`; null/empty = skipped; stored to `bcc_home_chain`.
+- **Response 200:** `{ "data": { "completed": true, "home_chain": "ethereum", "rank_label": "Apprentice" } }` — `home_chain` null when none supplied; `rank_label` is the current auto-derived §A2 label (`""` for unknown).
+- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 422 (`home_chain` not in allowlist)
+- **Cache:** `Cache-Control: no-store`
+- **Mapping:** `OnboardingEndpoint::completeOnboarding` (route `OnboardingEndpoint.php:129`); sets `bcc_onboarding_completed = '1'`, audit-logs `onboarding_completed` on first completion, fires `do_action('bcc_onboarding_completed', …)`.
+
+#### `GET /bcc/v1/me/onboarding/status`
+
+Fresh read of the onboarding flag — drives the `/onboarding` gate to skip the wizard for already-onboarded users.
+
+- **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
+- **Response 200:** `{ "data": { "onboarded": true } }` (`bcc_onboarding_completed === '1'`).
+- **Errors:** `bcc_unauthorized` 401
+- **Cache:** `Cache-Control: no-store`
+- **Mapping:** `OnboardingEndpoint::onboardingStatus` (route `OnboardingEndpoint.php:146`); direct `get_user_meta`.
+
+#### `PATCH /bcc/v1/me/handle`
+
+Change the viewer's public handle (§B6). 7-day cooldown. Registered as `WP_REST_Server::EDITABLE` (also POST/PUT).
+
+- **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
+- **Body (JSON):** `handle` (**required**) — lowercased + trimmed; §B6 rules (3–20 chars, `a-z`/digits/`-`, no leading/trailing/consecutive hyphens, not reserved).
+- **Response 200:** `{ "data": { "handle": "ramona-v", "next_change_at": "2026-06-17T14:05:00Z" } }` — `next_change_at` is now + 7 days, **null on a no-op rename** (submitting the existing handle short-circuits without arming the cooldown).
+- **Errors (checked in this order):** `bcc_unauthorized` 401 · `bcc_rate_limited` 429 (within the 7-day cooldown; checked FIRST so a locked-out user can't probe availability; carries `Retry-After`) · `bcc_invalid_handle` 422 · `bcc_handle_reserved` 422 · `bcc_conflict` 409 (taken)
+- **Rate limit:** one successful change per 7 days (`HandleService::COOLDOWN_SECONDS = 604800`)
+- **Cache:** `Cache-Control: no-store`
+- **Mapping:** `OnboardingEndpoint::updateHandle` (route `OnboardingEndpoint.php:102`, EDITABLE) → `HandleService`; on a real rename writes `bcc_handle` + `bcc_handle_last_changed`, audit-logs `handle_changed`, fires `do_action('bcc_handle_changed', …)`.
+
+#### `DELETE /bcc/v1/me/reviews/:id`
+
+Remove the viewer's own review on a page.
+
+- **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
+- **Path:** `id` — the target **page id** (`\d+`, `absint`); this is the page whose review by the viewer is removed, not a review-row id.
+- **Response 200:** `{ "data": { "ok": true, "page_id": 4471 } }`
+- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (`page_id` ≤ 0) · `bcc_unavailable` 503 (vote-removal failure)
+- **Cache:** `Cache-Control: no-store`
+- **Mapping:** `PostsEndpoint::removeReview` (route `PostsEndpoint.php:58`) → `PostsService::removeReview` → `VoteService::removePageVote` (a review is the viewer's page vote).
+
+### 4.28 Posts, reactions, blog composer & cold-start feed
+
+The umbrella composer-create endpoint plus the reaction writer, the §D6 crypto-blog read/edit/picker surfaces, and the home-feed cold-start bridge. All in the `bcc/v1` namespace, standard §1.4 envelope. Read surfaces return §3.3 `FeedItem`s; the reaction shape is §2.11 `ReactionState`. Photo (§4.14) and GIF (§4.15) posts are separate routes; comments are §4.13.
+
+#### `POST /bcc/v1/posts`
+
+Create a post. The `kind` discriminator routes to one of three writers (`status` / `review` / `blog`). Auth checked in-handler (anonymous → `bcc_unauthorized 401`).
+
+- **Auth:** required. Anonymous → `bcc_unauthorized 401`.
+- **Content-Type:** `application/json`.
+- **Body (common):** `kind` (string, optional, default `status`) ∈ `status|review|blog` (`sanitize_key`) · `content` (string, **required**) — kind-dependent (PeepSo's `add_post` owns escaping; not `wp_kses`'d at the REST layer).
+- **Body (`kind=status`):** `group_id` (int, optional, > 0 — §4.7.6 group-scope; viewer must be an active member, validated before throttle) · `visibility` (string, optional, default `members_only`) ∈ `members_only|public_group|public_all` (only meaningful when `group_id > 0`; unrecognized clamps to `members_only`; stored `_bcc_post_visibility`) · content 1–500 chars.
+- **Body (`kind=review`):** `target_page_id` (int, **required**, > 0; `group_id` ignored) · `grade` (string, **required**) ∈ `trust|neutral|caution` (→ vote_type +1/0/−1) · content 1–4000 chars.
+- **Body (`kind=blog`, §D6):** `content` (**required**, full_text, 1–60000) · `excerpt` (**required**, 80–500) · `title` (optional, ≤ 120) · `category` (optional) ∈ `news|analysis|guide|opinion|tools|events` · `tags` (string[], ≤ 5; lowercase `[a-z0-9-]`, ≤ 24 each, deduped) · `chain_tags` (string[], ≤ 3 — chain **slugs** over the wire, resolved via `ChainRepository::getBySlug`) · `disclosure` ({tickers ≤ 20 uppercase `[A-Z0-9]` ≤ 12 each, note ≤ 500} | null — empty struct rejected, send `null`) · `sources` (string[], ≤ 20, ≤ 280 each, deduped) · `cover_image_id` (int, > 0 — from `POST /blog/cover-image`, must be an `attachment` owned by the author) · `status` (optional, default `publish`) ∈ `draft|publish` (a draft fires no `bcc_blog_post_created`, gets no activity row, reachable only via `GET /posts/:id`). `group_id` is **rejected** for `kind=blog` (V1 blogs land on the author's own wall).
+- **Rate limit:** burst seatbelt — 5 / 120s / author, keyed separately for status / blog. Reviews additionally pass through `VoteService`'s fraud/rate/coordination pipeline.
+- **Response 200 (`kind=status`):** `{ "ok": true, "feed_id": "feed_2210184", "post_id": 4012, "act_id": 2210184 }`
+- **Response 200 (`kind=review`):** `{ "ok": true, "feed_id": null, "vote_id": 9001, "page_id": 55, "grade": "trust" }` — `feed_id` is `null` (the activity row is written async by `ActivityStreamWriter` on `bcc_review_published`).
+- **Response 200 (`kind=blog`):** `{ "ok": true, "post_id": 4012, "excerpt_length": 142, "full_text_length": 5300, "status": "publish" }`
+- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (unsupported kind; missing/over-length content/excerpt/title/tag/source; under-length excerpt; review missing/zero `target_page_id`; invalid grade; unknown category/chain_tag; malformed tags/disclosure; cover not found/owned; invalid status; `kind=blog` with `group_id`) · `bcc_invalid_mention_target` 400 (§3.3.12 `MentionPolicy`; echoes `{user_id}`) · `bcc_too_many_mentions` 400 (`{max: 10}`) · `bcc_forbidden` 403 (review eligibility / PeepSo `PERM_POST`) · `bcc_permission_denied` 403 (group-scoped status, non-member) · `bcc_not_found` 404 (group missing/secret) · `bcc_rate_limited` 429 · `bcc_unavailable` 503
+- **Side effects:** `bcc_post_created` / `bcc_review_published` / `bcc_blog_post_created` (publish only) on the §A3 bus; subscribers run async via Action Scheduler.
+- **Cache:** `no-store`.
+- **Mapping:** `PostsEndpoint::create` (route `PostsEndpoint.php:75`) → `PostsService::createStatus` / `createReview` / `createBlog`.
+
+#### `GET /bcc/v1/posts/:id`
+
+Owner-only blog edit-read for the §D6 composer's `?edit=<id>` cold-load. Returns the flat blog-edit view-model (NOT a `FeedItem`). The author's own **drafts** are returned (the only way to hydrate a draft for editing).
+
+- **Auth:** `current_user_can('read')` at the route; the service enforces `post_author === viewer`.
+- **Path:** `id` (int, the wp_post id).
+- **Response 200:**
+  ```json
+  { "excerpt": "…", "full_text": "…", "wp_post_id": 4012, "title": "…", "category": "analysis", "tags": ["staking"], "chain_tags": [{ "id": 3, "slug": "cosmos", "name": "Cosmos", "color": "#2E3148", "icon_url": "https://…" }], "disclosure": { "tickers": ["ATOM"], "note": "…" }, "cover_image_url": "https://…", "cover_image_id": 5120, "sources": ["https://… — staking paper"], "status": "draft" }
+  ```
+  Every field always present; unset fields resolve to `""`/`null`/`[]`. `cover_image_url` is the `large` thumbnail.
+- **Errors:** `bcc_unauthorized` 401 · `bcc_forbidden` 403 (not the author) · `bcc_not_found` 404 (missing / wrong type / not a blog)
+- **Cache:** `no-store`.
+- **Mapping:** `PostsEndpoint::getBlogForEdit` (route `PostsEndpoint.php:265`) → `BlogService::getBlogForEdit`. FE `blog-endpoints.ts:getBlogPost`.
+
+#### `PATCH /bcc/v1/posts/:id`
+
+Owner blog **partial update** (§D6 PR-B). Registered as `WP_REST_Server::EDITABLE` (also accepts POST/PUT); FE uses PATCH. Every body field optional; **null/omitted = unchanged**.
+
+- **Auth:** `current_user_can('read')` at the route; service enforces `post_author === viewer`.
+- **Content-Type:** `application/json`. **Path:** `id` (int).
+- **Body (all optional):** `title`, `excerpt`, `content`, `category`, `tags`, `chain_tags`, `disclosure`, `sources`, `cover_image_id`, `status` — same per-field validation/caps as `POST /posts kind=blog`. Three-state tunnels: `tags`/`chain_tags`/`sources` omitted=unchanged, `[]`=clear, non-empty=replace; `disclosure` omitted=unchanged (internal `__noop__` sentinel), `null`=clear, object=replace; `cover_image_id` omitted=unchanged, `0`=un-pin, positive=replace; `title` omitted=unchanged, `""`=clear; `category` empty="no change"; `status` drives `transition_post_status` → `BlogStatusTransitionHandler` (draft→publish fires `bcc_blog_post_created`; publish→draft removes the activity row); `wp_save_post_revision` runs before mutation.
+- **Response 200:** `{ "ok": true, "post_id": 4012, "status": "publish" }` (`status` reflects the post-update state).
+- **Errors:** `bcc_unauthorized` 401 · `bcc_forbidden` 403 · `bcc_not_found` 404 · `bcc_invalid_request` 400 (any field validation failure; echoes `{max}`/`{category}`/`{chain_id}`) · `bcc_unavailable` 503
+- **Cache:** `no-store`.
+- **Mapping:** `PostsEndpoint::updateBlog` (route `PostsEndpoint.php:298`, EDITABLE) → `PostsService::updateBlog`. FE `blog-endpoints.ts:updateBlog` (PATCH).
+
+#### `POST /bcc/v1/reactions`
+
+Set / replace the viewer's reaction on a feed item. Idempotent on same-kind set; swap on different-kind. Returns the §2.11 `ReactionState` block so the response patches the feed cache directly.
+
+- **Auth:** required (in-handler). Anonymous → `bcc_unauthorized 401`.
+- **Body (JSON):** `feed_id` (string, **required**) — the opaque `feed_<act_id>` string the feed emitted (clients round-trip it; bad prefix/tail → `bcc_invalid_request`) · `reaction` (string, **required**) — a kind from `ReactionGrammarMap::allKnownKinds()` (trust: `solid|vouch|stand_behind`; social: `like|love|haha|wow|fire`). The kind MUST belong to the **post's** grammar (cross-grammar is rejected).
+- **Rate limit:** 60/min/user (key `react`).
+- **Response 200 (§2.11 `ReactionState`):** `{ "kind_grammar": "trust", "counts": { "solid": 14, "vouch": 3, "stand_behind": 1 }, "viewer_reaction": "solid" }` — `counts` zero-filled for the post's grammar; `viewer_reaction` kind or `null`.
+- **Errors:** `bcc_unauthorized` 401 · `bcc_rate_limited` 429 · `bcc_invalid_request` 400 (bad `feed_id`; cross-grammar) · `bcc_permission_denied` 403 (group-scoped post, non-member — read but not react) · `bcc_unavailable` 503 (reaction types not seeded) · `bcc_internal_error` 500 (writer failed)
+- **Side effects:** `bcc_reaction_added` on the §A3 bus.
+- **Cache:** `no-store`.
+- **Mapping:** `ReactionsEndpoint::setReaction` (route `ReactionsEndpoint.php:78`) → bcc-core `PeepSoReactionWriter`. FE `reaction-endpoints.ts:setReaction`.
+
+#### `DELETE /bcc/v1/reactions/:feed_id`
+
+Remove the viewer's reaction. Idempotent — removing when nothing is set is a no-op returning the current §2.11 state.
+
+- **Auth:** required (in-handler). Anonymous → `bcc_unauthorized 401`.
+- **Path:** `feed_id` (string, `feed_<act_id>`; route pattern `[a-z0-9_]+`).
+- **Rate limit:** 60/min/user (shared `react` budget).
+- **Response 200:** §2.11 `ReactionState` for the post's grammar (`viewer_reaction` typically `null`).
+- **Errors:** same as `POST /reactions` minus cross-grammar — `bcc_unauthorized` 401 · `bcc_rate_limited` 429 · `bcc_invalid_request` 400 · `bcc_permission_denied` 403 · `bcc_internal_error` 500
+- **Side effects:** `bcc_reaction_removed` on the §A3 bus.
+- **Cache:** `no-store`.
+- **Mapping:** `ReactionsEndpoint::removeReaction` (route `ReactionsEndpoint.php:105`). FE `reaction-endpoints.ts:removeReaction`.
+
+#### `GET /bcc/v1/blog/chain-options`
+
+Public picker source for the §D6 composer's chain-tag multi-select. Returns active `bcc_onchain_chains` rows with only display fields (chain internals omitted).
+
+- **Auth:** anonymous-readable (so the composer can prefetch without `/me`).
+- **Response 200:** `{ "items": [ { "id": 3, "slug": "cosmos", "name": "Cosmos", "color": "#2E3148", "icon_url": "https://…" } ] }` (`color`/`icon_url` null when unset).
+- **Cache:** `Cache-Control: public, max-age=3600` (object-cache + 5-min transient via `ChainRepository::getActive()`).
+- **Mapping:** `BlogChainOptionsEndpoint::list` (route `BlogChainOptionsEndpoint.php:55`). FE `blog-endpoints.ts:getBlogChainOptions`.
+
+#### `POST /bcc/v1/blog/cover-image`
+
+Multipart blog cover-image upload (§D6 PR-B). Wraps `wp_handle_upload` + `wp_insert_attachment` with `post_author = uploader` (so the later cover-ownership check passes). No activity row emitted.
+
+- **Auth:** required (in-handler — anonymous → `bcc_unauthorized 401`).
+- **Content-Type:** `multipart/form-data`.
+- **Form fields:** `cover_image` (file, **required**) — allowed MIME `image/jpeg|png|webp|gif`; hard cap **8 MiB**; MIME sniffed from contents (browser Content-Type not trusted); multi-file rejected.
+- **Rate limit:** burst seatbelt 5 / 60s / author (before disk write).
+- **Response 200:** `{ "ok": true, "attachment_id": 5120, "url": "https://…/cover.webp", "width": 1600, "height": 900 }` (`attachment_id` → `cover_image_id` on blog create/update).
+- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (missing field; multi-file; PHP upload error; empty; oversized `{max_bytes: 8388608}`; disallowed `{mime}`) · `bcc_rate_limited` 429 · `bcc_unavailable` 503
+- **Cache:** `no-store`.
+- **Mapping:** `BlogCoverImageEndpoint::upload` (route `BlogCoverImageEndpoint.php:55`) → `BlogCoverImageWriter::upload`. FE `blog-endpoints.ts:uploadBlogCoverImage`.
+
+#### `GET /bcc/v1/feed/cold-start`
+
+Public cold-start three-block bridge for the home-feed empty state — a civic map, not a recommendation engine. Composes Locals + recent operators + hot posts. Bounded (3 locals, 4 operators, 2 hot posts); no pagination.
+
+- **Auth:** auth-permissive. Authed viewers get chain-aligned Locals (`bcc_home_chain`) + a per-(viewer, UTC-day) stable-random operator shuffle; anon viewers share the per-day seed.
+- **Response 200:**
+  ```json
+  { "locals": [ { "slug": "iron-local-342", "name": "Iron Local 342", "chain_slug": "cosmos", "member_count": 88 } ], "recent_operators": [ { "handle": "ramona", "display_name": "Ramona V.", "avatar_url": "https://…", "card_tier": "rare", "tier_label": "Rare", "rank_label": "Journeyman", "recent_action": "REVIEWED a card", "link": "/u/ramona" } ], "hot_posts": [ /* §3.3 FeedItem[] */ ] }
+  ```
+  `recent_operators` are ordered by a stable daily shuffle (NOT ranked); `recent_action` uses a locked past-tense verb allowlist with a `Recently on the floor.` fallback. `card_tier`/`tier_label` may be `null`. `hot_posts` are `FeedRankingService::getHotFeed` items verbatim.
+- **Cache:** `Cache-Control: private, no-store` (per-viewer per-day stable-randomization).
+- **Mapping:** `FeedColdStartEndpoint::handle` (route `FeedColdStartEndpoint.php:45`) → `FeedColdStartService::getColdStart`; operator hydration reuses the `MemberSummaryPrefetcher` bundle. FE `cold-start-endpoints.ts:getColdStart`.
+
+### 4.29 Group & local detail, entity tabs, creator gallery
+
+Backfills the `####` endpoint headers the contract already cross-references (§4.7.5 group detail, §4.7.6 group feed, §4.7.7 group members) plus the entity-profile tab data planes and the now-shipped creator NFT gallery list. All in namespace `bcc/v1`, standard §1.4 envelope. Reads are auth-optional unless noted; the per-viewer fields they carry drive the cache posture.
+
+#### `GET /bcc/v1/groups/:slug` (§4.7.5)
+
+Cross-kind single-group detail view-model (`nft`/`local`/`system`/`user`). Powers `/communities/[slug]` header, membership pill, join/leave controls, and the `feed_visible` + `permissions.can_read_feed` gate consumed by `<GroupFeedSection>`.
+
+- **Auth:** Anonymous OR Bearer. Anonymous → public slice (`viewer_membership: null`); authed → `viewer_membership` + viewer-resolved `permissions`.
+- **Path:** `slug` — `[a-z0-9][a-z0-9-]{0,99}`, required.
+- **Response 200:**
+  ```json
+  { "id": 4231, "slug": "holders-bored-apes", "name": "Holders: Bored Apes", "type": "nft", "privacy": "closed", "description": "…", "image_url": "https://…", "member_count": 87, "verification": { "kind": "on_chain", "label": "On-Chain Verified" }, "activity": { "posts_last_7d": 14, "last_activity_at": "2026-05-04T14:22:00Z", "heat": "warm", "heat_label": "Warm" }, "collection_stats": { "...": "§4.7.4 block, NFT-type only else null" }, "viewer_membership": { "is_member": true, "joined_at": "2026-01-12T00:00:00Z" }, "permissions": { "can_join": { "allowed": false, "unlock_hint": null, "reason_code": "already_member" }, "can_leave": { "allowed": true, "unlock_hint": null, "reason_code": null }, "can_read_feed": { "allowed": true, "unlock_hint": null, "reason_code": null } }, "feed_visible": true, "members_visible": true, "chain_tag": "ethereum", "trust_min": null, "links": { "self": "/groups/holders-bored-apes" } }
+  ```
+  - `type` ∈ `nft|local|system|user`; `privacy` ∈ `open|closed|secret`. `verification`/`image_url`/`collection_stats` are NFT-type only (else `null`). `activity` is the §4.7.1 heat tile (defaults `posts_last_7d: 0, heat: "cold", heat_label: "Quiet"`). `viewer_membership`: `null` (anon), `{is_member: false, joined_at: null}` (authed non-member), `{is_member: true, joined_at}` (member). `permissions.*` each `{allowed, unlock_hint, reason_code}` (render `unlock_hint` verbatim per §A2/§N7); `can_join.reason_code` ∈ `auth_required|already_member|not_eligible|trust_threshold|requires_approval|invite_only`; `can_leave.reason_code` ∈ `auth_required|not_member|owner_cannot_leave`; `can_read_feed.allowed` always `true` for a built view-model (per-post visibility teaser, v1.24 — secret-non-member never gets a view-model). `feed_visible` mirrors `can_read_feed.allowed`. `members_visible` true for open groups, else only for active members. `chain_tag` slug or `null`. `trust_min` ∈ `25|50|75|null`.
+- **Errors:** `bcc_invalid_request` 400 (empty slug) · `bcc_not_found` 404 (unresolved, OR secret + viewer not a member — §S, indistinguishable from missing)
+- **Cache:** anon → `public, max-age=60`; authed → `private, no-store`.
+- **Mapping:** `GroupsDetailEndpoint::show` (route `GroupsDetailEndpoint.php:52`) → `GroupsService::getGroup` (→ `PeepSoGroupRepository::findGroupBySlug` → `GroupContextResolver` → secret-gate → `GroupActivityHeatService` → `findUserMemberships` → NFT enrichment → `buildPermissions` → `ChainRepository::resolveSlugsForGroups`).
+
+#### `GET /bcc/v1/groups/:id/feed` (§4.7.6)
+
+Group-scoped, cursor-paginated activity stream. Membership-gated in the handler; same single-brain composition as `/feed`.
+
+- **Auth:** Anonymous OR Bearer. Members get the **full** feed (incl. `members_only`); non-members of nft/closed/open (non-secret) groups and anonymous viewers get a **public-only teaser** (`public_group` + `public_all` only; absent-meta posts excluded), enforced by an SQL INNER JOIN.
+- **Path:** `id` (int, required — group id, not slug).
+- **Query:** `cursor` (optional, opaque per §1.5) · `limit` (optional, default 20, min 1, max 50)
+- **Response 200:** `CursorEnvelope<FeedItem>` — identical shape to `/feed`: `data = { items: FeedItem[] (§3.3), pagination: { next_cursor, has_more } }`.
+- **Errors:** `bcc_invalid_request` 400 (invalid/zero id) · `bcc_not_found` 404 (group missing OR secret + non-member). No 403 in v1.24 (non-members get the teaser rather than a refusal).
+- **Cache:** `private, no-store`; `Vary: Authorization, Cookie`.
+- **Mapping:** `GroupsDetailEndpoint::feed` (route `GroupsDetailEndpoint.php:69`) → `GroupsService::gateGroupFeed` → `FeedRankingService::getGroupFeed($viewerId, $groupId, $cursor, $limit, $publicOnly)`. FE `useGroupFeed`.
+
+#### `GET /bcc/v1/groups/:id/members` (§4.7.7)
+
+Paginated group roster. Offset-paginated (stable-ordered by role + joined_at).
+
+- **Auth:** Anonymous OR Bearer. `open` + anyone → roster; `closed`/`secret` + member → roster; `closed` + non-member → 403; `secret` + non-member → 404. NFT-gated rosters are gated to members.
+- **Path:** `id` (int, required). **Query:** `offset` (default 0, min 0) · `limit` (default 24, min 1, max 100)
+- **Response 200:**
+  ```json
+  { "items": [ { "...": "MemberSummary (§3.1)", "role": "owner", "role_label": "OWNER", "joined_at": "2026-01-12T00:00:00Z" } ], "pagination": { "offset": 0, "limit": 24, "total": 87, "has_more": true } }
+  ```
+  Each item is the shared `MemberSummary` (§3.1, via `UserViewService::getSummary` + `MemberSummaryPrefetcher`) merged with `role` ∈ `owner|moderator|member`, `role_label` (server-rendered §A2, filterable via `bcc_group_role_labels`), `joined_at` (ISO 8601 UTC or `null`). Rows for deleted users are skipped (so `items.length` can trail `total`).
+- **Errors:** `bcc_invalid_request` 400 · `bcc_not_found` 404 (missing or secret-non-member) · `bcc_permission_denied` 403 (closed/secret non-member)
+- **Cache:** anon (open) → `public, max-age=300`; authed → `private, no-store` + `Vary`; denials → `private, no-store`.
+- **Mapping:** `GroupMembersEndpoint::list` (route `GroupMembersEndpoint.php:58`) → `GroupMembersService::listMembers` (shares `GroupsService::resolveGroupAccess` with §4.7.5/§4.7.6).
+
+#### `POST /bcc/v1/me/groups` (§4.7.3 — create, V1.6)
+
+Create a plain (non-gated, non-Local) PeepSo group owned by the viewer. (Join/leave siblings are at §4.7.3.)
+
+- **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized 401`.
+- **Body (JSON):** `name` (**required**, 3–100 chars) · `description` (optional, ≤ 2000, `wp_kses_post`) · `privacy` (optional, default `open`) ∈ `open|closed|secret|trust` (→ PeepSo 0/1/2; `trust` = open + a BCC reputation gate at join) · `trust_min` (**required when `privacy=trust`**) ∈ `25|50|75` · `chain` (**required**) — chain-tag slug, immutable after creation, validated via `ChainRepository::getBySlug`.
+- **Response 201:** `{ "group_id": 5120, "slug": "evm-builders", "name": "EVM Builders", "privacy": "trust", "chain_tag": "ethereum", "trust_min": 50 }` (`trust_min` echoes the threshold for `privacy=trust`, else `null`).
+- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (name length, description > 2000, missing/unknown chain, `trust` without valid `trust_min`) · `bcc_rate_limited` 429 (5/hour/user) · `bcc_internal_error` 500
+- **Rate limit:** 5/hour/user (`group_create:{user_id}`)
+- **Cache:** `no-store`.
+- **Mapping:** `MyGroupsEndpoint::postCreate` (route `MyGroupsEndpoint.php:75`) → `PeepSoGroupWriter::createPlainGroup`; emits `group_create` audit. FE `my-groups-endpoints.ts:createPlainGroup`.
+
+#### `GET /bcc/v1/locals/:slug`
+
+Single Local detail (auth-optional). Same item shape as the `/locals` directory rows. The `/locals/[slug]` page also composes `GET /groups/:slug` + `GET /groups/:id/feed` (§4.7 composition note).
+
+- **Auth:** Anonymous OR Bearer.
+- **Path:** `slug` — `[a-z0-9][a-z0-9-]{0,99}`, required.
+- **Response 200:**
+  ```json
+  { "id": 342, "slug": "cosmos-base-fan", "name": "Local 342 Cosmos Base Fan", "number": 342, "chain": "cosmos", "member_count": 412, "viewer_membership": { "is_member": true, "is_primary": true, "joined_at": "2026-01-12T00:00:00Z" }, "links": { "self": "/locals/cosmos-base-fan" } }
+  ```
+  `number`/`chain` parsed from the title (§E3 `Local NNN`), `null` when absent. `viewer_membership` carries `is_primary` (Locals own the primary pointer; unlike §4.7.5).
+- **Errors:** `bcc_invalid_request` 400 (empty slug) · `bcc_not_found` 404
+- **Cache:** anon → `public, max-age=300`; authed → `private, no-store`.
+- **Mapping:** `LocalsEndpoint::showBySlug` (route `LocalsEndpoint.php:82`) → `LocalsService::getLocal` (`PeepSoGroupRepository::findOneBySlug` + `findUserMemberships` + `bcc_primary_local_group_id`).
+
+#### `GET /bcc/v1/entities/:target_kind/:target_id/reviews`
+
+Reviews-tab data plane for entity profiles — reviews filed **against** this entity (by `votes.page_id`). Page-paginated. Auth-optional (public trust signal).
+
+- **Auth:** Anonymous OR Bearer (identical row set).
+- **Path:** `target_kind` ∈ `validator_card|project_card|creator_card` (`user_profile` excluded — `/users/:handle/reviews` serves that) · `target_id` (int > 0, the page's `wp_post.ID`).
+- **Query:** `page` (default 1) · `per_page` (default 20, max 50)
+- **Response 200:**
+  ```json
+  { "items": [ { "id": 88, "grade": "A", "text": "Reliable validator.", "posted_at_label": "3 days ago", "author": { "...": "MemberSummary (§3.1)" } } ], "pagination": { "page": 1, "per_page": 20, "total": 12, "total_pages": 1 } }
+  ```
+  `grade` ∈ `A|B|C`. `author` is the full §3.1 `MemberSummary` (hydrated like `/members`; authorless rows skipped). An unknown `target_id` returns `total: 0` (no 404).
+- **Errors:** `bcc_invalid_request` 400 (bad `target_kind` or `target_id ≤ 0`)
+- **Cache:** anon → `public, max-age=30`; authed → `private, max-age=30` + `Vary`; invalid → `private, no-store`.
+- **Mapping:** `CardReviewsEndpoint::list` (route `CardReviewsEndpoint.php:65`) → `CardReviewsService::getReviews`. FE `card-tabs-endpoints.ts:getCardReviews`.
+
+#### `GET /bcc/v1/entities/:target_kind/:target_id/disputes`
+
+Disputes-tab data plane — **open** disputes (status=0) filed against this entity. Mirrors the reviews endpoint; resolved/dismissed disputes are hidden from the entity profile. Auth-optional (§D5 public evidence).
+
+- **Auth / Path / Query:** identical to the reviews endpoint above.
+- **Response 200:**
+  ```json
+  { "items": [ { "id": 19, "body": "Misrepresented commission rate.", "posted_at_label": "1 week ago", "flagger": { "...": "MemberSummary (§3.1)" } } ], "pagination": { "page": 1, "per_page": 20, "total": 2, "total_pages": 1 } }
+  ```
+  `body` is the dispute reason; `flagger` is the opener (§3.1 `MemberSummary`; ghost-signed rows skipped).
+- **Errors:** `bcc_invalid_request` 400
+- **Cache:** identical to reviews.
+- **Mapping:** `CardDisputesEndpoint::list` (route `CardDisputesEndpoint.php:52`) → `CardDisputesService::getDisputes`. FE `card-tabs-endpoints.ts:getCardDisputes`.
+
+#### `GET /bcc/v1/entities/:target_kind/:target_id/watchers`
+
+Watchers-tab data plane — people watching this entity. Offset-paginated to match `/users/:handle/followers`. "Watchers of card X" routes through the PeepSo follower graph: card → `wp_post` → `post_author` (owner) → owner's followers. Auth-optional (the owner's `watching_hidden` flag does NOT propagate to entity pages).
+
+- **Auth:** Anonymous OR Bearer.
+- **Path:** `target_kind` ∈ `validator_card|project_card|creator_card` · `target_id` (int > 0).
+- **Query:** `offset` (default 0) · `limit` (default 24, max 100)
+- **Response 200:** `{ items: Card[], pagination: { offset, limit, total, has_more } }`, each `Card` the **full member Card view-model (§3.2, with `member_dossier`)** (hydrated via `CardViewService::getMemberCardForList`). Unclaimed cards (no resolvable `post_author`) return an empty page.
+- **Errors:** `bcc_invalid_request` 400
+- **Cache:** anon → `public, max-age=30`; authed → `private, max-age=30` + `Vary`; invalid → `private, no-store`.
+- **Mapping:** `CardWatchersEndpoint::list` (route `CardWatchersEndpoint.php:46`) → `CardWatchersService::listWatchers`. FE `card-tabs-endpoints.ts:getCardWatchers`.
+
+#### `GET /bcc/v1/creators/:slug/gallery`
+
+Paginated NFT collection gallery for a creator page (`/c/[slug]`). **Supersedes the §8 "deferred" note** — this endpoint is fully wired in V1, registered, and consumed by `useCreatorGallery`. Stale-while-revalidate: reads the cached/paginated rows immediately and, if the visible page has any expired row (or the creator is never-indexed but has wallets), dispatches one rate-limited (5-min per-post transient) async refresh.
+
+- **Auth:** Anonymous OR Bearer (response currently viewer-agnostic).
+- **Path:** `slug` — `[A-Za-z0-9][A-Za-z0-9_-]{0,99}`, resolves to a `peepso-page` with `_bcc_page_type = nft` (numeric slug → ID lookup).
+- **Query:** `page` (default 1, **max 20** — over → 400) · `per_page` (default 12, max 50, over clamps) · `sort` ∈ `total_volume`(default)`|floor_price|unique_holders|total_supply|collection_name`
+- **Response 200:**
+  ```json
+  { "items": [ { "id": 88, "contract_address": "0xbc4c…f13d", "chain_slug": "ethereum", "chain_name": "Ethereum", "name": "Bored Apes", "image_url": "https://…", "total_supply": 10000, "floor_price_label": "12.34 ETH", "total_volume_label": "987.7K ETH volume", "unique_holders_label": "5,421 holders", "explorer_url": "https://etherscan.io/address/0xbc4c…f13d" } ], "pagination": { "page": 1, "per_page": 12, "total": 7, "total_pages": 1, "has_more": false }, "is_stale": false, "last_refreshed_at": "2026-06-09T18:02:11Z" }
+  ```
+  Per §A2, floor/volume/holders are **pre-formatted display strings** (render verbatim, no `Intl.NumberFormat` in TS); each `null` when missing/zero. `name` falls back to a truncated contract; `image_url`/`explorer_url`/`total_supply` nullable. `is_stale` true when the visible page has an expired row (refresh already dispatched). `last_refreshed_at` is the newest `fetched_at` across the page (`null` when empty). V1 fetcher coverage: ETH + Solana; other chains return empty arrays ("Coming soon").
+- **Errors:** `bcc_invalid_request` 400 (empty slug or `page > 20`) · `bcc_not_found` 404 (slug not an `nft` page)
+- **Cache:** `Cache-Control: public, max-age=30, stale-while-revalidate=60`.
+- **Mapping:** `CreatorGalleryEndpoint::handle` (route `CreatorGalleryEndpoint.php:80`) → `CollectionService::getForProject` → per-row `shapeRow` (§A2) → staleness sweep → `maybeDispatchRefresh`. FE `creator-gallery-endpoints.ts:getCreatorGallery`.
+
+### 4.30 Disputes (file / vote / panel) & received endorsements
+
+The §D5 vote-dispute panel-adjudication system (owner files a dispute against a downvote → a peer panel votes accept/reject → the verdict resolves async), plus the endorsement read direction. Dispute endpoints live in `DisputeController`; the endorsement reads live in `UserEndorsementsEndpoint`.
+
+> **Envelope note (load-bearing asymmetry — do not "fix"):** dispute endpoints emit the canonical `{ data, _meta }` envelope via `ApiResponse::ok`/`error`. The two `/endorsements/mine*` reads return **unenveloped, top-level JSON** via raw `rest_ensure_response([...])` (they predate the helper; shape matches the §4.22 public read), and their error bodies are non-standard bare `{message}`. Documented reality, not the §1.4 target. The admin-only `POST /disputes/:id/resolve` (force-resolve) and `GET /disputes/health` are **internal** and intentionally undocumented (allowlisted).
+
+#### `POST /bcc/v1/disputes`
+
+File a dispute against a single downvote on a page the caller owns. The server atomically selects `BCC_DISPUTES_PANEL_SIZE` qualified panelists (§D5 affinity overlay + outsider quota) and queues per-panelist notifications.
+
+- **Auth:** Bearer **required** (`is_user_logged_in() && Permissions::is_not_suspended`). Page-ownership enforced in-handler.
+- **Body:** `vote_id` (**required**, int ≥ 1) · `reason` (**required**, `sandbox`d via `sanitize_textarea_field`; `BCC_DISPUTES_MIN_REASON_LENGTH`–`MAX_REASON_LENGTH` non-whitespace chars) · `evidence_url` (optional, ≤ 2083, `esc_url_raw`)
+- **Response 200:** `{ "data": { "dispute_id": 41, "panelists": 5, "message": "Dispute submitted. 5 panelists have been notified." }, "_meta": {...} }`
+- **Errors (bare codes, NOT `bcc_`-prefixed):** `dispute_subsystem_unhealthy` 503 (UNIQUE constraint missing) · `rate_limited` 429 · `vote_not_found` 404 · `not_page_owner` 403 · `cannot_self_dispute` 400 · `upvote_not_disputable` 400 · `already_disputed` 409 · `insufficient_panelists` 503 · `dispute_limit_reached` 429 · `reporter_limit_reached` 429 · `vote_no_longer_active` 410 · `db_transient` 503 · `db_error` 500
+- **Rate limit:** 1 / 60s / user (`Throttle::allow('dispute_submit', 1, 60)`)
+- **Cache:** `no-store`.
+- **Mapping:** `DisputeController::open` (route `DisputeController.php:37`) → ownership `Permissions::owns_page`, vote context `TrustReadService::getVoteById`, `selectPanelists` → `rankPanelistsByAffinity`, atomic `DisputeRepository::createDisputeWithPanel`, async `DisputeNotificationService::enqueueAsync`. FE `disputes-endpoints.ts:openDispute`.
+
+#### `GET /bcc/v1/disputes/votes/:page_id`
+
+List the active votes on a page so the owner can pick which downvote to dispute. Offset-paginated via `X-WP-Total` / `X-WP-TotalPages` headers.
+
+- **Auth:** Bearer **required**. Visibility gated in-handler: page owner **or** `manage_options` only.
+- **Path:** `page_id` (int, `(?P<page_id>\d+)`). **Query:** `page` (default 1) · `per_page` (default 50, max 100)
+- **Response 200:** `data` is a flat array (paging in headers):
+  ```json
+  { "data": [ { "id": 9912, "voter_name": "Dale R.", "vote_type": "downvote", "weight": 1.25, "reason": "", "date": "2026-05-15 14:23:47", "already_disputed": false } ], "_meta": {...} }
+  ```
+  `vote_type` ∈ `upvote|downvote`; `weight` 2dp; `date` UTC datetime or `null`; `already_disputed` from `DisputeRepository::getDisputedVoteIds`.
+- **Errors:** `forbidden` 403 (not owner/admin) · `trust_service_unavailable` 503
+- **Cache:** `no-store`. **Headers:** `X-WP-Total`, `X-WP-TotalPages`.
+- **Mapping:** `DisputeController::getDisputableVotes` (route `DisputeController.php:50`) → `TrustReadService::countActiveVotesForPage` + `getActiveVotesForPage`. FE `disputes-endpoints.ts:getDisputableVotes`.
+
+#### `GET /bcc/v1/disputes/mine`
+
+The disputes the caller has filed (page-owner view). Offset-paginated via headers; optional `page_id` filter.
+
+- **Auth:** Bearer **required**.
+- **Query:** `page` (default 1) · `per_page` (default 20, max 100) · `page_id` (optional — caller must own that page or be admin, else 403; closes a probe vector)
+- **Response 200:** `data` is a flat array of the shared `formatDispute` shape:
+  ```json
+  { "data": [ { "id": 41, "vote_id": 9912, "page_id": 5521, "page_title": "Stakecito", "voter_name": "Dale R.", "reporter_name": "Owner", "reason": "…", "evidence_url": "", "status": "reviewing", "accepts": 1, "rejects": 0, "panel_size": 5, "my_decision": null, "created_at": "…", "resolved_at": null } ], "_meta": {...} }
+  ```
+  `status` ∈ `reviewing|accepted|rejected|dismissed|timeout_no_quorum`. `my_decision` is **always `null`** here (the reporter is never a panelist on their own dispute).
+- **Errors:** `forbidden` 403 (`page_id` for a page the caller doesn't own / isn't admin)
+- **Cache:** `no-store`. **Headers:** `X-WP-Total`, `X-WP-TotalPages`.
+- **Mapping:** `DisputeController::getMyDisputes` (route `DisputeController.php:57`) → `DisputeRepository::countByReporter` + `getByReporterPaginated`. FE `disputes-endpoints.ts:getMyDisputes`.
+
+#### `GET /bcc/v1/disputes/panel`
+
+The caller's panelist queue. Offset-paginated via headers. The **independent-deliberation privacy mask** is applied per row: for a panelist who hasn't finished, `reporter_name`/`accepts`/`rejects` are nulled and a terminal `status` is rewritten to `"closed"` so the tally can't be inferred.
+
+- **Auth:** Bearer **required**.
+- **Query:** `page` (default 1) · `per_page` (default 20, max 100)
+- **Response 200:** `data` is a flat array of the masked `formatDispute` shape; `my_decision` ∈ `accept|reject|null` is set on these rows. FE MUST NOT treat `0`/null `accepts` or empty `reporter_name` as ground truth.
+- **Errors:** none beyond auth.
+- **Cache:** `no-store`. **Headers:** `X-WP-Total`, `X-WP-TotalPages`.
+- **Mapping:** `DisputeController::getPanelQueue` (route `DisputeController.php:64`) — opportunistic self-heal `DisputeScheduler::emergencyResolveIfStale()` runs first; `DisputeRepository::countPanelQueueForUser` + `getPanelQueueForUser`. FE `disputes-endpoints.ts:getPanelQueue`.
+
+#### `POST /bcc/v1/disputes/:id/vote`
+
+Cast the caller's panel vote (accept/reject) on a dispute they're assigned to. The deciding vote enqueues async resolution; **running tallies are intentionally omitted** from the response.
+
+- **Auth:** Bearer **required**. Panelist assignment enforced in-handler.
+- **Path:** `id` (int, `(?P<id>\d+)`). **Body:** `decision` (**required**, ∈ `accept|reject`) · `note` (optional, ≤ 500, `sanitize_textarea_field`)
+- **Response 200:**
+  ```json
+  { "data": { "message": "Vote recorded.", "decision": "accept", "participation": { "credited": true, "reason": null, "credited_today": 3, "credited_lifetime": 27 } }, "_meta": {...} }
+  ```
+  `participation.reason` ∈ `daily_cap|total_cap|suspended|fraud_flag|already_recorded|service_unavailable|null`; `credited_*` are post-vote counts.
+- **Errors:** `rate_limited` 429 (10s) · `invalid_decision` 400 · `not_assigned` 403 · `already_voted` 409 · `dispute_closed` 410 · plus `{code, message, http}` surfaced by the atomic vote tx
+- **Rate limit:** 1 / 10s / user (`Throttle::allow('panel_vote', 1, 10)`)
+- **Cache:** `no-store`.
+- **Mapping:** `DisputeController::castPanelVote` (route `DisputeController.php:71`) → assignment check `getPanelAssignment`, atomic `castPanelVoteAtomic`, verdict `computeVerdict`, deciding-vote async `bcc_disputes_async_resolve` enqueue, participation `DisputeParticipationService::recordParticipation` (outside the vote tx). FE `disputes-endpoints.ts:castPanelVote`.
+
+#### `GET /bcc/v1/disputes/participation/me`
+
+The caller's own §D5 panel-vote participation counters + caps. Powers the `/panel` header. Never throws; returns zeros for a user who has never sat on a panel.
+
+- **Auth:** Bearer **required**.
+- **Response 200:**
+  ```json
+  { "data": { "credited_today": 3, "credited_lifetime": 27, "correct_count": 19, "earned_today": 0.06, "earned_lifetime": 0.41, "caps": { "daily_trust": 1.0, "lifetime_trust": 10.0, "min_for_accuracy": 5, "base_weight": 0.01, "accuracy_weight": 0.02 } }, "_meta": {...} }
+  ```
+  `credited_*`/`correct_count` are row counts; `earned_*` are clamped trust-point contributions (4dp). `caps.*` mirror the `BCC_DISPUTE_PARTICIPATION_*` server constants so the FE never hardcodes them.
+- **Errors:** none beyond auth (read-only, total-failure-safe).
+- **Cache:** `no-store`.
+- **Mapping:** `DisputeController::getMyParticipation` (route `DisputeController.php:115`) → `DisputeParticipationService::getStatus`. FE `disputes-endpoints.ts:getMyParticipation`.
+
+#### `GET /bcc/v1/endorsements/mine`
+
+The endorsements the caller authored, hydrated to the shared §J.6 row shape (the same `given`-direction read as §4.22's per-handle public endpoint — single source per §A4).
+
+> **Direction note:** despite the "received" framing, the underlying read is `EndorsementService::getUserEndorsements` = endorsements the caller *authored*. There is no separate "endorsements I received" query behind this route. The genuine received-by-a-user roster is the attestation roster (`GET /entities/user_profile/:id/attestations`, §4.20/§J.6).
+
+- **Auth:** Bearer **required** (`is_user_logged_in() && Permissions::is_not_suspended()`).
+- **Query:** `limit` (optional, default 20, min 1, max 50)
+- **Response 200 (UNENVELOPED — `{items,total}` at the document root, no `data`/`_meta`):**
+  ```json
+  { "items": [ { "id": 142, "page_id": 4521, "page_title": "…", "page_url": "https://…", "avatar_url": "https://…", "trust_score": 67, "tier": "trusted", "weight": 1.25, "context": "general", "reason": "…|null", "created_at": "…" } ], "total": 1 }
+  ```
+  Identical row shape to §4.22 (`EndorsementService::hydrateEndorsementItems`). `trust_score` `null` when the page has no read-model row; `tier` `unavailable` likewise. `total` = count of items returned (capped by `limit`), NOT a paginated grand total.
+- **Errors:** bare `{ "message": "Too many requests." }` **429** (non-standard); anonymous/suspended → WP `rest_forbidden` 401/403.
+- **Rate limit:** 30 / 60s, bucket `endorsements_mine`.
+- **Cache:** not set by the handler (treat as `no-store`).
+- **Mapping:** `UserEndorsementsEndpoint::getMine` (route `UserEndorsementsEndpoint.php:35`) → `EndorsementService::getUserEndorsements`. FE shares the §4.22 `UserEndorsementsResponse` type.
+
+#### `GET /bcc/v1/endorsements/mine/stats`
+
+Aggregate stats over the caller's authored endorsements. Powers the endorsements-tab summary strip.
+
+- **Auth:** Bearer **required** (`is_user_logged_in() && Permissions::is_not_suspended()`).
+- **Response 200 (UNENVELOPED — raw service array at the document root):**
+  ```json
+  { "user_id": 412, "total_endorsements_given": 27, "unique_pages_endorsed": 5, "recent_endorsements": [ /* up to 5 raw EndorsementWithPage rows — opaque */ ], "endorsement_weight_avg": 1.18, "last_endorsement": "2026-05-15 14:23:47" }
+  ```
+  `unique_pages_endorsed` counts distinct pages within the 10 most-recent only (not lifetime distinct). `recent_endorsements` are raw repository rows (NOT the hydrated §J.6 shape — treat as opaque). `endorsement_weight_avg` floors to `1.0` when no positive average. `last_endorsement` `null` when none.
+- **Errors:** bare `{ "message": "Too many requests." }` **429**; anonymous/suspended → WP forbidden.
+- **Rate limit:** 30 / 60s, bucket `endorsements_mine_stats`.
+- **Cache:** not set by the handler (treat as `no-store`).
+- **Mapping:** `UserEndorsementsEndpoint::getMineStats` (route `UserEndorsementsEndpoint.php:51`) → `EndorsementService::getUserEndorsementStats`.
 
 ## 5. Encoded rules — quick reference
 
@@ -4649,7 +5623,7 @@ All ten open items locked **2026-04-27**. Phase 1 implementation may begin.
 Logged here so re-readers don't expect them in V1's contract.
 
 - **Real-time signal SSE endpoint** (`GET /signals/live`) — Phase 3 deliverable.
-- **NFT gallery list endpoints** (`GET /creators/:slug/gallery`, `GET /collections/:id/pieces`) — still deferred. The per-piece DETAIL endpoint (`GET /nft-pieces/{chain}/{contract}/{tokenId}`) ships in V2 Phase 6 — see §4.17. The list-form gallery is a follow-on phase that still needs cursor pagination + collection-level filters.
+- **NFT collection-pieces list endpoint** (`GET /collections/:id/pieces`) — still deferred (needs cursor pagination + collection-level filters). The per-piece DETAIL endpoint (`GET /nft-pieces/{chain}/{contract}/{tokenId}`) ships in V2 Phase 6 — see §4.17. (`GET /creators/:slug/gallery`, the per-creator gallery list, is now **live** — see §4.29.)
 - **~~Watchlist summary endpoint~~ (`GET /me/watching/summary`)** — **shipped 2026-05-13** per §4.5. Originally tracked here as the Phase-6 deferred `GET /me/binder/summary`.
 - **Email digest endpoints** — opt-in only per §I1; deferred to V1.5.
 - **Per-event notification preferences endpoints** — deferred to V1.5 per §I1.
@@ -4753,6 +5727,41 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.25 — 2026-06-10 — Contract-route parity backfill (§γ gap closure)
+
+Documentation-only + dead-route cleanup; **no behavior change** to any surviving
+endpoint. Closes the gap surfaced by `scripts/contract-parity-guard.php` (was: 88
+documented vs 233 registered in-scope routes; 128 undocumented). Full audit:
+[docs/route-audit-2026-06-10.md](route-audit-2026-06-10.md).
+
+- **§4 backfill (additive).** Documented the previously-undocumented but
+  shipped + frontend-consumed routes under new sub-sections: §4.25 social
+  connections & trust actions (GitHub/X OAuth, `bcc-trust/v1` endorse /
+  revoke-endorsement / device-fingerprint), §4.26 profile editing / privacy /
+  blocks, §4.27 highlights / badges / reports / messaging prefs / onboarding,
+  §4.28 posts / reactions / blog composer / cold-start feed, §4.29 group & local
+  detail / entity tabs / creator gallery, §4.30 disputes / received endorsements.
+  Auth (`/auth/signup|login|refresh|verify-email|resend-verification`) gained
+  canonical `####` headers. `GET /creators/:slug/gallery` promoted (the §8
+  "deferred" note was stale — it is fully wired).
+- **Dead-route removal** (no consumers; superseded — fresh-install no-backcompat).
+  Removed 15 routes: the 4 `/me/binder/*` deprecation aliases, FSE-era
+  `GET /page/:id`, the `bcc-trust/v1` discovery root, legacy `/vote`,
+  `/remove-vote`, `/report-vote`, `/user/:id/pages/scores`, `/user/status`, and
+  the never-wired `POST /claim`, `POST /flag`, `GET /nft/collections`,
+  `POST /auth/token`, `GET /onchain/:page_id`. (`POST /report-user` was reverted
+  after review — it is the write door to a live admin-adjudicated member-report →
+  trust-penalty feature, not dead code; documented at §4.27.)
+- **Guard hardening.** `contract-parity-guard.php` gained an `EXEMPT_INTERNAL`
+  allowlist (23 admin/machine routes intentionally out of the public contract,
+  each with a reason + stale-entry detection) and a relaxed header parser that
+  recognizes the §J.* `#### §J.5 \`GET …\`` form. Result: undocumented-WARN → 0;
+  the guard is now a live signal for the next accidentally-public route.
+- **Documented envelope realities (no code change):** the `bcc-trust/v1` namespace
+  uses the legacy `{success,data}` envelope (§4.25 note); `GET /endorsements/mine`
+  and `/endorsements/mine/stats` return unenveloped top-level JSON (§4.30 note).
+  Known §3.4 `HighlightStrip` shape drift flagged in §4.27.
 
 ### v1.24 — 2026-06-06
 
