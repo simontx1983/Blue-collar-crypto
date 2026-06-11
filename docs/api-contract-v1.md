@@ -3730,6 +3730,30 @@ Permanently delete the user. Body `{ "current_password": "...", "confirm": "DELE
 
 - **Response 200:** `{ "deleted": true, "logout_url": "..." }`
 
+#### `POST /bcc/v1/me/account/recovery-email` (wallet recovery, phase 2)
+
+Lets a **wallet-only** account (random unseen password + undeliverable `@noreply.bcc.local` placeholder) attach a real recovery email. Authenticated by a **fresh wallet signature** instead of the password the user never had: the client first pulls an authed challenge from `GET /auth/nonce` for one of the user's *verified* wallets, signs it, and posts here. **Verify-before-promote** — this call only *stages* the email and mails a 6-digit OTP to it; `user_email` is untouched until the OTP is confirmed (see the verify route).
+
+Body `{ "wallet_address", "chain_slug", "signature", "email", "extra"? }`. The signed message is the server-stored challenge (never caller input). The proving wallet must be the caller's own, **verified** wallet.
+
+- **Auth:** required. **Rate limit:** 5/min/user (throttled *before* signature verification).
+- **Response 200:** `{ "ok": true, "email_masked": "a****@example.com", "expires_in": 900 }`
+- **Errors:** `bcc_unauthorized` 401; `bcc_invalid_request` 400 (missing fields / unknown chain / wallet not linked or not verified / challenge expired) / 422 (bad or placeholder email); `bcc_signature_invalid` 401; `bcc_conflict` 409 (email already in use); `bcc_rate_limited` 429.
+- **Cache:** `Cache-Control: no-store`.
+- **Side effects:** stages `{ email, otp_hash }` in the `bcc_recovery_email_{userId}` transient (15-min TTL); mails the OTP via `AuthMailer::sendRecoveryEmailOtp`; writes a `recovery_email_requested` audit row.
+
+#### `POST /bcc/v1/me/account/recovery-email/verify` (wallet recovery, phase 2)
+
+Confirms the OTP from the request above and **promotes** the pending address to `user_email`, marking it verified. After this, the standard `/auth/forgot-password` → `/auth/reset-password` flow can reach the user — the account is no longer wallet-only-unrecoverable.
+
+Body `{ "code": "123456" }`.
+
+- **Auth:** required. **Rate limit:** 10/hour/user. (A 6-digit OTP under this cap + the 15-min TTL is not brute-forceable; a wrong code leaves the pending transient in place for retry.)
+- **Response 200:** `{ "ok": true, "email": "<new>" }`
+- **Errors:** `bcc_unauthorized` 401; `bcc_invalid_request` 400 (no pending email) / 422 (missing or incorrect/expired code); `bcc_conflict` 409 (email taken in the race window); `bcc_internal_error` 500; `bcc_rate_limited` 429.
+- **Cache:** `Cache-Control: no-store`.
+- **Side effects:** `wp_update_user(user_email)` + `_bcc_email_verified='1'`; clears the pending transient; `recovery_email_confirmed` audit row; out-of-band notice via `AccountSecurityMailer::recoveryEmailConfirmed` (new address only, when replacing the placeholder) or `::emailChanged` (both addresses, when replacing a real email).
+
 #### Earlier V2 Phase 2 endpoints
 
 Already shipped, summarized for completeness:
@@ -4621,9 +4645,14 @@ Returns the current user's linked wallets.
       "is_primary": false,
       "verified": true,
       "created_at": "2026-04-27 14:24:00"
-    }]
+    }],
+    "recovery": {
+      "has_recovery_email": false,
+      "verified_wallet_count": 1
+    }
   }
   ```
+- **`recovery`** (account-recovery posture for the settings UI): `has_recovery_email` is `true` when a real, non-placeholder email is set (a `@noreply.bcc.local` wallet-signup placeholder reads as `false`); `verified_wallet_count` is the number of the user's verified wallets (wallets usable for wallet login). Together they drive the "set up a recovery method" banner and mirror the `DELETE /wallets/{id}` self-lockout guard (`bcc_last_recovery_method`): the account is at lockout risk when `has_recovery_email` is `false` and `verified_wallet_count <= 1`.
 - **Errors:** `bcc_rate_limited` 429.
 - **Rate limit:** 30/min/user.
 - **Cache:** `Cache-Control: no-store`.
