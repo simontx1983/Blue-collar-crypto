@@ -121,6 +121,18 @@ should point at exactly one source-of-truth class or method per concept.
   ([app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/CardViewService.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/CardViewService.php))
 - **Permission shape** (`{allowed, unlock_hint, reason_code}`) →
   `CardViewService::allow()` / `CardViewService::deny()` (same file)
+- **List-hydration batch prefetch (member cards)** →
+  `BCC\Trust\Core\Support\MemberSummaryPrefetcher::primeFor($userIds)` —
+  keyed bundle consumed by `UserViewService::getSummary(..., $prefetched)`
+  with graceful per-user fallback. Any endpoint hydrating N member
+  summaries MUST route through this, never loop `getSummary` bare.
+  ([app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Support/MemberSummaryPrefetcher.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Support/MemberSummaryPrefetcher.php))
+- **List-hydration batch prefetch (page cards: validator / project /
+  creator)** → `BCC\Trust\Core\Support\PageCardPrefetcher::primeFor($pageIds,
+  $viewerId)` — same bundle/fallback contract as MemberSummaryPrefetcher;
+  consumed by `CardViewService::getPageCardForList`. Any endpoint hydrating
+  N page cards MUST route through this, never loop `getCard` bare.
+  ([app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Support/PageCardPrefetcher.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Support/PageCardPrefetcher.php))
 
 ## Feed
 
