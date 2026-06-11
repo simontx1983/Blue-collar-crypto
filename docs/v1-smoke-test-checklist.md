@@ -1,10 +1,13 @@
 # V1 Smoke Test Checklist
 
-**Last updated: 2026-04-30**
+**Last updated: 2026-06-11**
 
 End-to-end manual walkthrough to verify V1 + V1.5 ship-readiness before
 opening a closed beta. Walks the actual user paths through the live
 stack: WordPress (Local-by-Flywheel) → bcc-trust REST → Next.js → browser.
+
+Reconciled 2026-06-11 against a live automated pass (harness:
+`~/bcc-smoke`, Playwright).
 
 Each check has an explicit setup, action, and expected outcome. Mark
 each box as you verify. **Anything you can't make pass is a closed-beta
@@ -25,6 +28,9 @@ Before starting, confirm:
   blue-collar-crypto-peepso-integration, peepso-core.
 - [ ] **Next.js dev server running.** `cd bcc-frontend && npm run dev`.
   `http://localhost:3000` returns the Floor home (anon shape).
+- [ ] **Mailpit running.** Local's mail catcher (API on
+  `127.0.0.1:10006`) is where signup verification codes and login
+  2FA codes land locally — keep it open for §2.
 - [ ] **`BCC_FRONTEND_ORIGIN` set** in `wp-config.php` to
   `http://localhost:3000`. Verify by `wp config get BCC_FRONTEND_ORIGIN`
   or grep `wp-config.php`.
@@ -66,8 +72,8 @@ session leaks in.
 - [ ] **1.7** GET `/directory` → grid of cards, anon-shape (no Pull
   button, no Block toggle on member cards).
 - [ ] **1.8** Visit `/u/<handle>` of a real user → profile renders with
-  Living Header (streak + today's impact), tabs (Reviews / Disputes),
-  no settings link.
+  the FLOOR // OPERATOR file-style header (see §4.1), tabs (Reviews /
+  Disputes), no settings link.
 
 ## 2. Signup + onboarding
 
@@ -79,10 +85,15 @@ Brand-new account through the §B6 + §O1 onboarding wizard.
   "3-20 chars" error; `simon!` (bad chars) shows the format error;
   `admin` (reserved) shows "reserved"; a known-taken handle shows
   "already taken".
-- [ ] **2.3** Submit a valid form → redirect to `/onboarding` wizard,
-  step 1: home-chain picker. Skippable.
+- [ ] **2.3** Submit a valid form → routes to `/verify-email?email=...`.
+  A 6-digit code (or verification link) lands in the account's inbox —
+  locally, pull it from Mailpit. Code is valid for 15 minutes; the
+  account doesn't work until verified.
+- [ ] **2.3.1** Enter the code → auto-login fires, then redirect to
+  `/onboarding` wizard, step 1: home-chain picker. Skippable.
 - [ ] **2.4** Step 2: first-watch suggestions render 3-5 cards. Click
-  Watch on each → button flips to "Watching" / disabled.
+  **KEEP TABS** (the Keep-Tabs rebrand of Watch) on each → button
+  flips to its watching state / disabled.
 - [ ] **2.5** Click Done → **§O1 dopamine animation** fires:
   - [ ] Cards fly into a watchlist icon (the visual still uses the
     3-ring binder iconography per pattern-registry — name is "watchlist")
@@ -98,6 +109,11 @@ Brand-new account through the §B6 + §O1 onboarding wizard.
   cards already in the For You feed.
 - [ ] **2.8** Hit `/onboarding` after completion → redirects to `/`
   (state in `wp_user_meta.bcc_onboarded = 1`).
+- [ ] **2.9** **Login 2FA:** sign out, then sign back in with
+  credentials → routes through `/login/two-factor`. An emailed "login
+  verification code" lands (Mailpit locally); enter it and click
+  **CONFIRM SIGN-IN** → session established. (Verified working
+  2026-06-11.)
 
 ## 3. The Floor
 
@@ -105,9 +121,9 @@ Logged in as User A.
 
 - [ ] **3.1** GET `/` → For You feed renders. Header shows bell, user
   menu, Compose button (or inline Composer below header).
-- [ ] **3.2** **Feed mode tabs:** click For You / Following / Signals
-  in turn → URL updates `?feed=...`, feed content swaps. Anon-shape
-  doesn't appear.
+- [ ] **3.2** **Feed mode tabs:** click For You / Watching / Signals
+  in turn → tabs swap content (URL param not implemented — state-only,
+  no `?feed=...`). Anon-shape doesn't appear.
 - [ ] **3.3** **Highlight Strip:** if the user has a highlight, it
   renders above the feed. Dismissing one removes it (server records
   dismissal). Strict slot order: negative > positive > external.
@@ -117,10 +133,13 @@ Logged in as User A.
 - [ ] **3.5** **Inline Composer (Blog tab):** switch tab, fill excerpt
   (80-500 chars) + body, submit → blog post appears with "Read full
   post" affordance on the Floor.
-- [ ] **3.6** **Reactions:** click Solid on someone else's post →
-  count increments, your reaction shows highlighted. Click again →
-  removes. Vouch + Stand-behind work the same. Helper labels (Agree /
-  Back this / Stake my rep) visible until §N5 familiarity flag flips.
+- [ ] **3.6** **Reactions:** feed status posts use emoji reactions
+  (👍 ❤️ 😂 😮 🔥 = like/love/haha/wow/fire). Click 👍 on someone
+  else's post → count increments, your reaction shows highlighted.
+  Recipient's bell increments with "@handle reacted to your post."
+  (The Solid/Vouch/Stand-behind trio applies to trust-grammar
+  surfaces, not social status posts — those casts live in the
+  profile attestation cluster, §J.)
 - [ ] **3.7** **Pull batching (§C3):** pull 3 cards within 30 seconds
   on different surfaces. Wait 11+ minutes. **Exactly one** "@you
   pulled 3 cards" feed item renders, frozen — unfollowing one of the
@@ -130,9 +149,12 @@ Logged in as User A.
 
 Logged in as User A. Visit `/u/<userA-handle>`.
 
-- [ ] **4.1** Living Header renders three elements: streak counter
-  with flame, today's recent-impact line, comparison line ("Top X%
-  this week" or "Quiet shift").
+- [ ] **4.1** Profile header renders as the FLOOR // OPERATOR
+  file-style header: JOINED date, FILE no., reputation block, GOOD
+  STANDING chip, rank chip. (The earlier Living Header spec —
+  streak-flame, today's-impact line, comparison line — was not
+  rendered as of 2026-06-11; flag for Phillip to confirm the drop
+  is intentional.)
 - [ ] **4.2** **Rank progress strip:** shows current rank + next-rank
   progress bar with "X reviews to go" copy (only on own profile).
 - [ ] **4.3** Tabs: Reviews, Disputes, Activity, Network, Watching,
@@ -172,9 +194,13 @@ Pick `/v/<unclaimed-validator-slug>` (page exists, no `claimed_by` user).
 Logged in as User A. Visit `/v/<userC-claimed-page>`.
 
 - [ ] **6.1** **WRITE A REVIEW** button visible.
-  - [ ] Disabled with unlock hint when User A is Level 1 (hasn't
-    earned write_review yet).
-  - [ ] Enabled when User A is Level 2+ with rep tier ≥ neutral.
+  - [ ] Disabled with unlock hint when User A hasn't earned the
+    `write_review` level gate yet.
+  - [ ] Enabled once the `write_review` level gate is met.
+  - [ ] **CAUTION (downvote) grade** additionally requires trusted+
+    rep tier AND identity verification (verified 2026-06-11 — the
+    old "Level 2+ with rep tier ≥ neutral" line understated the
+    downvote gate).
 - [ ] **6.2** Click WRITE A REVIEW → unified Composer modal opens with
   Review tab pre-selected. Header shows "Reviewing <pageName>".
 - [ ] **6.3** Modal has tabs Update / Review / Blog. The Review tab is
@@ -200,7 +226,11 @@ Logged in as User A. Visit `/v/<userC-claimed-page>`.
 User C owns a page that has at least one downvote on it.
 
 - [ ] **7.1** As User C on `/v/<own-slug>` → **OPEN A DISPUTE** button
-  renders (owner-only). Other users don't see it.
+  renders (owner-only). Other users don't see it. **Caution:** the
+  "DISPUTE" button in the entity-page action cluster is the §J
+  attestation cast (veteran + wallet gated), NOT this owner
+  vote-dispute entry — don't confuse the two. TODO-verify: document
+  where the owner's OpenDisputeModal entry actually lives.
 - [ ] **7.2** Click → OpenDisputeModal opens with vote-picker. Pick a
   downvote, write a reason, submit → dispute filed; modal closes;
   refreshes profile.
@@ -221,11 +251,12 @@ User C owns a page that has at least one downvote on it.
 
 Logged in as User A. The bell + the digest.
 
-- [ ] **8.1** Bell badge shows unread count (≤ "9+"). Refreshes every
-  60s + on window focus.
-- [ ] **8.2** Click bell → dropdown lists recent notifications,
-  newest first. Click a row → marks read, navigates to the linked
-  surface.
+- [ ] **8.1** Bell badge shows unread count (≤ "9+") — verify on BOTH
+  the desktop header and the mobile sheet. Refreshes every 60s + on
+  window focus.
+- [ ] **8.2** Click bell → dropdown (desktop header) / sheet (mobile)
+  lists recent notifications, newest first. Click a row → marks read,
+  navigates to the linked surface.
 - [ ] **8.3** "Mark all read" header button bulk-clears.
 - [ ] **8.4** As User B, react to one of User A's posts. Within 5s,
   User A's bell badge increments. The dispatcher fires correctly.
