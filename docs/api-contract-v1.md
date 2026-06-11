@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.24 · 2026-06-06 · Phase 1 deliverable
+**Status:** Draft v1.26 · 2026-06-11 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -364,7 +364,7 @@ The single most important shared type. Encodes §N7 (always visible, disabled wi
     "can_edit_bio":         { "allowed": false, "unlock_hint": null },
     "can_edit_image":       { "allowed": false, "unlock_hint": null, "reason_code": "not_claimer" },
     "can_attach_card":      { "allowed": true,  "unlock_hint": null },
-    "can_open_dispute":     { "allowed": false, "unlock_hint": "Reach Level 3 to open disputes." }
+    "can_open_dispute":     { "allowed": false, "unlock_hint": null, "reason_code": "not_page_owner" }
   }
 }
 ```
@@ -373,6 +373,7 @@ The single most important shared type. Encodes §N7 (always visible, disabled wi
 
 - Every gate the viewer might *eventually* unlock is listed, even when `allowed: false`. Hidden gates teach nothing; visible gates teach the system.
 - When `allowed: false`, `unlock_hint` is a **plain-English explanation** the frontend renders verbatim as a tooltip/disabled-button helper.
+- `can_open_dispute` is the **owner vote-dispute** entry (DisputeCallout → `POST /disputes`) and mirrors the write gate exactly: page ownership only, no feature ladder (shipped 2026-06-11). It is distinct from `can_dispute`, the §J attestation-cast gate (`sign_dispute` ladder). Non-owners get `reason_code: "not_page_owner"` with no hint — the §N7 visible-gate rule applies to gates a viewer can eventually unlock, which ownership of someone else's page is not.
 - When `allowed: true`, `unlock_hint` is `null` (not omitted — explicit `null` so client typing is uniform).
 - When a gate is **structurally impossible** for this viewer (e.g., viewing your own card → `can_pull: false`, you can't follow yourself), `unlock_hint` is `null` and the frontend hides the action UI per §N7's "structurally impossible" carve-out (the always-visible rule applies to *gates a viewer could resolve*, not to nonsensical actions).
 
@@ -5756,6 +5757,23 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.26 — 2026-06-11 — `can_open_dispute` ships (owner vote-dispute gate)
+
+Additive permission field + example correction; no existing field changed.
+
+- **`permissions.can_open_dispute` is now emitted** on card view-models. It was
+  documented in the §4.4 shape since draft but never implemented; the frontend's
+  `DisputeCallout` (owner-only "Open a Dispute" CTA) consequently consumed
+  `can_dispute` — the §J attestation-cast gate (`sign_dispute` ladder) — which
+  meant any veteran+wallet viewer saw the owner-only CTA on any entity page,
+  and page owners below veteran never saw it for their own page.
+- Semantics: mirrors `DisputeController`'s write gate exactly — page ownership
+  only (`Permissions::owns_page` via PageOwnerResolver), **no feature ladder**.
+  Non-owners: `allowed: false, reason_code: "not_page_owner"`, no unlock hint
+  (ownership of someone else's page is not an unlockable gate per §N7's spirit).
+  Member cards: `not_applicable`. Anon: `signin_required`.
+- §4.4 example corrected (previously showed a fictional "Reach Level 3" hint).
 
 ### v1.25 — 2026-06-10 — Contract-route parity backfill (§γ gap closure)
 
