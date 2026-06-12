@@ -1,6 +1,6 @@
 # V1 Smoke Test Checklist
 
-**Last updated: 2026-06-11**
+**Last updated: 2026-06-12**
 
 End-to-end manual walkthrough to verify V1 + V1.5 ship-readiness before
 opening a closed beta. Walks the actual user paths through the live
@@ -114,6 +114,25 @@ Brand-new account through the §B6 + §O1 onboarding wizard.
   verification code" lands (Mailpit locally); enter it and click
   **CONFIRM SIGN-IN** → session established. (Verified working
   2026-06-11.)
+- [ ] **2.10** **Wallet-only signup (§4.1):** signed out, on `/signup`
+  use the WalletAuthButton: connect → sign the nonce → account created
+  with NO email, auto-signed-in via the NextAuth wallet provider.
+  Handle-pick respects the same 2.2 validation rules.
+- [ ] **2.11** **Recovery-email banner (wallet lockout recovery):** as
+  the 2.10 wallet-only account, open `/settings/identity` → Wallets
+  section shows the "add a recovery email" banner (gated on
+  `has_recovery_email === false`). Submit an email → code lands
+  (Mailpit) → verify → banner clears and does not return.
+- [ ] **2.12** **Wallet login:** sign out, then log back in with the
+  same wallet (connect → sign) → session established, no password ever
+  involved.
+- [ ] **2.13** **Forgot/reset password:** from `/login` →
+  forgot-password → email lands → reset link/code → set a new password
+  → old password rejected, new one works.
+- [ ] **2.14** **SSO complete-profile (oauth-complete):** sign up via
+  X/Google SSO (requires the OAuth bridge secret configured on both
+  ends — fail-closed otherwise) → lands on
+  `/signup/complete-profile` to pick a handle → account active.
 
 ## 3. The Floor
 
@@ -220,6 +239,12 @@ Logged in as User A. Visit `/v/<userC-claimed-page>`.
 - [ ] **6.8** **Self-endorse blocked:** as User C, visit your own
   page. ENDORSE is disabled with "You can't endorse your own page"
   tooltip.
+- [ ] **6.9** **Phase γ error contract:** force an endorse failure (e.g.
+  an account under the 7-day §I1 age gate, or re-endorse after revoke
+  inside a rate window). The UI copy must be the humanized
+  `err.code` mapping from `lib/api/errors.ts` — never the raw backend
+  `err.message` string (that's the whole point of `humanizeCode()`;
+  regression guard: `bcc-frontend/scripts/error-contract-guard.sh`).
 
 ## 7. Disputes
 
@@ -229,8 +254,11 @@ User C owns a page that has at least one downvote on it.
   renders (owner-only). Other users don't see it. **Caution:** the
   "DISPUTE" button in the entity-page action cluster is the §J
   attestation cast (veteran + wallet gated), NOT this owner
-  vote-dispute entry — don't confuse the two. TODO-verify: document
-  where the owner's OpenDisputeModal entry actually lives.
+  vote-dispute entry — don't confuse the two. The owner entry is
+  `DisputeCallout` (`src/components/disputes/DisputeCallout.tsx`),
+  rendered by `EntityProfile.tsx` in the legacy IdentityBlock stack
+  on `/v/[slug]`, `/p/[slug]`, `/c/[slug]`; it lazy-loads
+  `OpenDisputeModal` on click.
 - [ ] **7.2** Click → OpenDisputeModal opens with vote-picker. Pick a
   downvote, write a reason, submit → dispute filed; modal closes;
   refreshes profile.

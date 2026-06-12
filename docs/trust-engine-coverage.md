@@ -1,6 +1,6 @@
 # Trust Engine — Frontend Coverage
 
-**Last audited: 2026-04-30** (V1.5 wave — see *Recent changes* below)
+**Last audited: 2026-06-12** (auth wave — see *Recent changes* below)
 
 ## Why this doc exists
 
@@ -17,6 +17,27 @@ This doc is the single source of truth for that question. Read it **before**:
 - Cutting V2 scope (so you know which gaps are deliberate vs accidental)
 
 It's a snapshot, not a contract. Re-audit after each milestone.
+
+## Recent changes (auth wave, 2026-06-12)
+
+The 2026-05/06 auth work landed a full second generation of auth endpoints,
+all frontend-covered (grep-verified 2026-06-12):
+
+- **Wallet-native auth** — `wallet-nonce` / `wallet-login` / `wallet-signup`
+  via `WalletAuthButton` on the login + signup pages; login flows through the
+  NextAuth wallet Credentials provider (the typed `walletLogin()` client
+  export is dead code — flagged in the table).
+- **Wallet-only lockout recovery** (§4.24-adjacent, contract `/me/account/
+  recovery-email[/verify]`) — `WalletsSection` banner for accounts with
+  `has_recovery_email === false`.
+- **Password recovery + email verification** — forgot/reset-password and
+  verify-email/resend-verification pages under `(auth)/`.
+- **2FA + SSO completion** — `2fa/verify|resend` (two-factor page),
+  `oauth-complete` (complete-profile page), `auth/refresh` (Phase β silent
+  refresh inside `bccFetch`, invisible to callers).
+- **Phase γ error contract** — the frontend branches on `err.code` only
+  (`lib/api/errors.ts` `humanizeCode()`, never `err.message`), enforced by
+  `bcc-frontend/scripts/error-contract-guard.sh`.
 
 ## Recent changes (V1.5 wave, 2026-04-30)
 
@@ -84,6 +105,19 @@ applies.
 | `/bcc/v1/auth/token` | POST | `auth-endpoints` | ✅ | NextAuth JWT exchange |
 | `/bcc/v1/auth/nonce` | POST | `auth-endpoints.getWalletNonce` | ✅ | |
 | `/bcc/v1/auth/wallet-link` | POST | `auth-endpoints.linkWallet` | ✅ | |
+| `/bcc/v1/auth/wallet-nonce` | GET | `auth-endpoints.ts:310` | ✅ | `WalletAuthButton` (login + signup pages) |
+| `/bcc/v1/auth/wallet-login` | POST | NextAuth wallet Credentials provider (`lib/auth.ts:309`) | ✅ | The typed `walletLogin()` export at `auth-endpoints.ts:336` is **dead code** (zero callers) — live path goes through NextAuth |
+| `/bcc/v1/auth/wallet-signup` | POST | `auth-endpoints.ts:362` | ✅ | `WalletAuthButton` connect → sign → account |
+| `/bcc/v1/auth/forgot-password` | POST | `auth-endpoints.ts:391` | ✅ | `(auth)/forgot-password` |
+| `/bcc/v1/auth/reset-password` | POST | `auth-endpoints.ts:408` | ✅ | `(auth)/reset-password` |
+| `/bcc/v1/auth/2fa/verify` | POST | `auth-endpoints.ts:79` | ✅ | `(auth)/login/two-factor` |
+| `/bcc/v1/auth/2fa/resend` | POST | `auth-endpoints.ts:95` | ✅ | `(auth)/login/two-factor` |
+| `/bcc/v1/auth/oauth-complete` | POST | `auth-endpoints.ts:144` | ✅ | `(auth)/signup/complete-profile` (SSO handle pick) |
+| `/bcc/v1/auth/refresh` | POST | `lib/api/client.ts:307` | ✅ | Phase β silent refresh inside `bccFetch` — transparent, pre-request |
+| `/bcc/v1/auth/verify-email` | POST | `auth-endpoints.ts:208` | ✅ | `(auth)/verify-email` |
+| `/bcc/v1/auth/resend-verification` | POST | `auth-endpoints.ts:226` | ✅ | `(auth)/verify-email` |
+| `/bcc/v1/me/account/recovery-email` | POST | `account-endpoints.ts:104` → `useRecoveryEmail` | ✅ | `settings/WalletsSection` banner, gated on `has_recovery_email === false` (wallet-only lockout recovery) |
+| `/bcc/v1/me/account/recovery-email/verify` | POST | `account-endpoints.ts:123` → `useRecoveryEmail` | ✅ | Same banner, code-entry step |
 | `/bcc-trust/v1/x/auth` | GET | `oauth-endpoints.getXAuthUrl` | ✅ | Accepts `?return_to=` validated against `BCC_FRONTEND_ORIGIN`, persisted in user meta for the callback |
 | `/bcc-trust/v1/x/callback` | GET | (browser-redirect target) | ✅ | Reads return URL from user meta; falls back to `defaultReturn('/settings/identity')` |
 | `/bcc-trust/v1/x/status` | GET | `oauth-endpoints.getXStatus` | ✅ | |

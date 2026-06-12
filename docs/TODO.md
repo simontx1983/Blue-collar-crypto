@@ -28,7 +28,6 @@ Real drift surfaced by the 2026-05-26 first run of `scripts/contract-parity-guar
 
 ## Docs
 
-- [ ] Refresh frontend-coverage docs for v1.19 + v1.20 surfaces — [`trust-engine-coverage.md`](trust-engine-coverage.md) (last audit 2026-04-30) and [`v1-smoke-test-checklist.md`](v1-smoke-test-checklist.md) (2026-04-30) both predate the wallet-auth endpoints (§4.1 + §4.24) and the endorse error-code Phase γ stabilization (§1.4.6). Needs real coverage entries, not metadata fixes.
 
 ---
 
@@ -36,6 +35,9 @@ Real drift surfaced by the 2026-05-26 first run of `scripts/contract-parity-guar
 
 Once an item ships, move it here with a date + commit hash so the
 file documents recent flow. Trim entries older than ~30 days.
+
+- 2026-06-12 — Frontend-coverage docs refreshed for v1.19/v1.20 surfaces. `trust-engine-coverage.md` re-audited (header now 2026-06-12): 15 new auth/recovery rows, all ✅ grep-verified against the typed client + UI surfaces; one honest finding — `auth-endpoints.walletLogin()` is dead code (live wallet login goes through the NextAuth Credentials provider). `v1-smoke-test-checklist.md` gained §2.10–2.14 (wallet signup/login, recovery-email banner, forgot/reset, oauth-complete) + §6.9 (Phase γ err.code-only copy check); §7.1 TODO-verify resolved (owner entry = `DisputeCallout` in EntityProfile's IdentityBlock stack). NEW `testnet-deploy-checklist.md` consolidates secrets/SMTP/cron/Vercel/health-gates.
+- 2026-06-12 — Boot-floor root cause fixed (`bcc-trust a3f27ee`). The ~250-query floor was the schema-migration gate misfiring per-request (stale-object-cache option mismatch re-ran the ~200-query installer, including the chains×26 seeds). Gate now logs loudly + verify-after-write + GET_LOCK; `TableRegistry::exists()` caches table-existence probes (positive-only persist); `ChainRepository::getById()` request-memoized. Live before/after counts pending; probe at `scripts/bcc-query-floor-probe.php`.
 
 - 2026-05-26 — contract-parity-guard.php extended with cross-file class-constant resolution. One-pass walk of every plugin PHP file builds a `ClassName => [CONST => value]` map; `resolve_string_arg` now distinguishes `self::` / `static::` (same-file) from `OtherClass::CONST` (cross-file). Closed the parser-limitation finding (`UserGroupsEndpoint` using `UsersEndpoint::HANDLE_PATTERN`) plus four other previously-unresolved sites in `UserAlbumsEndpoint` / `UserAlbumPhotosEndpoint` / `UserFollowsEndpoint`. Guard exit code is now 0 — safe to wire into a blocking CI check. 21 subsystem-count subsystems + 223 in-scope REST routes covered by the two guard pair.
 - 2026-05-26 — admin/ranks REST surface retracted (contract v1.23). Investigation found half-built state: read-side `is_admin_conferred` field renders in `GET /ranks` (always false in V1; no path sets a non-auto rank), `RankCatalog::isAutoAssigned` flags certain ranks as non-auto — but zero `register_rest_route` for the documented `POST /admin/ranks/award` + `DELETE /admin/ranks/:rank/:user_id`, zero frontend callers. V1 ships pure auto-derivation via `RankProgressionListener::run`. Two `####` headers replaced with a §4.8 deferral note. Read-side artifacts kept (contract field stable; admin-override is a future feature build). Parity guard down to 1 remaining finding (parser limitation).

@@ -7,20 +7,30 @@
 
 **Goal:** Smallest possible set of changes that materially increase survivability for external/public clients (mobile + public API).
 
+> **STATUS (2026-06-12): ALL MUST-FIX ITEMS SHIPPED.** Phase α (Item 1)
+> landed as the `isAlreadyEnveloped()` legacy-shape recognition in
+> `Envelope.php`, locked by `tests/EnvelopeRecognitionTest.php`. Phase β
+> (Items 2–4) shipped 2026-05-13. Phase γ (Items 5 + 8) shipped
+> 2026-05-13 (`lib/api/errors.ts` + `error-contract-guard.sh` +
+> contract error-code enumeration). Only the Phase δ acceptable-debt
+> items (6, 7, V-07 namespace collapse, table-prefix rename) remain
+> deferred-by-design. This document is retained as the rationale
+> record — nothing below is open work.
+
 ---
 
 ## TL;DR — Priority order
 
 | # | Item | Category | Risk | Blast radius |
 |---|---|---|---|---|
-| 1 | **Envelope mismatch on `/bcc-trust/v1/*`** — fixing 13 currently-broken endpoints | **MUST-FIX BEFORE BETA** | CONTRACT (live bug) | 1 PHP file, 2 lines |
-| 2 | **`MyNotificationPrefsEndpoint` adds `push_available`** | MUST-FIX BEFORE MOBILE | UX (cold-start failure) | 1 PHP file + 1 TS hook |
-| 3 | **JWT silent-refresh via existing `/auth/token` bridge** | MUST-FIX BEFORE MOBILE | UX (data loss in composer drafts) | 1 client.ts retry path |
-| 4 | **Permission-block null-safety sweep** (16 sites) | MUST-FIX BEFORE MOBILE | ARCHITECTURAL (contract softening crashes) | 9 frontend files, 1-line edits each |
-| 5 | **Error-contract `.message` → `.code` normalization** (8 HIGH sites) | MUST-FIX BEFORE PUBLIC API | CONTRACT (localization breakage) | 8 frontend files, structured |
+| 1 | ✅ DONE — **Envelope mismatch on `/bcc-trust/v1/*`** — fixing 13 currently-broken endpoints | **MUST-FIX BEFORE BETA** | CONTRACT (live bug) | 1 PHP file, 2 lines |
+| 2 | ✅ DONE — **`MyNotificationPrefsEndpoint` adds `push_available`** | MUST-FIX BEFORE MOBILE | UX (cold-start failure) | 1 PHP file + 1 TS hook |
+| 3 | ✅ DONE — **JWT silent-refresh via existing `/auth/token` bridge** | MUST-FIX BEFORE MOBILE | UX (data loss in composer drafts) | 1 client.ts retry path |
+| 4 | ✅ DONE — **Permission-block null-safety sweep** (16 sites) | MUST-FIX BEFORE MOBILE | ARCHITECTURAL (contract softening crashes) | 9 frontend files, 1-line edits each |
+| 5 | ✅ DONE — **Error-contract `.message` → `.code` normalization** (8 HIGH sites) | MUST-FIX BEFORE PUBLIC API | CONTRACT (localization breakage) | 8 frontend files, structured |
 | 6 | Centralize `ERROR_COPY` map across 19 components | Acceptable debt | UX (cosmetic drift) | Deferred until i18n lands |
 | 7 | Replace 3 MEDIUM HTTP-status-based branches | Acceptable debt | CONTRACT (low-likelihood drift) | 2 frontend files |
-| 8 | Per-endpoint error-code enumeration in `api-contract-v1.md` | MUST-FIX BEFORE PUBLIC API | CONTRACT (docs gap) | Documentation only |
+| 8 | ✅ DONE — Per-endpoint error-code enumeration in `api-contract-v1.md` | MUST-FIX BEFORE PUBLIC API | CONTRACT (docs gap) | Documentation only |
 
 ---
 
