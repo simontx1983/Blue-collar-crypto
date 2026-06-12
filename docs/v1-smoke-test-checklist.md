@@ -222,9 +222,11 @@ Logged in as User A. Visit `/v/<userC-claimed-page>`.
     downvote gate).
 - [ ] **6.2** Click WRITE A REVIEW → unified Composer modal opens with
   Review tab pre-selected. Header shows "Reviewing <pageName>".
-- [ ] **6.3** Modal has tabs Update / Review / Blog. The Review tab is
-  locked to the target — clicking other tabs works but switching back
-  to Review preserves the target.
+- [ ] **6.3** Modal has tabs Update / Review (Blog was removed from
+  this surface by design — long-form lives at
+  `/u/{handle}?tab=blog&blogsub=create`, see Composer.tsx docblock).
+  The Review tab is locked to the target — switching tabs and back
+  preserves the target.
 - [ ] **6.4** Pick grade (Trust/Neutral/Caution) + write body → submit.
   Modal closes; profile refreshes; new review on the page; CTA flips
   to **REMOVE YOUR REVIEW**.
@@ -271,9 +273,11 @@ User C owns a page that has at least one downvote on it.
 - [ ] **7.5** Open a case → PanelVoteModal. Cast Accept or Reject →
   modal closes; queue row flips to a "YOU VOTED · ACCEPT/REJECT"
   badge.
-- [ ] **7.6** Participation strip shows "TRUST TODAY", "VOTES", and
-  "ACCURACY" (if `credited_lifetime ≥ min_for_accuracy`). Numbers
-  match what you cast.
+- [ ] **7.6** Participation strip renders its three blocks — implemented
+  copy is "TODAY // x/1.00 TRUST", "LIFETIME // x/10.00 TRUST", and
+  "ACCURACY BONUS //" (LOCKED until `credited_lifetime ≥
+  min_for_accuracy`). Numbers match what you cast. (Copy verified
+  live 2026-06-12.)
 
 ## 8. Notifications (§I1)
 
