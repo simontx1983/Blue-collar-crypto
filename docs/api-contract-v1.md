@@ -363,7 +363,6 @@ The single most important shared type. Encodes §N7 (always visible, disabled wi
     "can_post_as_entity":   { "allowed": false, "unlock_hint": null },
     "can_edit_bio":         { "allowed": false, "unlock_hint": null },
     "can_edit_image":       { "allowed": false, "unlock_hint": null, "reason_code": "not_claimer" },
-    "can_attach_card":      { "allowed": true,  "unlock_hint": null },
     "can_open_dispute":     { "allowed": false, "unlock_hint": null, "reason_code": "not_page_owner" }
   }
 }
@@ -995,9 +994,6 @@ Feed items share an envelope and vary by `post_kind`.
   "comment_count": 7,
   "social_proof": { "...": "see §2.2 — applies to feed posts per §O4" },
   "permissions": {
-    "can_react":  { "allowed": true, "unlock_hint": null },
-    "can_reply":  { "allowed": true, "unlock_hint": null },
-    "can_share":  { "allowed": true, "unlock_hint": null },
     "can_report": { "allowed": true, "unlock_hint": null }
   },
   "links": {
