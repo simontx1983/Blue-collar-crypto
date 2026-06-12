@@ -2716,7 +2716,14 @@ Explicit user-initiated join. Verifies eligibility server-side, clears any activ
     - opt-out cooldown active: "You opted out of this community recently. Try again later or rejoin from the discovery page."
     - holder check failed: "Hold a `<CollectionName>` NFT to join this community." (or "Hold at least N NFTs from this collection..." for `min_balance > 1`)
   - `bcc_internal_error` (503) — chain unsupported (transient infra issue)
-- **Mapping:** `NftGroupGateService::joinIfEligible` → `PeepSoGroupWriter::join` (which fires `peepso_action_group_user_join` and recomputes `peepso_group_members_count`).
+  - `bcc_upstream_unavailable` (503) — the chain provider could not verify NFT
+    ownership (timeout / 429 / circuit-breaker open / malformed response).
+    Transient; retry with backoff. The join **fails closed** — the user is NOT
+    added when ownership can't be confirmed, so an outage never grants access.
+    (Mirrors the §J read-time 503 precedent; the §1.4.6 standard-codes table
+    lists this code at 502, but holder-gating emits 503 — both are valid for
+    this code.)
+- **Mapping:** `NftGroupGateService::joinIfEligible` → `PeepSoGroupWriter::join` (which fires `peepso_action_group_user_join` and recomputes `peepso_group_members_count`). A provider-verification failure short-circuits to `bcc_upstream_unavailable` before any join write.
 
 #### `POST /bcc/v1/me/holder-groups/:id/leave`
 
