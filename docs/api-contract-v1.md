@@ -859,7 +859,7 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
 
 **Field rules:**
 
-- `card_kind` ∈ {`validator`, `project`, `creator`, `member`}.
+- `card_kind` ∈ {`validator`, `project`, `creator`, `member`, `community`}. `community` cards (v1.27) are emitted ONLY as the additive `card` field on the §4.7.4 discovery items and the §4.7.5 group detail response — `GET /cards/:type/:id` and `GET /cards` do NOT accept `community` (route enum unchanged); see §3.2.4 for the kind's rules.
 - `is_claimed` is meaningful for `validator` / `project` / `creator`. For `member`, `is_claimed: true` always (members are their own pages).
 - `claim_target` (per §N8) — non-null only when the page is unclaimed AND a claim target resolves. Drives the four-step claim modal.
 - `chains` (per §K3) — list of `CardChain` objects when 2+ chains back the same page; `null` otherwise. V1.5 validator-only; creator gallery filter is V2.
@@ -933,6 +933,43 @@ When on-chain meta is wired (per §K3 chain support and §H1 indexer), entity ca
 
 V1 frontend types declare `stats: CardStat[]` (opaque array, no per-kind narrowing). Adding kind-specific stats in V1.5 is purely additive — no breaking change.
 ```
+
+**3.2.4 Community card (`card_kind: "community"`) — v1.27:**
+
+Communities (PeepSo groups: `nft` / `local` / `system` / `user`) converge onto the Card view-model — same convergence members went through. Community cards are composed server-side from already-loaded group data (`CardViewService::getCommunityCardFromGroupData`, zero extra queries) and ship **additively** as the `card` field on §4.7.4 discovery items and the §4.7.5 detail response. No new endpoints; `GET /cards/*` does not serve them.
+
+Locked field rules:
+
+- **Trust placeholders (shape-stable, never rendered as trust):** communities have no trust system. `trust_score: 0`, `reputation_tier: "neutral"`, `card_tier: "common"`, `rank_label: null`, `is_in_good_standing: true`, `flags: []`. The community face does not render a trust dial; the values exist only to keep the envelope shape-stable.
+- **`tier_label` = server-owned group-type kicker** (§L5 — supersedes the frontend `KICKER_BY_TYPE` map): `nft` → `"HOLDERS GROUP"`, `local` → `"LOCAL CHAPTER"`, `system` → `"SYSTEM GROUP"`, `user` → `"COMMUNITY"`.
+- **Identity:** `id` = group id, `handle` = group slug, `bio` = group description (plain-text, ~200-char truncation — same bound as page/member bios; `""` when unset).
+- **Crest (§2.9 grammar):** `initials` from the group name (same server derivation as the other kinds), `image_url` = the group's cover (NFT collection art; `null` → FE monogram fallback). Background: NFT groups WITH a `chain_tag` → `background_kind: "chain"`, `background_value: <chain_tag>`; otherwise `background_kind: "tier"`, `background_value: "common"`.
+- **Stats (same CardStat shape as the other kinds, ≤3):**
+  ```json
+  "stats": [
+    { "key": "members",  "label": "Members",    "value": "87", "raw": 87, "format": "count" },
+    { "key": "posts_7d", "label": "Posts (7d)", "value": "14", "raw": 14, "format": "count" }
+  ]
+  ```
+  `posts_7d` is the §4.7.1 activity-heat `posts_last_7d` number (already resolved by both producers — no extra query).
+- **Permissions:** the full §3.2 key set (`can_pull`, `can_review`, `can_dispute`, `can_open_dispute`, `can_endorse`, `can_post_as_entity`, `can_edit_bio`, `can_edit_image`, `can_vouch`, `can_stand_behind`, `can_report`), every entry `{ allowed: false, unlock_hint: null, reason_code: "not_applicable" }` for ALL viewers — anon and authed alike. Communities use JOIN (gated on the group detail's own `permissions.can_join`), never the card verbs; signing in unlocks nothing on the card itself, so no `signin_required` copy is emitted.
+- **Always-null/constant envelope fields:** `member_dossier: null`, `chains: null`, `claim_target: null`, `onchain_signals: null`, `social_proof: null`, `viewer_attestation: null`, `viewer_has_reviewed: false`, `viewer_has_endorsed: false`, `endorse_unlock_hint: null`, `is_claimed: true`.
+- **`community_dossier`** — the community-only block, mirror of how `member_dossier` works: ALWAYS present on the wire, non-null on community cards, `null` on every other kind (and `member_dossier` is `null` here). Powers the community back face (`collection_stats` replaces FlippableNftCard's bespoke stats display):
+  ```json
+  "community_dossier": {
+    "type": "nft",
+    "privacy": "closed",
+    "member_count": 87,
+    "verification": { "kind": "on_chain", "label": "On-Chain Verified" },
+    "chain_tag": "stargaze",
+    "trust_min": null,
+    "collection_stats": { "...": "§4.7.4 NFT market block, null for non-NFT kinds" },
+    "viewer_is_member": true
+  }
+  ```
+  `verification` is the §4.7.x GroupVerification object or `null`; `viewer_is_member` is always `false` for anonymous viewers.
+- **Links + actions:** `links: { "self": "/communities/{slug}" }`. `actions` emits **`open` only** — a self-describing GET of the §4.7.5 detail endpoint (`{ "method": "GET", "href": "/wp-json/bcc/v1/groups/{slug}", "idempotent": true, "requires_auth": false }`). No `watch`/`pull` action: groups are joined, not watched.
+- **Privacy:** no new privacy logic. The producing endpoints already gate visibility (secret-non-member → absent/404); any group an endpoint returns gets a card.
 
 **3.2.5 Card actions (HATEOAS hints):**
 
@@ -2936,13 +2973,15 @@ Cross-kind discovery list. Sort key: `verified DESC, heat_score DESC, member_cou
           "last_activity_at": "2026-05-04T14:22:00+00:00",
           "heat": "warm",
           "heat_label": "Warm"
-        }
+        },
+        "card": { "...": "community Card view-model per §3.2.4 — card_kind: \"community\", community_dossier populated" }
       }
     ],
     "pagination": { "page": 1, "page_size": 20, "total": 142, "total_pages": 8 }
   }
   ```
-- **Cache:** `Cache-Control: public, max-age=60` (60s window keeps newly-warming groups discoverable quickly).
+- **`card` (v1.27, additive):** the full §3.2.4 community Card, composed from the same row data as the flat fields (zero per-item queries; viewer membership for `community_dossier.viewer_is_member` is one batched lookup over the page of items). New consumers render `item.card` via the CardFactory; the flat fields remain during the migration window.
+- **Cache:** anon → `Cache-Control: public, max-age=60` (60s window keeps newly-warming groups discoverable quickly); authed → `private, no-store` (v1.27 — each item's `card.community_dossier.viewer_is_member` is viewer-scoped, so authed responses must never sit in a shared cache; this matches the §4.7.5 detail posture).
 - **Privacy:** `secret` groups never appear here regardless of viewer. `closed` groups appear with name + member_count visible; content stays private at PeepSo's layer.
 - **Filter `verified=1`:** restricts to groups with `_bcc_group_kind = 'holders'`. Use this to render an "On-Chain Verified only" filter chip on the discovery page.
 - **`image_url`:** cover-art URL. NFT-type cards return the underlying collection's `image_url` (joined through `wp_bcc_onchain_collections`). Non-NFT cards (`local`/`system`/`user`) return `null` in V1 — the frontend falls back to a generated initials block. PeepSo group avatars for non-NFT kinds is V1.5.
@@ -5277,8 +5316,9 @@ Cross-kind single-group detail view-model (`nft`/`local`/`system`/`user`). Power
 - **Path:** `slug` — `[a-z0-9][a-z0-9-]{0,99}`, required.
 - **Response 200:**
   ```json
-  { "id": 4231, "slug": "holders-bored-apes", "name": "Holders: Bored Apes", "type": "nft", "privacy": "closed", "description": "…", "image_url": "https://…", "member_count": 87, "verification": { "kind": "on_chain", "label": "On-Chain Verified" }, "activity": { "posts_last_7d": 14, "last_activity_at": "2026-05-04T14:22:00Z", "heat": "warm", "heat_label": "Warm" }, "collection_stats": { "...": "§4.7.4 block, NFT-type only else null" }, "viewer_membership": { "is_member": true, "joined_at": "2026-01-12T00:00:00Z" }, "permissions": { "can_join": { "allowed": false, "unlock_hint": null, "reason_code": "already_member" }, "can_leave": { "allowed": true, "unlock_hint": null, "reason_code": null }, "can_read_feed": { "allowed": true, "unlock_hint": null, "reason_code": null } }, "feed_visible": true, "members_visible": true, "chain_tag": "ethereum", "trust_min": null, "links": { "self": "/groups/holders-bored-apes" } }
+  { "id": 4231, "slug": "holders-bored-apes", "name": "Holders: Bored Apes", "type": "nft", "privacy": "closed", "description": "…", "image_url": "https://…", "member_count": 87, "verification": { "kind": "on_chain", "label": "On-Chain Verified" }, "activity": { "posts_last_7d": 14, "last_activity_at": "2026-05-04T14:22:00Z", "heat": "warm", "heat_label": "Warm" }, "collection_stats": { "...": "§4.7.4 block, NFT-type only else null" }, "viewer_membership": { "is_member": true, "joined_at": "2026-01-12T00:00:00Z" }, "permissions": { "can_join": { "allowed": false, "unlock_hint": null, "reason_code": "already_member" }, "can_leave": { "allowed": true, "unlock_hint": null, "reason_code": null }, "can_read_feed": { "allowed": true, "unlock_hint": null, "reason_code": null } }, "feed_visible": true, "members_visible": true, "chain_tag": "ethereum", "trust_min": null, "links": { "self": "/groups/holders-bored-apes" }, "card": { "...": "community Card view-model per §3.2.4 — card_kind: \"community\", community_dossier populated" } }
   ```
+  - `card` (v1.27, additive): the full §3.2.4 community Card, composed from the same data already resolved for the flat fields (zero extra queries). New consumers render `group.card` via the CardFactory; the flat fields remain during the migration window.
   - `type` ∈ `nft|local|system|user`; `privacy` ∈ `open|closed|secret`. `verification`/`image_url`/`collection_stats` are NFT-type only (else `null`). `activity` is the §4.7.1 heat tile (defaults `posts_last_7d: 0, heat: "cold", heat_label: "Quiet"`). `viewer_membership`: `null` (anon), `{is_member: false, joined_at: null}` (authed non-member), `{is_member: true, joined_at}` (member). `permissions.*` each `{allowed, unlock_hint, reason_code}` (render `unlock_hint` verbatim per §A2/§N7); `can_join.reason_code` ∈ `auth_required|already_member|not_eligible|trust_threshold|requires_approval|invite_only`; `can_leave.reason_code` ∈ `auth_required|not_member|owner_cannot_leave`; `can_read_feed.allowed` always `true` for a built view-model (per-post visibility teaser, v1.24 — secret-non-member never gets a view-model). `feed_visible` mirrors `can_read_feed.allowed`. `members_visible` true for open groups, else only for active members. `chain_tag` slug or `null`. `trust_min` ∈ `25|50|75|null`.
 - **Errors:** `bcc_invalid_request` 400 (empty slug) · `bcc_not_found` 404 (unresolved, OR secret + viewer not a member — §S, indistinguishable from missing)
 - **Cache:** anon → `public, max-age=60`; authed → `private, no-store`.
@@ -5807,6 +5847,36 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.27 — 2026-06-11 — Community-card convergence (additive)
+
+Communities converge onto the Card view-model — same convergence members went
+through. Additive delivery only: no existing field changed, no new endpoints.
+
+- **`card_kind` enum gains `community`** (§3.2). New §3.2.4 documents the
+  kind's locked rules: trust placeholders (`trust_score: 0`,
+  `reputation_tier: "neutral"`, `card_tier: "common"`, `rank_label: null`),
+  `tier_label` = server-owned group-type kicker (HOLDERS GROUP / LOCAL
+  CHAPTER / SYSTEM GROUP / COMMUNITY — supersedes the FE `KICKER_BY_TYPE`
+  map per §L5), chain-keyed crest for NFT groups with a `chain_tag`,
+  `members` + `posts_7d` stats, all permissions `not_applicable` for every
+  viewer, `actions: { open }` only (no watch — groups are joined).
+- **New envelope field `community_dossier`** — mirror of `member_dossier`:
+  always present on the wire, populated on community cards
+  (`{ type, privacy, member_count, verification, chain_tag, trust_min,
+  collection_stats, viewer_is_member }`), `null` on
+  validator/project/creator/member cards.
+- **§4.7.4 `GET /groups` items each gain `card`** (composed from the same
+  row data — zero per-item queries; one batched membership lookup per page).
+  Cache posture tightened: authed → `private, no-store` because
+  `community_dossier.viewer_is_member` is viewer-scoped; anon keeps the 60s
+  public cache.
+- **§4.7.5 `GET /groups/:slug` response gains `card`** (same composition,
+  zero extra queries).
+- `GET /cards/:type/:id` and `GET /cards` do NOT accept `community`; the
+  additive fields on the two group endpoints are the entire delivery.
+- Server: `CardViewService::getCommunityCardFromGroupData` (pure
+  composition from already-loaded group data).
 
 ### v1.26 — 2026-06-11 — `can_open_dispute` ships (owner vote-dispute gate)
 
