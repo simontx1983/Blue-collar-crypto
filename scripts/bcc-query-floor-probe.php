@@ -44,4 +44,24 @@ add_action('shutdown', static function (): void {
     }
 
     error_log($line);
+
+    // Deep dump: ?bcc_qdump=1 logs the top normalized query patterns
+    // (numbers → N, IN-lists → IN(...)) so per-route N+1 sources are
+    // attributable without a profiler. Local diagnostics only.
+    if (isset($_GET['bcc_qdump']) && defined('SAVEQUERIES') && SAVEQUERIES && !empty($wpdb->queries)) {
+        $patterns = [];
+        foreach ($wpdb->queries as $q) {
+            $sql = is_array($q) ? (string) $q[0] : (string) $q;
+            $norm = preg_replace('/\s+/', ' ', $sql);
+            $norm = preg_replace('/IN\s*\([^)]*\)/i', 'IN(...)', $norm);
+            $norm = preg_replace('/\d+/', 'N', $norm);
+            $norm = substr(trim((string) $norm), 0, 160);
+            $patterns[$norm] = ($patterns[$norm] ?? 0) + 1;
+        }
+        arsort($patterns);
+        $top = array_slice($patterns, 0, 15, true);
+        foreach ($top as $pattern => $count) {
+            error_log(sprintf('[bcc-qdump] %3dx %s', $count, $pattern));
+        }
+    }
 }, PHP_INT_MAX);
