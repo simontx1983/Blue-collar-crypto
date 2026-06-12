@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.26 · 2026-06-11 · Phase 1 deliverable
+**Status:** Draft v1.27 · 2026-06-11 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1809,7 +1809,7 @@ Creates an email/password account with a public handle. Mints no JWT — the acc
 
 #### `POST /bcc/v1/auth/login`
 
-Exchanges email + password for a JWT. Gated on email verification: accounts explicitly pending verification (`_bcc_email_verified='0'`) are blocked; legacy accounts with no flag and verified accounts are allowed.
+First factor of the email/password login. Validates credentials, then **always** initiates an email-OTP second factor — the JWT is only minted by `/auth/2fa/verify`. Gated on email verification: accounts explicitly pending verification (`_bcc_email_verified='0'`) are blocked; legacy accounts with no flag and verified accounts are allowed.
 
 - **Auth:** Anonymous (no token)
 - **Body:**
@@ -1818,13 +1818,60 @@ Exchanges email + password for a JWT. Gated on email verification: accounts expl
   ```
 - **Response 200:**
   ```json
-  { "user_id": 42, "handle": "alice", "token": "<JWT>", "expires_in": 604800, "token_type": "Bearer", "in_good_standing": true }
+  { "status": "2fa_required", "method": "email", "challenge_token": "<64-hex>" }
   ```
-  `expires_in` is the 7-day JWT TTL (`JwtToken::TTL_SECONDS`). `in_good_standing` is the server-derived reputation-tier stamp (§A2; fails open to `true` on lookup error).
+  No JWT here. The client routes to the 2FA code screen and completes `/auth/2fa/verify` with the `challenge_token` (10-min TTL) + the 6-digit code emailed to the account (5-min TTL).
 - **Errors:** `bcc_invalid_request` 422 (missing/malformed email or empty password) · `bcc_invalid_credentials` 401 (user-not-found OR wrong password — generic, anti-enumeration) · `bcc_email_not_verified` 403 · `bcc_invalid_state` 409 (account has no handle) · `bcc_rate_limited` 429
 - **Rate limit:** IP-bucketed, 5 / 60s (before the bcrypt compare)
 - **Cache:** `Cache-Control: no-store`
-- **Mapping:** reads `wp_users` by email + `wp_check_password`, reads `bcc_handle` + `_bcc_email_verified`, sets the WP auth cookie, mints the JWT (`JwtToken::encode`), emits the `user_login` audit log, fires `do_action('bcc_user_login', …)`. Handler `AuthEndpoint::login` (route `AuthEndpoint.php:303`). Standard envelope per §1.4.
+- **Mapping:** reads `wp_users` by email + `wp_check_password`, reads `bcc_handle` + `_bcc_email_verified`, stores an HMAC-hashed 2FA OTP (`bcc_2fa_otp_<userId>`, 5-min transient) + challenge token (`bcc_2fa_ct_<token>`, 10-min transient), emails the code (`AuthMailer::send2faCode`), emits the `user_login_2fa_initiated` audit log. No auth cookie, no JWT. Handler `AuthEndpoint::login` (route `AuthEndpoint.php:303`). Standard envelope per §1.4.
+
+#### `POST /bcc/v1/auth/2fa/verify`
+
+Second factor: exchanges the `/auth/login` challenge token + emailed 6-digit code for the JWT. On success the response shape is identical to the pre-2FA `/auth/login` token response.
+
+- **Auth:** Anonymous (no token — the challenge token is the credential)
+- **Body:**
+  ```json
+  { "challenge_token": "<64-hex>", "code": "482915" }
+  ```
+- **Response 200:**
+  ```json
+  { "user_id": 42, "handle": "alice", "token": "<JWT>", "expires_in": 604800, "token_type": "Bearer", "in_good_standing": true }
+  ```
+  `expires_in` is the 7-day JWT TTL (`JwtToken::TTL_SECONDS`). `in_good_standing` per §A2.
+- **Errors:** `bcc_invalid_request` 422 (missing challenge_token or code) · `bcc_invalid_2fa_token` 401 (challenge expired/unknown — restart login) · `bcc_invalid_2fa_code` 401 (wrong/expired code — challenge preserved, retry in place) · `bcc_invalid_state` 404/409 (account vanished / no handle) · `bcc_rate_limited` 429
+- **Rate limit:** IP-bucketed, 10 / 60s (brute-force fence; the 10-min challenge TTL is the outer bound)
+- **Cache:** `Cache-Control: no-store`
+- **Mapping:** peeks `bcc_2fa_ct_<token>`, timing-safely consumes `bcc_2fa_otp_<userId>` (`hash_equals`), consumes the challenge token only after the OTP matches, sets the WP auth cookie, mints the JWT (`JwtToken::encode`), emits the `user_login` audit log (`via: 2fa`), fires `do_action('bcc_user_login', …)`. Handler `AuthEndpoint::twoFaVerify` (route `AuthEndpoint.php:546`). Standard envelope per §1.4.
+
+#### `POST /bcc/v1/auth/2fa/resend`
+
+Re-sends a fresh 2FA code for an in-progress login challenge. Always returns `ok: true` whether or not the challenge token is valid (anti-enumeration; mirrors `/auth/resend-verification`).
+
+- **Auth:** Anonymous (no token)
+- **Body:** `{ "challenge_token": "<64-hex>" }`
+- **Response 200:** `{ "ok": true }` (identical for valid and invalid tokens)
+- **Errors:** `bcc_rate_limited` 429
+- **Rate limit:** IP-bucketed, 3 / 60s (email-bomb fence)
+- **Cache:** `Cache-Control: no-store`
+- **Mapping:** peeks the challenge token without consuming it; when valid, overwrites `bcc_2fa_otp_<userId>` with a fresh HMAC-hashed code (the prior code immediately stops working) and re-dispatches `AuthMailer::send2faCode`. Handler `AuthEndpoint::twoFaResend` (route `AuthEndpoint.php:563`). Standard envelope per §1.4.
+
+#### `POST /bcc/v1/auth/oauth-complete`
+
+Completes an OAuth (Google/X) signup for a first-time user: exchanges the `provider_token` minted by the internal `/auth/oauth` bridge (see `EXEMPT_INTERNAL`) plus a chosen handle for a new account + JWT. Browser-called from `/signup/complete-profile`; its security rests on the `provider_token` — an unforgeable, single-use, server-issued capability carrying server-stored (not client-supplied) provider identity.
+
+- **Auth:** Anonymous (no token — the provider_token is the credential)
+- **Body:**
+  ```json
+  { "provider_token": "<64-hex>", "handle": "alice", "display_name": "Alice", "email": "alice@example.com" }
+  ```
+  `provider_token`, `handle` required; `display_name` optional (falls back to the provider's display name, then the handle). `email` is **required iff the provider didn't supply one** (X/Twitter's OAuth2 user-context never returns an email; Google always does) and is ignored when it did.
+- **Response 201:** identical shape to `/auth/2fa/verify` (`{ user_id, handle, token, expires_in, token_type, in_good_standing }`) — the user is signed in immediately.
+- **Errors:** `bcc_invalid_request` 400 (missing provider_token) · `bcc_invalid_oauth_token` 400 (provider_token expired (15 min) or consumed — restart the OAuth flow) · `bcc_invalid_handle` 422 / `bcc_handle_reserved` 422 (§B6) · `bcc_invalid_email` 422 (email missing/invalid when the provider supplied none) · `bcc_conflict` 409 (handle or email already taken) · `bcc_rate_limited` 429 · `bcc_internal_error` 500. Validation errors leave the provider_token intact so the user corrects and retries in place.
+- **Rate limit:** IP-bucketed, 5 / 60s
+- **Cache:** `Cache-Control: no-store`
+- **Mapping:** peeks the provider_token without consuming; creates a `subscriber` `wp_users` row (`wp_insert_user`, login `u_<handle>`, random 64-char password), sets `bcc_handle` + `_bcc_oauth_<provider>` meta. Email-verified flag depends on the email's origin: provider-supplied (Google) → `_bcc_email_verified='1'` + welcome email immediately; **user-typed** (X) → `'0'` + the standard verification email (same OTP/link machinery as `/auth/signup`; the welcome email arrives via `finalizeVerification`). A `'0'` account cannot be email-matched by the `/auth/oauth` bridge (anti-pre-registration gate) nor password-login until verified — provider sign-in is unaffected (provider-ID match). Consumes the provider_token only after the user row commits, mints the JWT, emits the `user_signup` audit log (`via: oauth`), fires `do_action('bcc_user_signup', …)`. Handler `AuthEndpoint::oauthComplete` (route `AuthEndpoint.php:621`). Standard envelope per §1.4.
 
 #### `POST /bcc/v1/auth/refresh`
 

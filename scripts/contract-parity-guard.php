@@ -112,6 +112,7 @@ const EXEMPT_INTERNAL = [
     'GET /bcc-trust/v1/x/callback'              => 'machine: X OAuth redirect (CSRF state)',
     'POST /bcc/v1/onchain/helius/webhook'       => 'machine: Helius webhook (hash_equals secret)',
     'POST /bcc/v1/internal/indexer/tick'        => 'machine: Vercel cron (hash_equals secret)',
+    'POST /bcc/v1/auth/oauth'                   => 'machine: NextAuth SSO bridge (X-Bcc-Oauth-Secret, hash_equals, fail-closed)',
 ];
 
 /*
