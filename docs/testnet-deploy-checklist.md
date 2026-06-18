@@ -71,6 +71,17 @@ schema installer on every request (see boot-floor fix, 2026-06-12 — the
 gate now logs `[bcc-trust] schema migration firing` when it triggers;
 seeing that more than once per deploy = stale cache).
 
+- [ ] **`WP_REDIS_TIMEOUT` trap (P0 — biggest deploy footgun).** Local dev
+      runs the active `object-cache.php` drop-in with `WP_REDIS_TIMEOUT=1` +
+      `WP_REDIS_READ_TIMEOUT=1`. If that active drop-in lands on a host where
+      Redis is **absent or unreachable**, every cache op blocks up to 1s
+      before failing over — the persistent cache makes the site ~1s/op
+      *slower*, not faster. The decision is binary: **Redis reachable →
+      activate the drop-in; no Redis → do NOT ship the active drop-in** (let
+      WP use its in-memory per-request cache; BCC degrades cleanly — see
+      `DegradationMetrics` transient fallback). Confirm `wp redis status`
+      (or Settings → Redis) shows **Connected** before trusting it.
+
 ### 1.6 Edge cache for anonymous public reads (LiteSpeed / CDN)
 
 **Optional scaling step — apply when traffic warrants, not required for a
@@ -138,6 +149,15 @@ hard-count them here; verify against `wp cron event list` below).
       activation-only scheduling drifted in 2026-05).
 - [ ] Validator-logo enrichment: confirm the auto-import populates on the
       first enrichment run (never yet observed live as of 2026-06-04).
+- [ ] **Action Scheduler.** BCC's async layer (`bcc-core` `AsyncDispatcher`)
+      prefers `as_enqueue_async_action()` for vote fan-out (4+ jobs/vote) and
+      the debounced push flush, falling back to `wp_schedule_single_event`
+      only when Action Scheduler is absent. Confirm whether it's installed
+      (`wp plugin list | grep action-scheduler`, or that the `as_*` functions
+      exist) and, if so, that its queue runner is draining
+      (`wp action-scheduler run`; no growing `wp_actionscheduler_actions`
+      backlog). If it's **absent**, the real-system-cron requirement above is
+      load-bearing — the fallback single-events run on wp-cron.
 
 ---
 
