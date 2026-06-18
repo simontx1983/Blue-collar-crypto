@@ -149,7 +149,40 @@ Run in order; each must pass before the next matters
 
 ---
 
-## 6. Known-open manual items (as of 2026-06-12)
+## 6. PeepSo configuration (performance)
+
+PeepSo settings live in the `peepso_config` wp_option (per-install — they do
+NOT travel with the codebase, so they must be set in each environment's
+**PeepSo → Configuration → Profiles** admin).
+
+- [ ] **Disable name-based avatars** (PeepSo → Configuration → Profiles →
+      Avatars → uncheck "Name-based avatars"; equivalently
+      `avatars_name_based = 0` in `peepso_config`).
+
+      **Why:** PeepSo's name-based avatar generator runs a
+      `SELECT * wp_peepso_users` + gender-field lookup + config reads on
+      **every member avatar, every request** — and BCC's frontend never
+      shows PeepSo avatars (it renders an initials monogram via
+      `Avatar.tsx`, which treats both the generated SVG and the static
+      `user-neutral` default as "no photo"). Measured locally: `/members`
+      at `per_page=24` dropped **1492 → 143 queries** with this off; the
+      same per-render PeepSo lookups are eliminated on every avatar-heavy
+      route (`/feed/hot`, `/users/:handle`, sidebars). The frontend
+      change that makes this swap visually invisible
+      (`isPeepSoPlaceholder` covering the default PNG) is already shipped.
+
+      After flipping: `wp cache flush` (the setting is object-cached), and
+      optionally clear the now-unused generated meta:
+      `DELETE FROM wp_usermeta WHERE meta_key IN
+      ('wp_peepso_name_based_avatar_url',
+       'wp_peepso_name_based_avatar_path',
+       'wp_peepso_name_based_avatars_config');`
+
+      Real uploaded avatars (`/peepso/users/{id}/…`) are unaffected.
+
+---
+
+## 7. Known-open manual items (as of 2026-06-12)
 
 - [ ] Vercel: set `BCC_OAUTH_BRIDGE_SECRET` (matching wp-config) — SSO is
       fail-closed until done.
