@@ -71,6 +71,42 @@ schema installer on every request (see boot-floor fix, 2026-06-12 — the
 gate now logs `[bcc-trust] schema migration firing` when it triggers;
 seeing that more than once per deploy = stale cache).
 
+### 1.6 Edge cache for anonymous public reads (LiteSpeed / CDN)
+
+**Optional scaling step — apply when traffic warrants, not required for a
+correct deploy.** This is "F2 Tier 3": the real origin-offload that pairs
+with the frontend's anon Data-Cache seam (the frontend caches the Vercel→WP
+round-trip for anon views; this caches the WP→DB view-model rebuild).
+
+The frontend is already built for this. The API client sends anonymous reads
+**cookie-less and Bearer-only** *specifically* so an edge cache can key on
+them (`bcc-frontend/src/lib/api/client.ts` — `credentials: 'omit'`;
+Authorization is deliberately kept out of the cache key). So a public GET
+from a logged-out viewer is byte-identical and safe to serve from cache.
+
+Configure LiteSpeed (LSCWP) — or a CDN/edge in front of the WP origin — to
+cache **anonymous** GETs of the public read endpoints:
+
+- [ ] Cache `GET /wp-json/bcc/v1/users/*`, `/cards/*`, `/groups/*` (the
+      public profile / entity / group view-models) for **30–60s** (match the
+      backend's per-viewer view-model cache; see `user-endpoints.ts`).
+- [ ] **Hard exclusions (correctness-critical — a leak here serves one
+      viewer's personalized data to another):**
+  - Bypass cache whenever the `Authorization` header is present (authed =
+    personalized, must always hit origin).
+  - Bypass whenever any `wordpress_logged_in_*` / session cookie is present.
+  - Never cache non-GET methods, `/auth/*`, `/me/*`, `/admin/*`, or any
+    write/mutation route.
+- [ ] Confirm with two curls: a bare `GET …/users/<handle>` should become a
+      cache HIT on the second call; the same URL **with** `Authorization:
+      Bearer <token>` must always MISS (origin) and return the viewer-aware
+      body.
+
+Bundle this with the Redis/object-cache upgrade — both are the same
+"persistent cache shows up when traffic does" milestone (see
+`project_hosting_redis_strategy` in memory). Without LiteSpeed/CDN this step
+is a no-op; the frontend seam still works on its own.
+
 ---
 
 ## 2. Mail (SMTP)

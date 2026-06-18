@@ -1,0 +1,203 @@
+# BCC Capacity Model
+
+Quantitative capacity model for the Blue Collar Crypto platform, anchored to
+the system's **actual** behavior as of 2026-06-18 (post-F1 polling cadence,
+≤50-query boot floor, Redis-backed read-models, Vercel→WP-PHP split).
+
+Every number traces to a stated assumption and an explicit formula. The
+single biggest swing is **peak concurrent share of DAU** — it is carried
+through every metric. Practical limits use a **30% safety margin** (size to
+70% utilization of the binding resource).
+
+> **Architecture scope:** "Vercel" hosts only the Next.js frontend. **All
+> data/queries hit the WordPress/PHP backend** (`bcc-frontend/src/lib/api/client.ts`:
+> Vercel→WP, Bearer-only). PHP-FPM + MySQL are the real ceiling regardless of
+> Vercel. Hidden browser tabs **do not** poll (`useBadges.tsx`,
+> `refetchIntervalInBackground:false`), so only *visible* sessions generate load.
+
+---
+
+## Global assumptions
+
+| Parameter | Best | Expected | Worst | Basis |
+|---|---|---|---|---|
+| Peak concurrent *visible* sessions (% of DAU) | 5% | 10% | 15% | Engaged-social peak-hour concurrency |
+| → Concurrent sessions `C` (at 10k DAU) | 500 | 1,000 | 1,500 | `DAU × %` |
+| Badge poll cadence (weighted avg) | 28s | 28s | 20s | F1: 10% chat@10s, 30% unread@25s, 60% idle@45s |
+| Feed/nav/action reqs per session | 0.02/s | 0.03/s | 0.05/s | 1 req per ~20–50s of activity |
+| Avg queries/request (Redis warm) | 12 | 18 | 28 | Read-model + prefetcher; boot floor caps at 50 |
+| Avg request latency | 80ms | 120ms | 220ms | Warm-cache REST; SSR data heavier |
+| Cold-cache penalty (no Redis) | — | ×2–4 queries & latency | — | Per-request caches don't persist |
+
+**Concurrency cross-check (independent):** 10k DAU × 3 sessions × 10 min =
+5,000 user-hours/day; if 15% lands in the peak hour → ~750 concurrent. The
+500–1,500 range brackets it; expected 1,000 is mildly conservative-high.
+
+---
+
+## 1. Requests per second (to the WP backend)
+
+`RPS = C × (badge_rate + feed_rate + other_rate)`, badge_rate ≈ 1/28s = 0.036/s.
+
+| | Best | Expected | Worst |
+|---|---|---|---|
+| Badge | 18 | 36 | 75 |
+| Feed+other | 10 | 30 | 75 |
+| **Total RPS** | **~28** | **~70** | **~150** (bursts ~250) |
+
+## 2. Badge polling traffic
+
+`badge_RPS = C × Σ(fraction_i / interval_i)` = 0.036/s per session.
+
+| | Best | Expected | Worst |
+|---|---|---|---|
+| Badge RPS | 18 | 36 | 75 |
+| Badge DB q/s | 45 | 90 | 188 |
+
+**Tuning applied 2026-06-18:** `BADGE_CACHE_TTL_SECONDS` raised 15→30s. F1
+moved the dominant poll interval to 25s; with a 15s TTL most single-tab polls
+*missed* the per-user cache (poll interval > TTL) and recomputed ~2.5 queries
+each. A 30s TTL ≥ poll interval, so most polls now hit cache → badge DB load
+drops ~2–3×. The generation-counter still forces an immediate refresh on any
+real badge event, so only the *missed-bump safety window* widens 15→30s.
+
+## 3. Feed traffic
+
+No polling (no `refetchInterval`); load on nav + re-stale after 60s; 20
+items/page; page hydrate ≈ 25 queries (prefetcher-batched, ≤50 boot floor).
+
+| | Best | Expected | Worst |
+|---|---|---|---|
+| Feed RPS | ~6 | ~18 | ~45 |
+| Feed q/s | 150 | 450 | 1,350 |
+
+## 4. Notification traffic
+
+Reads folded into badges (no separate poll). Writes ≈ 5 received/DAU/day.
+`notif_creates/s = DAU × 5 / 86,400` (avg), ×5 peak.
+
+| | Best | Expected | Worst |
+|---|---|---|---|
+| Notif writes/s | 0.3 | 0.6 (peak ~3) | ~6 |
+
+Negligible vs badge/feed.
+
+## 5. Database queries per second
+
+`DB_QPS = Σ(endpoint_RPS × queries_per_endpoint)`
+
+| | Best | Expected | Worst |
+|---|---|---|---|
+| Badges | 45 | 90 | 188 |
+| Feed | 150 | 450 | 1,350 |
+| Other/profile/mutations | 200 | 600 | 1,500 |
+| **Total (Redis warm)** | **~400** | **~1,150** | **~3,000** |
+| **Total (NO Redis, ×2.5)** | ~1,000 | ~2,900 | ~7,500 |
+
+The cold-cache row is what kills shared hosting.
+
+## 6. Redis operations per second
+
+`redis_ops = RPS × 30` (cache ops/request).
+
+| | Best | Expected | Worst |
+|---|---|---|---|
+| Redis ops/s | ~840 | ~2,100 | ~4,500 |
+
+A modest Redis does 100k+ ops/s → **Redis is never the bottleneck**; it is a
+relief valve, not a constraint.
+
+## 7. PHP-FPM worker requirements
+
+Little's Law: `busy = RPS × latency`; provision `busy / 0.7`.
+
+| | Best | Expected | Worst |
+|---|---|---|---|
+| Busy (warm) | 2 | 8 | 33 |
+| **Provision (÷0.7)** | ~3 | ~12 | ~47 (spikes → ~70) |
+| Cold-cache busy (×2.5) | ~6 | ~20 | ~80 → provision ~115 |
+| Worker RAM @60MB | 0.2GB | 0.7–1.2GB | 3–7GB |
+
+## 8. MySQL CPU requirements
+
+~2,000 q/s per vCPU (mixed read-model/join). `vCPU = QPS / 2,000`, provision `÷0.7`.
+
+| | Best | Expected | Worst |
+|---|---|---|---|
+| Warm vCPU busy | 0.2 | 0.6 | 1.5 |
+| **Provision** | ~0.3 | ~1 | ~2 |
+| Cold (no Redis) | ~0.7 | ~1.5 | ~3.8 → ~5–6 |
+| Connections (= busy workers) | ~6 | ~20 | ~80–115 |
+
+## 9. Memory requirements (backend box)
+
+`PHP-FPM×60MB + InnoDB buffer pool + Redis + OS`
+
+| Component | Best | Expected | Worst |
+|---|---|---|---|
+| PHP-FPM | 0.5GB | 1.2GB | 6GB |
+| InnoDB buffer pool (hot set) | 1GB | 3GB | 8GB |
+| Redis | 0.2GB | 0.5GB | 1GB |
+| OS/overhead | 0.5GB | 1GB | 1.5GB |
+| **Total** | **~2GB** | **~6GB** | **~16GB** |
+
+## 10. Storage growth per month (10k DAU)
+
+`rows/mo = DAU × events/day × 30`; `bytes ≈ rows × (row + index)`
+
+| Table | Events/DAU/day | Rows/mo | Size/mo | Notes |
+|---|---|---|---|---|
+| activity log | 20 | 6M | ~2.4GB | plateaus (90-day retention + archive) |
+| score_events | ~4 | ~1.2M | ~0.5GB | persistent |
+| votes | 2 | 0.6M | ~0.2GB | persistent |
+| notifications (PeepSo) | 5 | 1.5M | ~0.5GB | PeepSo-pruned |
+| messages/endorse/misc | — | — | ~0.5GB | mixed |
+| **Gross** | | | **~4–5GB/mo** | |
+| **Net persistent** (after retention) | | | **~1.5GB/mo** | votes+score_events+endorsements |
+
+| | Best | Expected | Worst |
+|---|---|---|---|
+| Gross/mo | ~2GB | ~4.5GB | ~10GB |
+
+---
+
+## First bottleneck that actually fails
+
+**Shared hosting: PHP-FPM worker exhaustion, compounded by cold-cache MySQL
+CPU.** Without a persistent object cache, every request pays ~2.5× queries
+*and* ~2.5× latency → workers stay busy longer → the ~25–40 worker pool
+saturates, requests queue, latency cascades. Matches the `BadgesService`
+author's note ("~30–80 concurrent before COUNT contention saturates a worker,"
+pre-coalesce).
+
+**VPS (with Redis): MySQL CPU is the next wall**, then single-primary
+connection/write contention past ~20–40k DAU (→ needs a read replica, F3).
+
+---
+
+## Practical DAU limits (70% utilization = 30% safety margin)
+
+Binding resource at each tier, expected-load column.
+
+| Platform | Binding resource | Practical safe DAU | Notes |
+|---|---|---|---|
+| **1. Hostinger Business (shared)** | PHP-FPM (~30 workers) + cold-cache MySQL (often no real Redis) | **~1,500–2,500** | True Redis + steady CPU → top of range; otherwise bottom. Don't plan past ~2k. |
+| **2. 4 vCPU VPS (Redis, tuned, 8GB)** | MySQL CPU / worker RAM | **~7,000–8,000** | Handles expected 10k *load* at ~70–85%, thin spike headroom → safe target ~8k. |
+| **3. 8 vCPU VPS (Redis, 16GB)** | MySQL CPU, then connections | **~18,000–22,000** | ~2× the 4-vCPU box; single-primary writes bind near the top. |
+| **4. Managed DB + Vercel + scaled WP + Redis + CDN** | WP app-tier scale; DB **writes** | **~50,000** (→ **100k+ with F3 read-replica + F5 queue**) | Vercel removes the *frontend* wall only; managed DB + replicas remove MySQL CPU; writes + cron drain are the last limits. |
+
+**Planning takeaway:** Hostinger Business covers early testnet (~2k DAU). A
+**4 vCPU VPS + Redis is the real "10k DAU box"** — and it's exactly the upgrade
+that unlocks the deferred wins (Redis flip, LiteSpeed anon cache §1.6,
+badge-TTL bump). 8 vCPU buys ~20k. Past that → F3 (read replica) / F5 (worker
+queue) and the managed-DB architecture, which is why those are deferred until
+the hosting upgrade.
+
+---
+
+## Related
+
+- Deploy/ops gates: [testnet-deploy-checklist.md](testnet-deploy-checklist.md)
+  (§1.5 object cache, §1.6 LiteSpeed anon edge cache).
+- Boot-floor probe + load-check commands: [GOLDEN_PATHS.md](GOLDEN_PATHS.md) §5.6.
+- Hosting/Redis strategy: see the project memory `project_hosting_redis_strategy`.
