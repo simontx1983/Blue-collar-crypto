@@ -22,7 +22,7 @@ considered burned. Generate new ones:
 
 | Constant | Purpose | Generate with |
 |---|---|---|
-| `BCC_ENCRYPTION_KEY` | At-rest encryption for stored tokens. **Site 503s for non-admins if missing.** | `openssl rand -base64 48` |
+| `BCC_ENCRYPTION_KEY` | At-rest encryption for stored tokens. **If missing, all trust/dispute/onchain API calls return 403 for non-admins — BCC features go offline (the WP site itself still loads).** | `openssl rand -base64 48` |
 | `BCC_INTERNAL_VERIFY_SECRET` | `X-Bcc-Internal` header for wallet-signature verify bridge. Must match the Vercel env var of the same name. | `openssl rand -base64 32` |
 | `BCC_INTERNAL_CRON_SECRET` | Internal cron-trigger auth. Deliberately separate from VERIFY so leaking one doesn't widen the other. | `openssl rand -base64 32` |
 | `BCC_OAUTH_BRIDGE_SECRET` | `X-Bcc-Oauth-Secret` header from the NextAuth OAuth bridge. Must match Vercel. **Fail-closed: SSO is disabled until set on BOTH ends.** | `openssl rand -hex 32` |
@@ -89,8 +89,9 @@ actually deliver on testnet:
 
 ## 3. Cron
 
-19 recurring hooks + single-event dispatches (canonical list:
-`docs/cron-registry.md`).
+The recurring hooks + single-event dispatches listed in
+`docs/cron-registry.md` (the canonical, self-updating list — don't
+hard-count them here; verify against `wp cron event list` below).
 
 - [ ] Real system cron hitting `wp-cron.php` (or `wp cron event run --due-now`
       every minute) + `define('DISABLE_WP_CRON', true)` — testnet must not

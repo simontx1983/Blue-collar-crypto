@@ -42,7 +42,7 @@ NEXTAUTH_SECRET            = ____________________________________________
 ## Step 1 — wp-config.php on the staging server
 
 ### 1a. Generated secrets (paste from Step 0)
-- [ ] `define('BCC_ENCRYPTION_KEY',         '____');`  ← **site 503s for non-admins if missing**
+- [ ] `define('BCC_ENCRYPTION_KEY',         '____');`  ← **missing = trust/dispute/onchain API calls 403 for non-admins (BCC features offline; site still loads)**
 - [ ] `define('BCC_INTERNAL_VERIFY_SECRET', '____');`  ← must equal Vercel (Step 3)
 - [ ] `define('BCC_INTERNAL_CRON_SECRET',   '____');`
 - [ ] `define('BCC_OAUTH_BRIDGE_SECRET',    '____');`  ← must equal Vercel; **SSO dead until both set**
@@ -86,7 +86,7 @@ NEXTAUTH_SECRET            = ____________________________________________
 - [ ] **SMTP**: real transactional provider wired to `wp_mail`
 - [ ] Send ONE test: change a test account's password → confirm the email arrives
 - [ ] **Cron**: `define('DISABLE_WP_CRON', true);` + system cron hitting `wp-cron.php` (or `wp cron event run --due-now` each minute)
-- [ ] `wp cron event list` → all 19 recurring hooks present (they self-heal on load)
+- [ ] `wp cron event list` → all recurring hooks from `docs/cron-registry.md` present (they self-heal on load)
 - [ ] **PeepSo → Configuration → Profiles → Avatars → uncheck "Name-based avatars"**, then `wp cache flush`  ← perf (see checklist §6)
 
 ---
@@ -124,7 +124,7 @@ NEXTAUTH_SECRET            = ____________________________________________
 ---
 
 ### The three that hard-break if missed
-1. `BCC_ENCRYPTION_KEY` absent → **site 503s for everyone but admins**
+1. `BCC_ENCRYPTION_KEY` absent → **trust/dispute/onchain API calls 403 for non-admins** (BCC features offline; the WP site still loads)
 2. `BCC_OAUTH_BRIDGE_SECRET` mismatched/absent on either end → **Google/X login silently dead** (email + wallet still work)
 3. `BCC_HIGHLIGHTS_DEMO` left on → **seeded demo data renders publicly**
 
