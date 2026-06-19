@@ -22,6 +22,8 @@ Real drift surfaced by the 2026-05-26 first run of `scripts/contract-parity-guar
 
 - [ ] **Post-launch doc fix** — correct the stale "Used for: dispute evidence, ... user-facing score history" claim in [`schema-score-events.php:6`](../app/public/wp-content/plugins/bcc-trust/includes/database/schema-score-events.php#L6). The 2026-06-18 read-path trace proved no dispute flow reads `trust_score_events` (disputes read the votes table) and the "score history" readers are now deleted. Reword to reflect the one real consumer (the 24h `findForPagesSince` highlights slot) + write-time audit log.
 
+- [ ] **§1 raw-`$wpdb` remediation (ratchet debt)** — move direct `$wpdb` into Repositories for the 6 files frozen in `arch-guardrails.sh`'s `WPDB_DEBT_ALLOWLIST` (the guard's Rule 1 was a no-op until the 2026-06-18 directory-scan fix; these are real but safe-today §1 violations). Remove each from the allowlist as it lands: `TrustReadService` (→ read repo), `GroupsDiscoveryEndpoint` (→ Repository), `ReactionSeeder` (SHOW/CREATE INDEX → Infrastructure migration), `WatchingService` (→ `PageReadModelRepository::getReputationTier`), `NotificationPrefs` (→ Repository), `OnchainCircuitBreaker` (breaker-state → Repository/Infrastructure).
+
 
 ## Observability
 
