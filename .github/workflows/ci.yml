@@ -1,0 +1,70 @@
+name: CI
+
+# Cross-repo guards. The plugin + frontend code lives in separate repos, so
+# this job reassembles the WordPress/monorepo layout (root repo at the root,
+# the public sibling repos checked out into their dev paths) and runs the
+# static guards that span the contract docs (this repo) and the code (the
+# sibling repos).
+#
+# Note: this triggers on changes to THIS repo (docs/scripts). A route change
+# in a plugin repo won't auto-trigger it — run it manually or via the
+# Actions "Run workflow" button after cross-repo changes.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  guards:
+    name: Cross-repo guards — contract · subsystem · cadence · dead-file
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: simontx1983/bcc-trust
+          path: app/public/wp-content/plugins/bcc-trust
+      - uses: actions/checkout@v4
+        with:
+          repository: simontx1983/bcc-core
+          path: app/public/wp-content/plugins/bcc-core
+      - uses: actions/checkout@v4
+        with:
+          repository: simontx1983/bcc-search
+          path: app/public/wp-content/plugins/bcc-search
+      - uses: actions/checkout@v4
+        with:
+          repository: simontx1983/bcc-frontend
+          path: bcc-frontend
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: mbstring
+          coverage: none
+
+      - name: Contract-vs-code parity
+        run: php scripts/contract-parity-guard.php
+
+      - name: Subsystem-count parity
+        run: php scripts/subsystem-count-guard.php
+
+      - name: Cadence-pressure policy
+        run: bash scripts/cadence-pressure-guard.sh
+
+      - name: Dead-file scan
+        run: php scripts/dead-file-scan.php
+
+      # wallet-case-preservation-check.php is intentionally NOT run here — it
+      # boots WordPress (needs mysqli + a DB), so it's a live-site check, not a
+      # static gate. Run it against a running site, not in CI.
