@@ -29,6 +29,12 @@ Real drift surfaced by the 2026-05-26 first run of `scripts/contract-parity-guar
 
 <!-- subsystem-count guard shipped 2026-05-26 — see Recently shipped below -->
 
+- [ ] **Prove the degradation alert end-to-end** — `DegradationAlerter` (bcc-core, 2026-06-19) pushes an email/webhook on sustained degradation, but only its decision logic is unit-tested. Prove the full path on Local: seed a subsystem (`DegradationMetrics::record('throttle')` ≥ threshold), run the cron (`wp cron event run bcc_core_degradation_alert_check`), confirm the alert lands in Mailpit. Then set `BCC_DEGRADATION_ALERT_EMAIL` (+ optional `_WEBHOOK`, `_THRESHOLD`) before deploy.
+
+## Performance / Ops
+
+- [ ] **Warm the `/feed/hot` cold path** — the 2026-06-19 k6 baseline measured ~20s for the cold view-model rebuild (first hit after cache expiry). Add a cache-warming cron or stale-while-revalidate so a user never pays it. See [`capacity-model.md`](capacity-model.md) "Measured baseline".
+- [ ] **Re-run the load test on a provisioned staging box** — the Local k6 run is dominated by a dev-box FPM cliff (~2–4 workers + Xdebug), so the per-tier DAU numbers in `capacity-model.md` stay modeled, not measured. Re-run [`scripts/perf/load-test.js`](../scripts/perf/load-test.js) on a 4 vCPU + Redis + tuned-FPM box, including the with/without-Redis comparison.
 
 ## Docs
 
