@@ -20,6 +20,8 @@ section at the bottom. Don't pad the active list.
 
 Real drift surfaced by the 2026-05-26 first run of `scripts/contract-parity-guard.php`. Each needs a one-way decision: fix the contract OR fix the code.
 
+- [ ] **Post-launch doc fix** — correct the stale "Used for: dispute evidence, ... user-facing score history" claim in [`schema-score-events.php:6`](../app/public/wp-content/plugins/bcc-trust/includes/database/schema-score-events.php#L6). The 2026-06-18 read-path trace proved no dispute flow reads `trust_score_events` (disputes read the votes table) and the "score history" readers are now deleted. Reword to reflect the one real consumer (the 24h `findForPagesSince` highlights slot) + write-time audit log.
+
 
 ## Observability
 
@@ -36,6 +38,7 @@ Real drift surfaced by the 2026-05-26 first run of `scripts/contract-parity-guar
 Once an item ships, move it here with a date + commit hash so the
 file documents recent flow. Trim entries older than ~30 days.
 
+- 2026-06-18 — Deleted 3 dead `ScoreEventRepository` readers (`getForPage`/`getForActor`/`getTierChanges`) — zero callers confirmed by grep across all repos; only live read path is `findForPagesSince` (24h §O2.1 highlights slot). PHPStan L8 + arch-guardrails green. Stale `schema-score-events.php:6` "dispute evidence / score history" doc claim remains (see Backend section).
 - 2026-06-12 — Frontend-coverage docs refreshed for v1.19/v1.20 surfaces. `trust-engine-coverage.md` re-audited (header now 2026-06-12): 15 new auth/recovery rows, all ✅ grep-verified against the typed client + UI surfaces; one honest finding — `auth-endpoints.walletLogin()` is dead code (live wallet login goes through the NextAuth Credentials provider). `v1-smoke-test-checklist.md` gained §2.10–2.14 (wallet signup/login, recovery-email banner, forgot/reset, oauth-complete) + §6.9 (Phase γ err.code-only copy check); §7.1 TODO-verify resolved (owner entry = `DisputeCallout` in EntityProfile's IdentityBlock stack). NEW `testnet-deploy-checklist.md` consolidates secrets/SMTP/cron/Vercel/health-gates.
 - 2026-06-12 — Boot-floor root cause fixed (`bcc-trust a3f27ee`). The ~250-query floor was the schema-migration gate misfiring per-request (stale-object-cache option mismatch re-ran the ~200-query installer, including the chains×26 seeds). Gate now logs loudly + verify-after-write + GET_LOCK; `TableRegistry::exists()` caches table-existence probes (positive-only persist); `ChainRepository::getById()` request-memoized. Live before/after counts pending; probe at `scripts/bcc-query-floor-probe.php`.
 
