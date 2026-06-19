@@ -195,6 +195,48 @@ the hosting upgrade.
 
 ---
 
+## Measured baseline — local dev (2026-06-19, k6)
+
+First real measurement of the hot read paths via
+[`scripts/perf/load-test.js`](../scripts/perf/load-test.js), against the Local
+(Flywheel) dev site. **Heavily caveated:** Local runs a tiny PHP-FPM pool,
+`WP_DEBUG=true`, and likely Xdebug on a single box — so the *absolute* numbers
+below are a dev-box stress signature, **not** production capacity. The
+*relative* findings and the cold-cache result are the takeaways.
+
+**Single-request, warm cache** (the useful latency baseline):
+
+| Endpoint | Warm | Cold (first hit) |
+|---|---|---|
+| `GET /bcc/v1/cards?per_page=20` | ~0.36s | ~0.4s |
+| `GET /bcc/v1/members?per_page=20` | ~0.22s | ~0.2s |
+| `GET /bcc/v1/feed/hot?per_page=20` | ~1.2s | **~20s** |
+
+**Under 10 concurrent VUs** (k6, 15s): latency collapsed — `/cards` p95 ~1.8s,
+`/members` p50 ~10s / p95 ~30s, `/feed/hot` p95 ~24s, throughput falling to a
+handful of req/s. This is **FPM-worker serialization on an untuned single box**
+(Local ships ~2–4 workers + Xdebug), not an endpoint defect — it's the exact
+thing the per-tier model assumes proper FPM pool sizing removes.
+
+**Actionable findings (survive the caveats):**
+1. **`/feed/hot` cold rebuild is the most expensive path by far (~20s cold here).**
+   The first visitor after the feed view-model cache expires eats the full
+   rebuild. Even discounting the dev box, this is the path to protect — consider
+   a **cache-warming cron** or stale-while-revalidate so a user never pays the
+   cold rebuild. Validate the *production* cold-rebuild cost (opcache + warm
+   MySQL + Redis cut it sharply, but it stays the worst path).
+2. **The per-tier DAU numbers above cannot be validated on Local** — the FPM
+   cliff dominates. Re-run this k6 script against a provisioned staging box
+   (4 vCPU + Redis + tuned FPM, no Xdebug) to turn the modeled tiers into
+   measured ones. The script is parameterized (`-e URL=… -e VUS=… -e DURATION=…`).
+3. Endpoint ordering by cost: **feed ≫ cards > members** — matches the audit's
+   "feed is the heaviest hot path" call.
+
+> Not done: a with-vs-without-Redis comparison. On this box the FPM cliff swamps
+> any cache delta, so that comparison is only meaningful on the staging box above.
+
+---
+
 ## Related
 
 - Deploy/ops gates: [testnet-deploy-checklist.md](testnet-deploy-checklist.md)
