@@ -79,8 +79,35 @@ seeing that more than once per deploy = stale cache).
       *slower*, not faster. The decision is binary: **Redis reachable →
       activate the drop-in; no Redis → do NOT ship the active drop-in** (let
       WP use its in-memory per-request cache; BCC degrades cleanly — see
-      `DegradationMetrics` transient fallback). Confirm `wp redis status`
-      (or Settings → Redis) shows **Connected** before trusting it.
+      `DegradationMetrics` transient fallback).
+
+  **Don't hardcode the `WP_REDIS_*` defines per environment** — gate them on a
+  host env var so the same `wp-config.php` is safe whether or not the host has
+  Redis. Replace any unconditional `WP_REDIS_*` block with:
+
+  ```php
+  // Only activate Redis when the host actually has it reachable. Set
+  // BCC_REDIS_ENABLED=1 in the host environment ONLY AFTER `wp redis status`
+  // reports Connected. Absent/0 → leave the drop-in disabled (rename the
+  // active object-cache.php to object-cache.php.disabled) and BCC falls back
+  // to the DB-backed RateLimiter + transient cache. Never ship the active
+  // drop-in to a Redis-less host (WP_REDIS_TIMEOUT=1 → 1s stall per cache op).
+  if (getenv('BCC_REDIS_ENABLED') === '1') {
+      define('WP_REDIS_HOST',         getenv('WP_REDIS_HOST') ?: '127.0.0.1');
+      define('WP_REDIS_PORT',  (int) (getenv('WP_REDIS_PORT') ?: 6379));
+      define('WP_REDIS_PREFIX',       getenv('WP_REDIS_PREFIX') ?: 'bcc_');
+      define('WP_REDIS_DATABASE', (int) (getenv('WP_REDIS_DATABASE') ?: 0));
+      define('WP_REDIS_TIMEOUT', 1);
+      define('WP_REDIS_READ_TIMEOUT', 1);
+      define('WP_CACHE', true);
+  }
+  ```
+
+- [ ] **Blocking gate:** `BCC_REDIS_ENABLED=1` is set **only** after `wp redis
+      status` (or Settings → Redis) shows **Connected**. If Redis is not
+      reachable, `BCC_REDIS_ENABLED` is unset/`0` **and** the active
+      `object-cache.php` drop-in is renamed `object-cache.php.disabled`. Do not
+      go live with an active drop-in and an unreachable Redis.
 
 ### 1.6 Edge cache for anonymous public reads (LiteSpeed / CDN)
 
