@@ -6027,15 +6027,15 @@ documented vs 233 registered in-scope routes; 128 undocumented). Full audit:
   `DELETE /admin/ranks/:rank/:user_id` for admin-conferred ranks,
   but neither endpoint was ever wired into `register_rest_route`.
   Zero frontend callers, zero PHP handlers. V1 ranks are fully
-  auto-derived from tier/trust score by
-  `RankProgressionListener::run`; admin-override is not a V1
-  feature. Replaced the two `####` headers with a "deferred" note
-  in §4.8 explaining what stays (read-side `is_admin_conferred`
-  field, catalog `auto_assigned: false` design intent) and what
-  doesn't (the mutation REST surface). When admin-conferral
-  becomes a real feature, the new endpoints get designed at that
-  point — not resurrected from this retracted spec. Per fresh-
-  install policy, the contract aligns with shipping reality.
+  auto-derived (no admin-conferred *rank*); admin-override is not a
+  V1 feature. Replaced the two `####` headers with a "deferred" note
+  in §4.8. When admin-conferral becomes a real feature, the new
+  endpoints get designed at that point — not resurrected from this
+  retracted spec. Per fresh-install policy, the contract aligns with
+  shipping reality. *(Updated 2026-06-22, v1.28: rank derivation moved
+  from reputation tier to the feature-access level — `rankForLevel` —
+  and the deferred admin-conferral surface is now the **Foreman Role**,
+  not a rank. See v1.28.)*
 
 ### v1.22 — 2026-05-26
 
