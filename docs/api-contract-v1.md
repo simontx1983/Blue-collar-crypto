@@ -814,8 +814,10 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
 
 **Field rules:**
 
-- `trust_score`, `reputation_tier`, `card_tier`, `tier_label`, `rank`, `rank_label`, `is_in_good_standing`, `flags` — all derived per §A4 by `bcc-trust`. Frontend renders, never derives.
-- `card_tier` follows §C1 mapping: `elite → legendary`, `trusted → rare`, `neutral → uncommon`, `caution → common`, `risky → null` (hidden from card UI per §C1).
+- `trust_score`, `reputation_tier`, `reputation_tier_label`, `card_tier`, `tier_label`, `rank`, `rank_label`, `current_rank_label`, `foreman_insignia`, `is_in_good_standing`, `flags` — all derived per §A4 by `bcc-trust`. Frontend renders, never derives.
+- `card_tier` follows §C1 mapping: `elite → legendary`, `trusted → rare`, `neutral → uncommon`, `caution → common`, `risky → null` (hidden from card UI per §C1). This is **entity-card rarity** vocabulary.
+- `reputation_tier_label` is the **honest member trust-tier name** (the chip a human reads): `risky → "Risky"`, `caution → "Caution"`, `neutral → "Neutral"`, `trusted → "Trusted"`, `elite → "Proven"`. Distinct from `card_tier`/`tier_label` rarity — a *caution* member must not read as "Common". Always present on member surfaces.
+- `current_rank_label` is the pre-rendered §A2 label for the level-derived **Rank** (`rank_label`'s display string; e.g. `"Master"`). `foreman_insignia` is a boolean — `true` iff the member holds the conferred Foreman **Role** (orthogonal to Rank; see §4.8). Both are member-axis fields; `foreman_insignia` is always `false` for non-member kinds.
 - `flags` is an array of short slugs; if non-empty, the frontend may render moderation chips. V1 codes: `suspended`, `shadow_limited`, `hidden`, `under_review`.
 - Hidden privacy fields (per `privacy.*_hidden: true`) cause the corresponding sections in `counts`, `wallets`, etc. to either be omitted or zeroed depending on the viewer's relationship — server decides, client doesn't.
 - `cover_photo_url` is `null` when no custom cover photo is set; the frontend renders a default treatment in that case. URL is absolute (per §1.7) and points at PeepSo's stored cover image. Self-edits go through `PATCH /me/profile/cover` (multipart upload) — see §V2 Phase 2 endpoints.
@@ -836,9 +838,12 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
   "bio": "Cosmos validator. Iron Local 342.",
   "trust_score": 98,
   "reputation_tier": "elite",
+  "reputation_tier_label": null,
   "card_tier": "legendary",
   "tier_label": "Legendary",
   "rank_label": null,
+  "current_rank_label": null,
+  "foreman_insignia": false,
   "is_in_good_standing": true,
   "flags": [],
   "is_claimed": true,
@@ -863,7 +868,9 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
 - `is_claimed` is meaningful for `validator` / `project` / `creator`. For `member`, `is_claimed: true` always (members are their own pages).
 - `claim_target` (per §N8) — non-null only when the page is unclaimed AND a claim target resolves. Drives the four-step claim modal.
 - `chains` (per §K3) — list of `CardChain` objects when 2+ chains back the same page; `null` otherwise. V1.5 validator-only; creator gallery filter is V2.
-- `rank_label` — **populated on `member` cards** (mapped from `bcc_user_ranks` + auto-derived activity, via `UserViewService::getSummary`); may be `""` when the member has no derived rank yet. `null` on page kinds (`validator`/`project`/`creator`) — §E2 ranks are member-only. The field is always present (the union is `string | null`).
+- `rank_label` — **populated on `member` cards** (the level-derived Rank label — Apprentice/Journeyman/Master — via `UserViewService::getSummary`); may be `""` when the member has no derived rank yet. `null` on page kinds (`validator`/`project`/`creator`) — Rank is member-only. The field is always present (the union is `string | null`). `current_rank_label` mirrors it (own/profile surfaces).
+- `reputation_tier_label` — **honest member trust-tier name** (Risky/Caution/Neutral/Trusted/Proven). Populated on `member` cards; `null` on page kinds (entity cards use `card_tier`/`tier_label` rarity instead). Always present (`string | null`).
+- `foreman_insignia` — boolean, `true` iff the member holds the conferred Foreman **Role** (see §4.8). `false` on page kinds and on members without the role. The Role is orthogonal to Rank — it is never folded into `rank_label`.
 - `member_dossier` — **non-null object on `member` cards, `null` on page kinds** (always present for shape uniformity, like `chains`). Carries the back-of-card signal blocks the `/members`, watchers, and followers/following lists previously emitted as a bare `MemberSummary`. Server-composed from the same `UserViewService::getSummary` resolution (no parallel query). Shape:
   ```json
   "member_dossier": {
@@ -2997,40 +3004,63 @@ Cross-kind discovery list. Sort key: `verified DESC, heat_score DESC, member_cou
 
 The rank catalog and the viewer's current rank.
 
+**Identity is three orthogonal axes (locked 2026-06-22):** **Rank** (this
+endpoint's earned ladder), **Trust Tier** (`reputation_tier` / new
+`reputation_tier_label`, see §3.2), and **Role** (Foreman). A member holds
+one value on each axis, independently. **Rank mirrors the feature-access
+level** (§2.6): `apprentice = New`, `journeyman = Active`, `master = Veteran`
+— earned from activity, **not** from reputation tier. **Foreman is a conferred
+Role, not a rank**: it is NOT in the `ranks` catalog and never appears as
+`current_rank`; it surfaces only via `viewer.foreman_insignia`. Reaching
+`master` does not confer it.
+
 - **Auth:** Anonymous OR Bearer
 - **Response 200:**
   ```json
   {
     "ranks": [
-      { "key": "apprentice", "label": "Apprentice", "description": "New on the floor.", "auto_assigned": true,  "order": 1 },
-      { "key": "journeyman", "label": "Journeyman", "description": "Earned the basics.", "auto_assigned": true,  "order": 2 },
-      { "key": "foreman",    "label": "Foreman",    "description": "Conferred for trust.","auto_assigned": false, "order": 3 }
+      { "key": "apprentice", "label": "Apprentice", "description": "New on the floor.",   "auto_assigned": true, "order": 1 },
+      { "key": "journeyman", "label": "Journeyman", "description": "Earned the basics.",   "auto_assigned": true, "order": 2 },
+      { "key": "master",     "label": "Master",     "description": "Master of the trade.", "auto_assigned": true, "order": 3 }
     ],
     "viewer": {
       "current_rank": "journeyman",
+      "current_rank_label": "Journeyman",
       "auto_derived_rank": "journeyman",
-      "is_admin_conferred": false
+      "next_rank": "master",
+      "next_rank_label": "Master",
+      "is_admin_conferred": false,
+      "foreman_insignia": false
     }
   }
   ```
 - **Cache:** `Cache-Control: public, max-age=300`
-- **Mapping:** Static rank catalog from `bcc_options`. `viewer.*` from `bcc_user_ranks`. `current_rank` and `auto_derived_rank` are always equal in V1 (see deferral note below); they're separate fields because the data layer can already store admin-conferred rank rows — only the REST mutation surface is deferred.
+- **Mapping:** Static rank catalog from `RankCatalog::all()` (the three earned
+  rungs only — Foreman is a Role, excluded). `viewer.*` from
+  `RankService::getViewerBlock()`. `current_rank` / `auto_derived_rank` are the
+  **level-derived** earned rank and are always equal in V1 (no demotion path).
+  `next_rank` / `next_rank_label` are `null` at `master` (top of the ladder).
+  `foreman_insignia` is `true` iff the user holds an active conferred Foreman
+  role row in `bcc_user_ranks`; it never changes `current_rank`. `is_admin_conferred`
+  is `true` iff any conferred Role row is active (today only Foreman), kept for
+  future-build readiness.
 
-#### Admin-conferral REST surface — deferred (V1 ships auto-derivation only)
+#### Foreman role + admin-conferral REST surface — deferred (V1 ships auto-derivation only)
 
 V1 contract previously documented `POST /admin/ranks/award` and
 `DELETE /admin/ranks/:rank/:user_id` for admin-conferred ranks. Those
 endpoints were never registered in `register_rest_route` and have no
-frontend caller. V1 ranks are **fully auto-derived** from tier/trust
-score by [`RankProgressionListener::run`](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/RankProgressionListener.php),
+frontend caller. V1 **Rank** is **fully auto-derived** from feature-access
+level by [`RankProgressionListener`](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/RankProgressionListener.php),
 which fires `bcc_rank_awarded` on real promotions; admin override is
 not a V1 capability.
 
-The read-side artifacts kept around for future-build readiness:
-- `is_admin_conferred` in `GET /ranks` is in the contract but always
-  `false` in V1 (no path sets a non-auto rank).
-- The `auto_assigned: false` flag on certain rank catalog entries
-  (e.g. `foreman`) is design intent, not enforced today.
+The **Foreman Role** conferral path (admin assigns/revokes the role, panel
+powers) is a later slice — see the roadmap. Until it ships:
+- `foreman_insignia` in `GET /ranks` is in the contract but always `false`
+  in V1 (no path sets a conferred role row).
+- `is_admin_conferred` is likewise always `false` in V1.
+- The read-side artifacts are kept for future-build readiness.
 
 When admin-conferral becomes a real feature, the REST surface gets
 designed against the contract at that point — not resurrected from

@@ -35,9 +35,11 @@ These rules govern how the brand vocabulary in this glossary is exposed in the U
 | **Delegator** | A user who has staked on-chain with a validator. Proven by `bcc_onchain_signals` rows. | 🔒 |
 | **Collector** | A user who holds NFTs from a creator. Proven on-chain. | 🔒 |
 | **Backer** | A user who supports a project. **Not used in V1.** Reserved for V2 — will tie to token holdings, funding, or governance once those concepts land. Do not surface in shipping UI. | 🚫 |
-| **Journeyman** | A member class/tier — shown on the member's card. Currently used as one of the "blue-collar" rank labels. | 🟡 |
-| **Apprentice / Rookie** | Entry-level member rank label shown on low-reputation cards. | 🟡 |
-| **Foreman / Shop Steward** | Community-respected member informal roles. Not a formal product concept yet. | 🎨 |
+| **Rank** | A member's **earned capability ladder**, auto-derived from their feature-access **level** (activity-based, *not* reputation): **Apprentice → Journeyman → Master**. Shown on the member's card. Orthogonal to Trust Tier and to Role — a member holds one value on each axis independently. | 🔒 |
+| **Apprentice** | Entry rank. Every new member starts here (feature-access level *New*). | 🔒 |
+| **Journeyman** | Middle rank (feature-access level *Active*). | 🔒 |
+| **Master** | Top earned rank (feature-access level *Veteran*). Replaces Foreman as the ladder's top rung — reaching it is purely a capability milestone, never an authority grant. | 🔒 |
+| **Foreman** | A **conferred Role**, *not* a rank — community/panel moderator authority. Assigned (admin-conferred), never auto-earned. Orthogonal to Rank: a Journeyman can be a Foreman, and reaching Master does **not** make a member a Foreman (otherwise every highly-active user would drift into moderator status). Surfaced as a separate `foreman_insignia` flag, never folded into the rank label. | 🔒 |
 
 ---
 
@@ -152,7 +154,8 @@ Helper labels render as italic sub-labels under the chip in normal use, and as t
 
 | Term | Definition | Status |
 |---|---|---|
-| **Tier** | A card's rarity classification: **Legendary / Rare / Uncommon / Common** — derived from the entity's reputation tier. | 🔒 |
+| **Tier (entity-card rarity)** | An **entity card's** rarity classification: **Legendary / Rare / Uncommon / Common** — derived from the entity's reputation tier. Applies to collectible entity cards (validators, projects, creators, NFTs). This is *rarity vocabulary*, distinct from the member trust chip below. Field: `card_tier` / `tier_label`. | 🔒 |
+| **Trust Tier (member chip)** | A **member's** reputation quality, shown with **honest trust names**: **Risky / Caution / Neutral / Trusted / Proven** (internal key `elite` → label "Proven"). Deliberately *not* rarity words — a *Caution* member must not read as "Common", and *Neutral* (the starting point) must not read as "Uncommon". Field: `reputation_tier_label`. Auto-derived; one of the three orthogonal identity axes (Rank · Trust Tier · Role). | 🔒 |
 | **Foil** | The gold-holographic visual treatment reserved for Legendary-tier cards. | 🔒 |
 | **Crest** | The hexagonal emblem with a monogram inside that serves as an entity's portrait on its card. | 🔒 |
 | **Portrait** | The top art region of a card (contains the crest or, for NFTs, the artwork itself). | 🔒 |
@@ -268,7 +271,7 @@ All previously-tentative terms are resolved. Recap:
 
 - **Watch / Follow** — split. Watch = UI label + API verb, Follow = underlying storage relationship. (See §3a. Replaces the retired Pull / Follow split.)
 - **Local 342** — real construct. Locals are PeepSo Groups; a user joins multiple, designates one as primary. (See §7.)
-- **Journeyman / Apprentice / Foreman** — real ranks. Apprentice + Journeyman auto-assigned by reputation tier + activity. Foreman+ admin-conferred. Revocable.
+- **Rank · Trust Tier · Role — three orthogonal identity axes (locked 2026-06-22).** **Rank** (Apprentice → Journeyman → Master) is the earned *capability* ladder, auto-derived from feature-access **level** (activity), shown on the member card. **Trust Tier** (Risky / Caution / Neutral / Trusted / Proven) is auto-derived *reputation*, shown as the honest member chip (`reputation_tier_label`) — separate from entity-card rarity words. **Foreman** is an assigned **Role** (moderator authority), never auto-earned: reaching Master does not confer it. A member holds one value on each axis, in any combination. (See §1, §6.)
 - **Good Standing** — locked. Auto-derived: tier ≥ neutral AND no active flags. (See §7.)
 - **Shift Log / Recent Shift** — final names; section headings dual-label them ("Activity (Shift Log)").
 - **Solid / Vouch / Stand behind** — locked names; ship with descriptive helper labels (Agree / Back this / Stake my rep). (See §3c.)
