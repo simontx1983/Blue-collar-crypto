@@ -1311,9 +1311,11 @@ For equal unambiguity:
 - **Tier system** — elite/trusted/neutral/caution/risky enum is
   unchanged. Reputation Score is the continuous axis; Trust Tier
   is the step function for eligibility gating.
-- **Rank system** — apprentice/journeyman/foreman auto-derivation
-  from participation is unchanged. Ranks are participation badges,
-  not reputation labels.
+- **Rank system** — apprentice/journeyman/**master** auto-derivation
+  from the feature-access **level** (participation, not reputation
+  tier). Ranks are capability badges, not reputation labels. **Foreman**
+  is a conferred **Role**, orthogonal to the Rank ladder — not its top
+  rung (see glossary §1, api-contract §4.8).
 - **Good Standing** — `is_in_good_standing` flag, sourced from
   `UserViewService::GOOD_STANDING_TIERS`, is unchanged.
 - **Existing dispute mechanics** — disputed entity cards work the

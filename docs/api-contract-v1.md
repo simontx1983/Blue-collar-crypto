@@ -492,13 +492,13 @@ Encodes §N11. Appears on the **own** User view-model (not on others' profiles).
 ```json
 {
   "progression": {
-    "current_rank": "apprentice",
-    "current_rank_label": "Apprentice",
-    "next_rank": "journeyman",
-    "next_rank_label": "Journeyman",
+    "current_rank": "journeyman",
+    "current_rank_label": "Journeyman",
+    "next_rank": "master",
+    "next_rank_label": "Master",
     "next_rank_thresholds": [
-      { "metric": "reviews_written", "label": "Reviews", "current": 8,  "required": 20 },
-      { "metric": "days_active",     "label": "Days active", "current": 41, "required": 90 }
+      { "metric": "reviews_written", "label": "Reviews", "current": 1,  "required": 3 },
+      { "metric": "days_active",     "label": "Days active", "current": 12, "required": 30 }
     ],
     "trust_score_recent_changes": [
       { "delta":  1, "reason": "Governance vote", "at": "2026-04-22" },
@@ -511,10 +511,11 @@ Encodes §N11. Appears on the **own** User view-model (not on others' profiles).
 
 **Rules:**
 
-- `next_rank` is `null` when the user is at the highest rank reachable through auto-promotion (Journeyman).
-- For ranks above Journeyman (Foreman+, admin-conferred per §E2), `next_rank` stays `null` even though higher ranks exist — auto-promotion is the only progression path the user can drive themselves.
-- `next_rank_thresholds` always has all metrics; the frontend renders the `current/required` ratio for each as a progress bar.
-- `trust_score_recent_changes` is the most recent 5 events (sorted desc by `at`). Reason strings are plain English, ≤ 80 chars.
+- Rank mirrors the feature-access **level** (Apprentice=New, Journeyman=Active, Master=Veteran), so `next_rank_thresholds` is exactly the next level's gate from §2.6 `next_level_thresholds`: **Apprentice → Journeyman** = `pulls` (≥5); **Journeyman → Master** = `reviews_written` (≥3) + `days_active` (≥30).
+- `next_rank` is `null` when the user is at the top of the earned ladder (Master) — `next_rank_thresholds` is then `[]`.
+- The Foreman **Role** never appears here — it is orthogonal to Rank (surfaced via `foreman_insignia`, see §4.8), not a step above Master.
+- The frontend renders the `current/required` ratio for each threshold as a progress bar.
+- `trust_score_recent_changes` is the most recent 5 reputation events (sorted desc by `at`). Reason strings are plain English, ≤ 80 chars. (Trust score drives the *Tier* axis, not Rank — it's surfaced here only as recent-activity context.)
 
 ### 2.6 `FeatureAccess`
 
@@ -5664,8 +5665,10 @@ For each view-model field, the table below names the existing BCC system that ow
 | `joined_at` | `wp_users.user_registered` |
 | `trust_score` | `bcc-trust` `ReputationCalculatorService` (§A4) |
 | `reputation_tier` | `bcc-trust` `ReputationCalculatorService` |
-| `card_tier`, `tier_label` | Server-side mapping `reputation_tier → card_tier` (§C1), in `bcc-trust` |
-| `rank`, `rank_label` | `bcc_user_ranks` (new V1, per §E2) + auto-derived from activity |
+| `reputation_tier_label` | Server-side mapping `reputation_tier → honest label` (`ReputationTierMap::TIER_LABEL`; elite → "Proven") — the member trust chip, distinct from `card_tier` rarity |
+| `card_tier`, `tier_label` | Server-side mapping `reputation_tier → card_tier` (§C1), in `bcc-trust` (entity-card rarity) |
+| `rank`, `rank_label`, `current_rank_label` | Auto-derived from the feature-access **level** (`RankService::rankForLevel`: New→Apprentice, Active→Journeyman, Veteran→Master). `bcc_user_ranks` stores only conferred **Role** rows (Foreman), not earned ranks |
+| `foreman_insignia` | `bcc_user_ranks` active conferred Foreman Role row (always `false` in V1 — conferral path deferred, see §4.8) |
 | `is_in_good_standing` | `bcc-trust` derived from tier ≥ neutral AND no flags (§E1) |
 | `flags` | `bcc_trust_flags` |
 | `bio` | PeepSo profile description |
@@ -5877,6 +5880,29 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.28 — 2026-06-22 — Identity slice: Rank↔level, honest tier labels, Foreman as Role
+
+Collapses the three contradictory progression ladders into the locked
+three orthogonal identity axes (**Rank · Trust Tier · Role**):
+
+- **Rank now mirrors the feature-access level**, not reputation tier:
+  Apprentice=New, Journeyman=Active, **Master=Veteran**. Master replaces
+  Foreman as the top earned rung. `RankService::deriveRankFromTier` removed
+  in favour of `rankForLevel`. Supersedes the v1.23 note that V1 ranks were
+  "auto-derived from tier/trust score" — they are now derived from activity
+  level (§2.5, §2.6, §4.8).
+- **Foreman is a conferred Role, not a rank.** Removed from the `/ranks`
+  catalog; never appears as `current_rank`. Surfaced via the new
+  `foreman_insignia` boolean (always `false` in V1 — conferral path deferred).
+- **Honest member trust chip:** new `reputation_tier_label`
+  (Risky/Caution/Neutral/Trusted/**Proven**) on member/author surfaces,
+  distinct from entity-card rarity (`card_tier`/`tier_label`, unchanged).
+- New `/ranks` viewer fields (`current_rank_label`, `next_rank`,
+  `next_rank_label`, `foreman_insignia`); new member view-model fields
+  (`reputation_tier_label`, `current_rank_label`, `foreman_insignia`) —
+  `null`/`false` on page + community kinds for shape stability.
+- Additive + non-breaking. See glossary §1/§6 for the locked vocabulary.
 
 ### v1.27 — 2026-06-11 — Community-card convergence (additive)
 
