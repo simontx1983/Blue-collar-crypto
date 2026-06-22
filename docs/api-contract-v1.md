@@ -3571,10 +3571,11 @@ Clear the stash after the toast renders.
 | Event | Stashed kind | Stashed label |
 |---|---|---|
 | `bcc_rank_awarded` | `rank_up` | `"You're now a {RankLabel}."` |
-| (reserved) `bcc_feature_level_unlocked` | `level_up` | TBD when FeatureAccessService starts emitting transitions |
 | (reserved) `bcc_card_tier_upgraded` | `tier_upgrade` | TBD when the tier-upgrade listener lands |
 
 `RankProgressionListener` is the only producer in V1. It seeds quietly on a user's first event so users who are already Journeyman at rollout don't get a phantom celebration on their next activity.
+
+Since Rank mirrors the feature-access **level** 1:1 (Apprentice=New, Journeyman=Active, Master=Veteran), a level crossing **is** a rank-up — there is no separate `level_up` celebration. (The 2026-06-22 identity slice retired the no-op `LevelProgressionListener` + its 0-subscriber `bcc_feature_level_unlocked` event; the frontend `level_up` celebration preset is therefore unreachable and slated for removal.)
 
 ### 4.13 Comments (v1.5)
 
