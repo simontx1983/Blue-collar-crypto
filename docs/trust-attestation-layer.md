@@ -1360,6 +1360,67 @@ iterates before code lands.
 
 ---
 
+## §J.14 Trust Recovery Through Contribution (Contribution + Consistency signals)
+
+A user must never be permanently trapped in Risky. Sustained positive
+participation earns a **gradual** recovery — but popularity must never
+create trust. Trust is still primarily earned through trustworthy
+behavior (votes, endorsements, dispute outcomes, scam reports,
+moderation); contribution + consistency are **minor, capped, internal**
+inputs that *assist* recovery.
+
+**Two internal signals (no public score is exposed):**
+
+- **Contribution (~15% band, capped)** — useful posts/guides, helpful
+  comments, reviews written, upheld scam reports. Computed by
+  `ContributionScoreService` over rolling windows.
+- **Consistency (~5% band, capped)** — account age + sustained presence
+  across the rolling windows + a clean record.
+
+These feed a persisted `bcc_trust_reputation.contribution_bonus` (the
+INPUT, refreshed daily by `ContributionRecoveryEvaluator` over the
+caution/risky cohort) which `ReputationCalculatorService::recalculateUserReputation`
+blends into `reputation_score` (the OUTPUT) — the same derived-column
+pattern as `endorsement_bonus`, so a vote-recalc never clobbers it.
+
+**The model:**
+
+```
+genuine   = vote-ratio reputation (+ dispute/fraud penalties)   // primary trust
+bonus     = min(contribution, BCC_CONTRIB_MAX) + min(consistency, BCC_CONSIST_MAX)
+effective = genuine + bonus
+if genuine < Trusted(65):  effective = min(effective, BCC_CONTRIB_CEILING≈60)
+reputation_score = clamp(effective, 0, 100)   // tier re-derives from this
+```
+
+**Anti-abuse rules (config/contribution.php):**
+
+1. **Reactions never directly create trust.** Engagement is only a
+   *multiplier* on real contribution — a user with zero qualifying
+   contributions earns zero bonus no matter how many reactions they farm
+   (`usefulness × 0 = 0`).
+2. **Contribution has a ceiling.** `BCC_CONTRIB_CEILING` (< Trusted) means
+   contribution alone lifts Risky → Caution → toward Neutral but never
+   into Trusted/Proven; the genuine score must independently clear those.
+3. **Rolling windows (30/90/180 d) reward consistency, not spikes** —
+   non-overlapping buckets, each capped.
+4. **Trust-weighted engagement** — a contribution's usefulness is weighted
+   by the *engager's* reputation tier (reusing `BCC_TRUST_WEIGHT_*`), so
+   reaction farming from new/low-tier accounts is near-worthless.
+
+Clean-record gate: a recent fraud/violation signal dampens contribution
+and zeroes consistency. Risky users stay visible but feed-demoted +
+feature-gated as today (unchanged) — recovery is the path back, not
+re-admission. Dispute participation keeps its existing §D5 read-time
+credit and is intentionally not folded in here (avoids double-counting);
+promoting it to a tier-affecting recovery signal is a deliberate follow-up.
+
+The bonus is observable to operators via the `contribution_recovery`
+DegradationMetric subsystem; no `Contribution Score` is ever rendered to
+users (identity stays Rank · Trust Tier · Role — see glossary §1).
+
+---
+
 ## Cross-references
 
 - API wire-level contracts: `docs/api-contract-v1.md` §J
