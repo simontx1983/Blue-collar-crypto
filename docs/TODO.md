@@ -13,6 +13,7 @@ section at the bottom. Don't pad the active list.
 
 ## Frontend
 
+- [ ] **Remove the orphaned `level_up` celebration preset** — the 2026-06-22 identity slice made Rank mirror level 1:1, so level crossings celebrate as **rank-ups**; the backend no longer stashes a `level_up` kind (retired `LevelProgressionListener` + `bcc_feature_level_unlocked`). The frontend `level_up` preset is now unreachable: drop it from [`types.ts`](../bcc-frontend/src/lib/api/types.ts), [`CelebrationGate.tsx`](../bcc-frontend/src/components/celebration/CelebrationGate.tsx), [`CelebrationToast.tsx`](../bcc-frontend/src/components/celebration/CelebrationToast.tsx), [`celebrations-endpoints.ts`](../bcc-frontend/src/lib/api/celebrations-endpoints.ts), and the `level-up` keyframes in [`globals.css`](../bcc-frontend/src/app/globals.css). Keep `rank_up`.
 - [ ] [`BlogComposer.tsx:16`](../bcc-frontend/src/components/blog/BlogComposer.tsx#L16) — wire `?edit=<id>` initialValues fetch for blog-post-edit hydration (tagged V1.5).
 - [ ] [`RightSidebar.tsx:12`](../bcc-frontend/src/components/layout/RightSidebar.tsx#L12) — replace static placeholders (Top Directories / Trending / Suggested Members) with TanStack Query hooks (tagged Phase 2 API integration).
 

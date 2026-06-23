@@ -17,7 +17,7 @@
 | `bcc_trust_activity` | Audit/activity log |
 | `bcc_pull_meta` | Sidecar metadata for PeepSo follows (card pulls) — V1 |
 | `bcc_photo_alts` | Sidecar alt-text metadata for PeepSo photos (§3.3.9 / §4.18) — V1.5 |
-| `bcc_user_ranks` | Rank assignments (Apprentice / Journeyman auto, Foreman+ admin) — V1 |
+| `bcc_user_ranks` | Conferred **Role** rows (Foreman) — earned ranks (Apprentice/Journeyman/Master) are level-derived, not stored — V1 |
 | `bcc_onchain_claims` (extended) | Now also stores page claims (`entity_type='page'`); `recovery_pending` column added for §B5 lost-wallet rule — V1 |
 
 ---
@@ -296,21 +296,21 @@ Sidecar alt-text metadata for PeepSo photos. PeepSo's `peepso_photos` has no nat
 
 ## bcc_user_ranks
 
-BCC rank assignments per §E2. Apprentice + Journeyman are auto-assigned by reputation tier + activity thresholds; Foreman+ are admin-conferred. Revocations preserved as historical state via `revoked_at`.
+Conferred **Role** assignments (orthogonal to the earned Rank ladder). Earned ranks — Apprentice / Journeyman / Master — are **auto-derived from the feature-access level** (`RankService::rankForLevel`) and are NOT stored here. This table holds only conferred Roles (today: **Foreman**), which set `foreman_insignia` without changing the member's earned rank. Revocations preserved as historical state via `revoked_at`. (Earlier V1 design auto-stored tier-derived ranks here; superseded by the 2026-06-22 identity slice.)
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | BIGINT UNSIGNED AUTO_INCREMENT | Primary key |
 | `user_id` | BIGINT UNSIGNED | WordPress user ID |
-| `rank_key` | VARCHAR(32) | `apprentice` / `journeyman` / `foreman` / etc. (named `rank_key` because RANK is reserved in MySQL 8.0+) |
-| `awarded_by` | BIGINT UNSIGNED NULL | NULL for auto-derived; admin user ID for admin-conferred |
-| `awarded_at` | DATETIME | When the rank was assigned |
-| `revoked_at` | DATETIME NULL | NULL = active rank; non-NULL = historical |
+| `rank_key` | VARCHAR(32) | Conferred Role key — `foreman` today (named `rank_key` because RANK is reserved in MySQL 8.0+; earned ranks `apprentice`/`journeyman`/`master` are level-derived, not stored) |
+| `awarded_by` | BIGINT UNSIGNED NULL | Admin user ID who conferred the Role |
+| `awarded_at` | DATETIME | When the Role was conferred |
+| `revoked_at` | DATETIME NULL | NULL = active Role; non-NULL = historical |
 | `revoke_reason` | VARCHAR(255) NULL | Optional admin-supplied reason |
 
-**Indexes:** `(user_id, revoked_at)` for active-rank lookups, `rank_key`, `awarded_by`
+**Indexes:** `(user_id, revoked_at)` for active-Role lookups, `rank_key`, `awarded_by`
 
-**Invariant:** at most one row per `user_id` with `revoked_at IS NULL` — enforced at the application layer (MySQL has no partial unique indexes). On revocation, the user drops to their auto-derived rank, NOT to flat Apprentice (§E2 revocation rule).
+**Invariant:** at most one active (`revoked_at IS NULL`) Role row per `user_id` — enforced at the application layer (MySQL has no partial unique indexes). On revocation, the user simply loses the Role insignia; their earned rank is unaffected (it's level-derived, never stored). **Note:** the conferral path is deferred (see api-contract §4.8), so in V1 this table is empty and `foreman_insignia` is always `false`.
 
 ---
 
