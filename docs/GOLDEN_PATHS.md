@@ -809,6 +809,7 @@ foreach (($dm["degradation_metrics"]["subsystems"] ?? []) as $name => $events) {
 - `cron_dispatch` (2 events — soft wp_schedule_single_event / AsyncDispatcher enqueue failures on the unrecoverable trust async surface)
 - `helius_dedup` (1 event — Helius webhook replay-protection activations; sustained = double-send or replay attempt)
 - `gated_group_provision` (3 events — `bcc_gated_group_provision` cron sweep failure modes; sustained = retry path not catching up)
+- `contribution_recovery` (1 event — `user_eval_failed`; per-user failure in the daily trust-recovery sweep; sustained = caution/risky cohort silently stops climbing back)
 
 **Failure means:** A registered subsystem dropped out of the canonical map in `bcc-core/bcc-core.php`. New subsystems wired into `DegradationMetrics::record()` MUST register here — the map is the only place future agents discover which events are even possible.
 
