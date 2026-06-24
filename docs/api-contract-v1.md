@@ -359,7 +359,6 @@ The single most important shared type. Encodes §N7 (always visible, disabled wi
     "can_review":           { "allowed": false, "unlock_hint": "Reach Level 2 (5 pulls + 3 Floor visits) to write reviews." },
     "can_dispute":          { "allowed": false, "unlock_hint": "Link a wallet and reach Level 3 to sign disputes." },
     "can_vouch":            { "allowed": false, "unlock_hint": "Reach Level 2 to use the Vouch reaction." },
-    "can_stand_behind":     { "allowed": false, "unlock_hint": "Reach Level 2 to use the Stand-behind reaction." },
     "can_post_as_entity":   { "allowed": false, "unlock_hint": null },
     "can_edit_bio":         { "allowed": false, "unlock_hint": null },
     "can_edit_image":       { "allowed": false, "unlock_hint": null, "reason_code": "not_claimer" },
@@ -537,7 +536,6 @@ Encodes §O5 + §O5.1. Appears on the **own** User view-model.
     "features": {
       "write_review":         { "allowed": true,  "unlock_hint": null },
       "vouch_reaction":       { "allowed": true,  "unlock_hint": null },
-      "stand_behind_reaction":{ "allowed": true,  "unlock_hint": null },
       "sign_dispute":         { "allowed": false, "unlock_hint": "Write 3 reviews and stay active 30 days to sign disputes." },
       "open_dispute":         { "allowed": false, "unlock_hint": "Write 3 reviews and stay active 30 days to open disputes." },
       "see_signal_details":   { "allowed": false, "unlock_hint": "Reach Level 3 to read on-chain signal details." },
@@ -651,11 +649,13 @@ Appears on Feed item view-models and on Card view-models that support reactions.
 
 | `kind_grammar` | Applies to `post_kind` | Reaction kinds | Visual grammar |
 |---|---|---|---|
-| `"trust"`  | `review`, `dispute_signed`, `page_claim`, `project_drop`, `nft_drop`, `signal` | `solid`, `vouch`, `stand_behind` | restrained, intentional |
+| `"trust"`  | `review`, `dispute_signed`, `page_claim`, `project_drop`, `nft_drop`, `signal` | `solid`, `vouch` | restrained, intentional |
 | `"social"` | `status`, `watch_batch` (legacy `pull_batch`), `blog_excerpt` | `like`, `love`, `haha`, `wow`, `fire` | expressive, emoji-forward |
 | `"tribal"` | _(reserved — V2)_ | _(reserved — e.g. `same_wallet`, `onchain_confirm`)_ | identity-forward |
 
 `counts` always carries all kinds for the active grammar with zero-fill. The frontend never derives the kind set from `post_kind` — it reads `kind_grammar`.
+
+**Vouch confers trust (Slice 3, 2026-06-24).** The `vouch` trust reaction is not just a counter — adding it lands a light, **fixed-weight** (~10% of a top endorsement), **non-vesting** `post_vouch` endorsement on the post **author's self-page** (Architecture A — people are trust subjects). It's rank-gated (`vouch_reaction` ≥ Level 2), one-per-voucher-per-author (idempotent, anti-farm), and **ref-counted**: the endorsement persists while the voucher holds ≥1 vouch reaction on any of that author's content, and lifts when the last is removed. `solid` remains a pure lightweight ack (powers the "solids" stat); it confers no trust. The `stand_behind` **reaction** is retired (distinct from the trust-attestation-layer `stand_behind` in §J, which is unaffected).
 
 **Shape (trust grammar):**
 
@@ -665,8 +665,7 @@ Appears on Feed item view-models and on Card view-models that support reactions.
     "kind_grammar": "trust",
     "counts": {
       "solid":        14,
-      "vouch":         3,
-      "stand_behind":  1
+      "vouch":         3
     },
     "viewer_reaction": "solid"
   }
@@ -5280,11 +5279,11 @@ Owner blog **partial update** (§D6 PR-B). Registered as `WP_REST_Server::EDITAB
 Set / replace the viewer's reaction on a feed item. Idempotent on same-kind set; swap on different-kind. Returns the §2.11 `ReactionState` block so the response patches the feed cache directly.
 
 - **Auth:** required (in-handler). Anonymous → `bcc_unauthorized 401`.
-- **Body (JSON):** `feed_id` (string, **required**) — the opaque `feed_<act_id>` string the feed emitted (clients round-trip it; bad prefix/tail → `bcc_invalid_request`) · `reaction` (string, **required**) — a kind from `ReactionGrammarMap::allKnownKinds()` (trust: `solid|vouch|stand_behind`; social: `like|love|haha|wow|fire`). The kind MUST belong to the **post's** grammar (cross-grammar is rejected).
+- **Body (JSON):** `feed_id` (string, **required**) — the opaque `feed_<act_id>` string the feed emitted (clients round-trip it; bad prefix/tail → `bcc_invalid_request`) · `reaction` (string, **required**) — a kind from `ReactionGrammarMap::allKnownKinds()` (trust: `solid|vouch`; social: `like|love|haha|wow|fire`). The kind MUST belong to the **post's** grammar (cross-grammar is rejected).
 - **Rate limit:** 60/min/user (key `react`).
-- **Response 200 (§2.11 `ReactionState`):** `{ "kind_grammar": "trust", "counts": { "solid": 14, "vouch": 3, "stand_behind": 1 }, "viewer_reaction": "solid" }` — `counts` zero-filled for the post's grammar; `viewer_reaction` kind or `null`.
+- **Response 200 (§2.11 `ReactionState`):** `{ "kind_grammar": "trust", "counts": { "solid": 14, "vouch": 3 }, "viewer_reaction": "solid" }` — `counts` zero-filled for the post's grammar; `viewer_reaction` kind or `null`.
 - **Errors:** `bcc_unauthorized` 401 · `bcc_rate_limited` 429 · `bcc_invalid_request` 400 (bad `feed_id`; cross-grammar) · `bcc_permission_denied` 403 (group-scoped post, non-member — read but not react) · `bcc_unavailable` 503 (reaction types not seeded) · `bcc_internal_error` 500 (writer failed)
-- **Side effects:** `bcc_reaction_added` on the §A3 bus.
+- **Side effects:** `bcc_reaction_added` on the §A3 bus. When `reaction === "vouch"`, a `vouch` subscriber lands a fixed-weight `post_vouch` endorsement on the post author's self-page (Slice 3, §2.11) — rank-gated + idempotent + ref-counted; failures are isolated and never break the reaction write.
 - **Cache:** `no-store`.
 - **Mapping:** `ReactionsEndpoint::setReaction` (route `ReactionsEndpoint.php:78`) → bcc-core `PeepSoReactionWriter`. FE `reaction-endpoints.ts:setReaction`.
 
@@ -5881,6 +5880,29 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.29 — 2026-06-24 — Vouch confers trust; reaction `stand_behind` retired (Slice 3)
+
+People-as-trust-subjects, Slice 3. The `vouch` **trust reaction** now lands
+a light, **fixed-weight** (~10% of a top endorsement), **non-vesting**
+`post_vouch` endorsement on the post author's **self-page** (Architecture A).
+Rank-gated (`vouch_reaction` ≥ Level 2), one-per-voucher-per-author
+(idempotent, anti-farm), and **ref-counted** — the endorsement persists while
+the voucher holds ≥1 vouch reaction on any of that author's content, and lifts
+when the last is removed. Rides the existing `endorsement_bonus` term (no new
+formula term).
+
+- **§2.11 reaction grammar:** trust kinds are now `solid`, `vouch`
+  (`stand_behind` **reaction** retired). `solid` stays a pure lightweight ack
+  (powers the "solids" stat); it confers no trust. `ReactionState.counts` for
+  the trust grammar drops the `stand_behind` key.
+- **`POST /reactions`:** `reaction` enum trust kinds `solid|vouch`; new
+  documented side-effect when `reaction === "vouch"`.
+- **Permissions / features:** `can_stand_behind` and the `stand_behind_reaction`
+  feature gate removed; `can_vouch` / `vouch_reaction` unchanged.
+- **No endpoint added** — vouch is a subscriber on the existing reaction bus.
+- **Not** the trust-attestation-layer `stand_behind` (§J): that is a separate
+  subsystem and is unaffected.
 
 ### v1.28 — 2026-06-22 — Identity slice: Rank↔level, honest tier labels, Foreman as Role
 
