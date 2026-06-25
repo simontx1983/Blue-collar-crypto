@@ -37,11 +37,18 @@ and what (cannot be confirmed to) block merge.
 
 ## Known gaps / cannot-be-determined
 
-- **What actually blocks merge: CANNOT BE DETERMINED from the repo files.** There are no
-  rulesets, CODEOWNERS, or branch-protection configs in any `.github/`. The workflows define the
-  checks that *run* (and `pull_request` triggers surface them on PRs), but whether any is
-  **required** to merge is GitHub server-side state. **→ This is Phase 2's job: confirm + arm
-  branch protection so these gates actually block.**
+- **What blocks merge (GitHub branch protection on `main`, armed in Phase 2c 2026-06-25 — this
+  is server-side config, not in the repo files; query via `gh api .../branches/main/protection`):**
+  - **bcc-trust** — required: `PHP — PHPStan L8 · PHPUnit · guardrails`, `PHP integration (MySQL)`.
+  - **bcc-core** — required: `PHP — PHPStan L8 · PHPUnit`.
+  - **bcc-frontend** — required: `Frontend — tsc · lint · vitest`.
+  - **Blue-collar-crypto (umbrella)** — required: `Cross-repo guards — contract · subsystem ·
+    cadence · dead-file` (so contract-parity/subsystem/cadence/dead-file now block umbrella merges).
+  - `enforce_admins = true` on all four — required checks block **everyone**, including the two
+    admin engineers (no override escape hatch; chosen 2026-06-25). `strict = false` (PRs need not
+    be up to date with main before merge).
+  - **bcc-search** — intentionally **not protected**: it has no CI checks of its own to require.
+  Once the Phase-5 `schema-drift-guard.php` is armed, add it to the umbrella required-checks list.
 - **`bcc-search` has no test/type CI** — only the notify shim. Any quality gate for it is not
   expressed as a workflow.
 - **Cross-repo trigger is push-to-`main` only.** A plugin *PR* does not re-trigger the umbrella
