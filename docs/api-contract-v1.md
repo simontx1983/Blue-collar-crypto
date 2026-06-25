@@ -5979,7 +5979,7 @@ Additive permission field + example correction; no existing field changed.
 Documentation-only + dead-route cleanup; **no behavior change** to any surviving
 endpoint. Closes the gap surfaced by `scripts/contract-parity-guard.php` (was: 88
 documented vs 233 registered in-scope routes; 128 undocumented). Full audit:
-[docs/route-audit-2026-06-10.md](route-audit-2026-06-10.md).
+[docs/archive/route-audit-2026-06-10.md](archive/route-audit-2026-06-10.md).
 
 - **§4 backfill (additive).** Documented the previously-undocumented but
   shipped + frontend-consumed routes under new sub-sections: §4.25 social

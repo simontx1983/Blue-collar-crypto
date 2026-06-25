@@ -76,7 +76,7 @@ becomes a candidate.
 - **Demand-gated** (public API, native mobile, i18n, Backer concept, Injective/NEAR/Thorchain NFT support, gallery list endpoints) → [`v2-roadmap.md`](v2-roadmap.md). Don't start without external evidence of need.
 - **V2 engagement polish** (sound on Heavy celebrations, streak-freeze mechanic, network percentile on others' profiles, per-category highlight muting) → [`v2-roadmap.md`](v2-roadmap.md). Open, but ranks below the items above.
 - **Trust attestation Phase 1.5+** (profile-scoped disputes, reliability badges, validator/builder gauges, meta-dispute flow) → [`trust-attestation-phase-1-plan.md`](trust-attestation-phase-1-plan.md). Design-gated.
-- **Acceptable post-MVP debt** (V-07 dual-namespace REST shim collapse, `bcc_project_*` table-prefix rename, ERROR_COPY centralization across 19 components) → [`stabilization-plan-2026-05-13.md`](stabilization-plan-2026-05-13.md) (frozen).
+- **Acceptable post-MVP debt** (V-07 dual-namespace REST shim collapse, `bcc_project_*` table-prefix rename, ERROR_COPY centralization across 19 components) → [`stabilization-plan-2026-05-13.md`](archive/stabilization-plan-2026-05-13.md) (frozen).
 - **Mid-bake forbidden** (NFT observability X1–X5 / F2 / F6 expansion, Stabilization Phase D, frontend gap-audit D2-full / D3 / D4) → tracked in Claude memory; do not start without explicit approval.
 
 ---

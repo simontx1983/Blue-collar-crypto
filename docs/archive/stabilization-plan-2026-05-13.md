@@ -1,7 +1,7 @@
 # Post-Audit Consolidation: Mobile / Public-Client Stabilization Plan
 
 **Date:** 2026-05-13 (post commit `1f6e8f0`)
-**Companion documents:** `docs/GOLDEN_PATHS.md` (runbook), `docs/operational-audit-2026-05-13.md` (audit snapshot)
+**Companion documents:** `docs/GOLDEN_PATHS.md` (runbook), `docs/archive/operational-audit-2026-05-13.md` (audit snapshot)
 
 **Scope:** Surgical, additive stabilization. Five focus areas. No speculative rewrites, no framework migrations, no future-platform abstractions. Preserve existing doctrine and API envelope rules.
 

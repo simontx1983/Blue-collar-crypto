@@ -5,7 +5,7 @@
 When working in any `bcc-trust` Domain (`Core` / `Disputes` / `Onchain`),
 the question **"which Domain owns this behavior?"** should have a fast,
 scannable answer. As [`bcc-trust/app/Domain/Core/Plugin.php`](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Plugin.php)
-has grown to ~1840 lines with ~85 service-getter methods (each returning
+has grown to ~2,485 lines with ~122 service-getter methods (each returning
 a service from one of the three Domains), the answer is increasingly
 buried in implementation details — and "which constructor does this
 service depend on transitively?" has no one-page answer at all.
