@@ -4,7 +4,7 @@
 > prior hand-maintained partial. Regenerate when schema changes; a declared-vs-live
 > drift guard is being added in Phase 2/5.
 
-Prefix: `wp_`. Engine: InnoDB. **64** `wp_bcc_*` tables live (50 active, 14 orphan).
+Prefix: `wp_`. Engine: InnoDB. **64** `wp_bcc_*` tables live (47 active, 17 orphan).
 
 Row counts are exact (`SELECT COUNT(*)`) for orphan candidates and ambiguous
 tables; the rest are the InnoDB `information_schema` estimate (≈), adequate for a
@@ -61,8 +61,8 @@ Repository/Service that reads it.
 | wp_bcc_onchain_collection_pieces | 0 | Individual NFT pieces within a collection (TTL) | schema-collection-pieces.php | Active |
 | wp_bcc_onchain_validators | 3060 | Validator registry + enrichment (Cosmos/etc.) | schema-validators.php | Active |
 | wp_bcc_onchain_delegations | 0 | Per-wallet validator delegations (TTL) | schema-delegations.php | Active |
-| wp_bcc_onchain_dao_stats | 0 | Per-wallet DAO governance stats (TTL) | schema-core.php (Onchain) | Active |
-| wp_bcc_onchain_treasury | 0 | DAO treasury holdings per dao_stat (TTL) | schema-core.php (Onchain) | Active |
+| wp_bcc_onchain_dao_stats | 0 | (was per-wallet DAO governance stats) | none (no creator/reader) | ORPHAN — Phase 5 drop |
+| wp_bcc_onchain_treasury | 0 | (was DAO treasury holdings) | none (no creator/reader) | ORPHAN — Phase 5 drop |
 | wp_bcc_nft_holdings | 0 | Confirmed NFT holdings per wallet link | schema-nft-holdings.php | Active |
 | wp_bcc_nft_spam_contracts | 0 | NFT spam contract allow/deny rules | schema-nft-spam-contracts.php | Active |
 | wp_bcc_user_nft_selections | 2 | User-curated NFT showcase selections | schema-nft-selections.php | Active |
@@ -637,31 +637,6 @@ Per-wallet validator delegations (TTL).
 - fetched_at · datetime · NO; expires_at · datetime · NO · K
 - Indexes: PRIMARY (id) [uq]; uq_wallet_validator (wallet_link_id,validator_address) [uq]; chain_validator (chain_id,validator_address); wallet_link_id; expires_at
 
-#### wp_bcc_onchain_dao_stats
-Per-wallet DAO governance stats (TTL).
-- id · bigint unsigned · NO · PK auto
-- wallet_link_id · bigint unsigned · NO · K
-- governance_contract · varchar(128) · NO · K
-- chain_id · bigint unsigned · NO · K
-- platform · varchar(30) · YES
-- total_proposals / passed_proposals · int unsigned · YES
-- participation_rate / quorum_threshold · decimal(5,2) · YES
-- token_holders / active_voters · int unsigned · YES
-- fetched_at · datetime · NO; expires_at · datetime · NO · K
-- Indexes: PRIMARY (id) [uq]; wallet_link_id; governance_contract; chain_id; expires_at
-
-#### wp_bcc_onchain_treasury
-DAO treasury holdings per dao_stat (TTL).
-- id · bigint unsigned · NO · PK auto
-- dao_stat_id · bigint unsigned · NO · K
-- token_address · varchar(128) · YES
-- token_symbol · varchar(20) · NO
-- token_amount · decimal(30,8) · YES
-- usd_value · decimal(20,2) · YES
-- percentage · decimal(5,2) · YES
-- fetched_at · datetime · NO; expires_at · datetime · NO · K
-- Indexes: PRIMARY (id) [uq]; dao_stat_id; expires_at
-
 #### wp_bcc_nft_holdings
 Confirmed NFT holdings per wallet link.
 - id · bigint unsigned · NO · PK auto
@@ -750,6 +725,8 @@ prod row count is 0 before dropping — dev counts below).
 | wp_bcc_trust_page_identities | 0 | Page-scoped twin of project_identities; superseded by user verifications on the self-page. Zero references; stale-installer leftover. |
 | wp_bcc_trust_page_metrics | 0 | Page-scoped twin of project_metrics_history. Zero references; stale-installer leftover. |
 | wp_bcc_trust_page_verifications | 0 | Page-scoped twin of project_verifications; superseded by `wp_bcc_trust_user_verifications`. Zero references; stale-installer leftover. |
+| wp_bcc_onchain_dao_stats | 0 | DAO governance-stats feature never wired: no `CREATE TABLE`/accessor anywhere in code, zero reads/writes. Live-only leftover (surfaced by `schema-drift-guard.php`, 2026-06-25). |
+| wp_bcc_onchain_treasury | 0 | DAO-treasury twin of dao_stats; same — no creator/reader in code. Live-only leftover (surfaced by `schema-drift-guard.php`, 2026-06-25). |
 
 ### Notes / prior-cleanup confirmations
 - `wp_bcc_collections`, `wp_bcc_collection_images`, `wp_bcc_onchain_contracts` (dropped in the 2026-06-04 legacy cleanup) are **absent from live** — confirmed gone. Active `wp_bcc_onchain_collections` (314 rows) is the live NFT collection cache and is unrelated to the dead `bcc_collections`.
