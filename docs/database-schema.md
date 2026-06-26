@@ -1,359 +1,733 @@
-# BCC Trust Engine — Database Schema
+# BCC Database Schema
 
-## Tables Overview
+> Generated from live `information_schema` on 2026-06-25 (dev DB). Supersedes the
+> prior hand-maintained partial. Regenerate when schema changes; a declared-vs-live
+> drift guard is being added in Phase 2/5.
 
-| Table | Purpose |
-|-------|---------|
-| `bcc_trust_votes` | Vote records with fraud context |
-| `bcc_trust_page_scores` | Aggregated page trust scores |
-| `bcc_trust_endorsements` | Endorsement records |
-| `bcc_trust_user_info` | User reputation metadata |
-| `bcc_trust_fingerprints` | Device fingerprints for automation detection |
-| `bcc_trust_fraud_analysis` | Flagged fraud activities |
-| `bcc_trust_verifications` | Email verification tokens |
-| `bcc_trust_edges` | Trust graph edges (voter → page owner) |
-| `bcc_trust_patterns` | Behavioral pattern tracking |
-| `bcc_trust_rings` | Vote ring (collusion) detection |
-| `bcc_trust_activity` | Audit/activity log |
-| `bcc_pull_meta` | Sidecar metadata for PeepSo follows (card pulls) — V1 |
-| `bcc_photo_alts` | Sidecar alt-text metadata for PeepSo photos (§3.3.9 / §4.18) — V1.5 |
-| `bcc_user_ranks` | Conferred **Role** rows (Foreman) — earned ranks (Apprentice/Journeyman/Master) are level-derived, not stored — V1 |
-| `bcc_onchain_claims` (extended) | Now also stores page claims (`entity_type='page'`); `recovery_pending` column added for §B5 lost-wallet rule — V1 |
+Prefix: `wp_`. Engine: InnoDB. **64** `wp_bcc_*` tables live (47 active, 17 orphan).
+
+Row counts are exact (`SELECT COUNT(*)`) for orphan candidates and ambiguous
+tables; the rest are the InnoDB `information_schema` estimate (≈), adequate for a
+reference doc. Ownership is the bcc-trust plugin unless noted; "Owning code" cites
+the table-name accessor (`TableRegistry::*`), the creating schema file, or the
+Repository/Service that reads it.
 
 ---
 
-## bcc_trust_votes
+## Master inventory
 
-Stores individual vote records with fraud context.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | BIGINT UNSIGNED AUTO_INCREMENT | Primary key |
-| `voter_user_id` | BIGINT UNSIGNED | WordPress user ID of voter |
-| `page_id` | BIGINT UNSIGNED | Target page ID |
-| `vote_type` | TINYINT | +1 (upvote) or -1 (downvote) |
-| `weight` | DECIMAL(5,4) | Computed vote weight (0.03–0.60) |
-| `category_id` | BIGINT UNSIGNED | Vote category |
-| `reason` | TEXT | Optional vote reason |
-| `status` | TINYINT(1) | 1 = active, 0 = soft-deleted |
-| `fraud_score` | INT | Fraud score at time of vote |
-| `fraud_context` | JSON | Snapshot of fraud signals |
-| `created_at` | DATETIME | Vote timestamp |
-| `updated_at` | DATETIME | Last modification |
-
-**Unique Key:** `(voter_user_id, page_id, category_id)` — one vote per user per page per category.
-
-**Indexes:** `voter_user_id`, `page_id`, `status`, `created_at`
-
----
-
-## bcc_trust_page_scores
-
-Aggregated trust scores per page.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | BIGINT UNSIGNED AUTO_INCREMENT | Primary key |
-| `page_id` | BIGINT UNSIGNED | WordPress page/post ID |
-| `page_owner_id` | BIGINT UNSIGNED | Page author user ID |
-| `total_score` | DECIMAL(5,2) | Composite trust score (0–100) |
-| `identity_score` | DECIMAL(5,2) | Identity verification subscore |
-| `endorsement_score` | DECIMAL(5,2) | Endorsement subscore |
-| `vote_score` | DECIMAL(5,2) | Vote subscore |
-| `activity_score` | DECIMAL(5,2) | Activity subscore |
-| `fraud_penalty` | DECIMAL(5,2) | Fraud penalty (subtracted) |
-| `reputation_tier` | VARCHAR(20) | elite/trusted/neutral/caution/risky |
-| `confidence` | DECIMAL(3,2) | Data sufficiency (0.0–1.0) |
-| `total_votes` | INT | Total vote count |
-| `total_endorsements` | INT | Total endorsement count |
-| `recalculate_required` | TINYINT(1) | Dirty flag for async recalc |
-| `is_dirty` | TINYINT(1) | Score needs refresh |
-| `created_at` | DATETIME | First calculation |
-| `updated_at` | DATETIME | Last recalculation |
-
-**Unique Key:** `(page_id)`
-
-**Indexes:** `page_owner_id`, `reputation_tier`, `total_score`, `recalculate_required`
-
----
-
-## bcc_trust_endorsements
-
-Endorsement records with vesting.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | BIGINT UNSIGNED AUTO_INCREMENT | Primary key |
-| `endorser_id` | BIGINT UNSIGNED | User giving endorsement |
-| `endorsed_id` | BIGINT UNSIGNED | User receiving endorsement |
-| `page_id` | BIGINT UNSIGNED | Target page |
-| `category` | VARCHAR(50) | Endorsement category |
-| `weight` | DECIMAL(5,4) | Computed weight (tier-based) |
-| `status` | VARCHAR(20) | active/revoked |
-| `vesting_stage` | TINYINT | 0/1/2 (vesting period) |
-| `created_at` | DATETIME | Endorsement timestamp |
-| `updated_at` | DATETIME | Last modification |
-
-**Unique Key:** `(endorser_id, endorsed_id, category)`
-
-**Indexes:** `endorsed_id`, `page_id`, `status`
+| Table | ~rows | Purpose | Owning code | Status |
+|---|---|---|---|---|
+| wp_bcc_trust_votes | ≈2 | Per-(voter,page,category) trust votes; weight + vesting | TableRegistry::votes / VoteRepository | Active |
+| wp_bcc_trust_page_scores | 403 | Per-(page,category) aggregate score row (self-page tier lives here) | TableRegistry::scores / PageScoreRepository | Active |
+| wp_bcc_trust_score_events | 3969 | Audit trail of score/tier transitions per page | TableRegistry::scoreEvents | Active |
+| wp_bcc_trust_page_scores_velocity | 1 | Daily score-delta track per page | TableRegistry::scoreVelocity | Active |
+| wp_bcc_trust_endorsements | 2 | Endorsements toward a page (weight, vesting, status) | TableRegistry::endorsements | Active |
+| wp_bcc_trust_attestations | 9 | §J attestation layer (Vouch / Stand Behind); successor to endorsements | TableRegistry::trustAttestations / schema-trust-attestations.php | Active |
+| wp_bcc_trust_activity | 571 | Recent trust-action activity log (rate-limit + fraud signal) | TableRegistry::activity | Active |
+| wp_bcc_trust_activity_archive | 115 | Aged-out rows from trust_activity | TableRegistry::activityArchive | Active |
+| wp_bcc_trust_flags | 0 | Per-(vote,flagger) vote flags | TableRegistry::flags | Active |
+| wp_bcc_trust_page_flags | 0 | Public page flags (signal only, no score impact) | TableRegistry::pageFlags / schema-page-flags.php | Active |
+| wp_bcc_trust_edges | 1 | Directed trust graph edges (PageRank inputs) | TableRegistry::edges | Active |
+| wp_bcc_trust_patterns | 0 | Detected behavioral patterns per user (fraud) | TableRegistry::patterns | Active |
+| wp_bcc_trust_device_fingerprints | 0 | Device fingerprints + automation scoring per user | TableRegistry::fingerprints | Active |
+| wp_bcc_trust_fraud_analysis | 120 | Cached fraud-score analysis per user (TTL) | TableRegistry::fraudAnalysis | Active |
+| wp_bcc_trust_suspensions | 0 | User suspension ledger | TableRegistry::suspensions | Active |
+| wp_bcc_trust_user_info | 119 | Denormalized per-user trust/fraud summary (source of truth) | TableRegistry::userInfo / schema-user-info.php | Active |
+| wp_bcc_trust_user_verifications | 2 | Per-user external verifications (GitHub/X/domain/wallet) | TableRegistry::userVerifications | Active |
+| wp_bcc_trust_quest_log | 9 | Onboarding quest completions per user | TableRegistry::questLog | Active |
+| wp_bcc_user_ranks | 0 | Awarded ranks per user (Foreman role etc.) | TableRegistry::userRanks / UserRankRepository | Active |
+| wp_bcc_page_read_model | 2777 | Denormalized page read model for discovery/search | TableRegistry::pageReadModel / schema-project.php | Active |
+| wp_bcc_rm_dirty_queue | 0 | Dirty-page queue driving read-model recompute | TableRegistry::dirtyQueue | Active |
+| wp_bcc_page_follows | 12 | User→page follow edges | TableRegistry::pageFollows | Active |
+| wp_bcc_pull_meta | 22 | Per-follow feed-pull bookkeeping | TableRegistry::pullMeta | Active |
+| wp_bcc_pull_batches | 13 | Feed-pull batch emission log | TableRegistry::pullBatches | Active |
+| wp_bcc_photo_alts | 1 | a11y alt-text sidecar 1:1 with peepso_photos.pho_id | TableRegistry::photoAlts | Active |
+| wp_bcc_blog_chain_tags | 3 | Many-to-many blog post ↔ chain tags | schema-blog-chain-tags.php | Active |
+| wp_bcc_content_reports | 0 | User content reports (moderation queue) | TableRegistry::contentReports | Active |
+| wp_bcc_user_reports | 2 | Member-on-member reports | UserReportRepository | Active |
+| wp_bcc_hidden_activities | 0 | Moderator-hidden activity ids | TableRegistry::hiddenActivities | Active |
+| wp_bcc_target_divergence_state | 5 | §J.8 divergence-state notifier sidecar (prior-state memory) | TableRegistry::targetDivergenceState | Active |
+| wp_bcc_disputes | 1 | Vote disputes (status, panel tally, adjudication) | Disputes domain (DisputeRepository) | Active |
+| wp_bcc_dispute_panel | 5 | Panelist assignments + decisions per dispute | Disputes domain | Active |
+| wp_bcc_dispute_participations | 1 | Per-(user,dispute) participation + credit outcome | TableRegistry::disputeParticipations | Active |
+| wp_bcc_push_subscriptions | 3 | Web-push VAPID subscriptions per user/device | TableRegistry::pushSubscriptions | Active |
+| wp_bcc_chains | 21 | Supported chains registry (RPC/REST/explorer config) | schema-chains.php (Onchain) | Active |
+| wp_bcc_chain_checkpoints | 7 | Per-chain indexer checkpoint + CU budget | schema-chain-checkpoints.php | Active |
+| wp_bcc_wallet_links | 9 | User↔wallet links per chain | schema-wallets.php / WalletRepository | Active |
+| wp_bcc_onchain_signals | 3 | Unified on-chain trust signals (wallet age/tx/role boost) | schema-core.php / OnchainSignalRepository | Active |
+| wp_bcc_onchain_claims | 0 | Entity claims (incl. page claims via entity_type='page') | schema-claims.php | Active |
+| wp_bcc_onchain_collections | 314 | NFT collection metadata cache (TTL) | schema-collections.php | Active |
+| wp_bcc_onchain_collection_pieces | 0 | Individual NFT pieces within a collection (TTL) | schema-collection-pieces.php | Active |
+| wp_bcc_onchain_validators | 3060 | Validator registry + enrichment (Cosmos/etc.) | schema-validators.php | Active |
+| wp_bcc_onchain_delegations | 0 | Per-wallet validator delegations (TTL) | schema-delegations.php | Active |
+| wp_bcc_onchain_dao_stats | 0 | (was per-wallet DAO governance stats) | none (no creator/reader) | ORPHAN — Phase 5 drop |
+| wp_bcc_onchain_treasury | 0 | (was DAO treasury holdings) | none (no creator/reader) | ORPHAN — Phase 5 drop |
+| wp_bcc_nft_holdings | 0 | Confirmed NFT holdings per wallet link | schema-nft-holdings.php | Active |
+| wp_bcc_nft_spam_contracts | 0 | NFT spam contract allow/deny rules | schema-nft-spam-contracts.php | Active |
+| wp_bcc_user_nft_selections | 2 | User-curated NFT showcase selections | schema-nft-selections.php | Active |
+| wp_bcc_helius_seen_signatures | 0 | Solana Helius webhook dedup (seen signatures) | schema-helius-seen-signatures.php | Active |
+| wp_bcc_user_locals | 0 | (was Locals membership ledger) | none (removal comment) | ORPHAN — Phase 5 drop |
+| wp_bcc_page_claims | 0 | (was page-claim ledger) | none (removal comment) | ORPHAN — Phase 5 drop |
+| wp_bcc_wallet_signals | 0 | (was wallet trust signals) | none (removal comment) | ORPHAN — Phase 5 drop |
+| wp_bcc_trust_eligibility | 0 | (was vote-eligibility cache) | none (removal comment) | ORPHAN — Phase 5 drop |
+| wp_bcc_trust_user_risk | 0 | (was per-user risk summary) | none (removal comment) | ORPHAN — Phase 5 drop |
+| wp_bcc_endorsement_types | 5 | (was endorsement type catalog) | none | ORPHAN — Phase 5 drop |
+| wp_bcc_trust_endorsement_types | 5 | (was endorsement type catalog, dup) | none | ORPHAN — Phase 5 drop |
+| wp_bcc_project_identities | 0 | (was project identity links) | none (stale installer) | ORPHAN — Phase 5 drop |
+| wp_bcc_project_scores | 0 | (was project score rows) | none (stale installer) | ORPHAN — Phase 5 drop |
+| wp_bcc_project_metrics_history | 0 | (was project metric history) | none (stale installer) | ORPHAN — Phase 5 drop |
+| wp_bcc_project_verifications | 0 | (was project verifications) | none (stale installer) | ORPHAN — Phase 5 drop |
+| wp_bcc_trust_page_composites | 0 | (was page composite scores) | none (stale installer) | ORPHAN — Phase 5 drop |
+| wp_bcc_trust_page_identities | 0 | (was page identity links) | none (stale installer) | ORPHAN — Phase 5 drop |
+| wp_bcc_trust_page_metrics | 0 | (was page metric history) | none (stale installer) | ORPHAN — Phase 5 drop |
+| wp_bcc_trust_page_verifications | 0 | (was page verifications) | none (stale installer) | ORPHAN — Phase 5 drop |
 
 ---
 
-## bcc_trust_user_info
+## Active tables — per-table detail
 
-User-level reputation and fraud metadata.
+Legend: column rows are `name · type · null · key` (key: PK / UQ unique / K indexed; FK·generated·auto noted inline).
+Indexes listed as `name (cols) [unique]`.
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | BIGINT UNSIGNED AUTO_INCREMENT | Primary key |
-| `user_id` | BIGINT UNSIGNED | WordPress user ID |
-| `fraud_score` | INT | Current fraud score (0–100) |
-| `risk_level` | VARCHAR(20) | critical/high/medium/low/minimal |
-| `trust_rank` | DECIMAL(5,4) | PageRank-style trust (0.0–1.0) |
-| `automation_score` | INT | Automation detection score (0–100) |
-| `behavior_score` | INT | Behavioral analysis score (0–100) |
-| `device_fraud_probability` | DECIMAL(3,2) | Device fraud probability (0.0–1.0) |
-| `is_verified` | TINYINT(1) | Email verified flag |
-| `is_suspended` | TINYINT(1) | Suspension flag |
-| `votes_cast` | INT | Total votes cast |
-| `endorsements_given` | INT | Total endorsements given |
-| `pages_owned` | INT | Number of pages owned |
-| `page_ids_owned` | JSON | Array of owned page IDs |
-| `posts_created` | INT | Content creation count |
-| `comments_made` | INT | Comment count |
-| `fraud_triggers` | JSON | Fraud trigger history |
-| `signals_updated_at` | DATETIME | Last async signal update |
-| `usr_last_activity` | DATETIME | Last user activity |
-| `created_at` | DATETIME | Record creation |
-| `updated_at` | DATETIME | Last modification |
+### Core / trust engine
 
-**Unique Key:** `(user_id)`
+#### wp_bcc_trust_votes
+Per-(voter,page,category) trust vote with weight + vesting lifecycle.
+- id · bigint unsigned · NO · PK auto
+- voter_user_id · bigint unsigned · NO · K
+- page_id · bigint unsigned · NO · K
+- category_id · bigint unsigned · NO
+- vote_type · tinyint · NO
+- weight · decimal(8,4) · NO
+- vested_weight · decimal(8,4) · NO
+- fraud_score_at_vote · tinyint unsigned · YES
+- vesting_stage · tinyint unsigned · NO · K
+- vesting_started_at / fully_vested_at · datetime · YES
+- weight_corrected_at · datetime · YES · K
+- reason · varchar(100) · YES
+- explanation · text · YES
+- status · tinyint · NO
+- ip_address · varbinary(16) · YES · K
+- created_at · datetime · NO · K
+- updated_at · datetime · NO
+- Indexes: PRIMARY (id) [uq]; uq_voter_page_cat (voter_user_id,page_id,category_id) [uq]; idx_page_recent (page_id,status,created_at); idx_page_score (page_id,status,weight); idx_page_voter (page_id,voter_user_id,status); idx_page_votes (page_id,vote_type,status); idx_votes_page_cat_status (page_id,category_id,status); idx_vote_lookup (voter_user_id,page_id,category_id,status); idx_voter_created / idx_voter_history (voter_user_id,created_at); idx_voter_status_date (voter_user_id,status,created_at); idx_vesting (vesting_stage,fully_vested_at); idx_correction (weight_corrected_at,fraud_score_at_vote); idx_created (created_at); idx_ip_lookup (ip_address,created_at)
 
-**Indexes:** `fraud_score`, `risk_level`, `is_suspended`, `behavior_score`
+#### wp_bcc_trust_page_scores
+Per-(page,category) aggregate score row. Self-page tier is the page row here.
+- page_id · bigint unsigned · NO · PK
+- category_id · bigint unsigned · NO · PK
+- page_owner_id · bigint unsigned · NO · K
+- total_score · decimal(5,2) · NO
+- onchain_bonus / endorsement_bonus · decimal(10,2) · NO
+- positive_score / negative_score · decimal(5,2) · NO
+- vote_count / unique_voters · int unsigned · NO
+- confidence_score · decimal(3,2) · NO · K
+- reputation_tier · varchar(20) · NO · K
+- endorsement_count · int unsigned · NO
+- last_vote_at · datetime · YES
+- last_calculated_at · datetime · NO
+- fraud_metadata · text · YES
+- recalculate_required · tinyint(1) · NO · K
+- recalc_failures · int unsigned · NO · K
+- contribution_bonus / penalty_adjustment · decimal(10,2) · NO
+- Indexes: PRIMARY (page_id,category_id) [uq]; idx_cat_score (category_id,positive_score,total_score); idx_owner_scores (page_owner_id,total_score); idx_tier_lookup (reputation_tier,total_score); idx_confidence (confidence_score); idx_recalculate (recalculate_required,last_calculated_at); idx_recalc_failures (recalc_failures,recalculate_required)
+
+#### wp_bcc_trust_score_events
+Append-only audit of score/tier transitions per page.
+- id · bigint unsigned · NO · PK auto
+- page_id · bigint unsigned · NO · K
+- event_type · varchar(50) · NO · K
+- score_before / score_after / delta · decimal(5,2) · YES
+- tier_before / tier_after · varchar(20) · YES
+- reason · varchar(255) · YES
+- actor_user_id · bigint unsigned · YES
+- meta · json · YES
+- created_at · datetime · YES · K
+- Indexes: PRIMARY (id) [uq]; idx_page_created (page_id,created_at); idx_page_id (page_id); idx_event_type (event_type); idx_created_at (created_at)
+
+#### wp_bcc_trust_page_scores_velocity
+Daily score-delta per page (velocity tracking).
+- page_id · bigint unsigned · NO · PK
+- track_date · date · NO · PK
+- score_delta · decimal(8,4) · NO
+- Indexes: PRIMARY (page_id,track_date) [uq]; idx_date (track_date)
+
+#### wp_bcc_trust_endorsements
+Endorsements toward a page (weight, vesting, status).
+- id · bigint unsigned · NO · PK auto
+- endorser_user_id · bigint unsigned · NO · K
+- page_id · bigint unsigned · NO · K
+- context · varchar(50) · NO
+- endorsement_type_id · bigint unsigned · YES · K (FK → now-orphan type catalog)
+- weight / base_weight · decimal(5,2) · NO
+- vesting_stage · tinyint unsigned · NO · K
+- fraud_score_at_endorsement · tinyint unsigned · NO
+- reason · text · YES
+- status · tinyint · NO
+- created_at · datetime · NO
+- Indexes: PRIMARY (id) [uq]; unique_endorsement (endorser_user_id,page_id,context) [uq]; idx_page_endorsements (page_id,status,created_at); idx_page_endorser (page_id,endorser_user_id,status); idx_endorser_history (endorser_user_id,created_at); idx_vesting (vesting_stage,status,created_at); fk_endorsement_type (endorsement_type_id)
+
+#### wp_bcc_trust_attestations
+§J attestation layer (Vouch / Stand Behind); generalized successor to endorsements.
+- id · bigint unsigned · NO · PK auto
+- attestor_user_id · bigint unsigned · NO · K
+- target_kind · varchar(20) · NO · K
+- target_id · bigint unsigned · NO
+- kind · varchar(20) · NO
+- weight_at_time · decimal(8,4) · NO
+- context_note · text · YES
+- attestation_order_in_target · int unsigned · NO
+- created_at · datetime · NO · K
+- reaffirmed_at / revoked_at · datetime · YES
+- Indexes: PRIMARY (id) [uq]; uq_active_attestation (attestor_user_id,target_kind,target_id,kind,revoked_at) [uq]; idx_attestor_active (attestor_user_id,kind,revoked_at,created_at); idx_attestor_target (attestor_user_id,target_kind,target_id); idx_target_active (target_kind,target_id,kind,revoked_at,created_at); idx_created (created_at)
+
+#### wp_bcc_trust_activity / wp_bcc_trust_activity_archive
+Recent trust-action log (rate-limit + fraud signal); archive holds aged-out rows. Identical column shape.
+- id · bigint unsigned · NO · PK auto
+- user_id · bigint unsigned · NO · K
+- action · varchar(50) · NO · K
+- target_type · varchar(50) · NO · K
+- target_id · bigint unsigned · NO
+- ip_address · varbinary(16) · YES · K
+- created_at · datetime · NO · K
+- Indexes (activity): PRIMARY (id) [uq]; idx_user (user_id); idx_action (action); idx_action_created (action,created_at); idx_user_action_date (user_id,action,created_at); idx_target (target_type,target_id); idx_ip_created / idx_ip_lookup (ip_address,created_at); idx_created (created_at).
+- Indexes (archive): PRIMARY (id); idx_user; idx_action; idx_target; idx_ip_lookup (ip_address,created_at); idx_created (created_at); idx_archive_created (created_at).
+
+#### wp_bcc_trust_flags
+Per-(vote,flagger) vote flags.
+- id · bigint unsigned · NO · PK auto
+- vote_id · bigint unsigned · NO · K
+- flagger_user_id · bigint unsigned · NO · K
+- reason · varchar(100) · NO
+- status · tinyint · NO · K
+- resolved_by · bigint unsigned · YES
+- resolved_at · datetime · YES
+- created_at · datetime · NO
+- Indexes: PRIMARY (id) [uq]; unique_vote_flagger (vote_id,flagger_user_id) [uq]; idx_vote (vote_id); idx_flagger (flagger_user_id); idx_status (status)
+
+#### wp_bcc_trust_page_flags
+Public page flags (signal only, no score impact).
+- id · bigint unsigned · NO · PK auto
+- page_id · bigint unsigned · NO · K
+- user_id · bigint unsigned · NO · K
+- reason · varchar(255) · YES
+- created_at · datetime · YES · K
+- Indexes: PRIMARY (id) [uq]; uq_page_user (page_id,user_id) [uq]; idx_page_id; idx_user_id; idx_created_at
+
+#### wp_bcc_trust_edges
+Directed trust graph edges (PageRank inputs).
+- id · bigint unsigned · NO · PK auto
+- source_user_id · bigint unsigned · NO · K
+- target_user_id · bigint unsigned · NO · K
+- weight · decimal(10,4) · NO
+- vote_count · int unsigned · NO
+- edge_type · varchar(20) · NO · K
+- created_at · datetime · NO
+- updated_at · datetime · NO
+- last_updated · datetime · YES
+- Indexes: PRIMARY (id) [uq]; uniq_edge (source_user_id,target_user_id,edge_type) [uq]; idx_source (source_user_id); idx_target (target_user_id); idx_target_source (target_user_id,source_user_id); idx_type_weight (edge_type,weight); idx_pagerank (edge_type,source_user_id,target_user_id,weight)
+
+#### wp_bcc_trust_patterns
+Detected behavioral patterns per user (fraud).
+- id · bigint unsigned · NO · PK auto
+- user_id · bigint unsigned · NO · K
+- pattern_type · varchar(50) · NO · K
+- pattern_data · text · NO
+- confidence · decimal(3,2) · YES
+- detected_at · datetime · NO · K
+- expires_at · datetime · YES · K
+- Indexes: PRIMARY (id) [uq]; idx_user (user_id); idx_user_type (user_id,pattern_type); idx_type (pattern_type); idx_detected (detected_at); idx_expires (expires_at)
+
+#### wp_bcc_trust_device_fingerprints
+Device fingerprints + automation scoring per user.
+- id · bigint unsigned · NO · PK auto
+- user_id · bigint unsigned · NO · K
+- fingerprint · varchar(64) · NO · K
+- automation_score · tinyint unsigned · YES · K
+- automation_signals · text · YES
+- first_seen / last_seen · datetime · NO
+- ip_address · varbinary(16) · YES · K
+- user_agent · text · YES
+- risk_level · varchar(20) · YES
+- screen_resolution · varchar(20) · YES
+- Indexes: PRIMARY (id) [uq]; idx_fingerprint (fingerprint); idx_user (user_id); idx_user_fingerprint (user_id,fingerprint); idx_user_fingerprint_lastseen (user_id,fingerprint,last_seen); idx_ip_fingerprint (ip_address,fingerprint); idx_automation (automation_score); idx_automation_risk (automation_score,risk_level)
+
+#### wp_bcc_trust_fraud_analysis
+Cached fraud-score analysis per user (TTL via expires_at).
+- id · bigint unsigned · NO · PK auto
+- user_id · bigint unsigned · NO · K
+- fraud_score · tinyint unsigned · NO · K
+- risk_level · varchar(20) · NO · K
+- confidence · decimal(3,2) · NO
+- triggers · text · NO
+- details · text · YES
+- analyzed_at · datetime · NO
+- expires_at · datetime · YES · K
+- Indexes: PRIMARY (id) [uq]; idx_user (user_id); idx_user_recent (user_id,analyzed_at); idx_score (fraud_score); idx_risk (risk_level); idx_expires (expires_at)
+
+#### wp_bcc_trust_suspensions
+User suspension ledger.
+- id · bigint unsigned · NO · PK auto
+- user_id · bigint unsigned · NO · K
+- suspended_by · bigint unsigned · NO
+- reason · varchar(100) · NO
+- fraud_score_at_time · tinyint unsigned · YES
+- notes · text · YES
+- suspended_at · datetime · NO · K
+- expires_at · datetime · YES · K
+- unsuspended_at · datetime · YES · K
+- unsuspended_by · bigint unsigned · YES
+- Indexes: PRIMARY (id) [uq]; idx_user (user_id); idx_active (unsuspended_at,expires_at); idx_status (suspended_at,unsuspended_at); idx_expires (expires_at)
+
+#### wp_bcc_trust_user_info
+Denormalized per-user trust/fraud summary (source of truth; ~40 cols). Key columns:
+- id · bigint unsigned · NO · PK auto
+- user_id · bigint unsigned · NO · UQ
+- user_login · varchar(60) / user_email · varchar(100) / display_name · varchar(250)
+- registered · datetime · YES; usr_last_activity · datetime · YES · K
+- usr_views / usr_likes · int · YES; usr_role · varchar(50) · YES
+- fraud_score · int · YES · K; trust_rank · float · YES · K; risk_level · varchar(20) · YES · K
+- is_suspended · tinyint(1) · YES · K; is_verified · tinyint(1) · YES · K
+- votes_cast / endorsements_given / automation_score / behavior_score(K) · int · YES
+- device_fraud_probability · float · YES; signals_updated_at · datetime · YES
+- pages_owned / groups_owned / posts_created / comments_made · int · YES
+- last_login · datetime · YES; last_ip_address · varchar(45) · YES; device_fingerprint · varchar(255) · YES
+- created_at · datetime · YES; updated_at · datetime · YES · K
+- peak_fraud_score · int · YES; fraud_triggers · text · YES; page_ids_owned · text · YES
+- risk_label · varchar(20) · NO; risk_color · varchar(10) · NO; reputation_tier · varchar(20) · NO · K
+- Indexes: PRIMARY (id) [uq]; user_id [uq]; fraud_score; idx_fraud_risk (fraud_score,risk_level); risk_level; idx_reputation_tier; idx_suspended; idx_verification (is_verified,fraud_score); idx_trust_rank; idx_behavior_score; usr_last_activity; idx_updated_at
+
+#### wp_bcc_trust_user_verifications
+Per-user external verifications (GitHub/X/domain/wallet).
+- id · bigint unsigned · NO · PK auto
+- user_id · bigint unsigned · NO · K
+- type · varchar(50) · NO · K
+- provider_id / provider_username / provider_avatar · varchar(255) · YES
+- meta · text · YES; access_token · text · YES
+- trust_boost · float · YES · K; fraud_reduction · int · YES
+- status · varchar(20) · NO · K
+- verified_at · datetime · YES · K; last_synced · datetime · YES
+- created_at / updated_at · datetime · YES
+- Indexes: PRIMARY (id) [uq]; unique_provider (type,provider_id) [uq]; unique_user_type (user_id,type) [uq]; idx_user (user_id); idx_user_status (user_id,status); idx_status; idx_type; idx_trust_boost; idx_verified
+
+#### wp_bcc_trust_quest_log
+Onboarding quest completions per user.
+- id · bigint unsigned · NO · PK auto
+- user_id · bigint unsigned · NO · K
+- quest_slug · varchar(50) · NO
+- completed_at · datetime · NO
+- Indexes: PRIMARY (id) [uq]; uq_user_quest (user_id,quest_slug) [uq]; idx_user (user_id)
+
+#### wp_bcc_user_ranks
+Awarded ranks per user (e.g. Foreman role).
+- id · bigint unsigned · NO · PK auto
+- user_id · bigint unsigned · NO · K
+- rank_key · varchar(32) · NO · K
+- awarded_by · bigint unsigned · YES · K
+- awarded_at · datetime · NO
+- revoked_at · datetime · YES; revoke_reason · varchar(255) · YES
+- Indexes: PRIMARY (id) [uq]; idx_user_active (user_id,revoked_at); idx_rank_key (rank_key); idx_awarded_by (awarded_by)
+
+### Read-model / feed
+
+#### wp_bcc_page_read_model
+Denormalized page read model for discovery/search reads (updated via score/vote/endorse hooks).
+- page_id · bigint unsigned · NO · PK
+- owner_id · bigint unsigned · NO · K
+- trust_score · decimal(5,2) · NO · K
+- reputation_tier · varchar(20) · NO · K
+- confidence_score · decimal(3,2) · NO · K
+- vote_count / unique_voters · int unsigned · NO
+- endorsement_count · int unsigned · NO · K
+- follower_count · int unsigned · NO · K
+- page_type · varchar(50) · NO · K
+- is_verified · tinyint(1) · NO · K
+- last_updated · datetime · NO
+- positive_score / negative_score / onchain_bonus · decimal(5,2) · NO
+- github_username · varchar(100) · YES; github_followers · int unsigned · NO
+- x_username · varchar(100) · YES; x_followers · int unsigned · NO
+- has_wallet · tinyint(1) · NO
+- last_vote_at / last_endorsement_at · datetime · YES
+- updated_at · datetime · NO; endorsement_bonus · decimal(10,2) · NO
+- Indexes: PRIMARY (page_id) [uq]; idx_trust_sort (trust_score); idx_tier_trust (reputation_tier,trust_score); idx_type_trust (page_type,trust_score); idx_verified_trust (is_verified,trust_score); idx_endorsement_sort (endorsement_count); idx_follower_sort (follower_count); idx_owner (owner_id); idx_confidence (confidence_score)
+
+#### wp_bcc_rm_dirty_queue
+Dirty-page queue driving read-model recompute.
+- page_id · bigint unsigned · NO · PK
+- created_at · datetime(6) · NO
+- Indexes: PRIMARY (page_id) [uq]
+
+#### wp_bcc_page_follows
+User→page follow edges.
+- id · bigint unsigned · NO · PK auto
+- user_id · bigint unsigned · NO · K
+- page_id · bigint unsigned · NO · K
+- card_kind · varchar(32) · NO · K
+- tier_at_pull · varchar(20) · YES
+- created_at · datetime · NO · K
+- Indexes: PRIMARY (id) [uq]; uq_user_page (user_id,page_id) [uq]; idx_user_id; idx_page_id; idx_card_kind; idx_created_at
+
+#### wp_bcc_pull_meta
+Per-follow feed-pull bookkeeping.
+- follow_id · bigint unsigned · NO · PK
+- tier_at_pull · varchar(20) · YES · K
+- batch_id · varchar(64) · YES · K
+- visibility · varchar(20) · NO
+- pulled_at · datetime · NO · K
+- Indexes: PRIMARY (follow_id) [uq]; idx_batch_id; idx_tier_at_pull; idx_pulled_at
+
+#### wp_bcc_pull_batches
+Feed-pull batch emission log.
+- id · bigint unsigned · NO · PK auto
+- user_id · bigint unsigned · NO · K
+- batch_id · varchar(64) · NO · UQ
+- card_count / more_count · int unsigned · NO
+- emitted_at · datetime · NO
+- Indexes: PRIMARY (id) [uq]; uk_batch_id (batch_id) [uq]; idx_user_emitted (user_id,emitted_at)
+
+#### wp_bcc_photo_alts
+a11y alt-text sidecar, 1:1 with peepso_photos.pho_id.
+- pho_id · bigint unsigned · NO · PK
+- owner_id · bigint unsigned · NO · K
+- alt_text · varchar(500) · NO
+- updated_at · datetime · NO · K
+- Indexes: PRIMARY (pho_id) [uq]; idx_owner_id; idx_updated_at
+
+#### wp_bcc_blog_chain_tags
+Many-to-many blog post ↔ chain tags.
+- post_id · bigint unsigned · NO · PK
+- chain_id · bigint unsigned · NO · PK
+- created_at · datetime · NO
+- Indexes: PRIMARY (post_id,chain_id) [uq]; idx_chain (chain_id)
+
+### Moderation / reports
+
+#### wp_bcc_content_reports
+User content reports (moderation queue).
+- id · bigint unsigned · NO · PK auto
+- target_kind · varchar(20) · NO · K
+- target_id · bigint unsigned · NO
+- reporter_user_id · bigint unsigned · NO · K
+- reason_code · varchar(40) · NO
+- comment · text · YES
+- status · tinyint · NO · K
+- resolved_by · bigint unsigned · YES; resolved_at · datetime · YES
+- created_at · datetime · NO
+- Indexes: PRIMARY (id) [uq]; unique_reporter_target (reporter_user_id,target_kind,target_id) [uq]; idx_target_status (target_kind,target_id,status); idx_status_created (status,created_at); idx_reporter (reporter_user_id,created_at)
+
+#### wp_bcc_user_reports
+Member-on-member reports.
+- id · bigint unsigned · NO · PK auto
+- reported_id · bigint unsigned · NO · K
+- reporter_id · bigint unsigned · NO · K
+- reason_key · varchar(100) · NO
+- reason_detail · varchar(1000) · NO
+- status · varchar(20) · NO · K
+- created_at · datetime · NO
+- reviewed_at / notified_at / admin_notified_at · datetime · YES
+- Indexes: PRIMARY (id) [uq]; uq_reporter_reported (reporter_id,reported_id) [uq]; uq_reporter_reported_reason (reporter_id,reported_id,reason_key) [uq]; idx_reported; idx_reporter; idx_reporter_reported; idx_status
+
+#### wp_bcc_hidden_activities
+Moderator-hidden activity ids.
+- act_id · bigint unsigned · NO · PK
+- hidden_at · datetime · NO · K
+- hidden_by_user_id · bigint unsigned · NO
+- reason_code · varchar(40) · NO · K
+- related_report_id · bigint unsigned · YES
+- Indexes: PRIMARY (act_id) [uq]; idx_hidden_at; idx_reason (reason_code)
+
+#### wp_bcc_target_divergence_state
+§J.8 divergence-state notifier sidecar (prior-state memory + cooldown).
+- id · bigint unsigned · NO · PK auto
+- target_kind · varchar(20) · NO · K
+- target_id · bigint unsigned · NO
+- current_state · varchar(20) · NO · K
+- computed_at · datetime · NO · K
+- last_notified_at · datetime · YES · K
+- Indexes: PRIMARY (id) [uq]; uq_target (target_kind,target_id) [uq]; idx_state; idx_computed_at; idx_last_notified_at
+
+### Disputes
+
+#### wp_bcc_disputes
+Vote disputes (status, panel tally, adjudication, reopen).
+- id · bigint unsigned · NO · PK auto
+- vote_id · bigint unsigned · NO · K
+- page_id · bigint unsigned · NO · K
+- reporter_id · bigint unsigned · NO · K
+- voter_id · bigint unsigned · NO
+- reason · varchar(1000) · NO
+- evidence_url · varchar(2083) · YES
+- status · varchar(20) · NO · K
+- panel_accepts / panel_rejects / panel_size · tinyint unsigned · NO
+- created_at · datetime · NO; resolved_at · datetime · YES
+- adjudication_status · varchar(20) · NO · K
+- reopen_count · tinyint unsigned · NO
+- resolved_notified_at · datetime · YES
+- active_vote_lock · bigint unsigned · YES · UQ (STORED GENERATED)
+- resolution_enqueued_at · datetime · YES
+- Indexes: PRIMARY (id) [uq]; uq_active_vote (active_vote_lock) [uq]; idx_vote; idx_page; idx_reporter; idx_reporter_created; idx_status; idx_status_created; idx_adjudication; idx_reconcile (status,adjudication_status,resolved_at)
+
+#### wp_bcc_dispute_panel
+Panelist assignments + decisions per dispute.
+- id · bigint unsigned · NO · PK auto
+- dispute_id · bigint unsigned · NO · K
+- panelist_user_id · bigint unsigned · NO · K
+- decision · varchar(20) · YES · K
+- note · varchar(500) · YES
+- assigned_at · datetime · NO
+- voted_at / notified_at · datetime · YES
+- Indexes: PRIMARY (id) [uq]; uq_panelist_dispute (dispute_id,panelist_user_id) [uq]; idx_dispute; idx_panelist; idx_panelist_decision (panelist_user_id,decision); idx_undecided (decision)
+
+#### wp_bcc_dispute_participations
+Per-(user,dispute) participation + credit outcome.
+- id · bigint unsigned · NO · PK auto
+- user_id · bigint unsigned · NO · K
+- dispute_id · bigint unsigned · NO · K
+- decision · enum('accept','reject') · NO
+- was_credited · tinyint(1) · NO
+- credit_skipped_reason · varchar(32) · YES
+- outcome_match · tinyint(1) · YES
+- created_at · datetime · NO
+- Indexes: PRIMARY (id) [uq]; uq_user_dispute (user_id,dispute_id) [uq]; idx_dispute; idx_user_created; idx_user_credited_created; idx_user_credited_outcome; idx_user_outcome
+
+### Onchain
+
+#### wp_bcc_chains
+Supported chains registry (RPC/REST/explorer config).
+- id · bigint unsigned · NO · PK auto
+- slug · varchar(50) · NO · UQ
+- name · varchar(100) · NO
+- chain_type · varchar(20) · NO · K
+- chain_id_hex · varchar(20) · YES
+- rpc_url / rest_url / explorer_url / icon_url · varchar(500) · YES
+- native_token · varchar(20) · YES; color · char(7) · YES
+- is_testnet · tinyint(1) · NO
+- is_active · tinyint(1) · NO · K
+- created_at · datetime · NO
+- decimals · tinyint unsigned · NO; bech32_prefix · varchar(20) · YES
+- marketplace_template · text · YES
+- Indexes: PRIMARY (id) [uq]; slug [uq]; chain_type; is_active
+
+#### wp_bcc_chain_checkpoints
+Per-chain indexer checkpoint + compute-unit budget.
+- chain_id · bigint unsigned · NO · PK
+- last_processed_block / head_block · bigint unsigned · NO
+- state · varchar(20) · NO
+- cu_used_today · int unsigned · NO
+- cu_budget_reset_at · date · NO
+- last_run_at · datetime · YES; last_error · varchar(255) · YES
+- block_progression_history · varchar(500) · YES
+- Indexes: PRIMARY (chain_id) [uq]
+
+#### wp_bcc_wallet_links
+User↔wallet links per chain.
+- id · bigint unsigned · NO · PK auto
+- user_id · bigint unsigned · NO · K
+- post_id · bigint unsigned · NO · K
+- wallet_address · varchar(128) · NO · K
+- chain_id · bigint unsigned · NO · K
+- wallet_type · varchar(20) · NO · K
+- label · varchar(100) · YES
+- verified_at · datetime · YES
+- is_primary · tinyint(1) · NO
+- created_at · datetime · NO
+- last_holdings_refresh_at · datetime · YES
+- helius_managed · tinyint(1) · NO
+- Indexes: PRIMARY (id) [uq]; uq_chain_address (chain_id,wallet_address) [uq]; user_chain_wallet (user_id,chain_id,wallet_address) [uq]; user_id; post_id; chain_id; wallet_address; wallet_type
+
+#### wp_bcc_onchain_signals
+Unified on-chain trust signals (wallet age/tx/role boost). Supersedes the orphan bcc_wallet_signals.
+- id · bigint unsigned · NO · PK auto
+- user_id · bigint unsigned · NO · K
+- wallet_address · varchar(255) · NO · K
+- chain · varchar(20) · NO
+- wallet_age_days · int unsigned · NO
+- first_tx_at · datetime · YES
+- tx_count / contract_count · int unsigned · NO
+- score_contribution · decimal(6,2) · NO
+- raw_data · longtext · YES
+- fetched_at · datetime · NO
+- role · varchar(20) · NO
+- trust_boost · decimal(6,2) · NO · K
+- fraud_reduction · int · NO
+- contract_address · varchar(128) · YES
+- meta · text · YES; last_synced · datetime · YES
+- Indexes: PRIMARY (id) [uq]; uq_wallet_chain (wallet_address,chain) [uq]; idx_user; idx_trust_boost
+
+#### wp_bcc_onchain_claims
+Entity claims (incl. page claims via entity_type='page' — absorbed bcc_page_claims).
+- id · bigint unsigned · NO · PK auto
+- user_id · bigint unsigned · NO · K
+- entity_type · varchar(20) · NO · K
+- entity_id · bigint unsigned · NO
+- wallet_address · varchar(128) · NO
+- chain_id · bigint unsigned · NO
+- claim_role · varchar(20) · NO
+- status · varchar(20) · NO · K
+- verified_at · datetime · YES
+- created_at · datetime · NO
+- recovery_pending · tinyint(1) · NO · K
+- Indexes: PRIMARY (id) [uq]; uq_user_entity (user_id,entity_type,entity_id) [uq]; idx_entity (entity_type,entity_id); idx_user; idx_status; idx_recovery_pending
+
+#### wp_bcc_onchain_collections
+NFT collection metadata cache (TTL via expires_at). Distinct from the dropped legacy bcc_collections.
+- id · bigint unsigned · NO · PK auto
+- wallet_link_id · bigint unsigned · YES · K
+- contract_address · varchar(128) · NO · K
+- chain_id · bigint unsigned · NO · K
+- collection_name · varchar(200) · YES
+- token_standard · varchar(20) · YES
+- total_supply · int unsigned · YES
+- floor_price · decimal(20,8) · YES · K
+- floor_currency · varchar(20) · YES
+- unique_holders · int unsigned · YES
+- total_volume · decimal(20,8) · YES · K
+- listed_percentage / royalty_percentage · decimal(5,2) · YES
+- metadata_storage · varchar(30) · YES
+- fetched_at · datetime · NO; expires_at · datetime · NO · K
+- show_on_profile · tinyint(1) · NO
+- image_url · varchar(500) · YES
+- is_verified · tinyint(1) · NO · K
+- source · varchar(20) · NO
+- Indexes: PRIMARY (id) [uq]; uq_chain_contract (chain_id,contract_address) [uq]; wallet_chain_contract (wallet_link_id,chain_id,contract_address) [uq]; chain_id; contract_address; wallet_link_id; expires_at; idx_floor; idx_volume; idx_verified
+
+#### wp_bcc_onchain_collection_pieces
+Individual NFT pieces within a collection (TTL).
+- id · bigint unsigned · NO · PK auto
+- chain_id · bigint unsigned · NO · K
+- contract_address · varchar(128) · NO
+- token_id · varchar(255) · NO
+- name · varchar(255) · YES; description · text · YES
+- image_url / image_url_thumb · text · YES
+- attributes_json · longtext · YES
+- fetched_at · datetime · NO; expires_at · datetime · NO
+- Indexes: PRIMARY (id) [uq]; uniq_chain_contract_token (chain_id,contract_address,token_id) [uq]; idx_chain_expires (chain_id,expires_at)
+
+#### wp_bcc_onchain_validators
+Validator registry + enrichment (Cosmos/etc.).
+- id · bigint unsigned · NO · PK auto
+- wallet_link_id · bigint unsigned · YES · K
+- operator_address · varchar(128) · NO · K
+- chain_id · bigint unsigned · NO · K
+- moniker · varchar(200) · YES
+- status · varchar(20) · NO · K
+- commission_rate · decimal(5,2) · YES
+- total_stake / self_stake · decimal(30,8) · YES
+- delegator_count · int unsigned · YES
+- uptime_30d / governance_participation · decimal(5,2) · YES
+- jailed_count · int unsigned · YES
+- voting_power_rank · int unsigned · YES · K
+- fetched_at · datetime · NO; expires_at · datetime · NO
+- last_enriched_at / next_enrichment_at(K) / retry_after · datetime · YES
+- enrichment_attempts · tinyint unsigned · NO
+- identity · varchar(64) · YES
+- logo_url / logo_source_ref · varchar(2048) · YES
+- logo_checked_at · datetime · YES
+- Indexes: PRIMARY (id) [uq]; uq_chain_operator (chain_id,operator_address) [uq]; wallet_link_id; operator_address; chain_id; status; voting_power_rank; expires_at; idx_enrichment_schedule (next_enrichment_at,retry_after)
+
+#### wp_bcc_onchain_delegations
+Per-wallet validator delegations (TTL).
+- id · bigint unsigned · NO · PK auto
+- wallet_link_id · bigint unsigned · NO · K
+- chain_id · bigint unsigned · NO · K
+- validator_address · varchar(128) · NO
+- shares · decimal(40,18) · YES
+- amount · decimal(30,8) · YES
+- fetched_at · datetime · NO; expires_at · datetime · NO · K
+- Indexes: PRIMARY (id) [uq]; uq_wallet_validator (wallet_link_id,validator_address) [uq]; chain_validator (chain_id,validator_address); wallet_link_id; expires_at
+
+#### wp_bcc_nft_holdings
+Confirmed NFT holdings per wallet link.
+- id · bigint unsigned · NO · PK auto
+- wallet_link_id · bigint unsigned · NO · K
+- chain_id · bigint unsigned · NO · K
+- contract_address · varchar(64) · NO
+- token_id · varchar(128) · NO
+- token_standard · varchar(16) · YES
+- balance · int unsigned · NO
+- metadata_status · tinyint unsigned · NO · K
+- name · varchar(255) · YES
+- image_url / metadata_uri · varchar(500) · YES
+- collection_name · varchar(255) · YES
+- last_seen_block · bigint unsigned · NO
+- confirmed_at · datetime · NO; indexed_at · datetime · NO
+- enriched_at · datetime · YES · K
+- Indexes: PRIMARY (id) [uq]; uk_wallet_token (wallet_link_id,contract_address,token_id) [uq]; idx_wallet_chain (wallet_link_id,chain_id); idx_chain_contract (chain_id,contract_address); idx_metadata_status; idx_enriched_at
+
+#### wp_bcc_nft_spam_contracts
+NFT spam contract allow/deny rules.
+- id · bigint unsigned · NO · PK auto
+- chain_id · bigint unsigned · NO · K
+- contract_address · varchar(64) · NO
+- rule · varchar(10) · NO · K
+- reason · varchar(255) · YES
+- created_at · datetime · NO
+- Indexes: PRIMARY (id) [uq]; uk_chain_contract (chain_id,contract_address) [uq]; idx_rule (rule)
+
+#### wp_bcc_user_nft_selections
+User-curated NFT showcase selections.
+- id · bigint unsigned · NO · PK auto
+- user_id · bigint unsigned · NO · K
+- wallet_link_id · bigint unsigned · NO · K
+- chain_id · bigint unsigned · NO · K
+- contract_address · varchar(128) · NO
+- token_id · varchar(128) · NO
+- collection_name / name · varchar(200) · YES
+- image_url / metadata_uri · varchar(500) · YES
+- token_standard · varchar(30) · YES
+- display_order · int unsigned · NO
+- added_at · datetime · NO
+- Indexes: PRIMARY (id) [uq]; uq_user_token (user_id,chain_id,contract_address,token_id) [uq]; user_order (user_id,display_order); user_id; wallet_link_id; chain_id
+
+#### wp_bcc_helius_seen_signatures
+Solana Helius webhook dedup (seen signatures).
+- signature · varchar(96) · NO · PK
+- seen_at · datetime · NO · K
+- Indexes: PRIMARY (signature) [uq]; idx_seen_at
+
+### Infra / notifications
+
+#### wp_bcc_push_subscriptions
+Web-push VAPID subscriptions per user/device.
+- id · bigint unsigned · NO · PK auto
+- user_id · bigint unsigned · NO · K
+- endpoint · varchar(500) · NO
+- endpoint_hash · char(64) · NO
+- p256dh_key · varchar(128) · NO
+- auth_key · varchar(48) · NO
+- user_agent · varchar(255) · YES
+- created_at · datetime · NO; last_used_at · datetime · YES
+- Indexes: PRIMARY (id) [uq]; uniq_user_endpoint (user_id,endpoint_hash) [uq]; idx_user_id
 
 ---
 
-## bcc_trust_fingerprints
-
-Device fingerprints for multi-account and automation detection.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | BIGINT UNSIGNED AUTO_INCREMENT | Primary key |
-| `user_id` | BIGINT UNSIGNED | WordPress user ID |
-| `fingerprint` | VARCHAR(128) | SHA-256 fingerprint hash |
-| `automation_score` | INT | Automation confidence (0–100) |
-| `automation_signals` | JSON | Detected automation signals |
-| `ip_address` | VARCHAR(64) | HMAC-hashed IP (privacy-safe) |
-| `user_agent` | TEXT | Browser user agent |
-| `risk_level` | VARCHAR(20) | high/medium/low |
-| `first_seen` | DATETIME | First appearance |
-| `last_seen` | DATETIME | Most recent appearance |
-
-**Indexes:** `user_id`, `fingerprint`, `risk_level`
-
----
-
-## bcc_trust_edges
-
-Trust graph edges for PageRank-style propagation.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | BIGINT UNSIGNED AUTO_INCREMENT | Primary key |
-| `source_user_id` | BIGINT UNSIGNED | Edge source (voter/endorser) |
-| `target_user_id` | BIGINT UNSIGNED | Edge target (page owner) |
-| `edge_type` | VARCHAR(20) | vote/endorsement |
-| `weight` | DECIMAL(5,4) | Edge weight |
-| `created_at` | DATETIME | Edge creation |
-| `updated_at` | DATETIME | Last recalculation |
-
-**Unique Key:** `(source_user_id, target_user_id, edge_type)`
-
----
-
-## bcc_trust_fraud_analysis
-
-Detailed fraud analysis records.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | BIGINT UNSIGNED AUTO_INCREMENT | Primary key |
-| `user_id` | BIGINT UNSIGNED | Analyzed user |
-| `fraud_score` | INT | Computed fraud score |
-| `risk_level` | VARCHAR(20) | Risk classification |
-| `confidence` | DECIMAL(3,2) | Analysis confidence |
-| `triggers` | JSON | Array of triggered rules |
-| `details` | JSON | Full analysis details |
-| `expires_at` | DATETIME | Record expiry (retention) |
-| `created_at` | DATETIME | Analysis timestamp |
-
-**Indexes:** `user_id`, `risk_level`, `expires_at`
-
----
-
-## bcc_trust_patterns
-
-Behavioral pattern storage for ML training.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | BIGINT UNSIGNED AUTO_INCREMENT | Primary key |
-| `user_id` | BIGINT UNSIGNED | Pattern subject |
-| `pattern_type` | VARCHAR(50) | Pattern classification |
-| `pattern_data` | JSON | Pattern details |
-| `severity` | DECIMAL(3,2) | Severity score (0.0–1.0) |
-| `created_at` | DATETIME | Detection timestamp |
-
-**Indexes:** `user_id`, `pattern_type`, `created_at`
-
----
-
-## bcc_trust_rings
-
-Vote ring (collusion) detection results.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | BIGINT UNSIGNED AUTO_INCREMENT | Primary key |
-| `ring_hash` | VARCHAR(64) | Unique ring identifier |
-| `user_ids` | JSON | Array of participating user IDs |
-| `ring_size` | INT | Number of participants |
-| `strength` | DECIMAL(5,2) | Ring strength score |
-| `mutual_count` | INT | Number of mutual votes |
-| `status` | VARCHAR(20) | detected/confirmed/dismissed |
-| `created_at` | DATETIME | Detection timestamp |
-
-**Indexes:** `ring_hash`, `status`
-
----
-
-## bcc_trust_activity
-
-Activity log for audit trail.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | BIGINT UNSIGNED AUTO_INCREMENT | Primary key |
-| `user_id` | BIGINT UNSIGNED | Acting user |
-| `action` | VARCHAR(50) | Action type (vote_up, page_view, etc.) |
-| `target_id` | BIGINT UNSIGNED | Target entity ID |
-| `target_type` | VARCHAR(20) | Target type (page, user, etc.) |
-| `details` | JSON | Additional context |
-| `created_at` | DATETIME | Action timestamp |
-
-**Indexes:** `user_id`, `action`, `target_id`, `created_at`
-
----
-
-# V1 Frontend Support Tables
-
-The four tables below back the headless Next.js frontend per [api-contract-v1.md §6.5](api-contract-v1.md). All defined in `wp-content/plugins/bcc-trust/includes/database/schema-*.php` and installed via the schema-content-hash mechanism in `bcc-trust.php` (auto-runs `dbDelta` on next request when any schema file changes).
-
----
-
-## bcc_pull_meta — legacy physical name; stores Watch metadata
-
-Sidecar metadata for PeepSo follows that represent BCC card watches. Per §C2 of the V1 plan, the watchlist (formerly "Binder," renamed 2026-05-13 — see `pattern-registry.md` and `api-contract-v1.md §4.5.1`) is a UI projection of `peepso_follower` joined to this table; **NO separate follow graph**. Rows are 1:1 with `peepso_follower` rows.
-
-The **table name and column names retain their original `pull`-prefixed forms** (`bcc_pull_meta`, `tier_at_pull`, `pulled_at`) — a physical rename is deferred to a later release because it requires a data-copy migration with no API-surface benefit (these names are internal storage; user-facing API field names are `watched_at`, `card_tier_at_watch`). The logical concept stored here is "watch metadata."
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `follow_id` | BIGINT UNSIGNED | PeepSo follow row ID — PRIMARY KEY (1:1 with follow) |
-| `tier_at_pull` | VARCHAR(20) | `card_tier` at moment the card was watched (`legendary`/`rare`/`uncommon`/`common`); preserves historical narrative even when the entity's current tier changes. **API exposes this as `card_tier_at_watch`.** |
-| `batch_id` | VARCHAR(64) | Ties watches into one feed post per §C3 (10-minute rolling inactivity window) |
-| `visibility` | VARCHAR(20) | Per-watch visibility (V1: always `'public'`; reserved for V2 per-card hiding) |
-| `pulled_at` | DATETIME | Watch timestamp. **API exposes this as `watched_at`.** |
-
-**Primary Key:** `(follow_id)` — single row per follow
-
-**Indexes:** `batch_id`, `pulled_at`, `tier_at_pull`
-
----
-
-## bcc_photo_alts
-
-Sidecar alt-text metadata for PeepSo photos. PeepSo's `peepso_photos` has no native `alt` column, and adding one would be brittle under PeepSo updates — so the alt lives BCC-side. Rows are 1:1 with `peepso_photos.pho_id`. The author-supplied string surfaces in the §3.3.9 photo body via `FeedRankingService::loadPhotoBodies` and is written via §4.18 `PATCH /photos/:pho_id/alt`.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `pho_id` | BIGINT UNSIGNED | `peepso_photos.pho_id` — PRIMARY KEY (1:1 with photo row) |
-| `owner_id` | BIGINT UNSIGNED | Cached `peepso_photos.pho_owner_id` snapshot at write time. Lets the write endpoint authorise via a single PK read on this table without joining peepso_photos. Authoritative ownership remains `peepso_photos.pho_owner_id` (re-checked on every write). |
-| `alt_text` | VARCHAR(500) | Author-supplied alt text (post-sanitise: HTML stripped, whitespace collapsed). Hard cap 500 chars; A11y best practice is 125–150 — the cap blocks alt-stuffing without truncating descriptions of complex images. |
-| `updated_at` | DATETIME | Server-set on every upsert (default `CURRENT_TIMESTAMP`). Lets future moderation queues sort by recency. |
-
-**Primary Key:** `(pho_id)` — single row per photo
-
-**Indexes:** `owner_id`, `updated_at`
-
-**Invariants:**
-- A row exists IFF the photo's author has set a non-empty alt. Clearing alt (PATCH with `""`) DELETEs the row so subsequent feed reads return `alt: null` (the §3.3.9 "decorative" fallback).
-- `owner_id` is denormalised from PeepSo and not the source of truth — `peepso_photos.pho_owner_id` is. The write endpoint always re-checks against PeepSo before upserting to prevent a stale `owner_id` from being trusted across photo-ownership transfers (none in V1, but the check is cheap).
-
----
-
-## bcc_user_ranks
-
-Conferred **Role** assignments (orthogonal to the earned Rank ladder). Earned ranks — Apprentice / Journeyman / Master — are **auto-derived from the feature-access level** (`RankService::rankForLevel`) and are NOT stored here. This table holds only conferred Roles (today: **Foreman**), which set `foreman_insignia` without changing the member's earned rank. Revocations preserved as historical state via `revoked_at`. (Earlier V1 design auto-stored tier-derived ranks here; superseded by the 2026-06-22 identity slice.)
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | BIGINT UNSIGNED AUTO_INCREMENT | Primary key |
-| `user_id` | BIGINT UNSIGNED | WordPress user ID |
-| `rank_key` | VARCHAR(32) | Conferred Role key — `foreman` today (named `rank_key` because RANK is reserved in MySQL 8.0+; earned ranks `apprentice`/`journeyman`/`master` are level-derived, not stored) |
-| `awarded_by` | BIGINT UNSIGNED NULL | Admin user ID who conferred the Role |
-| `awarded_at` | DATETIME | When the Role was conferred |
-| `revoked_at` | DATETIME NULL | NULL = active Role; non-NULL = historical |
-| `revoke_reason` | VARCHAR(255) NULL | Optional admin-supplied reason |
-
-**Indexes:** `(user_id, revoked_at)` for active-Role lookups, `rank_key`, `awarded_by`
-
-**Invariant:** at most one active (`revoked_at IS NULL`) Role row per `user_id` — enforced at the application layer (MySQL has no partial unique indexes). On revocation, the user simply loses the Role insignia; their earned rank is unaffected (it's level-derived, never stored). **Note:** the conferral path is deferred (see api-contract §4.8), so in V1 this table is empty and `foreman_insignia` is always `false`.
-
----
-
-## Locals (no dedicated table)
-
-Per §E3, BCC Locals membership lives entirely in PeepSo's `peepso_group_members` (the single graph rule). The earlier dedicated `bcc_user_locals` table was removed as part of the §A4 anti-overengineering pass — it duplicated PeepSo's existing membership ledger.
-
-The single piece of per-user state BCC stores about Locals:
-
-- **`wp_usermeta.bcc_primary_local_group_id`** — integer pointer to the user's primary Local's `group_id` (or unset/0 for none). Singleton key per user.
-
-Reads:
-- *"Is user X in Local Y?"* → query `peepso_group_members WHERE gm_user_id=X AND gm_group_id=Y AND gm_user_status LIKE 'member%'`.
-- *"What's user X's primary Local?"* → `get_user_meta(X, 'bcc_primary_local_group_id', true)`.
-- *"What was user X's join date?"* → `peepso_group_members.gm_joined`.
-
-Writes (when /me/locals/:id/join lands): use PeepSo's group-join API; toggle `bcc_primary_local_group_id` via `update_user_meta` for primary changes. App-layer enforces the single-primary invariant by virtue of the singleton meta key (only one value can be stored).
-
----
-
-## bcc_onchain_claims (V1 extension: page claims + recovery flag)
-
-Existing table from `bcc-onchain-signals` (now in `bcc-trust/Onchain`) — logs every claim attempt by every user. **V1 extension:** the `recovery_pending` column is added to support §B5's lost-wallet rule, and `entity_type='page'` is added to the value set for page claims (merged from the originally-planned dedicated `bcc_page_claims` table per the §A4 single-source consolidation).
-
-| Column (existing + new) | Type | Description |
-|--------|------|-------------|
-| `id` | BIGINT UNSIGNED | Primary key |
-| `user_id` | BIGINT UNSIGNED | Claiming user |
-| `entity_type` | VARCHAR(20) | `validator` / `collection` / `page` (V1 adds `page`) |
-| `entity_id` | BIGINT UNSIGNED | Per-type FK (`onchain_validators.id`, `onchain_collections.id`, or PeepSo page ID) |
-| `wallet_address` | VARCHAR(128) | The signing wallet |
-| `chain_id` | BIGINT UNSIGNED | FK to `bcc_onchain_chains` |
-| `claim_role` | VARCHAR(20) | `operator` / `creator` / `holder` / `manager` |
-| `status` | VARCHAR(20) | `pending` / `verified` |
-| `verified_at` | DATETIME NULL | When the wallet signature was verified |
-| `recovery_pending` | TINYINT(1) NOT NULL DEFAULT 0 | **NEW V1** — §B5 lost-wallet flag for page-type claims |
-| `created_at` | DATETIME | Insert time |
-
-**Existing indexes:** `uq_user_entity (user_id, entity_type, entity_id)` UNIQUE, `idx_entity (entity_type, entity_id)`, `idx_user (user_id)`, `idx_status (status)`
-
-**New V1 index:** `idx_recovery_pending (recovery_pending)`
-
-**Concurrency rules (§B5):**
-- §B5 single-claim-wins for `entity_type='page'` is enforced by `ClaimRepository::createExclusiveClaim()` — an entity-scoped advisory lock serializes concurrent claim attempts on the same `(entity_type, entity_id, claim_role)`. Two simultaneous valid claims see exactly one acquire the lock and verify; the other is rejected with an "already claimed" error.
-- Subsequent claim attempts on a claimed page must use the dispute / admin-override flow.
-- The `recovery_pending` flag is raised by the wallet-disconnect / lost-wallet handler (per §B5) and consumed by the admin queue.
+## Orphan tables (scheduled Phase 5 drop)
+
+All 14 have **zero active reads/writes in current plugin code**. Each is flagged
+**drop via guarded migration in Phase 5 after prod-empty confirmation** (verify the
+prod row count is 0 before dropping — dev counts below).
+
+| Table | rows (dev) | Why orphaned |
+|---|---|---|
+| wp_bcc_user_locals | 0 | Removed in code; Locals membership moved to PeepSo `peepso_group_members`, primary-Local pointer is `wp_usermeta.bcc_primary_local_group_id` (single-graph rule). Removal comments in tables.php / TableRegistry / LocalsService; no schema file, no accessor. |
+| wp_bcc_page_claims | 0 | Merged into `wp_bcc_onchain_claims` (entity_type='page'; recovery_pending lives there). Removal comments in tables.php + TableRegistry; no accessor. |
+| wp_bcc_wallet_signals | 0 | Superseded by `wp_bcc_onchain_signals` (unified). WalletSignalRepository docblock: "former bcc_trust_wallet_signals table is no longer written to." No active write/read. |
+| wp_bcc_trust_eligibility | 0 | Replaced by the in-process cache in VoteEligibilityChecker (120s TTL); docblock: "Replaces the previous DB-backed bcc_trust_eligibility table — no INSERT/DELETE." No accessor. |
+| wp_bcc_trust_user_risk | 0 | Merged into `wp_bcc_trust_user_info`. CronService comment: "user_risk table merged into user_info" (hourly_risk_refresh cron retired). No accessor. |
+| wp_bcc_endorsement_types | 5 | Endorsement type catalog from an old design; the active path uses `wp_bcc_trust_endorsements` directly (its endorsement_type_id FK is unused/nullable). Zero code references. |
+| wp_bcc_trust_endorsement_types | 5 | Duplicate of the above (same shape). Zero code references. Both type-catalog tables are dead. |
+| wp_bcc_project_identities | 0 | Pre-self-page "projects as separate entities" design; superseded by member self-page + `wp_bcc_trust_user_verifications`. Zero references; not created by current installer (the stale `bcc_trust_create_page_tables` comment is misleading — schema-project.php only creates the read model). |
+| wp_bcc_project_scores | 0 | Same pre-self-page design; scores now live in `wp_bcc_trust_page_scores`. Zero references; stale-installer leftover. |
+| wp_bcc_project_metrics_history | 0 | Same pre-self-page design; no metric-history feature ships. Zero references; stale-installer leftover. |
+| wp_bcc_project_verifications | 0 | Same pre-self-page design; verifications are per-user in `wp_bcc_trust_user_verifications`. Zero references; stale-installer leftover. |
+| wp_bcc_trust_page_composites | 0 | Page-scoped twin of project_scores from the same abandoned design; superseded by `wp_bcc_trust_page_scores`. Zero references; stale-installer leftover. |
+| wp_bcc_trust_page_identities | 0 | Page-scoped twin of project_identities; superseded by user verifications on the self-page. Zero references; stale-installer leftover. |
+| wp_bcc_trust_page_metrics | 0 | Page-scoped twin of project_metrics_history. Zero references; stale-installer leftover. |
+| wp_bcc_trust_page_verifications | 0 | Page-scoped twin of project_verifications; superseded by `wp_bcc_trust_user_verifications`. Zero references; stale-installer leftover. |
+| wp_bcc_onchain_dao_stats | 0 | DAO governance-stats feature never wired: no `CREATE TABLE`/accessor anywhere in code, zero reads/writes. Live-only leftover (surfaced by `schema-drift-guard.php`, 2026-06-25). |
+| wp_bcc_onchain_treasury | 0 | DAO-treasury twin of dao_stats; same — no creator/reader in code. Live-only leftover (surfaced by `schema-drift-guard.php`, 2026-06-25). |
+
+### Notes / prior-cleanup confirmations
+- `wp_bcc_collections`, `wp_bcc_collection_images`, `wp_bcc_onchain_contracts` (dropped in the 2026-06-04 legacy cleanup) are **absent from live** — confirmed gone. Active `wp_bcc_onchain_collections` (314 rows) is the live NFT collection cache and is unrelated to the dead `bcc_collections`.
+- Known-orphan candidates that turned out **ACTIVE** (kept off the drop list): `wp_bcc_user_ranks`, `wp_bcc_trust_patterns`, `wp_bcc_trust_page_flags` (all registered in `TableRegistry::all()` / created by active schema files), and `wp_bcc_trust_edges` (1 row, registered).

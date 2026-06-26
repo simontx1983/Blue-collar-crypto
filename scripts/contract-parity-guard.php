@@ -74,7 +74,7 @@ const IN_SCOPE_NAMESPACES = ['bcc/v1', 'bcc-trust/v1'];
 | api-contract-v1.md surface: operator/admin endpoints (manage_options /
 | admin_permission_check) and machine endpoints (shared-secret webhooks,
 | OAuth browser-redirect callbacks, liveness probes). Each was classified
-| and its permission posture verified in docs/route-audit-2026-06-10.md.
+| and its permission posture verified in docs/archive/route-audit-2026-06-10.md.
 |
 | Keys are 'METHOD /namespace/path' in the SAME normalized form this guard
 | emits (path params as :name). Each entry carries a one-line reason.
