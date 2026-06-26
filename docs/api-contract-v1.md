@@ -1030,7 +1030,9 @@ Feed items share an envelope and vary by `post_kind`.
     "avatar_url": "https://bluecollar.crypto/wp-content/uploads/2026/04/simontx-avatar.jpg",
     "rank_label": "Journeyman",
     "reputation_tier": "trusted",
-    "is_operator": false
+    "is_operator": false,
+    "viewer_attestation": { "vouch": { "id": 5012, "created_at": "2026-06-20T09:00:00Z" }, "stand_behind": null },
+    "can_vouch": { "allowed": true, "unlock_hint": null }
   },
   "body": { "...": "kind-specific" },
   "attached_card": { "...": "summary Card view-model, optional" },
@@ -1066,6 +1068,7 @@ Feed items share an envelope and vary by `post_kind`.
   - **Mapping:** `peepso_group_id` post-meta on the activity's wp_post (PeepSo writes this when a status post is created inside a group) → `GroupContextResolver::forManyGroups`. Batched per page; no N+1.
 - V1 author block is **user-only** — every post in V1 is authored by a WP user (status, review, watch_batch, page_claim, dispute_signed, blog). System-emitted signals (§3.3.5) currently ride the same shape with the system actor's user_id; their `post_kind` discriminates them, not the author block.
 - `author.is_operator` — true when the author holds a verified operator/creator claim on any entity (per §N8). Drives the OPERATOR chip next to the author name.
+- `author.viewer_attestation` + `author.can_vouch` — **authed-only**, the per-author **Vouch toggle** state next to the byline (vouch is *author credibility*, not a post reaction). `viewer_attestation` is the viewer's own active attestation on this author's self-page (`{ vouch: {id,created_at}|null, stand_behind: {id,created_at}|null }`, reused from the §3.2 card shape); `can_vouch` is `{ allowed, unlock_hint }` (self/below-Neutral come back `allowed=false`). **Both fields are OMITTED for anonymous viewers** (the anon feed payload is unchanged; the sign-in CTA lives on the profile cluster, not every byline). Because the vouch targets the *author* (one vouch per person, full-weight via `POST /bcc/v1/me/attestations` `{kind:'vouch', target_kind:'user_profile', target_id: author.id}`), the toggle reads identically wherever that author appears — feed bylines and commenter names alike. Batched server-side across the page's distinct authors (no N+1).
 - `attached_card` is omitted (not `null`) when no card is attached.
 
 **Deferred to V1.5 — author block expansion:**
@@ -1453,7 +1456,9 @@ The `Comment` view-model used by §4.13 endpoints. One row per visible comment o
     "id":           42,
     "handle":       "simontx",
     "display_name": "Simon TX",
-    "avatar_url":   "https://bluecollar.crypto/wp-content/uploads/2026/05/simontx-avatar.jpg"
+    "avatar_url":   "https://bluecollar.crypto/wp-content/uploads/2026/05/simontx-avatar.jpg",
+    "viewer_attestation": { "vouch": null, "stand_behind": null },
+    "can_vouch":    { "allowed": true, "unlock_hint": null }
   },
   "body":      "love this — finally a watchlist that respects watches.",
   "mentions":  [],
@@ -1472,6 +1477,7 @@ The `Comment` view-model used by §4.13 endpoints. One row per visible comment o
 - `mentions` is the §3.3.12 `Mention[]` overlay extracted from the raw `body`. Range offsets reference raw stored content. Always present (`[]` when no mentions). V1d does NOT ship the comment-composer autocomplete picker — the array is still populated for any wire tokens authored via PeepSo's native UI or hand-typed by power users.
 - `posted_at` is ISO-8601 UTC.
 - `permissions.can_delete.allowed` is `true` only when the viewer is the comment's author. V1 does not support cross-author or admin moderation deletes through this endpoint.
+- `author.viewer_attestation` + `author.can_vouch` — **authed-only**, identical shape + semantics to the §3.3 feed-item author block: the per-author **Vouch toggle** behind the commenter's name (vouch is author credibility, one vouch per person, full-weight via `POST /bcc/v1/me/attestations`). **Both OMITTED for anonymous viewers.** The same author vouched from a feed byline reads as already-VOUCHED here (and vice-versa) — one vouch, one weight, everywhere. Batched server-side across the page's distinct comment authors (no N+1).
 
 **V1 deferred:**
 
