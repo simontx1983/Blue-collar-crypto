@@ -4929,7 +4929,7 @@ Endorse a PeepSo page. Thin controller → `EndorsementService::endorsePage` (ow
 - **Response 200:** `{ "success": true, "data": { "action": "endorse", "page_id": int, "vote": null, "endorsement": { "endorsement_id": int, "page_title": string, "context": string, "weight": number } | null, "score": <PageScore>, "votes_up": int, "votes_down": int, "endorsement_count": int } }`. FE reads `endorsement_count` and ignores server-only fraud fields.
 - **Errors:** `bcc_invalid_request` (400) · `bcc_unauthorized` (401) · `bcc_endorse_self` (403) · `bcc_conflict` (409, already endorsed) · `bcc_fraud_locked` (403) · `bcc_rate_limited` (429) · `bcc_permission_denied` (403, soft gate — message + `error.data.unlock_hint` per §1.4.5) · `bcc_internal` (500)
 - **Rate limit:** 10 / 300s / user (`BCC_TRUST_RATE_LIMIT_ENDORSE`), plus per-page daily/velocity caps in the service.
-- **Mapping:** `TrustRestController::endorse` (route `TrustRestController.php:99`) → `EndorsementService::endorsePage`. FE `endorse-endpoints.ts:endorsePage`. Canonical UX gate is the server-rendered `permissions.can_endorse` + `unlock_hint`; the 4xx codes are the race/direct-call fallback.
+- **Mapping:** `TrustRestController::endorse` → `AttestationService::cast` (Slice E cutover, §J.11 — was `EndorsementService::endorsePage`; entity endorse now casts a `vouch` attestation on the `*_card` target, which folds into `attestation_bonus`). The PUBLIC contract (request/response/error vocabulary) is UNCHANGED: the response shape is preserved verbatim by `buildEndorseResponse`, and `TrustRestController::mapEndorseError` maps the attestation eligibility codes back to this endpoint's documented codes. (`bcc_conflict` 409 is now unreachable — re-endorse is idempotent → 200.) FE `endorse-endpoints.ts:endorsePage`. Canonical UX gate is the server-rendered `permissions.can_endorse` + `unlock_hint`; the 4xx codes are the race/direct-call fallback.
 
 #### `POST /bcc-trust/v1/revoke-endorsement`
 
@@ -4940,7 +4940,7 @@ Revoke a previously-given endorsement. Same controller/service split and respons
 - **Response 200:** identical envelope/shape to `/endorse` with `"action": "revoke_endorsement"`; `endorsement` is `null`, `endorsement_count` reflects the post-revoke count.
 - **Errors:** `bcc_unauthorized` (401) · `bcc_rate_limited` (429) · `bcc_not_found` (404, endorsement not found) · `bcc_internal` (500)
 - **Rate limit:** 5 / 60s / user (`RateLimiter::enforce('revoke_endorse', 5, 60)`)
-- **Mapping:** `TrustRestController::revoke_endorsement` (route `TrustRestController.php:109`) → `EndorsementService::revokePageEndorsement`. FE `endorse-endpoints.ts:revokeEndorsement`.
+- **Mapping:** `TrustRestController::revoke_endorsement` → `AttestationService::revokeByTarget` (Slice E cutover — was `EndorsementService::revokePageEndorsement`; revokes the viewer's active `vouch` attestation on the entity, re-folding the score). Response shape + error vocabulary preserved (idempotent: a missing row is a no-op 200). FE `endorse-endpoints.ts:revokeEndorsement`.
 
 #### `POST /bcc-trust/v1/device-fingerprint`
 
