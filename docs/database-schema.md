@@ -3,6 +3,10 @@
 > Generated from live `information_schema` on 2026-06-25 (dev DB). Supersedes the
 > prior hand-maintained partial. Regenerate when schema changes; a declared-vs-live
 > drift guard is being added in Phase 2/5.
+>
+> The watch tables (`wp_bcc_watch_meta` / `wp_bcc_watch_batches`) and the
+> `page_follows.tier_at_watch` column were reconciled to live on 2026-06-28 after the
+> pull→watch rename; the rest of the doc remains the 2026-06-25 snapshot.
 
 Prefix: `wp_`. Engine: InnoDB. **64** `wp_bcc_*` tables live (47 active, 17 orphan).
 
@@ -40,8 +44,8 @@ Repository/Service that reads it.
 | wp_bcc_page_read_model | 2777 | Denormalized page read model for discovery/search | TableRegistry::pageReadModel / schema-project.php | Active |
 | wp_bcc_rm_dirty_queue | 0 | Dirty-page queue driving read-model recompute | TableRegistry::dirtyQueue | Active |
 | wp_bcc_page_follows | 12 | User→page follow edges | TableRegistry::pageFollows | Active |
-| wp_bcc_pull_meta | 22 | Per-follow feed-pull bookkeeping | TableRegistry::pullMeta | Active |
-| wp_bcc_pull_batches | 13 | Feed-pull batch emission log | TableRegistry::pullBatches | Active |
+| wp_bcc_watch_meta | 24 | Per-follow watch bookkeeping | TableRegistry::watchMeta | Active |
+| wp_bcc_watch_batches | 13 | Watch batch emission log | TableRegistry::watchBatches | Active |
 | wp_bcc_photo_alts | 1 | a11y alt-text sidecar 1:1 with peepso_photos.pho_id | TableRegistry::photoAlts | Active |
 | wp_bcc_blog_chain_tags | 3 | Many-to-many blog post ↔ chain tags | schema-blog-chain-tags.php | Active |
 | wp_bcc_content_reports | 0 | User content reports (moderation queue) | TableRegistry::contentReports | Active |
@@ -364,21 +368,21 @@ User→page follow edges.
 - user_id · bigint unsigned · NO · K
 - page_id · bigint unsigned · NO · K
 - card_kind · varchar(32) · NO · K
-- tier_at_pull · varchar(20) · YES
+- tier_at_watch · varchar(20) · YES
 - created_at · datetime · NO · K
 - Indexes: PRIMARY (id) [uq]; uq_user_page (user_id,page_id) [uq]; idx_user_id; idx_page_id; idx_card_kind; idx_created_at
 
-#### wp_bcc_pull_meta
-Per-follow feed-pull bookkeeping.
+#### wp_bcc_watch_meta
+Per-follow watch bookkeeping.
 - follow_id · bigint unsigned · NO · PK
-- tier_at_pull · varchar(20) · YES · K
+- tier_at_watch · varchar(20) · YES · K
 - batch_id · varchar(64) · YES · K
 - visibility · varchar(20) · NO
-- pulled_at · datetime · NO · K
-- Indexes: PRIMARY (follow_id) [uq]; idx_batch_id; idx_tier_at_pull; idx_pulled_at
+- watched_at · datetime · NO · K
+- Indexes: PRIMARY (follow_id) [uq]; idx_batch_id; idx_tier_at_watch; idx_watched_at
 
-#### wp_bcc_pull_batches
-Feed-pull batch emission log.
+#### wp_bcc_watch_batches
+Watch batch emission log.
 - id · bigint unsigned · NO · PK auto
 - user_id · bigint unsigned · NO · K
 - batch_id · varchar(64) · NO · UQ
