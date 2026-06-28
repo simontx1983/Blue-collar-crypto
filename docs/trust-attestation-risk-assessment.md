@@ -1314,7 +1314,7 @@ watch signals trigger.
 ## Part 6 — Phase 1 plan integration
 
 The Phase 1 scope-freeze plan
-(`docs/trust-attestation-phase-1-plan.md`) explicitly incorporates
+(`docs/archive/trust-attestation-phase-1-plan.md`) explicitly incorporates
 items 1–11 from §5 as required deliverables. Items 12–32 are
 strongly recommended for Phase 1 but acceptable to defer to Phase
 1.5 with explicit cause. Items 33–37 are post-launch tunings; no

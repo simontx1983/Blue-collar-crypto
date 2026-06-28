@@ -16,6 +16,8 @@ how the system works *today* — for that, start from `docs/GOLDEN_PATHS.md`,
 | `route-audit-2026-06-10.md` | REST route inventory + permission-posture audit | Historical; still referenced by `contract-parity-guard.php` and `api-contract-v1.md` for provenance |
 | `perf-upgrade-audit-2026-06-18.md` | Performance & upgrade-path audit | Historical snapshot |
 | `hardening-plan-2026-06-18.md` | Engineering-hardening plan (clean-code → production-grade) | Historical plan |
+| `trust-attestation-phase-1-plan.md` | Trust Attestation Layer Phase 1 scope-freeze implementation plan (frozen 2026-05-13) | Shipped (`AttestationService` + attestations schema live; Slice E merged); frozen |
+| `v2-phase-1-push-notifications.md` | V2 Phase 1 push-notifications spec (VAPID/web-push; frozen 2026-04-30) | Shipped (`PushSubscriptionRepository` + `minishlink/web-push` + `NotificationDispatcher` live); frozen |
 
 > Still live and intentionally **not** here: `cadence-pressure-policy.md` (referenced by
 > `cadence-pressure-guard.sh`), the dated deploy checklists, and `TODO.md` (the living

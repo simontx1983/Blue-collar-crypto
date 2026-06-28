@@ -1985,7 +1985,7 @@ Returns a full Card view-model.
   - `chain` ← `peepso_page` meta (existing AbstractPageType)
   - `stats[]` per kind ← see §6 mapping table
   - `permissions.*` ← `bcc-trust` permission resolver (§A4) combining O5 + D2 gates
-  - `social_proof` ← join over `peepso_follower` + `peepso_reactions` filtered by viewer's network and trust-weighted (§O4.1)
+  - `social_proof` ← join over `peepso_user_followers` + `peepso_reactions` filtered by viewer's network and trust-weighted (§O4.1)
 
 ### 4.3 Feed
 
@@ -2008,7 +2008,7 @@ Authenticated personalized feed (§F1, §N6).
   - `reactions` per item ← `peepso_reactions` aggregated
   - **Scope-to-filter mapping:**
     - `for_you` → ranked stream, F1 priority chain applied
-    - `following` → strict-time-ordered, posts attributed to entities/users in the viewer's `peepso_follower` set, signal kinds excluded
+    - `following` → strict-time-ordered, posts attributed to entities/users in the viewer's `peepso_user_followers` set, signal kinds excluded
     - `signals` → signal post-kinds only, ranked by recency + severity
   - Shadow-limited authors (§K1, §O4.1) excluded from all scopes for this viewer
 
@@ -2205,7 +2205,7 @@ Paginated directory of human members. Sibling to §4.9 `/cards` (entity-card dir
 - **Mapping:** `WP_User_Query` ordered by `user_registered DESC`; each row composed via `CardViewService::getMemberCardForList` (one call per user). `UsersEndpoint::members` prefetches eleven batched maps — followers count, primary-Local resolution, owned-page count, owned-page typed counts, endorsements received, solids received, reviews written, disputes signed, verified-wallet count, X connections, GitHub connections — via `MemberSummaryPrefetcher::primeFor` before the per-row loop; the card builder delegates the dossier resolution to `UserViewService::getSummary($userId, $viewerId, $prefetched)` so the total query budget stays bounded regardless of `per_page` (no parallel dossier query — same resolution as before, now wrapped in the Card shape). `card_tier` mirrors the §C1 slug (`legendary|rare|uncommon|common|null`); null only for risky-tier users (entity hidden from card UI per §C1). `tier_label` is the pre-rendered §A2 display string. Frontends should encode the tier as a color/border treatment on the rank chip rather than rendering `tier_label` as a duplicate word next to `rank_label`.
 - **Field rules** (the `member_dossier` sub-blocks; the rest follow the §3.2 Card rules):
     - `trust_score` ∈ [0, 100] per §D5. Augmented score = base reputation_score + clamped lifetime participation bonus (`DisputeParticipationRepository::getEarnedLifetimeTrust`). Clamped at the boundary; clients render as a stencil number, never derive. (Top-level card field per §3.2.)
-    - `stats[].watchers` (the member-card third stat per §3.2.2) is the passive side of `peepso_follower` (people who follow this user), sourced from `UserViewService::getSummary`'s `followers_count`. The full `/users/:handle` response carries both `followers` and `following`; the directory ships the followers count only — `following` isn't a meaningful directory signal and the second SQL isn't worth the cost.
+    - `stats[].watchers` (the member-card third stat per §3.2.2) is the passive side of `peepso_user_followers` (people who follow this user), sourced from `UserViewService::getSummary`'s `followers_count`. The full `/users/:handle` response carries both `followers` and `following`; the directory ships the followers count only — `following` isn't a meaningful directory signal and the second SQL isn't worth the cost.
     - `member_dossier.primary_local` shape matches `MemberProfile.primary_local`. `number` is parsed from `name` via the `^Local\s+(\d+)\b` convention; null when the title doesn't follow the pattern. Frontends render display strings client-side from `name`/`number`. `null` when the member has no primary Local.
     - `member_dossier.owned_pages_by_type` is a per-canonical-type count of `member_owner` pages, derived from the PeepSo page-categories taxonomy (`peepso_page_categories` joined to the `peepso-page-cat` CPT). The four type keys (`validator`, `project`, `nft`, `dao`) are stable wire identifiers — decoupled from the underlying PeepSo category slugs (which are admin-controlled and may include legacy typos like `vaildators`). PeepSo pages are tag-shaped, not type-shaped: a single page can carry multiple categories. Frontends should render one badge per non-zero bucket (`6 PROJECTS`, `5 NFT COLLECTIONS`, `1 VALIDATOR`). New canonical types require a contract amendment + a new key in the response shape; we don't fall back to an "OTHER" bucket for unrecognized categories.
     - `type_counts` is the **global** count of distinct users with ≥1 owned page per canonical type. Independent of the active `q` and `type` filters by design — the chip-strip's `VALIDATORS · 5` numbers shouldn't shift around as a viewer types in the search box. Same four keys as `member_dossier.owned_pages_by_type`. Always emitted (even on the type-empty short-circuit) so a filter-specific empty state can suggest alternative chips with non-zero counts.
@@ -2407,7 +2407,7 @@ Returns the viewer's watchlist (§C2 — UI projection of PeepSo follows + `bcc_
 - **Errors:** `bcc_unauthorized`
 - **Rate limit:** 60/min/user
 - **Cache:** `Cache-Control: private, max-age=30`
-- **Mapping:** JOIN of `peepso_follower` + `bcc_pull_meta` (§C2). Removed cards (unwatched) do not appear. `card_tier_at_watch` is the `card_tier` (`legendary|rare|uncommon|common|null`) at the moment the card was watched, not the current tier — preserved for historical narrative. `tier_label_at_watch` is the pre-rendered display string per §A2. The underlying storage table retains its legacy physical name `bcc_pull_meta` — see `docs/database-schema.md` for the storage-vs-logical naming note.
+- **Mapping:** JOIN of `peepso_user_followers` + `bcc_watch_meta` (§C2). Removed cards (unwatched) do not appear. `card_tier_at_watch` is the `card_tier` (`legendary|rare|uncommon|common|null`) at the moment the card was watched, not the current tier — preserved for historical narrative. `tier_label_at_watch` is the pre-rendered display string per §A2.
 
 #### `GET /bcc/v1/me/watching/summary`
 
@@ -2440,7 +2440,7 @@ Returns the viewer's identity-snapshot (§N9) — pre-computed tier distribution
 
 #### `POST /bcc/v1/me/watching/watch`
 
-Starts watching a card (= creates a PeepSo follow + `bcc_pull_meta` row).
+Starts watching a card (= creates a PeepSo follow + `bcc_watch_meta` row).
 
 - **Auth:** Bearer
 - **Body:**
@@ -2488,7 +2488,7 @@ Starts watching a card (= creates a PeepSo follow + `bcc_pull_meta` row).
 - **Rate limit:** 120/hour/user (soft), 600/day/user (hard)
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:**
-  - Side effects: PeepSo follow created, `bcc_pull_meta` row inserted, `bcc_card_watched` event emitted (§A3 async — request returns before subscribers run). For release N back-compat the server ALSO emits the legacy `bcc_card_watched` event with the same payload; removed in release N+1.
+  - Side effects: PeepSo follow created, `bcc_watch_meta` row inserted, `bcc_card_watched` event emitted (§A3 async — request returns before subscribers run). `bcc_card_watched` is the only event emitted — the legacy `bcc_card_pulled` event was removed per §4.5.1.
   - `feed_post.kind: "deferred_batch"` always (per §C3 — watches go through the rolling-window aggregator before becoming a feed post). The `estimated_post_at` = the current watch's timestamp + **10 minutes** (every watch resets the inactivity window per §C3). The frontend may show a passive "+1 to your watchlist" without waiting for the feed.
   - **Idempotency (`already_watching`):** if the card is already in the viewer's watchlist when this endpoint is called (e.g., user double-clicks Watch, or two tabs race), the server returns `200` with `already_watching: true`, the existing `follow_id`, the current `watching_size` (unchanged), `celebration: null`, and `feed_post: null`. No new row is inserted, no event re-emitted, no double-celebration fired. The frontend uses this signal to skip the dopamine animation on the second call.
 
@@ -2508,7 +2508,7 @@ Stops watching a card (= PeepSo unfollow).
 - **Errors:** `bcc_not_found`, `bcc_unauthorized`
 - **Rate limit:** 60/min/user
 - **Cache:** `Cache-Control: no-store`
-- **Mapping:** PeepSo unfollow + cascade `bcc_pull_meta`. **Does not** edit any prior feed post per §C3.
+- **Mapping:** PeepSo unfollow + cascade `bcc_watch_meta`. **Does not** edit any prior feed post per §C3.
 
 ### 4.5.1 Removed: `/me/binder/*` routes (use `/me/watching/*`)
 
@@ -5682,8 +5682,8 @@ For each view-model field, the table below names the existing BCC system that ow
 | `bio` | PeepSo profile description |
 | `primary_local`, `locals` | `peepso_group_members` (PeepSo's membership ledger — single graph rule) joined with `wp_usermeta.bcc_primary_local_group_id` for the primary pointer; no dedicated BCC table |
 | `wallets` | `bcc_wallet_links` (existing) |
-| `counts.followers/following` | `peepso_follower` aggregates |
-| `counts.watching_size` | `peepso_follower` filtered to BCC card kinds |
+| `counts.followers/following` | `peepso_user_followers` aggregates |
+| `counts.watching_size` | `peepso_user_followers` filtered to BCC card kinds |
 | `counts.reviews_written` | `bcc_trust_votes` aggregated |
 | `counts.disputes_signed` | `bcc_trust_flags` signers aggregated |
 | `counts.solids_given/received` | `peepso_reactions` aggregated by reaction-type ID |
@@ -5709,7 +5709,7 @@ For each view-model field, the table below names the existing BCC system that ow
 | `claimed_by_handle` | JOIN to `wp_usermeta.bcc_handle` |
 | `crest` | `peepso_pages` meta + AbstractPageType convention |
 | `stats[]` | per kind — see §3.2.x; sourced from `bcc_page_read_model` + chain-specific fetchers |
-| `social_proof` | new V1 server composer over `peepso_follower` + `peepso_reactions` + `bcc-trust` weighting |
+| `social_proof` | new V1 server composer over `peepso_user_followers` + `peepso_reactions` + `bcc-trust` weighting |
 | `permissions` | `bcc-trust` permission resolver (combines O5 + D2) |
 | `links` | server-side route map (canonical paths) |
 | `updated_at` | `bcc_page_read_model.updated_at` |
@@ -5723,7 +5723,7 @@ For each view-model field, the table below names the existing BCC system that ow
 | `posted_at` | `peepso_activities.act_time` |
 | `scope_tags` | server-derived from kind + visibility |
 | `author.*` | JOIN `wp_users` + `peepso_pages` (entity authors) + system flag |
-| `body.*` | per-kind, sourced from kind-specific tables (`bcc_trust_votes` for reviews, `bcc_pull_meta` batches for watches (table retains legacy physical name per §4.5.1), `bcc_onchain_signals` for signals, etc.) |
+| `body.*` | per-kind, sourced from kind-specific tables (`bcc_trust_votes` for reviews, `bcc_watch_meta` batches for watches, `bcc_onchain_signals` for signals, etc.) |
 | `attached_card` | summary Card view-model |
 | `reactions` | `peepso_reactions` aggregated |
 | `social_proof` | new V1 (same composer as Card) |
@@ -5744,7 +5744,7 @@ The following schema additions are **referenced but not implemented** by Phase 1
 
 - `bcc_onchain_claims.recovery_pending` — new column on the EXISTING `bcc_onchain_claims` table for §B5 page-claim recovery (no new table; entity_type='page' for page claims, single-claim-wins via existing `ClaimRepository::createExclusiveClaim()` advisory lock)
 - `bcc_photo_alts` — `(pho_id, owner_id, alt_text, updated_at)` (v1.5 §3.3.9 / §4.18; sidecar to `peepso_photos`, PK = `pho_id`, BCC-owned so PeepSo updates can't clobber)
-- `bcc_pull_meta` — `(follow_id, tier_at_watch, batch_id, watched_at)` (§C2). Table + column names retain their legacy `pull`-prefixed forms per §4.5.1; the logical concept they store is "watch metadata."
+- `bcc_watch_meta` — `(follow_id, tier_at_watch, batch_id, watched_at)` (§C2). Renamed from `bcc_pull_meta` (and `*_at_pull` columns → `*_at_watch`) via the data-preserving migration documented in §4.5.1.
 - `bcc_user_ranks` — `(user_id, rank_key, awarded_by, awarded_at, revoked_at, revoke_reason)` (§E2)
 - `wp_usermeta.bcc_handle` (§B6)
 - `wp_usermeta.bcc_primary_local_group_id` — singleton pointer to the user's primary Local; membership ledger itself stays in PeepSo's `peepso_group_members` per the single graph rule (§E3)
