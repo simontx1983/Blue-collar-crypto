@@ -927,7 +927,7 @@ Specifically, they must understand:
 
 The onboarding flow accomplishes this in four cards. Copy locked
 here; implementation matches verbatim per
-`docs/trust-attestation-phase-1-plan.md` §8.2.
+`docs/archive/trust-attestation-phase-1-plan.md` §8.2.
 
 **Card 1 — "What this is."**
 > Blue Collar Crypto is an operator intelligence network. Operators
@@ -1429,7 +1429,7 @@ users (identity stays Rank · Trust Tier · Role — see glossary §1).
   conforms to its §5 Critical items; closed-network testing
   instruments its §4 watch signals)
 - Phase 1 implementation plan:
-  `docs/trust-attestation-phase-1-plan.md` (scope-frozen
+  `docs/archive/trust-attestation-phase-1-plan.md` (scope-frozen
   implementation plan, 4-week sequencing, acceptance criteria)
 - Existing trust engine pattern: `pattern-registry.md` "Trust Engine"
 - Existing dispute mechanics: `app/Domain/Disputes/`
