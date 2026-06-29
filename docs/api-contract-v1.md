@@ -4344,10 +4344,12 @@ Returns the signed-in operator's own reliability surface. Mirror, not stigma —
   ```json
   {
     "operator_reliability": 0.87,
+    "consensus_reliability": 0.83,
+    "early_read_accuracy": 0.79,
     "reliability_standing": "highly_reliable",
     "since_attestation_count": 28,
     "stand_behind_allocation": {
-      "slots_total": 5,
+      "slots_total": 6,
       "slots_used": 2,
       "slots_recyclable_count": 1,
       "next_slot_unlocks_at": null
@@ -4374,6 +4376,8 @@ Returns the signed-in operator's own reliability surface. Mirror, not stigma —
     }
   }
   ```
+- **`consensus_reliability` / `early_read_accuracy`** — the two §J.3.2.1 Early Read sub-tracks, both SELF-ONLY (this surface only; never on third-party endpoints). `consensus_reliability` is the weighted-average goodness over the operator's *stand_behind* attestations (how often the operators they back earn subsequent confirming flow); `early_read_accuracy` is the same weighted average restricted to *pre-consensus* stand_behinds (`attestation_order_in_target ≤ 5`, excluding the operator's first-5 first-mover-protected casts), so the early-conviction multiplier is reflected. Both ∈ [0,1], `0.0` when the operator has no qualifying attestations.
+- **`stand_behind_allocation.slots_total`** — the operator's *current effective* slot count = tier baseline + graduated slots (§J.1; graduation needs sustained reliability — `highly_reliable` / `consistent` standing — and is capped at +3 above baseline).
 - **`divergence_state`** — the operator's own divergence-state classification per §J.8. SELF-ONLY context on this surface (the same value flows to the public §J.6 `negative_signals.divergence_state` for entity-card targets; user_profile targets keep it self-only in V1 per §J.10 q14). PR-8a ships this as a read-time `DivergenceStateClassifier` output.
 - **`explainer`** — server-pinned copy block explaining the current state in plain language. Per the §J.5 critical-risk-mitigation item #7 ("self-only 'why am I in this state' view"), the operator's self-mirror is the only surface that carries this — never on third-party endpoints. The `headline` + `body` strings are server-rendered per §A2; the FE renders them verbatim.
 - **Cache:** `private, max-age=60`.
@@ -6318,12 +6322,15 @@ documented vs 233 registered in-scope routes; 128 undocumented). Full audit:
     populates per the §J.3.2.1 Early Read sub-track synthesis. The
     FE's row chrome already conditionally renders the badge area, so
     Slice E activation is again backend-only.
-  - **`is_pre_consensus_pick`** — V1 heuristic: true when
-    `kind === 'stand_behind'` AND `attestation_order_in_target ≤ 3`.
+  - **`is_pre_consensus_pick`** — true when
+    `kind === 'stand_behind'` AND `attestation_order_in_target ≤ 5`
+    (the §J.3.2.1 early-conviction band: 1st + the 2nd–5th tier;
+    edge tunable via `bcc_reliability_preconsensus_max_order`).
     Vouch rows never mark as pre-consensus (vouch is abundant per
-    §J.1; the marker is reserved for the scarcer signal). Slice E
-    replaces with the §J.3.2.1 Early Read synthesis that compares
-    the call to later consensus.
+    §J.1; the marker is reserved for the scarcer signal). This public
+    boolean shares its band definition with the SELF-ONLY
+    `early_read_accuracy` sub-track; the underlying numeric stays
+    self-only while this marker is public.
   - **Sort modes** — `recency` produces a distinct ORDER BY
     (`created_at DESC, id DESC`). `decayed_weight` and `reliability`
     both collapse to `weight_at_time DESC, created_at DESC` in V1
