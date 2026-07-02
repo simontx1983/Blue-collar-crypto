@@ -845,6 +845,7 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
   "is_in_good_standing": true,
   "flags": [],
   "is_claimed": true,
+  "is_claim_verified": true,
   "claim_target": null,
   "viewer_has_reviewed": false,
   "viewer_has_endorsed": false,
@@ -864,6 +865,7 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
 
 - `card_kind` ∈ {`validator`, `project`, `creator`, `member`, `community`}. `community` cards (v1.27) are emitted ONLY as the additive `card` field on the §4.7.4 discovery items and the §4.7.5 group detail response — `GET /cards/:type/:id` and `GET /cards` do NOT accept `community` (route enum unchanged); see §3.2.4 for the kind's rules.
 - `is_claimed` is meaningful for `validator` / `project` / `creator`. For `member`, `is_claimed: true` always (members are their own pages).
+- `is_claim_verified` (verified-wins slice, 2026-06-30) — `true` when the page has a **verified on-chain operator/creator claim** (`onchain_claims.status='verified' AND claim_role IN ('operator','creator')`), i.e. the real entity proved key control. Distinct from `is_claimed` (ANY claim exists) and from `is_verified`/the member email flag. Drives the "✓ Verified Operator" badge + the dominant search-ranking bonus + same-name look-alike demotion. `false` on `member`/`community` cards (not on-chain-claimed). Projected from the read model (`has_verified_claim`), refreshed whenever a claim verify/revoke re-syncs the page.
 - `claim_target` (per §N8) — non-null only when the page is unclaimed AND a claim target resolves. Drives the four-step claim modal.
 - `chains` (per §K3) — list of `CardChain` objects when 2+ chains back the same page; `null` otherwise. V1.5 validator-only; creator gallery filter is V2.
 - `rank_label` — **populated on `member` cards** (the level-derived Rank label — Apprentice/Journeyman/Master — via `UserViewService::getSummary`); may be `""` when the member has no derived rank yet. `null` on page kinds (`validator`/`project`/`creator`) — Rank is member-only. The field is always present (the union is `string | null`). `current_rank_label` mirrors it (own/profile surfaces).
@@ -3140,11 +3142,13 @@ Top-N search suggestions for the §G1 nav-bar autocomplete. Smaller per-item sha
         "tier_label": "Legendary",
         "trust_score": 98,
         "is_verified": true,
+        "is_claim_verified": true,
         "href": "/v/blacksmith-node"
       }
     ]
   }
   ```
+- **`is_verified` vs `is_claim_verified` (verified-wins slice, 2026-06-30):** `is_verified` = the owner's **email** verification (weak; not an authenticity signal). `is_claim_verified` = the page has a **verified on-chain operator/creator claim** (`onchain_claims.status='verified' AND claim_role IN ('operator','creator')`) — i.e. the real entity proved key control. The FE renders the "✓ Verified Operator" badge from `is_claim_verified`, NOT `is_verified`. Claim-verified pages also receive a dominant ranking bonus (`bcc_rank_claim_verified_bonus`), and bcc-search demotes any unverified same-name look-alike strictly below the verified canonical page.
 - **Errors:** `bcc_invalid_request` (bad `kind`)
 - **Cache:** `Cache-Control: private, max-age=15`. Underlying bcc-search caches results for 60s.
 - **Mapping:**
@@ -3175,6 +3179,7 @@ Direct bcc-search project search and trending mode — the upstream that `cards/
         "tier": "elite",
         "endorsements": 24,
         "verified": true,
+        "is_claim_verified": true,
         "followers": 312,
         "category": "Validator",
         "category_slug": "validator"
