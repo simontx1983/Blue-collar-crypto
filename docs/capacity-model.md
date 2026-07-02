@@ -219,12 +219,19 @@ handful of req/s. This is **FPM-worker serialization on an untuned single box**
 thing the per-tier model assumes proper FPM pool sizing removes.
 
 **Actionable findings (survive the caveats):**
-1. **`/feed/hot` cold rebuild is the most expensive path by far (~20s cold here).**
-   The first visitor after the feed view-model cache expires eats the full
-   rebuild. Even discounting the dev box, this is the path to protect — consider
-   a **cache-warming cron** or stale-while-revalidate so a user never pays the
-   cold rebuild. Validate the *production* cold-rebuild cost (opcache + warm
-   MySQL + Redis cut it sharply, but it stays the worst path).
+1. **`/feed/hot` "~20s cold" — RE-ATTRIBUTED 2026-07-02.** Instrumenting every
+   outbound WP HTTP call proved the stall is NOT the feed rebuild (the anon
+   first-page build measures ~0.15–0.2s even fully cold). The real mechanism:
+   after a cache flush the next request spawns wp-cron, whose tick re-probes
+   the chain providers (~28 sequential RPC calls ≈ 15–18s) and occupies one of
+   Local's **~2 PHP-FPM workers**; the *second* concurrent request then queues
+   in FPM for the sweep's remaining duration (reproduced: 0.25s / 17.5s / 0.12s
+   across three requests post-flush). This is the same dev-box FPM cliff as
+   finding 2 — on a tuned pool it's cron-context work, not user latency.
+   Independently useful: the anon first-page payload cache + minutely warming
+   cron (bcc-trust `feat/feed-hot-warm`) cut the *warm* `/feed/hot` from ~1.2s
+   to ~0.1s (single cache get), which matters at beta scale since this is the
+   highest-QPS anonymous endpoint.
 2. **The per-tier DAU numbers above cannot be validated on Local** — the FPM
    cliff dominates. Re-run this k6 script against a provisioned staging box
    (4 vCPU + Redis + tuned FPM, no Xdebug) to turn the modeled tiers into

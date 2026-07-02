@@ -54,6 +54,7 @@ Optional RPC overrides if not using provider defaults:
 | `BCC_HIGHLIGHTS_DEMO` | `true` | **remove / `false`** — demo data must not render on testnet |
 | `BCC_REPAIR_ENABLED` | `true` | **`false`** — repair surface is dev-only |
 | `BCC_TRUST_TEST_MODE` | unset | **must be unset** — relaxes trust-engine gates when on |
+| `BCC_DEGRADATION_ALERT_EMAIL` | unset (falls back to `admin_email`) | A monitored operator inbox — the DegradationAlerter push sink (proven end-to-end on Local 2026-07-02). Optional: `BCC_DEGRADATION_ALERT_WEBHOOK` (out-of-band channel; carries P1 ahead of mail), `BCC_DEGRADATION_ALERT_THRESHOLD` (default 5 summed events across current+previous hour) |
 
 ### 1.4 Reverse-proxy / IP correctness (fraud signals depend on real IPs)
 
