@@ -1,13 +1,22 @@
 # V1 Smoke Test Checklist
 
-**Last updated: 2026-06-12**
+**Last updated: 2026-07-02** (refreshed to the current trust model — endorse→vouch/
+stand-behind cutover, pull→watch vocabulary, + new surfaces: verified-search ranking,
+`/me/reliability`, member self-disputes).
 
 End-to-end manual walkthrough to verify V1 + V1.5 ship-readiness before
 opening a closed beta. Walks the actual user paths through the live
 stack: WordPress (Local-by-Flywheel) → bcc-trust REST → Next.js → browser.
 
 Reconciled 2026-06-11 against a live automated pass (harness:
-`~/bcc-smoke`, Playwright).
+`~/bcc-smoke`, Playwright); trust-surface steps re-reconciled to `main` 2026-07-02.
+
+> **Cutover note (2026-07-02):** the platform's positive-trust primitive is now the
+> **attestation cast (Vouch / Stand Behind)** via `AttestationActionCluster`, not the
+> legacy **Endorse** button. Endorse writes are retired and repointed to attestations
+> (§J.11 "endorse collapses into vouch"); the legacy `EndorseButton` still renders on
+> entity profiles during the transitional window but is not the canonical path. Steps
+> below test Vouch/Stand-Behind as canonical.
 
 Each check has an explicit setup, action, and expected outcome. Mark
 each box as you verify. **Anything you can't make pass is a closed-beta
@@ -62,15 +71,27 @@ session leaks in.
 - [ ] **1.3** On a validator profile, the **Wanted poster + Claim
   CTA** renders when the page is unclaimed. The CTA is disabled with
   a "Sign in to claim" tooltip.
-- [ ] **1.4** **ENDORSE button visible-but-disabled** with "Sign in to
-  endorse" tooltip on hover.
+- [ ] **1.4** **VOUCH + STAND BEHIND buttons visible-but-disabled**
+  (the `AttestationActionCluster`) with a "Sign in to …" tooltip on
+  hover. (A legacy ENDORSE button may still render alongside during the
+  §J.11 cutover — also disabled anon; it is not the canonical path.)
 - [ ] **1.5** **WRITE A REVIEW button visible-but-disabled** with
   sign-in tooltip.
 - [ ] **1.6** **GlobalSearch** in the header opens a dropdown when you
   type 2+ chars; results link to `/v/<slug>` etc. Dropdown closes on
   Esc + outside click.
-- [ ] **1.7** GET `/directory` → grid of cards, anon-shape (no Pull
-  button, no Block toggle on member cards).
+- [ ] **1.6.1** **Verified-search ranking (anti-impersonation, §J):**
+  with two same-name entity pages seeded — one **claim-verified** (a
+  claimed validator whose operator wallet is linked) and one unverified
+  look-alike — type that shared name in GlobalSearch (or GET
+  `/bcc/v1/search?q=<name>`). The **verified page ranks strictly above**
+  the unverified look-alike. (Backend: `is_claim_verified` drives the
+  ranking bonus + same-name demotion. The per-page "✓ Verified Operator"
+  badge on the result row is FE-pending #12 — see §14; the user-level
+  OPERATOR pill on `AuthorBadge`/`Avatar`, driven by `is_operator`, is
+  already live.)
+- [ ] **1.7** GET `/directory` → grid of cards, anon-shape (no
+  Watch/Keep-Tabs button, no Block toggle on member cards).
 - [ ] **1.8** Visit `/u/<handle>` of a real user → profile renders with
   the FLOOR // OPERATOR file-style header (see §4.1), tabs (Reviews /
   Disputes), no settings link.
@@ -105,8 +126,8 @@ Brand-new account through the §B6 + §O1 onboarding wizard.
 - [ ] **2.6** **Reduced-motion check:** in browser devtools, set
   `prefers-reduced-motion: reduce`. Re-run a fresh signup. The
   animation falls back to a static confirmation tile.
-- [ ] **2.7** Newly authed user sees the Floor with their first-pull
-  cards already in the For You feed.
+- [ ] **2.7** Newly authed user sees the Floor with their first-watch
+  cards (the onboarding Keep-Tabs picks) already in the For You feed.
 - [ ] **2.8** Hit `/onboarding` after completion → redirects to `/`
   (state in `wp_user_meta.bcc_onboarded = 1`).
 - [ ] **2.9** **Login 2FA:** sign out, then sign back in with
@@ -159,10 +180,12 @@ Logged in as User A.
   (The Solid/Vouch/Stand-behind trio applies to trust-grammar
   surfaces, not social status posts — those casts live in the
   profile attestation cluster, §J.)
-- [ ] **3.7** **Pull batching (§C3):** pull 3 cards within 30 seconds
-  on different surfaces. Wait 11+ minutes. **Exactly one** "@you
-  pulled 3 cards" feed item renders, frozen — unfollowing one of the
-  cards doesn't change the post.
+- [ ] **3.7** **Watch batching (§C3):** watch (Keep Tabs) 3 cards within
+  30 seconds on different surfaces. Wait 11+ minutes. **Exactly one**
+  "@you watched 3 cards" feed item renders, frozen — un-watching one of
+  the cards doesn't change the post. (Backed by `bcc_watch_batch_sweep`;
+  the older "pull/binder" vocabulary is retired — legacy `/binder` URLs
+  still 308-redirect per §4.5.1.)
 
 ## 4. Member profile
 
@@ -187,6 +210,20 @@ Logged in as User A. Visit `/u/<userA-handle>`.
 - [ ] **4.5.1** Visit the legacy URL `/u/<userB-handle>/binder` →
   308 redirects to `/u/<userB-handle>/watching`. The legacy route
   remains alive for one release per `api-contract-v1.md §4.5.1`.
+- [ ] **4.6** **Reliability self-mirror (§J.5, SELF-ONLY):** as User A
+  (who has cast some vouch/stand-behind attestations), visit
+  `/me/reliability` (also reachable via the profile Setup tab →
+  RELIABILITY sub-tab). `ReliabilityMirrorBody` renders: **operator
+  reliability** numeric, a positive-only **reliability standing** badge
+  (Highly Reliable / Consistent / Newly Active), the **track_record**
+  outcome roll-up (disputed-upheld / vindicated / further-attestations /
+  clean-active counts), and a **trend** (steady / improving / softening).
+  For a brand-new attestor it reads `newly_active` with the destigmatized
+  empty-state copy (never a bare "0"). This numeric is **self-only** —
+  confirm it never appears on another user's `/u/<handle>`.
+  - Note: `consensus_reliability` + `early_read_accuracy` (the §J.3.2.1
+    Early-Read sub-tracks) are populated on the wire but their dedicated
+    FE display lands with the #12 types update — see §14.
 
 ## 5. Validator profile + claim flow
 
@@ -208,7 +245,7 @@ Pick `/v/<unclaimed-validator-slug>` (page exists, no `claimed_by` user).
   chains, the `<ChainTabs>` strip renders below the stats panel with
   one pill per chain. Single-chain pages: strip is hidden.
 
-## 6. Reviewing + endorsing
+## 6. Reviewing + backing (Vouch / Stand Behind)
 
 Logged in as User A. Visit `/v/<userC-claimed-page>`.
 
@@ -232,21 +269,28 @@ Logged in as User A. Visit `/v/<userC-claimed-page>`.
   to **REMOVE YOUR REVIEW**.
 - [ ] **6.5** Click REMOVE YOUR REVIEW → confirm dialog → review
   disappears; CTA flips back.
-- [ ] **6.6** **ENDORSE button:** when User A meets §I1 eligibility
-  (identity quest done, account ≥ 7 days, fraud score < HIGH), button
-  is enabled. Click → profile's endorsement count increments by 1;
-  CTA flips to **REMOVE ENDORSEMENT**.
-- [ ] **6.7** Click REMOVE ENDORSEMENT → confirm dialog → endorsement
-  count decrements; CTA flips back.
-- [ ] **6.8** **Self-endorse blocked:** as User C, visit your own
-  page. ENDORSE is disabled with "You can't endorse your own page"
-  tooltip.
-- [ ] **6.9** **Phase γ error contract:** force an endorse failure (e.g.
-  an account under the 7-day §I1 age gate, or re-endorse after revoke
-  inside a rate window). The UI copy must be the humanized
-  `err.code` mapping from `lib/api/errors.ts` — never the raw backend
-  `err.message` string (that's the whole point of `humanizeCode()`;
-  regression guard: `bcc-frontend/scripts/error-contract-guard.sh`).
+- [ ] **6.6** **VOUCH (`AttestationActionCluster`):** when User A meets
+  the vouch gate (Neutral tier or above, fraud score < HIGH), the VOUCH
+  button is enabled; otherwise disabled with an unlock hint (rendered
+  verbatim from `endorse_unlock_hint`). Click → the cast lands (one vouch
+  per author, per §J.6 no counter is shown on the button) and the CTA
+  flips to **VOUCHED**. Click again → un-vouch; flips back. (The legacy
+  ENDORSE button, if still rendered, routes to the same attestation write.)
+- [ ] **6.7** **STAND BEHIND (scarce, §J.1):** the STAND BEHIND button
+  shows the allocation as **"STAND BEHIND · N OF M"** (M = your tier
+  baseline + graduated slots). Cast one → flips to **STANDING BEHIND**
+  and the used-slot count increments. With all slots full, the button is
+  disabled with the bandwidth message ("All N slots in use — drop one to
+  add this"). No synthesis math surfaces (§J.4.1).
+- [ ] **6.8** **Self-vouch blocked:** as User C, visit your own page.
+  VOUCH + STAND BEHIND are disabled ("You can't back your own page" /
+  structurally hidden) — you cannot attest to yourself.
+- [ ] **6.9** **Phase γ error contract:** force an attestation failure
+  (e.g. cast below the tier gate, or a stand-behind with slots exhausted).
+  The UI copy must be the humanized `err.code` mapping from
+  `lib/api/errors.ts` — never the raw backend `err.message` string
+  (that's the whole point of `humanizeCode()`; regression guard:
+  `bcc-frontend/scripts/error-contract-guard.sh`).
 
 ## 7. Disputes
 
@@ -278,6 +322,16 @@ User C owns a page that has at least one downvote on it.
   "ACCURACY BONUS //" (LOCKED until `credited_lifetime ≥
   min_for_accuracy`). Numbers match what you cast. (Copy verified
   live 2026-06-12.)
+- [ ] **7.7** **Member self-dispute (backend live, FE pending #12):** the
+  vote-dispute engine now works for member self-pages — a member who
+  receives a Caution downvote can contest it (the member card exposes
+  `negative_signals` + `can_open_dispute`, and the divergence classifier
+  produces the full 5-state for members). The FE affordance on
+  `/u/<handle>` (a member-profile `DisputeCallout`/`OpenDisputeModal`)
+  ships with **#12** — until then this is API-level only, so it lives in
+  §14. To spot-check the backend: as a member with a contestable downvote,
+  `GET /bcc/v1/users/<own-handle>` returns `permissions.can_open_dispute.
+  allowed: true`; a non-owner gets `not_applicable`.
 
 ## 8. Notifications (§I1)
 
@@ -348,8 +402,8 @@ Settings, Sign Out.
 
 - [ ] **10.1** On any feed card or directory grid card, hover →
   tilt animation; click body → flips to back face with stats.
-- [ ] **10.2** **Pull button always visible on the front face**
-  (per §N7), disabled with sign-in tooltip when anon.
+- [ ] **10.2** **Watch (Keep Tabs) button always visible on the front
+  face** (per §N7), disabled with sign-in tooltip when anon.
 - [ ] **10.3** Foil effect renders on Legendary cards (look at a
   validator with `card_tier: legendary`).
 - [ ] **10.4** Social proof line renders below the card name when
@@ -364,14 +418,17 @@ Settings, Sign Out.
 
 Need two browser sessions or two accounts.
 
-- [ ] **11.1** User A endorses User C's page → User C's bell badge
-  increments. Click the row → lands on the page. Toggle
-  `bell_bcc_endorse` off in /settings/notifications → re-endorse from
-  a third user → no bell increment for User C.
+- [ ] **11.1** User A **vouches for / stands behind** User C's page →
+  User C's bell badge increments (the §J.7 attestation-received
+  notification). Click the row → lands on the page. Toggle the
+  corresponding attestation bell event off in /settings/notifications →
+  cast the same attestation from a third user → no bell increment for
+  User C. (The §I1 per-event gate now covers the attestation events; the
+  legacy `bell_bcc_endorse` toggle rides the same write during cutover.)
 - [ ] **11.2** User A reviews User C's page → User C's bell badge
   increments. Click row → lands on the page with the new review.
-- [ ] **11.3** User A pulls User B's member card → User B's bell
-  badge increments.
+- [ ] **11.3** User A watches (Keep Tabs) User B's member card → User B's
+  bell badge increments.
 - [ ] **11.4** **Block round-trip:** User A blocks User B → User B's
   posts vanish from User A's feed. User B can still see User A's
   posts (block is one-directional from the blocker's view per §K1
@@ -427,15 +484,34 @@ gaps. Mark them OK so future-you doesn't re-litigate.
 - [ ] **14.4** On-chain signal detail panel (`/onchain/:page_id`)
   unwired. V2.
 - [x] **14.5** ~~Endorse doesn't fire a bell notification today.~~
-  **Shipped 2026-04-30.** `NotificationType::ENDORSE` + the
-  `onEndorseAdded` dispatcher subscriber are wired; the
-  `bell_bcc_endorse` toggle on /settings/notifications gates writes.
+  **Shipped 2026-04-30**, now **superseded by the endorse→vouch cutover
+  (§J.11).** The positive-trust bell is now the §J.7 attestation-received
+  notification (vouch / stand_behind); the legacy `bell_bcc_endorse`
+  toggle + `onEndorseAdded` subscriber ride the same write during the
+  transitional window. Endorse dead-code fully collapses into vouch in a
+  follow-up.
 - [ ] **14.6** Composer's §D4 inline `#`/`@` embed search +
   Attach button is deferred. V2.
 - [ ] **14.7** Per-event email-digest filtering (vs all-or-nothing
   email opt-in today). V2.
 - [ ] **14.8** Fraud admin dashboard lives in wp-admin, not
   Next.js. V2.
+- [ ] **14.9** **Member self-dispute FE pending #12.** Backend is live
+  (`can_open_dispute` + `negative_signals` on member cards, §7.7); the
+  `/u/<handle>` filing affordance + the member `under_review`/`disputed`
+  signal rendering ship with Tia's feed/identity redesign (#12).
+- [ ] **14.10** **`is_claim_verified` per-page "✓ Verified Operator"
+  badge pending #12.** Verified-search **ranking** is live (§1.6.1); the
+  FE consuming `is_claim_verified` on search rows + cards to render the
+  per-page badge (distinct from the already-live user-level OPERATOR pill)
+  lands with #12.
+- [ ] **14.11** **Reliability Early-Read sub-tracks FE pending #12.**
+  `consensus_reliability` + `early_read_accuracy` are on the wire but
+  their dedicated `/me/reliability` display needs the #12 `lib/api/types.ts`
+  additions (§4.6).
+- [ ] **14.12** **Attestation-roster dormancy dimming pending #12.** The
+  backend supplies `is_dormant`; the roster's dim-and-exclude rendering is
+  the deferred Slice-4 FE piece.
 
 ---
 
