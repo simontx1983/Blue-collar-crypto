@@ -33,6 +33,7 @@ same commit. When a hook is retired (cleared via
 | `bcc_trust_daily_graph_update` | `daily` | CronService.php:584 | bcc-trust/bcc-trust.php:320 — `cronService()->dailyGraphUpdate()`. The actual graph + ring computation is performed by `BCC\Trust\Core\Security\TrustGraph::batchCalculateAllRanks` + `::detectVoteRings` + `::detectEndorsementRings` (Phase B V-18 classification). |
 | `bcc_trust_daily_vesting` | `daily` | CronService.php:585 | bcc-trust/bcc-trust.php:323 — `cronService()->dailyVesting()`. |
 | `bcc_trust_process_recalculations` | `bcc_five_minutes` | CronService.php:586 | bcc-trust/bcc-trust.php:326 — `cronService()->processRecalculations()`. |
+| `bcc_trust_feed_hot_warm` | `bcc_one_minute` | CronService.php `scheduleAll()` jobs map | bcc-trust/bcc-trust.php — `cronService()->warmHotFeed()`; rebuilds the anonymous `/feed/hot` first-page payload cache (`FeedRankingService::warmHotFeed`, TTL 300s, key includes the §K1-C hidden-activity generation). Failure is benign: requests fall back to inline build. |
 | `bcc_trust_daily_maintenance` | `daily` | CronService.php:587 | bcc-trust read-model sync safety net. |
 | `bcc_trust_weekly_digest` | `bcc_weekly` | CronService.php:588 | bcc-trust/bcc-trust.php:329 — `digestService()->sendWeeklyDigest()`. |
 | `bcc_onchain_daily_refresh` | `daily` | [bcc-trust/bcc-trust.php:1190](../app/public/wp-content/plugins/bcc-trust/bcc-trust.php#L1190) | bcc-trust onchain — daily holdings refresh sweep. |

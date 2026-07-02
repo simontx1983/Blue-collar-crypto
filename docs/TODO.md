@@ -34,7 +34,7 @@ Real drift surfaced by the 2026-05-26 first run of `scripts/contract-parity-guar
 
 ## Performance / Ops
 
-- [ ] **Warm the `/feed/hot` cold path** — the 2026-06-19 k6 baseline measured ~20s for the cold view-model rebuild (first hit after cache expiry). Add a cache-warming cron or stale-while-revalidate so a user never pays it. See [`capacity-model.md`](capacity-model.md) "Measured baseline".
+<!-- /feed/hot warm shipped 2026-07-02 (bcc-trust feat/feed-hot-warm) + the "20s cold" RE-ATTRIBUTED to the Local FPM cliff — see Recently shipped below -->
 - [ ] **Re-run the load test on a provisioned staging box** — the Local k6 run is dominated by a dev-box FPM cliff (~2–4 workers + Xdebug), so the per-tier DAU numbers in `capacity-model.md` stay modeled, not measured. Re-run [`scripts/perf/load-test.js`](../scripts/perf/load-test.js) on a 4 vCPU + Redis + tuned-FPM box, including the with/without-Redis comparison.
 
 ## Docs
@@ -47,6 +47,7 @@ Real drift surfaced by the 2026-05-26 first run of `scripts/contract-parity-guar
 Once an item ships, move it here with a date + commit hash so the
 file documents recent flow. Trim entries older than ~30 days.
 
+- 2026-07-02 — `/feed/hot` anon first-page payload cache + minutely warming cron shipped (bcc-trust `feat/feed-hot-warm`): warm latency ~1.2s → ~0.1s; cache key folds in the §K1-C hidden-activity generation (instant moderation invalidation), new-post staleness cron/TTL-bounded (≤~60s), matching the endpoint's declared `max-age=60` posture. **The "~20s cold rebuild" was RE-ATTRIBUTED** during this work: HTTP-probe instrumentation proved it was never the feed build (~0.2s cold) — it's the Local FPM cliff (a post-flush wp-cron chain-probe sweep of ~28 RPC calls occupies one of ~2 workers; the next request queues ~17s in FPM). See `capacity-model.md` Measured-baseline finding 1. Cron self-heals via the `plugins_loaded` guard (no version bump needed); registered in `cron-registry.md`.
 - 2026-07-02 — Degradation alert proven end-to-end on Local. Seeded `DegradationMetrics::record('throttle')` ×5 → `wp cron event run bcc_core_degradation_alert_check` → `[BCC][P2] DEGRADED: throttle` landed in Mailpit; cleared the buckets → re-ran the cron → `[BCC][P2] RECOVERED: throttle` landed; alert-state option de-dup verified (steady-state ticks don't re-alert). Bonus finding: the proof surfaced a REAL sustained degradation already alerting locally — `nft_indexer` / `dense_block_stall` (10 events across two hours). Prod config row added to `testnet-deploy-checklist.md` §1.3 (`BCC_DEGRADATION_ALERT_EMAIL` + optional `_WEBHOOK`/`_THRESHOLD`).
 - 2026-06-28 — §1 raw-`$wpdb` remediation complete (bcc-trust #21). All 6 `WPDB_DEBT_ALLOWLIST` files moved into Repositories/Infrastructure; the allowlist in `arch-guardrails.sh` is now EMPTY, so the guard enforces §1 on every file. (TODO line retired 2026-07-02 — it had gone stale.)
 - 2026-06-28 — TODO triage: confirmed two Frontend items already shipped (below) and refreshed the endorse-cutover line to its real in-progress state (`feat/retire-endorse`). The Slice-E score/write obligation is done; only the dead-code + column-drop + `can_endorse`-gate cleanup remains. (2026-07-02 correction: no `feat/retire-endorse` branch actually exists — the cleanup is not started.)
