@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.27 · 2026-06-11 · Phase 1 deliverable
+**Status:** Draft v1.28 · 2026-07-02 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -4641,6 +4641,8 @@ Public read of pages a specific user has endorsed. The inverse of the attestatio
 
 Anonymous-readable per §J trust-graph doctrine: attestation data is public-by-design. The per-page endorser list is already public via the entity card; this endpoint is the same data sliced by user.
 
+> **v1.28 source note:** attestation-backed. Rows are the user's ACTIVE `vouch` attestations (entity cards AND member self-pages; `stand_behind` is deliberately excluded — it has its own roster surfaces). The legacy `endorsements` table is dropped; its rows were materialized into attestations at the Phase-1 migration, so no history is lost. Row shape unchanged: `context` is the constant `'general'`, `weight` = the attestation's `weight_at_time`; `tier`/`trust_score` still snapshot at request time — from `bcc_page_read_model` for entity pages, from the self-page score row for member self-page targets (self-pages carry no read-model row).
+
 #### `GET /bcc/v1/users/{handle}/endorsements`
 
 - **Auth:** Anonymous OR Bearer (response shape is identical; no viewer-aware fields).
@@ -5303,7 +5305,7 @@ Set / replace the viewer's reaction on a feed item. Idempotent on same-kind set;
 - **Rate limit:** 60/min/user (key `react`).
 - **Response 200 (§2.11 `ReactionState`):** `{ "kind_grammar": "trust", "counts": { "solid": 14, "vouch": 3 }, "viewer_reaction": "solid" }` — `counts` zero-filled for the post's grammar; `viewer_reaction` kind or `null`.
 - **Errors:** `bcc_unauthorized` 401 · `bcc_rate_limited` 429 · `bcc_invalid_request` 400 (bad `feed_id`; cross-grammar) · `bcc_permission_denied` 403 (group-scoped post, non-member — read but not react) · `bcc_unavailable` 503 (reaction types not seeded) · `bcc_internal_error` 500 (writer failed)
-- **Side effects:** `bcc_reaction_added` on the §A3 bus. When `reaction === "vouch"`, a `vouch` subscriber lands a fixed-weight `post_vouch` endorsement on the post author's self-page (Slice 3, §2.11) — rank-gated + idempotent + ref-counted; failures are isolated and never break the reaction write.
+- **Side effects:** `bcc_reaction_added` on the §A3 bus (notification dispatch + first-action listener + future analytics). *(v1.28 correction: the former `post_vouch` endorsement side effect was retired with the vouch relocation — a `vouch` REACTION is engagement chrome only; the score-bearing vouch is the per-author byline toggle via `/me/attestations`.)*
 - **Cache:** `no-store`.
 - **Mapping:** `ReactionsEndpoint::setReaction` (route `ReactionsEndpoint.php:78`) → bcc-core `PeepSoReactionWriter`. FE `reaction-endpoints.ts:setReaction`.
 
@@ -5581,6 +5583,8 @@ The caller's own §D5 panel-vote participation counters + caps. Powers the `/pan
 The endorsements the caller authored, hydrated to the shared §J.6 row shape (the same `given`-direction read as §4.22's per-handle public endpoint — single source per §A4).
 
 > **Direction note:** despite the "received" framing, the underlying read is `EndorsementService::getUserEndorsements` = endorsements the caller *authored*. There is no separate "endorsements I received" query behind this route. The genuine received-by-a-user roster is the attestation roster (`GET /entities/user_profile/:id/attestations`, §4.20/§J.6).
+>
+> **v1.28 source note:** attestation-backed — same repoint as §4.22 (active `vouch` attestations authored by the caller; legacy table dropped). Response shape, the UNENVELOPED root, and the `/mine/stats` sibling are all byte-stable.
 
 - **Auth:** Bearer **required** (`is_user_logged_in() && Permissions::is_not_suspended()`).
 - **Query:** `limit` (optional, default 20, min 1, max 50)
@@ -5946,6 +5950,30 @@ three orthogonal identity axes (**Rank · Trust Tier · Role**):
   (`reputation_tier_label`, `current_rank_label`, `foreman_insignia`) —
   `null`/`false` on page + community kinds for shape stability.
 - Additive + non-breaking. See glossary §1/§6 for the locked vocabulary.
+
+### v1.28 — 2026-07-02 — Endorsement reads are attestation-backed (source-only; zero shape changes)
+
+The legacy `wp_bcc_trust_endorsements` table (frozen since the Slice-E write
+cutover) is DROPPED; every read that served it is repointed to the Trust
+Attestation Layer. **No route, shape, field name, or error changed** — this
+entry documents source-of-truth reality per §A4.
+
+- **§4.22 `GET /users/:handle/endorsements` + §4.30 `/endorsements/mine`,
+  `/mine/stats`** — rows are now the user's active `vouch` attestations
+  (entity cards + member self-pages; `stand_behind` excluded — own roster).
+  Legacy rows were materialized into attestations at the Phase-1 migration,
+  so no history is lost.
+- **`endorsement_count`** (cards, search `endorsements` field,
+  `sort=endorsements`, read model) now counts active vouch attestations and
+  refreshes on every cast/revoke/reaffirm + the nightly decay sweep —
+  previously a snapshot of the frozen table taken only at vote-recalc time.
+- **`endorsements_received`** member stat now counts vouches on the *person*
+  (their self-page), not endorsements on pages they own — the honest number
+  under the attestation model; values may shift.
+- **Fraud graph** — endorsement-ring detection reads live vouch edges.
+- **§4.28 reactions correction** — the stale `post_vouch` side-effect note
+  removed: a `vouch` reaction is engagement chrome; the score-bearing vouch
+  is the byline toggle (`/me/attestations`).
 
 ### v1.27 — 2026-06-11 — Community-card convergence (additive)
 
