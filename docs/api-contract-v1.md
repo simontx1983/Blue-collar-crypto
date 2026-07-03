@@ -5615,6 +5615,57 @@ Aggregate stats over the caller's authored endorsements. Powers the endorsements
 - **Cache:** not set by the handler (treat as `no-store`).
 - **Mapping:** `UserEndorsementsEndpoint::getMineStats` (route `UserEndorsementsEndpoint.php:51`) → `EndorsementService::getUserEndorsementStats`.
 
+### 4.31 Collection stances (waitlist / spam) — v1.32
+
+The airdrop-proof demand layer. Passive holdings are forgeable (a scammer can airdrop a token into every linked wallet), so community demand is measured by EXPLICIT per-collection user declarations instead: `waitlist` ("activate this community and count me in") and `spam` ("this is airdropped junk"). One stance per (user, collection), switchable, holder-gated server-side. Waitlist counts rank the operator's Verify Collections queue; spam tallies soft-hide a collection from user-facing surfaces at the threshold (`BCC_COLLECTION_SPAM_SOFT_HIDE`, default 3) — the hard kill stays operator-only (a DENY rule on the contract via the admin Hide button, which also blocks rediscovery). When a waitlisted collection's community provisions, waitlisted users receive one `bcc_holder_community_live` bell (+ push), stamped via `notified_at` so re-provisioning can't re-notify.
+
+Endpoints live in `CollectionStancesEndpoint`. The join action is NOT here — the panel's "Join this community" button drives the existing §4.7.1 `POST /me/holder-groups/:id/join`.
+
+#### `GET /bcc/v1/me/collection-stances/panel`
+
+Every collection the viewer's linked wallets hold, with the state that picks the button pair. Sources mirror discovery (EVM/SOL holdings index; Cosmos Hub marketplace rollup, 6h-cached) — no fresh RPC walks. Collections the operator hid (DENY rule) or the community soft-hid never appear (a viewer who flagged a soft-hidden collection still sees their own row so they can retract).
+
+- **Auth:** required.
+- **Response 200 data shape:**
+  ```json
+  { "items": [{
+      "chain_id": 8, "chain_slug": "cosmos",
+      "contract_address": "cosmos1…", "name": "ATLAS", "image_url": "https://…",
+      "collection_verified": false,
+      "state": "waitlist",
+      "group_id": null,
+      "waitlist_count": 1,
+      "viewer_stance": "waitlist"
+  }] }
+  ```
+  `state` ∈ {`live`, `waitlist`} — `live` means verified + community provisioned (`group_id` non-null → feed it to §4.7.1 join). `waitlist_count` is public social proof. Rows sort live-first, then by waitlist momentum; capped at 60.
+- **Errors:** `bcc_unauthorized` 401 · `bcc_rate_limited` 429.
+- **Rate limit:** 20 / 60s / user (`collection_stance_panel`).
+- **Cache:** `no-store` (viewer-scoped). React Query `staleTime: 60_000`.
+- **Mapping:** `CollectionStancesEndpoint::getPanel` → `CollectionStanceService::panelForUser`. FE `collection-stances-endpoints.ts:getCollectionStancePanel` → `CollectionStancePanel` (post-wallet-link in settings + onboarding CollectionsStep).
+
+#### `POST /bcc/v1/me/collection-stances`
+
+Set or switch the viewer's stance. Holder-gated: primary evidence is the same sources the panel rendered from; falls back to a live `ownsAny` check for holdings fresher than the caches. Switching stance resets the go-live-notified stamp.
+
+- **Auth:** required.
+- **Body:** `chain_id` (**required**, int) · `contract_address` (**required**) · `stance` (**required**, `waitlist` | `spam`)
+- **Response 200:** `{ "chain_id": 8, "contract_address": "cosmos1…", "stance": "waitlist" }`
+- **Errors:** `bcc_invalid_request` 400 · `bcc_nft_not_owned` 403 (linked wallets don't hold it) · `bcc_unavailable` 503 (holdings unverifiable — retryable) · `bcc_rate_limited` 429 · `bcc_unauthorized` 401.
+- **Rate limit:** 10 / 60s / user (`collection_stance_set`, shared with DELETE).
+- **Mapping:** `CollectionStancesEndpoint::postStance` → `CollectionStanceService::setStance` → `CollectionSignalRepository::setStance`.
+
+#### `DELETE /bcc/v1/me/collection-stances`
+
+Retract the viewer's stance (back to neutral). NOT holder-gated — you can always withdraw your own testimony (e.g. after selling).
+
+- **Auth:** required.
+- **Body:** `chain_id` (**required**) · `contract_address` (**required**)
+- **Response 200:** `{ "chain_id": 8, "contract_address": "cosmos1…", "stance": null }`
+- **Errors:** `bcc_invalid_request` 400 · `bcc_rate_limited` 429 · `bcc_unauthorized` 401.
+- **Rate limit:** shared `collection_stance_set` bucket (10 / 60s / user).
+- **Mapping:** `CollectionStancesEndpoint::deleteStance` → `CollectionStanceService::clearStance`.
+
 ## 5. Encoded rules — quick reference
 
 ### 5.1 §N7 — gated actions always visible
@@ -5906,6 +5957,30 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.32 — 2026-07-03 — Collection stances: airdrop-proof demand + scam flags (additive)
+
+New §4.31. Passive holdings turned out to be a forgeable demand signal
+(airdrop spam lands in every wallet), so demand is now measured by
+explicit per-collection user declarations:
+
+- **NEW `GET /me/collection-stances/panel`** — the wallet-connect /
+  onboarding panel: held collections with per-row state (`live` →
+  drives the existing §4.7.1 join · `waitlist`), public waitlist count,
+  viewer's stance.
+- **NEW `POST /me/collection-stances`** / **`DELETE …`** — set/switch/
+  retract `waitlist` | `spam` (holder-gated; one stance per collection).
+- **NEW bell type `bcc_holder_community_live`** (+ push event
+  `holder_community_live`, both default-on prefs) — fired once per
+  (user, collection) when a waitlisted collection's community
+  provisions.
+- **Server-side:** admin Verify Collections ranks by waitlist count
+  (spam-flagged rows sink; ⚑ counts shown), gains per-row Hide/Unhide
+  writing contract DENY/ALLOW rules that survive rediscovery; Cosmos
+  wallet-link discovery now runs the same spam pipeline as EVM; the
+  spam-rule table's `contract_address` widened to VARCHAR(128) —
+  Cosmos contract addresses (66 chars) were silently truncated and
+  rules never matched.
 
 ### v1.31 — 2026-07-02 — Holdings surface unverified collections (additive)
 
