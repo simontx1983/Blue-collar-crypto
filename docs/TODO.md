@@ -13,13 +13,13 @@ section at the bottom. Don't pad the active list.
 
 ## Frontend
 
-- [ ] **Remove the orphaned `level_up` celebration preset** — the 2026-06-22 identity slice made Rank mirror level 1:1, so level crossings celebrate as **rank-ups**; the backend no longer stashes a `level_up` kind (retired `LevelProgressionListener` + `bcc_feature_level_unlocked`). The frontend `level_up` preset is now unreachable: drop it from [`types.ts`](../bcc-frontend/src/lib/api/types.ts), [`CelebrationGate.tsx`](../bcc-frontend/src/components/celebration/CelebrationGate.tsx), [`CelebrationToast.tsx`](../bcc-frontend/src/components/celebration/CelebrationToast.tsx), [`celebrations-endpoints.ts`](../bcc-frontend/src/lib/api/celebrations-endpoints.ts), and the `level-up` keyframes in [`globals.css`](../bcc-frontend/src/app/globals.css). Keep `rank_up`.
+<!-- level_up preset removal shipped 2026-07-02 (bcc-frontend #21) — see Recently shipped below -->
 
 ## Backend / Contract
 
 Real drift surfaced by the 2026-05-26 first run of `scripts/contract-parity-guard.php`. Each needs a one-way decision: fix the contract OR fix the code.
 
-- [ ] **Post-launch doc fix** — correct the stale "Used for: dispute evidence, ... user-facing score history" claim in [`schema-score-events.php:6`](../app/public/wp-content/plugins/bcc-trust/includes/database/schema-score-events.php#L6). The 2026-06-18 read-path trace proved no dispute flow reads `trust_score_events` (disputes read the votes table) and the "score history" readers are now deleted. Reword to reflect the one real consumer (the 24h `findForPagesSince` highlights slot) + write-time audit log.
+<!-- schema-score-events docstring fix shipped 2026-07-02 (bcc-trust #37) — see Recently shipped below -->
 
 <!-- endorse→attestation final cleanup shipped 2026-07-02 (bcc-trust #31) — see Recently shipped below -->
 
@@ -46,6 +46,8 @@ Real drift surfaced by the 2026-05-26 first run of `scripts/contract-parity-guar
 
 Once an item ships, move it here with a date + commit hash so the
 file documents recent flow. Trim entries older than ~30 days.
+
+- 2026-07-02 — Phase-0 micro-items cleared: orphaned `level_up` celebration preset removed (bcc-frontend #21, `34239ba` — note: no `level-up` keyframes actually existed in globals.css, only a comment token; `rank_up` untouched) + `schema-score-events.php` docstring corrected (bcc-trust #37, `d194f78` — documents the ONE live reader `findForPagesSince` §O2.1 + write-time audit trail, pins the negative claims). The Active list is now empty except the staging-box k6 re-run (blocked on hosting).
 
 - 2026-07-02 — `nft_indexer`/`dense_block_stall` degradation RESOLVED (bcc-trust #34 + bcc-core #13 comment fix). Root cause: the V2 walker reads the CHAIN-WIDE ERC-721/1155 firehose (no address scoping) and filters at ingest — Optimism (ZERO linked wallets) was wedged a week on one dense block, burning its full daily CU budget on guaranteed skips; the canonical map's "near-impossible under block gas limits" claim assumed contract-scoped reads and was wrong. Fixes: zero-wallet chains now follow head with no transfer paging (`WalletRepository::hasAnyLinksForChain`); fetch ERRORS are now distinct from empty ranges and HOLD the checkpoint (was: silent advance over unread blocks — Avalanche/BSC had been no-op "indexing" via this path); stall site logs chain/range context. 13 new tests. Full alert loop closed: `[BCC][P2] RECOVERED: nft_indexer` in Mailpit, alert state empty. Documented follow-up (post-beta): wallet-BEARING busy L2s can't keep up with the firehose design — scale fix = wallet-scoped reads or address-activity webhooks.
 - 2026-07-02 — Legacy endorsement READ surface retired (bcc-trust #32 + contract v1.28): every read repointed to attestations with byte-stable shapes (§4.22/§4.30 rosters, `endorsement_count` denorm — now refreshes on cast/revoke/reaffirm, `endorsements_received`, ring-detection edges), then the frozen `wp_bcc_trust_endorsements` table DROPPED (guarded migration; rows were already materialized into attestations at Phase 1). 40 files, +935/−1937; FE + bcc-search untouched. Bonus fix: `markVotedPagesForRecalculation`'s invalid `UPDATE…JOIN…LIMIT` had been silently marking nothing — derived-table LIMIT pattern applied to both fraud-fanout markers. The endorsement DOMAIN is now fully closed: writes (Slice E), score (Slice E), dead code (#31), reads + table (#32).
