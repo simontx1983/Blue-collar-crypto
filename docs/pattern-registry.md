@@ -765,10 +765,22 @@ internals, symmetric public API: `HoldingsService::getForUser` /
 symmetry by building a Cosmos persistence layer prematurely.**
 
 Active NFT-chain set (CW-721 contracts deployed + public CosmWasm
-exposed): **Stargaze, Injective, Kujira, Dungeon**. Other Cosmos
+exposed): **Cosmos Hub, Injective, Kujira, Dungeon**. Other Cosmos
 chains seeded for validator/delegation paths but excluded from NFT
 work — curated-only posture self-cleans them (no `is_verified`
 collections → zero LCD calls per refresh).
+
+Stargaze note (2026-07): the original launch NFT chain was Stargaze;
+its L1 halted June 2026 after the Prop-1017 migration and its
+collections were re-instantiated on the Cosmos Hub as NEW `cosmos1…`
+CW-721 contracts (`cw721_migration`, cw721 v0.19 API). Two operational
+consequences: (1) Hub collections are re-curated manually — the
+Constellations GraphQL discovery API went partner-only, so there is no
+auto-pull; (2) migrated contracts reject the classic `contract_info`
+query — `CosmosFetcher::cw721CollectionInfoQuery` falls back to
+`get_collection_info_and_extension`. Each migrated contract answers a
+`stargaze_address` smart query with its old `stars1…` address if an
+old→new mapping is ever needed.
 
 Crypto.org is permanently out-of-scope at the protocol level until
 a future chain upgrade enables CosmWasm (`/cosmwasm/wasm/v1/code`
