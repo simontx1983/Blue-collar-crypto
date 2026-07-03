@@ -4524,7 +4524,8 @@ Live holdings across the viewer's linked wallets, annotated with which are alrea
       "wallet_link_id": 15, "is_selected": true,
       "name": "Genesis #042", "collection_name": null,
       "image_url": "https://…", "metadata_uri": "ipfs://…",
-      "token_standard": "ERC-721"
+      "token_standard": "ERC-721",
+      "collection_verified": true
     }],
     "truncated": false,
     "wallets_checked": 2, "wallets_truncated": 0,
@@ -4538,6 +4539,7 @@ Live holdings across the viewer's linked wallets, annotated with which are alrea
   ```
   - `refreshed_at` is keyed by `wallet_link_id` (not chain). Value is MySQL UTC datetime (`YYYY-MM-DD HH:MM:SS`); frontend normalizes to ISO at the boundary.
   - `meta.indexer_state` ∈ {`healthy`, `syncing`, `degraded`} per §3.6. `indexer_state_label` is `""` for `healthy` — the contract's "no chip" signal.
+  - `collection_verified` (v1.31) — whether the operator has verified the item's collection (Verify Collections). **Display-only**: the frontend dims unverified items (holder-community not yet activated) instead of hiding them; nothing gates on this flag. `false` when the contract has no collection row at all. Cosmos read-time items now include unverified-but-known collections (previously silently absent from the gallery).
 - **Errors:** `bcc_unauthorized 401`, `bcc_rate_limited 429` (10/60/user — shared bucket with `force=1` refreshes).
 - **Rate limit:** 10/60/user.
 - **Cache:** `no-store` (transient is server-side; the response is per-request live). React Query `staleTime: 60_000`.
@@ -5904,6 +5906,23 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.31 — 2026-07-02 — Holdings surface unverified collections (additive)
+
+Closes the "favorite NFT invisible → community never forms" UX hole:
+
+- **`GET /nft-selections/picker` items** gain `collection_verified: boolean`
+  (additive). Display-only — the frontend dims unverified items with a
+  "community not yet activated" treatment instead of hiding them; group
+  gating is untouched (it resolves per verified gate contract).
+- **Cosmos gallery widened (value-level):** the read-time CW-721 walk now
+  iterates every KNOWN collection (verified first under the same cap)
+  instead of verified-only, so a linked wallet's assets never silently
+  vanish. EVM/SOL items were already surfaced; they now carry the flag.
+- **Server-side, no wire impact:** Cosmos Hub wallet links now auto-discover
+  the wallet's collections via the Stargaze marketplace rollup
+  (`source='discovery'`, unverified, operator-gated), and the admin Verify
+  Collections queue ranks by distinct linked-wallet holders.
 
 ### v1.30 — 2026-07-02 — Stargaze chain retired (value-level; zero shape changes)
 
