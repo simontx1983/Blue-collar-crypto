@@ -4641,7 +4641,7 @@ Public read of pages a specific user has endorsed. The inverse of the attestatio
 
 Anonymous-readable per §J trust-graph doctrine: attestation data is public-by-design. The per-page endorser list is already public via the entity card; this endpoint is the same data sliced by user.
 
-> **v1.28 source note:** attestation-backed. Rows are the user's ACTIVE `vouch` attestations (entity cards AND member self-pages; `stand_behind` is deliberately excluded — it has its own roster surfaces). The legacy `endorsements` table is dropped; its rows were materialized into attestations at the Phase-1 migration, so no history is lost. Row shape unchanged: `context` is the constant `'general'`, `weight` = the attestation's `weight_at_time`, `tier`/`trust_score` still snapshot from `bcc_page_read_model` at request time.
+> **v1.28 source note:** attestation-backed. Rows are the user's ACTIVE `vouch` attestations (entity cards AND member self-pages; `stand_behind` is deliberately excluded — it has its own roster surfaces). The legacy `endorsements` table is dropped; its rows were materialized into attestations at the Phase-1 migration, so no history is lost. Row shape unchanged: `context` is the constant `'general'`, `weight` = the attestation's `weight_at_time`; `tier`/`trust_score` still snapshot at request time — from `bcc_page_read_model` for entity pages, from the self-page score row for member self-page targets (self-pages carry no read-model row).
 
 #### `GET /bcc/v1/users/{handle}/endorsements`
 
