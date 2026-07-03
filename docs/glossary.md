@@ -183,7 +183,6 @@ Seeded into `bcc_chains` by `bcc-trust/includes/database/schema-chains.php`. The
 | osmosis | Osmosis | OSMO | cosmos |
 | akash | Akash | AKT | cosmos |
 | juno | Juno | JUNO | cosmos |
-| stargaze | Stargaze | STARS | cosmos |
 | injective | Injective | INJ | cosmos |
 | cryptoorgchain | Cronos POS | CRO | cosmos |
 | jackal | Jackal | JKL | cosmos |
@@ -193,3 +192,8 @@ Seeded into `bcc_chains` by `bcc-trust/includes/database/schema-chains.php`. The
 | polkadot | Polkadot | DOT | polkadot |
 | solana | Solana | SOL | solana |
 | near | NEAR Protocol | NEAR | near |
+
+Retired: **stargaze** (STARS) — the stargaze-1 L1 halted June 2026 after the
+Prop-1017 migration to the Cosmos Hub; its CW-721 collections now live on the
+`cosmos` chain as re-instantiated `cosmos1…` contracts
+(`bcc-trust/includes/database/retire-stargaze-chain.php` removed the row).

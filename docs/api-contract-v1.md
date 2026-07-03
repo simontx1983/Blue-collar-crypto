@@ -968,7 +968,7 @@ Locked field rules:
     "privacy": "closed",
     "member_count": 87,
     "verification": { "kind": "on_chain", "label": "On-Chain Verified" },
-    "chain_tag": "stargaze",
+    "chain_tag": "cosmos",
     "trust_min": null,
     "collection_stats": { "...": "§4.7.4 NFT market block, null for non-NFT kinds" },
     "viewer_is_member": true
@@ -1685,7 +1685,7 @@ Verifies a signed nonce and links the wallet to the authenticated user.
 
 **Mapping:** verifier → existing `bcc-core` `WalletVerifier`. Storage → `bcc_wallet_links` table. Nonce → `bcc-core` challenge service. First-link flag → `wp_usermeta.bcc_first_wallet_link`.
 
-**Supported `chain_type` values:** `evm` (MetaMask / any EIP-1193 EVM wallet), `solana` (Phantom), `cosmos` (Keplr — ADR-036 secp256k1; covers Cosmos Hub / Osmosis / Injective / Juno / Stargaze / THORChain), `polkadot` (Polkadot.js / Talisman / SubWallet / Nova — sr25519 default, ed25519 / ecdsa accepted). Polkadot signature verification is delegated to the bcc-frontend Next.js app's `@polkadot/util-crypto` via an internal authenticated route (PHP has no native schnorrkel); same trust domain, same `WalletVerifier::verify` surface to callers.
+**Supported `chain_type` values:** `evm` (MetaMask / any EIP-1193 EVM wallet), `solana` (Phantom), `cosmos` (Keplr — ADR-036 secp256k1; covers Cosmos Hub / Osmosis / Injective / Juno / THORChain — Stargaze removed v1.30 with the chain's 2026 shutdown), `polkadot` (Polkadot.js / Talisman / SubWallet / Nova — sr25519 default, ed25519 / ecdsa accepted). Polkadot signature verification is delegated to the bcc-frontend Next.js app's `@polkadot/util-crypto` via an internal authenticated route (PHP has no native schnorrkel); same trust domain, same `WalletVerifier::verify` surface to callers.
 
 #### `GET /bcc/v1/auth/wallet-nonce`
 
@@ -3005,7 +3005,7 @@ Cross-kind discovery list. Sort key: `verified DESC, heat_score DESC, member_cou
 - **`image_url`:** cover-art URL. NFT-type cards return the underlying collection's `image_url` (joined through `wp_bcc_onchain_collections`). Non-NFT cards (`local`/`system`/`user`) return `null` in V1 — the frontend falls back to a generated initials block. PeepSo group avatars for non-NFT kinds is V1.5.
 - **`description`:** group post body, plain-text + tag-stripped + truncated to ~200 chars (em-dash ellipsis when truncated). `null` when the group has no description on file. Applies to all kinds — `local`/`system`/`user` cards can use the same field on a future detail surface.
 - **`collection_stats`:** market-data block for NFT-type cards only — drives the discovery card's flip-to-back UX (floor price, holder distribution, lifetime volume, listed %, royalty %). Each inner field is independently nullable since the upstream fetch can leave any column unpopulated. Currency-bearing fields (`floor_price`, `total_volume`) are returned as raw strings (full decimal precision) PLUS server-pre-formatted `*_display` strings (`floor_display`, `volume_display`, `holders_display`, `supply_display`, `listed_display`, `royalty_display`, `min_balance_display`). Frontend renders `*_display` verbatim per §A2 / §S — no client-side number-formatting decisions. `distribution_pct` is the server-computed `holders / supply * 100` (rounded), exposed as a number alongside `holders_display` for charting use. `min_balance` mirrors the gate threshold (`_bcc_gate_min_balance` post-meta). Em-dash (`"—"`) appears in `*_display` when the underlying value is missing/zero so the wire never surfaces "0.00 STARS" as a fake-low signal. Non-NFT cards return `null` for the entire block — there is no equivalent for `local`/`system`/`user` kinds.
-- **`collection_stats.marketplace`:** server-resolved canonical marketplace link for the underlying NFT collection — `{ url, label }` when the chain is mapped, `null` otherwise. V1 covers Stargaze (canonical) and the major EVM chains via OpenSea (`ethereum`/`polygon`/`arbitrum`/`optimism`/`base`/`avalanche`/`bsc`); Solana, NEAR, and the other cosmos chains return `null` until canonical marketplace surfaces are picked. Filterable via `bcc_marketplace_link_map` so a deployment can extend or override without a code release. Frontend renders the URL verbatim with `target="_blank" rel="noopener noreferrer"` and `e.stopPropagation()` on click so the marketplace tab opens without flipping the discovery card back to the front.
+- **`collection_stats.marketplace`:** server-resolved canonical marketplace link for the underlying NFT collection — `{ url, label }` when the chain is mapped, `null` otherwise. V1 covers the Cosmos Hub (`cosmos` — stargaze.zone, the marketplace app that survived the 2026 Stargaze→Hub chain migration) and the major EVM chains via OpenSea (`ethereum`/`polygon`/`arbitrum`/`optimism`/`base`/`avalanche`/`bsc`); Solana, NEAR, and the other cosmos chains return `null` until canonical marketplace surfaces are picked. Filterable via `bcc_marketplace_link_map` so a deployment can extend or override without a code release. Frontend renders the URL verbatim with `target="_blank" rel="noopener noreferrer"` and `e.stopPropagation()` on click so the marketplace tab opens without flipping the discovery card back to the front.
 - **Sort approximation note:** the candidate pool is fetched + sorted in PHP before pagination (limit 500). The cross-page sort is exact within the candidate pool; deep pagination beyond ~500 groups would require SQL-side sort. v1 scale is well under this.
 - **Mapping:** `PeepSoGroupRepository::listBrowsableGroupIds` (excludes secret) → `GroupContextResolver::forManyGroups` → `GroupActivityHeatService::forGroups` for heat → `GatedGroupRepository::listAllGatedGroupConfigs` + `CollectionRepository::findManyByIds` for image_url + collection_stats enrichment (NFT-type only) → in-memory sort by (`is_verified`, `posts_last_7d`, `member_count`) all DESC.
 
@@ -5904,6 +5904,24 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.30 — 2026-07-02 — Stargaze chain retired (value-level; zero shape changes)
+
+The Stargaze L1 (`stargaze-1`) halted in June 2026 after its migration to
+the Cosmos Hub (Prop 1017); its CW-721 collections were re-instantiated on
+the Hub as new `cosmos1…` contracts. No endpoint, field, or type changes —
+this is a **value-level** retirement of one chain slug:
+
+- **`stargaze` no longer appears** as a `chain_tag` / chain-slug value
+  anywhere on the wire: the chain row is deleted (with its collections and
+  wallet links) by a one-shot bcc-trust migration, and the seed no longer
+  creates it. Cosmos NFT collections are curated on the `cosmos` (Cosmos
+  Hub) chain instead.
+- **`collection_stats.marketplace`** for `cosmos`-chain collections resolves
+  to stargaze.zone — the marketplace app survived the chain migration and
+  serves the Hub-hosted collections. Label stays `"Stargaze"`.
+- **Wallet linking:** `cosmos` chain_type list loses Stargaze (§4.14 note);
+  Keplr signing for the remaining Cosmos chains is unchanged.
 
 ### v1.29 — 2026-06-24 — Vouch confers trust; reaction `stand_behind` retired (Slice 3)
 
