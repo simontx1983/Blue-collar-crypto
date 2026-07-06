@@ -504,7 +504,18 @@ Encodes §N11. Appears on the **own** User view-model (not on others' profiles).
       { "delta":  1, "reason": "Governance vote", "at": "2026-04-22" },
       { "delta":  2, "reason": "Uptime streak (14d)", "at": "2026-04-15" },
       { "delta": -1, "reason": "Dispute lost", "at": "2026-04-10" }
-    ]
+    ],
+    "quests": {
+      "multiplier": 1.28,
+      "completed_count": 4,
+      "total_count": 7,
+      "pct": 57,
+      "items": [
+        { "slug": "connect_wallet", "label": "Connect a Wallet", "hint": "Prove on-chain identity for higher credibility.", "done": true,  "weight_bonus": 0.08, "category": "identity" },
+        { "slug": "verify_github",  "label": "Verify GitHub Account", "hint": "Proves code ownership — boosts your vote weight.", "done": true,  "weight_bonus": 0.07, "category": "identity" },
+        { "slug": "explore_projects", "label": "Explore 3 Projects", "hint": "Browse and evaluate real projects.", "done": false, "weight_bonus": 0.02, "category": "engagement" }
+      ]
+    }
   }
 }
 ```
@@ -516,6 +527,7 @@ Encodes §N11. Appears on the **own** User view-model (not on others' profiles).
 - The Foreman **Role** never appears here — it is orthogonal to Rank (surfaced via `foreman_insignia`, see §4.8), not a step above Master.
 - The frontend renders the `current/required` ratio for each threshold as a progress bar.
 - `trust_score_recent_changes` is the most recent 5 reputation events (sorted desc by `at`). Reason strings are plain English, ≤ 80 chars. (Trust score drives the *Tier* axis, not Rank — it's surfaced here only as recent-activity context.)
+- `quests` is the §N11 completion checklist and the earned **vote-weight multiplier** (`multiplier`, 1.00–1.30) it grants — the value `VoteWeightCalculator` applies to the operator's votes at cast time. `items` is a stable-ordered list (the quest catalogue order), each with `done` and the `weight_bonus` that quest contributes. `pct` is `round(completed_count / total_count × 100)`. Own-only, like the rest of the block. Copy is descriptive per §2.7 — the frontend never renders a prescriptive "complete this" nudge.
 
 ### 2.6 `FeatureAccess`
 
