@@ -13,6 +13,16 @@
  *
  * Run from repo root:
  *   php scripts/dead-file-scan.php > dead-file-report.md
+ *
+ * Exit codes:
+ *   0 — no Tier A (high-confidence dead) findings.
+ *   1 — setup failure (wrong SAPI, unresolvable root), OR one+ Tier A
+ *       findings. Until 2026-07-06 this script ALWAYS exited 0 for
+ *       findings (only setup checks called exit(1)), so the CI step
+ *       could never fail a merge — a fully dead class shipped green.
+ *       Now Tier A is blocking. Tier B/C stay advisory (printed, not
+ *       gating) because they carry false positives (reflection-wired
+ *       classes, generic procedural basenames).
  */
 
 declare(strict_types=1);
@@ -456,3 +466,19 @@ echo "- Quoted-string class names (`'BCC\\\\Trust\\\\…'`) are matched in both 
 echo "- Tier A is the highest-confidence candidate for deletion but still warrants a manual look — a class may be wired up by a mechanism the scanner doesn't see (e.g., reflection, plugin-external code).\n";
 echo "- Tier C uses basename-presence as a heuristic for `require`/`include`. A unique basename appearing nowhere else is a strong signal; a generic name (`config.php`) is less reliable.\n";
 echo "- Test files are excluded from the candidate set. References *from* tests count by default (use `INCLUDE_TESTS_AS_REFERENCES = false` in the script to flip this — then test-only classes promote into Tier A).\n";
+
+// ── Gate ───────────────────────────────────────────────────────────
+// Tier A (declared class, zero references anywhere) is high-confidence
+// dead and blocks the merge. Tier B/C are advisory only — they carry
+// known false positives (reflection/plugin-external wiring; generic
+// procedural basenames), so gating on them would produce nuisance
+// failures. A reviewer who confirms a Tier A finding is a genuine
+// intentional keep can suppress it by adding a reference or excluding
+// the path from $PLUGIN_SOURCE_ROOTS.
+if (count($tierA) > 0) {
+    fwrite(STDERR, sprintf(
+        "\nFAIL: %d Tier A dead file(s) — declared classes with zero references. Delete them or wire them up. See the report above.\n",
+        count($tierA)
+    ));
+    exit(1);
+}

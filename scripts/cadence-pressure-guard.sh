@@ -69,16 +69,43 @@ PATTERNS=(
 
 VIOLATIONS=0
 
+# ── Blindness self-test ────────────────────────────────────────────
+# This guard was a silent no-op from its introduction until 2026-07-06:
+# it used `git grep --exclude-standard` from the umbrella root, whose
+# deny-all `/*` .gitignore covers every code scope path (the frontend
+# and plugins are nested sibling repos the umbrella ignores). The guard
+# scanned only the tracked policy doc and printed PASS on every run.
+# Plain filesystem grep below fixes the scan; this self-test makes the
+# failure mode structural: if the scope resolves to (almost) no files,
+# the guard fails loudly instead of passing blind.
+SCANNABLE_FILES=0
+for path in "${SCOPE_PATHS[@]}"; do
+  if [[ -f "$path" ]]; then
+    SCANNABLE_FILES=$((SCANNABLE_FILES + 1))
+  elif [[ -d "$path" ]]; then
+    count="$(find "$path" -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.php' -o -name '*.md' \) 2>/dev/null | wc -l)"
+    SCANNABLE_FILES=$((SCANNABLE_FILES + count))
+  fi
+done
+if [[ "$SCANNABLE_FILES" -lt 10 ]]; then
+  printf "FAIL: cadence-pressure guard resolved only %d scannable file(s) — the scope paths are wrong or the guard is running from the wrong root. Refusing to pass blind.\n" "$SCANNABLE_FILES" >&2
+  exit 1
+fi
+
 for pattern in "${PATTERNS[@]}"; do
   for path in "${SCOPE_PATHS[@]}"; do
     [[ -e "$path" ]] || continue
 
-    # git grep -nIE: line numbers, skip binary, extended regex.
-    # --untracked + --exclude-standard scans new files too while
-    # respecting .gitignore — local pre-commit runs catch violations
-    # before commit, not after. The 2>/dev/null suppresses "no
-    # matches" stderr; the || true keeps set -e happy.
-    matches="$(git grep --untracked --exclude-standard -nIE "$pattern" -- "$path" 2>/dev/null || true)"
+    # Plain filesystem grep (NOT git grep): the frontend and plugins are
+    # nested sibling git repos that the umbrella's deny-all .gitignore
+    # covers, so `git grep --exclude-standard` from this root silently
+    # skipped every code path (the guard passed green while checking
+    # nothing — 2026-07-06 audit). -r recurse, -n line numbers, -I skip
+    # binary, -E extended regex. Scope paths are tight source dirs, so
+    # no ignore-file handling is needed.
+    # -H forces the filename prefix even when the scope path is a single
+    # file (grep omits it otherwise and the file:line parse below breaks).
+    matches="$(grep -rnHIE "$pattern" "$path" 2>/dev/null || true)"
     [[ -z "$matches" ]] && continue
 
     # For each match, check the same line and preceding line for an
@@ -101,6 +128,16 @@ for pattern in "${PATTERNS[@]}"; do
       if echo "$same_line" | grep -qE "cadence-pressure-guard:allow" \
          || echo "$prev_line" | grep -qE "cadence-pressure-guard:allow"; then
         # Allowed — skip.
+        continue
+      fi
+
+      # Comment lines are exempt per the header ("a comment explaining
+      # why we don't say 'you should attest' must itself contain the
+      # phrase"). A line whose first non-whitespace is a comment opener
+      # can't be operator-facing copy. String literals that merely
+      # FOLLOW a comment on the same line still match (the opener test
+      # anchors at line start).
+      if echo "$same_line" | grep -qE '^[[:space:]]*(//|/\*|\*|#)'; then
         continue
       fi
 
