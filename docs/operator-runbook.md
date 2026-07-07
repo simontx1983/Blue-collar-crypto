@@ -141,7 +141,7 @@ Bottom of Health page shows the 18-subsystem table. Hot rows (nonzero current OR
 |---|---|
 | 1 | If many disputes are in "Reviewing" with the panel quorum incomplete, the auto-resolve sweep handles timeouts. Check Cron page for `bcc_disputes_auto_resolve` (daily). |
 | 2 | For an individual stuck dispute, open its detail page. Force-resolve buttons accept-or-reject with the per-dispute nonce. **Document why** in the dispute note before force-resolving. |
-| 3 | If a panelist's votes aren't being counted, check `bcc_disputes_reconcile` cron — it sweeps every 5 minutes and fixes silent-enqueue failures. |
+| 3 | If a panelist's votes aren't being counted, check `bcc_disputes_reconcile_orphans` cron — it sweeps every 5 minutes and fixes silent-enqueue failures. |
 
 ---
 

@@ -132,7 +132,7 @@ Branch on `code`, not status, to decide whether a retry can succeed:
 
 | Class | Codes | Retry? |
 |---|---|---|
-| Transient | `bcc_rate_limited`, `bcc_upstream_unavailable`, `bcc_internal` | Yes, with backoff |
+| Transient | `bcc_rate_limited`, `bcc_upstream_unavailable`, `bcc_internal`, `bcc_internal_error` | Yes, with backoff |
 | Auth | `bcc_unauthorized`, `bcc_token_expired`, `bcc_token_invalid` | Refresh first (see §1.4.3), then retry once |
 | Client error | `bcc_invalid_request`, `bcc_permission_denied`, `bcc_blocked`, `bcc_forbidden` | No — the request is wrong; show UX, do not retry |
 | Resource state | `bcc_not_found`, `bcc_conflict` | No — state has changed; refetch |
@@ -180,7 +180,7 @@ User-relationship errors (blocked, muted) use `bcc_blocked` (403). The frontend 
 | `bcc_not_found` | 404 | Resource state | Resource does not exist or is hidden from this viewer |
 | `bcc_conflict` | 409 | Resource state | State collision (claim already won, batch already closed) |
 | `bcc_rate_limited` | 429 | Transient | Per-user / per-IP rate limit hit (optionally `data.retry_after_seconds`) |
-| `bcc_internal` | 500 | Transient | Unhandled server error — never exposes internals |
+| `bcc_internal` / `bcc_internal_error` | 500 | Transient | Unhandled server error — never exposes internals. Both spellings are emitted (`bcc_internal_error` is the dominant one, ~47 handlers); clients MUST treat both as retryable-transient. |
 | `bcc_upstream_unavailable` | 502 | Transient | Upstream chain RPC / indexer down |
 
 **Feature-specific codes** (extend the table above; same semantics):
