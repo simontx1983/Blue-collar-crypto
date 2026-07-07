@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.28 · 2026-07-02 · Phase 1 deliverable
+**Status:** Draft v1.33 · 2026-07-07 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1871,22 +1871,23 @@ Creates an email/password account with a public handle. Mints no JWT — the acc
 
 #### `POST /bcc/v1/auth/login`
 
-First factor of the email/password login. Validates credentials, then **always** initiates an email-OTP second factor — the JWT is only minted by `/auth/2fa/verify`. Gated on email verification: accounts explicitly pending verification (`_bcc_email_verified='0'`) are blocked; legacy accounts with no flag and verified accounts are allowed.
+First factor of the password login. Validates credentials, then **always** initiates an email-OTP second factor — the JWT is only minted by `/auth/2fa/verify`. Gated on email verification: accounts explicitly pending verification (`_bcc_email_verified='0'`) are blocked; legacy accounts with no flag and verified accounts are allowed.
 
 - **Auth:** Anonymous (no token)
 - **Body:**
   ```json
-  { "email": "alice@example.com", "password": "<password>" }
+  { "identifier": "alice@example.com", "password": "<password>" }
   ```
+  `identifier` (v1.33, replaces `email`) accepts **either** the account email **or** the handle. Shape is server-detected: anything passing `is_email()` is looked up by email; everything else is treated as a handle (lowercased, one leading `@` stripped) and looked up via the same `u_<handle>` login convention signup uses. The old `email` key is **not** accepted — renamed in place pre-launch (no external consumers; frontend shipped atomically).
 - **Response 200:**
   ```json
   { "status": "2fa_required", "method": "email", "challenge_token": "<64-hex>" }
   ```
   No JWT here. The client routes to the 2FA code screen and completes `/auth/2fa/verify` with the `challenge_token` (10-min TTL) + the 6-digit code emailed to the account (5-min TTL).
-- **Errors:** `bcc_invalid_request` 422 (missing/malformed email or empty password) · `bcc_invalid_credentials` 401 (user-not-found OR wrong password — generic, anti-enumeration) · `bcc_email_not_verified` 403 · `bcc_invalid_state` 409 (account has no handle) · `bcc_rate_limited` 429
+- **Errors:** `bcc_invalid_request` 422 (missing identifier or empty password) · `bcc_invalid_credentials` 401 (user-not-found OR wrong password — generic, anti-enumeration; identical for email- and handle-shaped identifiers) · `bcc_email_not_verified` 403 · `bcc_invalid_state` 409 (account has no handle) · `bcc_rate_limited` 429
 - **Rate limit:** IP-bucketed, 5 / 60s (before the bcrypt compare)
 - **Cache:** `Cache-Control: no-store`
-- **Mapping:** reads `wp_users` by email + `wp_check_password`, reads `bcc_handle` + `_bcc_email_verified`, stores an HMAC-hashed 2FA OTP (`bcc_2fa_otp_<userId>`, 5-min transient) + challenge token (`bcc_2fa_ct_<token>`, 10-min transient), emails the code (`AuthMailer::send2faCode`), emits the `user_login_2fa_initiated` audit log. No auth cookie, no JWT. Handler `AuthEndpoint::login` (route `AuthEndpoint.php:303`). Standard envelope per §1.4.
+- **Mapping:** reads `wp_users` by email or by login (`u_<handle>` via `AuthSupport::deriveLogin`) + `wp_check_password`, reads `bcc_handle` + `_bcc_email_verified`, stores an HMAC-hashed 2FA OTP (`bcc_2fa_otp_<userId>`, 5-min transient) + challenge token (`bcc_2fa_ct_<token>`, 10-min transient), emails the code (`AuthMailer::send2faCode`), emits the `user_login_2fa_initiated` audit log. No auth cookie, no JWT. Handler `PasswordAuthController::login`. Standard envelope per §1.4.
 
 #### `POST /bcc/v1/auth/2fa/verify`
 
@@ -2053,6 +2054,18 @@ Anonymous-friendly hashtag feed — the hot feed narrowed to a single tag.
 - **Rate limit:** 60/min/IP (anon), 60/min/user (authed)
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - **Mapping:** Same `FeedRankingService` single brain (§F3) as `/feed/hot` — identical visibility gates (caution/risky shadow-limit, moderation hide, non-open group exclusion at the anonymous posture, and the global `public_all` visibility gate). The candidate set is then narrowed by `peepso_activities` → `wp_posts.post_content LIKE '%#<tag>%'` (the same substring association PeepSo uses for its `ht_count`). The narrowing predicate can only remove posts from the gated set — the tag feed never surfaces a post `/feed/hot` would not.
+
+#### `GET /bcc/v1/feed/:id`
+
+Single-activity permalink read (v1.33 backfill — shipped with the post-detail page; the route pattern is numeric-only so it never collides with `/feed/hot` / `/feed/tag`). Backs the post-detail page and quick-view modal.
+
+- **Auth:** Anonymous OR Bearer
+- **Path:** `id` (int — the raw activity id, i.e. the numeric tail of the feed's opaque `feed_<act_id>`)
+- **Response 200:** a single §3.3 `FeedItem` (bare object in the §1.4 envelope — NOT a `CursorEnvelope`), same hydration pipeline as `/feed`
+- **Errors:** `bcc_not_found` 404 — covers both "no such activity" and "not visible to this viewer" (§O4.1 caution/risky author exclusion, §K1 mutual-block invisibility, §K1-C moderation hide all collapse to 404; no existence oracle)
+- **Rate limit:** none route-specific
+- **Cache:** `Cache-Control: private, max-age=15` · `Vary: Authorization, Cookie`
+- **Mapping:** `FeedEndpoint::feedItem` → `FeedRankingService::getActivityById` (same §F3 single brain + `FeedHydrationPipeline` as the list surfaces). FE post-detail page / quick-view modal.
 
 #### Server-side group-privacy + visibility filter (applies to `/feed`, `/feed/hot`, and `/feed/tag`)
 
@@ -5336,6 +5349,22 @@ Remove the viewer's reaction. Idempotent — removing when nothing is set is a n
 - **Cache:** `no-store`.
 - **Mapping:** `ReactionsEndpoint::removeReaction` (route `ReactionsEndpoint.php:105`). FE `reaction-endpoints.ts:removeReaction`.
 
+#### `POST /bcc/v1/feed/:id/stoke` · `DELETE /bcc/v1/feed/:id/stoke`
+
+Stoke — the forge-fire engagement toggle (v1.33 backfill). X-"like" model: one stoke per person per post; POST sets it, DELETE clears it, both **idempotent**. Stoke is NOT a §2.11 reaction-kind write — it is backed by its own `wp_bcc_trust_stokes` table (`StokeRepository`), not `peepso_reactions` — but it shares the surrounding architecture: same throttle pattern, same group-privacy interaction gate as `/reactions`, same event-emission convention. **Cosmetic for trust** — never writes `bcc_trust_scores`.
+
+- **Auth:** required (in-handler). Anonymous → `bcc_unauthorized 401`.
+- **Path:** `id` (int — raw activity id, same as `GET /feed/:id`).
+- **Rate limit:** 60/min/user (key `stoke`, shared across add/remove).
+- **Response 200 (both verbs):** the post's §2.11 `ReactionState` block (`kind_grammar` / `counts` / `viewer_reaction` — carried so the frontend cache patch never drops them) **extended additively** with:
+  - `heat_stage` (int, ≥ 1) — the post's aggregate stoke heat tier
+  - `viewer_has_stoked` (bool)
+  - `stoke_count` (int) — public total
+- **Errors:** `bcc_unauthorized` 401 · `bcc_rate_limited` 429 · `bcc_invalid_request` 400 (non-positive id) · `bcc_permission_denied` 403 (group-scoped post, non-member — `GroupInteractionGate`, same posture as `/reactions`) · `bcc_internal_error` 500 (repository write failed)
+- **Side effects:** `bcc_stoke_added` / `bcc_stoke_removed` on the §A3 bus.
+- **Cache:** `no-store`.
+- **Mapping:** `StokeEndpoint::addStoke` / `removeStoke` → `StokeRepository`. FE `stoke-endpoints.ts`.
+
 #### `GET /bcc/v1/blog/chain-options`
 
 Public picker source for the §D6 composer's chain-tag multi-select. Returns active `bcc_onchain_chains` rows with only display fields (chain internals omitted).
@@ -5969,6 +5998,34 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.33 — 2026-07-07 — Login accepts email or handle (`identifier` replaces `email`)
+
+`POST /auth/login` body key renamed `email` → `identifier`; the field now
+accepts either the account email or the handle (server-detected by
+shape — `is_email()` → email lookup, otherwise handle → `u_<handle>`
+login lookup, leading `@` stripped). Anti-enumeration behaviour
+unchanged: one generic `bcc_invalid_credentials` 401 regardless of
+identifier shape or which check failed; rate limit still precedes the
+bcrypt compare.
+
+Strictly a §9 breaking rename, shipped **in place** rather than as
+`v2`: pre-launch, zero external consumers, and the sole consumer
+(bcc-frontend login page, `loginWithIdentifier`) merged atomically
+with the backend (bcc-trust #48 + bcc-frontend #12).
+
+**Also in v1.33 — §4 backfill of three shipped-but-undocumented
+routes** (surfaced by `contract-parity-guard.php` after the same
+merge; the frontend already calls all three):
+
+- **`GET /feed/:id`** — single-activity permalink read backing the
+  post-detail page / quick-view modal. Bare §3.3 `FeedItem`;
+  invisible-to-viewer collapses to `bcc_not_found` 404.
+- **`POST /feed/:id/stoke`** / **`DELETE /feed/:id/stoke`** — the
+  Stoke engagement toggle (one per person per post, idempotent both
+  verbs). Returns §2.11 `ReactionState` + additive `heat_stage` /
+  `viewer_has_stoked` / `stoke_count`. Own `wp_bcc_trust_stokes`
+  table; cosmetic for trust (no `bcc_trust_scores` writes).
 
 ### v1.32 — 2026-07-03 — Collection stances: airdrop-proof demand + scam flags (additive)
 
