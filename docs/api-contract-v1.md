@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.33 · 2026-07-07 · Phase 1 deliverable
+**Status:** Draft v1.35 · 2026-07-08 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -357,7 +357,6 @@ The single most important shared type. Encodes §N7 (always visible, disabled wi
   "permissions": {
     "can_watch":             { "allowed": true,  "unlock_hint": null },
     "can_review":           { "allowed": false, "unlock_hint": "Reach Level 2 (5 pulls + 3 Floor visits) to write reviews." },
-    "can_dispute":          { "allowed": false, "unlock_hint": "Link a wallet and reach Level 3 to sign disputes." },
     "can_vouch":            { "allowed": false, "unlock_hint": "Reach Level 2 to use the Vouch reaction." },
     "can_post_as_entity":   { "allowed": false, "unlock_hint": null },
     "can_edit_bio":         { "allowed": false, "unlock_hint": null },
@@ -371,7 +370,7 @@ The single most important shared type. Encodes §N7 (always visible, disabled wi
 
 - Every gate the viewer might *eventually* unlock is listed, even when `allowed: false`. Hidden gates teach nothing; visible gates teach the system.
 - When `allowed: false`, `unlock_hint` is a **plain-English explanation** the frontend renders verbatim as a tooltip/disabled-button helper.
-- `can_open_dispute` is the **owner vote-dispute** entry (DisputeCallout → `POST /disputes`) and mirrors the write gate exactly: page ownership only, no feature ladder (shipped 2026-06-11). It is distinct from `can_dispute`, the §J attestation-cast gate (`sign_dispute` ladder). Non-owners get `reason_code: "not_page_owner"` with no hint — the §N7 visible-gate rule applies to gates a viewer can eventually unlock, which ownership of someone else's page is not.
+- `can_open_dispute` is the **owner vote-dispute** entry (DisputeCallout → `POST /disputes`) and mirrors the write gate exactly: page ownership only, no feature ladder (shipped 2026-06-11). It is the **sole** dispute gate — the `can_dispute` §J attestation-cast gate (`sign_dispute` ladder) was a dead scaffold (no such attestation kind existed) and was retired 2026-07-08. Non-owners get `reason_code: "not_page_owner"` with no hint — the §N7 visible-gate rule applies to gates a viewer can eventually unlock, which ownership of someone else's page is not.
   - **Member self-pages (member-disputes slice, 2026-06-30):** a member is the owner of their own self-page, so on their OWN member card/profile `can_open_dispute` is `allowed: true` when they have a contestable active downvote on their self-page, else `reason_code: "no_contestable_downvote"`. Non-owners and anonymous viewers get `reason_code: "not_applicable"` (members can't dispute votes on each other — only the subject can contest a downvote on themselves, mirroring the entity owner-contests-downvote model). Ownership resolves via the zero-DB self-page identity (`page_id = ID_BASE + user_id`).
 - When `allowed: true`, `unlock_hint` is `null` (not omitted — explicit `null` so client typing is uniform).
 - When a gate is **structurally impossible** for this viewer (e.g., viewing your own card → `can_watch: false`, you can't follow yourself), `unlock_hint` is `null` and the frontend hides the action UI per §N7's "structurally impossible" carve-out (the always-visible rule applies to *gates a viewer could resolve*, not to nonsensical actions).
@@ -970,7 +969,7 @@ Locked field rules:
   ]
   ```
   `posts_7d` is the §4.7.1 activity-heat `posts_last_7d` number (already resolved by both producers — no extra query).
-- **Permissions:** the full §3.2 key set (`can_watch`, `can_review`, `can_dispute`, `can_open_dispute`, `can_endorse`, `can_post_as_entity`, `can_edit_bio`, `can_edit_image`, `can_vouch`, `can_stand_behind`, `can_report`), every entry `{ allowed: false, unlock_hint: null, reason_code: "not_applicable" }` for ALL viewers — anon and authed alike. Communities use JOIN (gated on the group detail's own `permissions.can_join`), never the card verbs; signing in unlocks nothing on the card itself, so no `signin_required` copy is emitted.
+- **Permissions:** the full §3.2 key set (`can_watch`, `can_review`, `can_open_dispute`, `can_endorse`, `can_post_as_entity`, `can_edit_bio`, `can_edit_image`, `can_vouch`, `can_stand_behind`, `can_report`), every entry `{ allowed: false, unlock_hint: null, reason_code: "not_applicable" }` for ALL viewers — anon and authed alike. Communities use JOIN (gated on the group detail's own `permissions.can_join`), never the card verbs; signing in unlocks nothing on the card itself, so no `signin_required` copy is emitted.
 - **Always-null/constant envelope fields:** `member_dossier: null`, `chains: null`, `claim_target: null`, `onchain_signals: null`, `social_proof: null`, `viewer_attestation: null`, `viewer_has_reviewed: false`, `viewer_has_endorsed: false`, `endorse_unlock_hint: null`, `is_claimed: true`.
 - **`community_dossier`** — the community-only block, mirror of how `member_dossier` works: ALWAYS present on the wire, non-null on community cards, `null` on every other kind (and `member_dossier` is `null` here). Powers the community back face (`collection_stats` replaces FlippableNftCard's bespoke stats display):
   ```json
@@ -2305,7 +2304,7 @@ Reviews this member has written (§V1.5 reviews-on-file tab), offset-paginated.
 
 #### `GET /bcc/v1/users/:handle/disputes`
 
-Disputes this member has signed (§V1.5 disputes-signed tab), offset-paginated.
+Disputes this member has **filed** (§V1.5 disputes tab), offset-paginated. A dispute is filed by a page owner contesting a downvote on a page they own; for a member, `reporter_id` = their user id (they own the self-page being defended).
 
 - **Auth:** Anonymous OR Bearer (privacy-filtered — `disputes_hidden` honored for non-self viewers)
 - **Path:** `handle`
@@ -2318,11 +2317,11 @@ Disputes this member has signed (§V1.5 disputes-signed tab), offset-paginated.
     "hidden": false
   }
   ```
-  `status` ∈ `open|resolved|dismissed` (from `bcc_trust_flags.status` 0/1/2; unknown → `open`). `subject` falls back to `"Page removed"`; `scope_label` is `PAGE` or `UNKNOWN`. Hidden behaves as reviews (`items: []`, totals `0`, `hidden: true`).
+  `status` ∈ `open|resolved|dismissed` (mapped from `bcc_disputes.status`: `reviewing`→`open`, `accepted`/`rejected`/`timeout_no_quorum`→`resolved`, `dismissed`→`dismissed`; unknown → `open`). `status_label` carries the richer real outcome (`OPEN`/`ACCEPTED`/`REJECTED`/`NOT DECIDED`/`DISMISSED`). `subject` is the disputed page title, falling back to `"Page removed"`; `scope_label` is `PAGE`. Hidden behaves as reviews (`items: []`, totals `0`, `hidden: true`).
 - **Errors:** `bcc_not_found` (handle missing)
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - **Pagination envelope:** offset (§1.5); `total_pages` is `0` on empty/hidden.
-- **Mapping:** `UserDisputesService::getDisputes` → `FlagsRepository::countByFlagger` + `findByFlagger`. Handler `UsersEndpoint::disputes` (route `UsersEndpoint.php:215`).
+- **Mapping:** `UserDisputesService::getDisputes` → `DisputeRepository::countByReporter` + `getByReporterPaginated` (live `bcc_disputes`, reporter-keyed). Handler `UsersEndpoint::disputes` (route `UsersEndpoint.php:215`). *(Was `bcc_trust_flags`/FlagsRepository — a write-dead legacy table — until 2026-07-08; the shape is unchanged.)*
 
 #### `GET /bcc/v1/users/:handle/activity`
 
@@ -4442,7 +4441,6 @@ Existing card and profile endpoints (`/bcc/v1/cards/:type/:id`, `/bcc/v1/users/:
   "permissions": {
     "can_vouch":        { "allowed": true,  "unlock_hint": null },
     "can_stand_behind": { "allowed": false, "unlock_hint": "All 5 Stand Behind slots are in use. Drop one to add this." },
-    "can_dispute":      { "allowed": false, "unlock_hint": "Reach Trusted tier to file disputes." },
     "can_report":       { "allowed": true,  "unlock_hint": null }
   }
 }
@@ -5489,20 +5487,6 @@ Reviews-tab data plane for entity profiles — reviews filed **against** this en
 - **Cache:** anon → `public, max-age=30`; authed → `private, max-age=30` + `Vary`; invalid → `private, no-store`.
 - **Mapping:** `CardReviewsEndpoint::list` (route `CardReviewsEndpoint.php:65`) → `CardReviewsService::getReviews`. FE `card-tabs-endpoints.ts:getCardReviews`.
 
-#### `GET /bcc/v1/entities/:target_kind/:target_id/disputes`
-
-Disputes-tab data plane — **open** disputes (status=0) filed against this entity. Mirrors the reviews endpoint; resolved/dismissed disputes are hidden from the entity profile. Auth-optional (§D5 public evidence).
-
-- **Auth / Path / Query:** identical to the reviews endpoint above.
-- **Response 200:**
-  ```json
-  { "items": [ { "id": 19, "body": "Misrepresented commission rate.", "posted_at_label": "1 week ago", "flagger": { "...": "MemberSummary (§3.1)" } } ], "pagination": { "page": 1, "per_page": 20, "total": 2, "total_pages": 1 } }
-  ```
-  `body` is the dispute reason; `flagger` is the opener (§3.1 `MemberSummary`; ghost-signed rows skipped).
-- **Errors:** `bcc_invalid_request` 400
-- **Cache:** identical to reviews.
-- **Mapping:** `CardDisputesEndpoint::list` (route `CardDisputesEndpoint.php:52`) → `CardDisputesService::getDisputes`. FE `card-tabs-endpoints.ts:getCardDisputes`.
-
 #### `GET /bcc/v1/entities/:target_kind/:target_id/watchers`
 
 Watchers-tab data plane — people watching this entity. Offset-paginated to match `/users/:handle/followers`. "Watchers of card X" routes through the PeepSo follower graph: card → `wp_post` → `post_author` (owner) → owner's followers. Auth-optional (the owner's `watching_hidden` flag does NOT propagate to entity pages).
@@ -5786,15 +5770,15 @@ For each view-model field, the table below names the existing BCC system that ow
 | `card_tier`, `tier_label` | Server-side mapping `reputation_tier → card_tier` (§C1), in `bcc-trust` (entity-card rarity) |
 | `rank`, `rank_label`, `current_rank_label` | Auto-derived from the feature-access **level** (`RankService::rankForLevel`: New→Apprentice, Active→Journeyman, Veteran→Master). `bcc_user_ranks` stores only conferred **Role** rows (Foreman), not earned ranks |
 | `foreman_insignia` | `bcc_user_ranks` active conferred Foreman Role row (always `false` in V1 — conferral path deferred, see §4.8) |
-| `is_in_good_standing` | `bcc-trust` derived from tier ≥ neutral AND no flags (§E1) |
-| `flags` | `bcc_trust_flags` |
+| `is_in_good_standing` | `bcc-trust` derived from tier ≥ neutral AND no moderation flags (§E1) |
+| `flags` | suspension state + `wp_usermeta` moderation flags (`bcc_shadow_limited`/`bcc_hidden`/`bcc_under_review`) via `UserViewService::resolveFlags` — NOT the retired `bcc_trust_flags` vote-flag table |
 | `bio` | PeepSo profile description |
 | `primary_local`, `locals` | `peepso_group_members` (PeepSo's membership ledger — single graph rule) joined with `wp_usermeta.bcc_primary_local_group_id` for the primary pointer; no dedicated BCC table |
 | `wallets` | `bcc_wallet_links` (existing) |
 | `counts.followers/following` | `peepso_user_followers` aggregates |
 | `counts.watching_size` | `peepso_user_followers` filtered to BCC card kinds |
 | `counts.reviews_written` | `bcc_trust_votes` aggregated |
-| `counts.disputes_signed` | `bcc_trust_flags` signers aggregated |
+| `counts.disputes_signed` | `bcc_disputes` reporters aggregated (`DisputeRepository::countByReporter(s)`) |
 | `counts.solids_given/received` | `peepso_reactions` aggregated by reaction-type ID |
 | `privacy.*` | `wp_usermeta.bcc_privacy_*` keys (new V1) |
 | `living.streak_days` | `bcc-trust` streak service (new V1, derived from `peepso_activities`) |
@@ -5997,6 +5981,43 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.35 — 2026-07-08 — Disputes reconciliation: dead `bcc_trust_flags`/`can_dispute` layer retired
+
+The 2026-07-06 audit flagged "disputes never surface on profiles." The
+cause was not a missing writer — it was **two dispute layers sharing the
+word "dispute."** The live layer (`bcc_disputes`, panel-adjudication,
+written by `POST /disputes` via `OpenDisputeModal`) worked; the profile/
+entity Disputes tabs read a *different*, write-dead legacy table
+(`bcc_trust_flags`, whose only writer was the deleted `report_vote`
+route). The fix repoints every reader/gate at the live layer and retires
+the dead one. Same vestigial-residue pattern as the v1.34 reaction/
+attestation cleanup.
+
+- **`GET /users/:handle/disputes` (§3.1):** response shape **unchanged**;
+  data source moved from `bcc_trust_flags` (write-dead → always empty) to
+  the live `bcc_disputes` reporter-keyed reads. Disputes a member filed
+  now actually appear. `status` mapping documented (`reviewing`→`open`,
+  `accepted`/`rejected`/`timeout_no_quorum`→`resolved`,
+  `dismissed`→`dismissed`); `status_label` carries the richer outcome.
+- **`counts.disputes_signed`:** now aggregated from `bcc_disputes`
+  reporters (was `bcc_trust_flags` signers, always 0).
+- **`can_dispute` removed** from member (§J.6) and card/community (§3.2,
+  §4.4) permission blocks. It was a dead scaffold — a "§J attestation
+  cast" with no attestation kind, rendering a do-nothing DISPUTE button.
+  The sole person-level negative action is now **`can_report`**;
+  vote-disputes remain owner-only via **`can_open_dispute`** (unchanged).
+- **`GET /entities/:kind/:id/disputes` route REMOVED.** The entity
+  Disputes tab is retired — its "disputes filed *against* this entity"
+  premise was the dead adversarial model (the live model is the owner
+  *defending* against a downvote). Active-dispute context for an entity
+  is already surfaced via the §J `negative_signals` summary.
+- **`bcc_trust_flags` table dropped** (guarded migration); `FlagsRepository`,
+  `CardDisputesService`/`CardDisputesEndpoint`, and the orphaned
+  `sign_dispute` feature deleted. The view-model `flags` field
+  (suspension + usermeta moderation flags) is unrelated and untouched.
+- **No new mutation, no new auth surface.** `POST /report-user` and
+  `POST /disputes` are untouched and already live.
 
 ### v1.34 — 2026-07-08 — Trust reaction grammar is `solid`-only; `vouch` is an attestation, not a reaction
 
