@@ -662,13 +662,13 @@ Appears on Feed item view-models and on Card view-models that support reactions.
 
 | `kind_grammar` | Applies to `post_kind` | Reaction kinds | Visual grammar |
 |---|---|---|---|
-| `"trust"`  | `review`, `dispute_signed`, `page_claim`, `project_drop`, `nft_drop`, `signal` | `solid`, `vouch` | restrained, intentional |
+| `"trust"`  | `review`, `dispute_signed`, `page_claim`, `project_drop`, `nft_drop`, `signal` | `solid` | restrained, intentional |
 | `"social"` | `status`, `watch_batch` (legacy `watch_batch`), `blog_excerpt` | `like`, `love`, `haha`, `wow`, `fire` | expressive, emoji-forward |
 | `"tribal"` | _(reserved — V2)_ | _(reserved — e.g. `same_wallet`, `onchain_confirm`)_ | identity-forward |
 
 `counts` always carries all kinds for the active grammar with zero-fill. The frontend never derives the kind set from `post_kind` — it reads `kind_grammar`.
 
-**Vouch confers trust (Slice 3, 2026-06-24).** The `vouch` trust reaction is not just a counter — adding it lands a light, **fixed-weight** (~10% of a top endorsement), **non-vesting** `post_vouch` endorsement on the post **author's self-page** (Architecture A — people are trust subjects). It's rank-gated (`vouch_reaction` ≥ Level 2), one-per-voucher-per-author (idempotent, anti-farm), and **ref-counted**: the endorsement persists while the voucher holds ≥1 vouch reaction on any of that author's content, and lifts when the last is removed. `solid` remains a pure lightweight ack (powers the "solids" stat); it confers no trust. The `stand_behind` **reaction** is retired (distinct from the trust-attestation-layer `stand_behind` in §J, which is unaffected).
+**`solid` is the only trust reaction; `vouch`/`stand_behind` are attestations, not reactions.** `solid` is a lightweight ack (powers the "solids" stat) and confers no trust on its own. Vouching for a person/entity is **not a post reaction** — it moved to the trust-attestation layer (§J): the byline **Vouch** toggle and the §J.6 profile actions cast a `vouch` (or `stand_behind`) *attestation* against the target's self-page via `POST /me/attestations`, and those move the trust score through `AttestationScoreSynthesis`. The `vouch` and `stand_behind` **reaction** kinds were retired when vouch relocated to the attestation layer — a `vouch` reaction on `POST /reactions` is now rejected with `bcc_invalid_request`. Do not confuse the retired reaction with the live §J attestation of the same name.
 
 **Shape (trust grammar):**
 
@@ -677,8 +677,7 @@ Appears on Feed item view-models and on Card view-models that support reactions.
   "reactions": {
     "kind_grammar": "trust",
     "counts": {
-      "solid":        14,
-      "vouch":         3
+      "solid":        14
     },
     "viewer_reaction": "solid"
   }
@@ -5328,9 +5327,9 @@ Owner blog **partial update** (§D6 PR-B). Registered as `WP_REST_Server::EDITAB
 Set / replace the viewer's reaction on a feed item. Idempotent on same-kind set; swap on different-kind. Returns the §2.11 `ReactionState` block so the response patches the feed cache directly.
 
 - **Auth:** required (in-handler). Anonymous → `bcc_unauthorized 401`.
-- **Body (JSON):** `feed_id` (string, **required**) — the opaque `feed_<act_id>` string the feed emitted (clients round-trip it; bad prefix/tail → `bcc_invalid_request`) · `reaction` (string, **required**) — a kind from `ReactionGrammarMap::allKnownKinds()` (trust: `solid|vouch`; social: `like|love|haha|wow|fire`). The kind MUST belong to the **post's** grammar (cross-grammar is rejected).
+- **Body (JSON):** `feed_id` (string, **required**) — the opaque `feed_<act_id>` string the feed emitted (clients round-trip it; bad prefix/tail → `bcc_invalid_request`) · `reaction` (string, **required**) — a kind from `ReactionGrammarMap::allKnownKinds()` (trust: `solid`; social: `like|love|haha|wow|fire`). The kind MUST belong to the **post's** grammar (cross-grammar is rejected). `vouch`/`stand_behind` are attestations (§J), not reaction kinds — sending them here returns `bcc_invalid_request`.
 - **Rate limit:** 60/min/user (key `react`).
-- **Response 200 (§2.11 `ReactionState`):** `{ "kind_grammar": "trust", "counts": { "solid": 14, "vouch": 3 }, "viewer_reaction": "solid" }` — `counts` zero-filled for the post's grammar; `viewer_reaction` kind or `null`.
+- **Response 200 (§2.11 `ReactionState`):** `{ "kind_grammar": "trust", "counts": { "solid": 14 }, "viewer_reaction": "solid" }` — `counts` zero-filled for the post's grammar; `viewer_reaction` kind or `null`.
 - **Errors:** `bcc_unauthorized` 401 · `bcc_rate_limited` 429 · `bcc_invalid_request` 400 (bad `feed_id`; cross-grammar) · `bcc_permission_denied` 403 (group-scoped post, non-member — read but not react) · `bcc_unavailable` 503 (reaction types not seeded) · `bcc_internal_error` 500 (writer failed)
 - **Side effects:** `bcc_reaction_added` on the §A3 bus (notification dispatch + first-action listener + future analytics). *(v1.28 correction: the former `post_vouch` endorsement side effect was retired with the vouch relocation — a `vouch` REACTION is engagement chrome only; the score-bearing vouch is the per-author byline toggle via `/me/attestations`.)*
 - **Cache:** `no-store`.
@@ -5965,7 +5964,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
     Returns `{items: [{id, slug, name, color, icon_url}, ...]}`
     from `ChainRepository::getActive()`. `Cache-Control: public,
     max-age=3600` (the chain registry changes rarely).
-  - `POST /reactions` accepts §D5 kinds `'solid' | 'vouch' | 'stand_behind'` (locked). Routes through bcc-core's `PeepSoReactionWriter` (single-graph rule). Throttled at 60/minute per viewer. Returns the post-mutation `{counts, viewer_reaction}` shape so the frontend patches its cache without a feed refetch. `DELETE /reactions/:feed_id` also registered. **Group-membership gate (v1.24):** a reaction on a group-scoped post (parent carries `peepso_group_id` post-meta) requires active group membership; non-members get `bcc_permission_denied 403`. Applies to both `POST /reactions` and `DELETE /reactions/:feed_id`. This mirrors the existing comment-create gate (§4.13 `POST /posts/:feed_id/comments`, which enforces the same membership requirement — note that the comment path returns `bcc_forbidden 403` for the analogous refusal).
+  - `POST /reactions` accepts the trust kind `'solid'` plus the social kinds `'like' | 'love' | 'haha' | 'wow' | 'fire'`. (`vouch`/`stand_behind` were retired as reaction kinds — they're attestations, §J.) Routes through bcc-core's `PeepSoReactionWriter` (single-graph rule). Throttled at 60/minute per viewer. Returns the post-mutation `{counts, viewer_reaction}` shape so the frontend patches its cache without a feed refetch. `DELETE /reactions/:feed_id` also registered. **Group-membership gate (v1.24):** a reaction on a group-scoped post (parent carries `peepso_group_id` post-meta) requires active group membership; non-members get `bcc_permission_denied 403`. Applies to both `POST /reactions` and `DELETE /reactions/:feed_id`. This mirrors the existing comment-create gate (§4.13 `POST /posts/:feed_id/comments`, which enforces the same membership requirement — note that the comment path returns `bcc_forbidden 403` for the analogous refusal).
   - Bonus: `DELETE /me/reviews/:id` is also live and routes through `PostsService::removeReview`.
 - **Onboarding endpoints** — all four fully wired:
   - `POST /auth/signup` — email / password / handle account creation. Rate-limited; validates handle availability; maps `db_insert_error` race conditions to `bcc_conflict`/409.
@@ -5998,6 +5997,32 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.34 — 2026-07-08 — Trust reaction grammar is `solid`-only; `vouch` is an attestation, not a reaction
+
+Naming-clarity reconciliation. The v1.29 "vouch confers trust via a
+`post_vouch` reaction" mechanism was superseded when vouch relocated to
+the trust-attestation layer (§J): the byline **Vouch** toggle and §J.6
+profile actions now cast a full `vouch` *attestation* through
+`POST /me/attestations` (scored by `AttestationScoreSynthesis`), not a
+reaction. The reaction grammar kept advertising a `vouch` kind that was
+unseeded and uncastable — the residue that made the reaction and
+attestation systems look merged. This makes the contract say what the
+code does.
+
+- **§2.11 reaction grammar:** trust kinds narrowed to `solid` (was
+  `solid, vouch`). `solid` is a lightweight ack (powers the "solids"
+  stat); it confers no trust. `vouch`/`stand_behind` are attestations
+  (§J), never reaction kinds.
+- **`POST /reactions`:** the `reaction` enum no longer accepts `vouch`
+  (or `stand_behind`) — sending either now returns `bcc_invalid_request`
+  400 (previously an unresolved `bcc_unavailable` 503). `solid` + social
+  kinds unchanged.
+- **No behaviour change to attestations.** §J vouch/stand_behind
+  attestations — the live trust-moving path — are untouched.
+- Shipped: bcc-core (`ReactionGrammarMap::TRUST_KINDS = [solid]`),
+  bcc-trust (dead `reactionVerb` branch + docblocks), bcc-frontend
+  (orphaned reaction client deleted; `TrustReactionKind = "solid"`).
 
 ### v1.33 — 2026-07-07 — Login accepts email or handle (`identifier` replaces `email`)
 
