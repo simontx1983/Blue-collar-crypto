@@ -22,16 +22,31 @@ A 6-phase agent pipeline over the code + live dev DB, **all phases completed**:
 
 ---
 
-## Remediation log — 2026-07-09
+## Remediation log — updated 2026-07-09
 
-First "high-payoff / low-effort" batch **shipped** (working tree; lint + arch-guardrails + 295 unit tests + PHPStan L8 + contract-parity all green):
+All fixes shipped as PRs (every repo `main` is branch-protected). Local gates green per PR: `php -l` + arch-guardrails + PHPUnit + PHPStan L8 + contract-parity.
+
+**Batch 1 — high-payoff / low-effort** (bcc-trust #56 + contract #31):
 
 - ✅ **[H-2] JWT revocation on credential change** — `reset_password` now bumps the token-version (revokes stolen tokens; user isn't logged in there); password *change* revokes-then-mints a fresh token and returns it (`token`/`expires_in`/`token_type`) so the legitimate session survives. Contract §`PATCH /me/account/password` updated. Files: `PasswordAuthController.php`, `MyAccountEndpoint.php`.
 - ✅ **[M] Group-rejoin gate** — `MyGroupsEndpoint::postJoin` now rejects suspended/banned accounts (`Permissions::is_not_suspended($userId, false)`, admin-bypass off) before the PeepSoGroupWriter door.
 - ✅ **[M] Creator-gallery dead branch** — `Core/Plugin.php` gate fixed `supports_feature('nft')` → `'collection'`; the async gallery refresh runs again.
-- ✅ **[M] Legacy `/endorse` throttle** — `TrustRestController::endorse` + `revoke_endorsement` now share the `attestation_cast:` 10/60 bucket with `/me/attestations` (can't dodge the limit by switching endpoints).
+- ✅ **[M] Legacy `/endorse` throttle** — `TrustRestController::endorse` + `revoke_endorsement` now share the `attestation_cast:` 10/60 bucket with `/me/attestations`.
 
-Remaining HIGH still open: [H-1] blog-draft lifecycle, [H-3] web-push SSRF, [H-4] OAuth bridge SPOF.
+**[H-1] Blog-draft lifecycle → FIXED** (bcc-trust #72) — `_bcc_activity_module='blog'` is now stamped at **creation** (draft *and* publish) in `PostsService::createBlog`, not publish-only, so a draft is loadable-for-edit / editable / publishable. Feeds are unaffected (the `peepso_activities` row is still inserted only by the publish-gated `handleBlogPostCreated`; the publish-time marker write becomes an idempotent no-op). Pinned by `BlogDraftMarkerTest`.
+
+**Bug-hunt batch** (see `backend-bug-hunt-2026-07-09.md`) — every H-B / M-B / L-B finding shipped (bcc-trust #60/#62/#63, bcc-core #18/#19); only **L-B2** left (intentional).
+
+**Round-2 bug hunt + adversarial verification** — 4 finders on the least-covered subsystems (onchain indexer/fetchers, crypto verifiers, bcc-search engine, onchain signals/gating) + 4 R5-style refuters. Crypto verifiers came back clean. **3 of 4 HIGH/MED were overturned** — the same over-claim class R5 exists to catch:
+
+- ✅ **[H3] Secret-page search leak** CONFIRMED → **FIXED** (bcc-search #6) — page search + trending filtered only `post_status='publish'`, but PeepSo page privacy is a `peepso_page_privacy=2` meta on published pages and raw `$wpdb` bypasses `WP_Query`'s `posts_clauses` filter → SECRET pages leaked to anon. Added the `pm_priv` join + `<>2` exclusion at all three page-ID sources + regression test (mirrors the existing secret-*group* exclusion).
+- ✅ **[M1] Claim-bonus mis-attribution** DOWNGRADED→LOW but **FIXED** (bcc-trust #70) — `computePageClaimBonus` credited every verified claim on a wallet-linked entity to the wallet-owner's page, so a holder's claim on a creator-linked collection inflated the **creator's** score. Rewrote attribution claimant-centric (each claim credits the claimant's own page). Product call confirmed with the operator.
+- ❌ **[H1] ERC-1155 revoke-on-outage** REFUTED — provider degradation *freezes* the persistent 1155 index positive (never zeroes), so a holder is kept, not dropped; 721-live-vs-1155-frozen both fail **safe**.
+- ❌ **[H2] Helius seen-before-ingest** REFUTED (HIGH→LOW) — Solana ownership is never read from the webhook index; gate + gallery re-derive it live via `getAssetsByOwner`. The persistent index is 1155/EVM only.
+
+**`bcc_user_ranks` writer-less [MEDIUM]** — being **CUT** on the parallel remediation lane: `UserRankRepository` + `schema-user-ranks.php` deleted, `drop-user-ranks-table.php` migration added. Confirmed vestigial — earned ranks are *derived* from feature-access level (`RankService::rankForLevel`), never persisted; the table only ever backed a conferred Foreman **role** that nothing confers.
+
+**Still open — parallel remediation lane:** [H-3] web-push SSRF (route through `SafeHttpClient`) and [H-4] OAuth bridge SPOF (request signing / nonce binding).
 
 ---
 
@@ -70,6 +85,8 @@ Scores are computed from the classified inventory + confirmed-only findings; for
 | **Documentation** | **7.0** / 10 | Strong contract + guards; drift (stale "DORMANT" label, schema-doc lists 64 tables incl. dead ones) |
 | **Overall readiness** | **6.0** / 10 | **Beta-ready, not prod-ready.** No critical (no RCE/SQLi/unauthenticated-bypass), but 4 confirmed HIGH gate launch. Min-dominated: any confirmed HIGH caps overall ≤6 until fixed |
 
+> Scores are **as-of-audit (2026-07-08)**. Since then, **2 of 4 HIGH are fixed** ([H-1] blog-draft #72, [H-2] JWT-revocation #56) and [H-3]/[H-4] are in-flight — so the security and overall-readiness figures should improve materially once the last two land. See the Remediation log for status.
+
 ---
 
 ## 3. Verified-working systems (proven by execution tracing)
@@ -86,10 +103,12 @@ Scores are computed from the classified inventory + confirmed-only findings; for
 
 ## 4. Confirmed defects (survived adversarial verification)
 
-### HIGH (4)
+> **Status (2026-07-09):** 2 of 4 HIGH fixed ([H-1] #72, [H-2] #56); [H-3]/[H-4] in-flight on the parallel remediation lane. See the Remediation log above for the full picture, including the round-2 bug-hunt fixes and refutations.
 
-- **[H-1] Blog draft lifecycle broken** — a blog post created as `status=draft` is orphaned: the `_bcc_activity_module='blog'` marker is written **only on publish** (by `ActivityStreamWriter`), but `getBlogForEdit`/`updateBlog` gate reads on that marker — so a never-published draft cannot be read-for-edit or published, and the documented "drafts included" edit path is dead. *(R2-B4; CONFIRMED)* → write the marker at draft-create time.
-- **[H-2] Password reset/change does not revoke JWTs** — only `/auth/logout-everywhere` bumps `bcc_token_version` (`SessionController.php:111`, sole caller). `reset_password` (`PasswordAuthController.php:485`) and `wp_set_password` (`MyAccountEndpoint.php:223`) don't, and `/auth/refresh` accepts tokens up to `REFRESH_GRACE_SECONDS` past `exp` — so a stolen 7-day token survives the victim's password reset and can be renewed indefinitely. *(R1-A3-1 + R4-S1; CONFIRMED)* → bump `bcc_token_version` in both handlers.
+### HIGH (4 — 2 fixed, 2 open)
+
+- **[H-1] Blog draft lifecycle broken** — a blog post created as `status=draft` is orphaned: the `_bcc_activity_module='blog'` marker is written **only on publish** (by `ActivityStreamWriter`), but `getBlogForEdit`/`updateBlog` gate reads on that marker — so a never-published draft cannot be read-for-edit or published, and the documented "drafts included" edit path is dead. *(R2-B4; CONFIRMED)* → **✅ FIXED (bcc-trust #72)** — marker now stamped at create time for draft + publish (`BlogDraftMarkerTest`).
+- **[H-2] Password reset/change does not revoke JWTs** — only `/auth/logout-everywhere` bumps `bcc_token_version` (`SessionController.php:111`, sole caller). `reset_password` (`PasswordAuthController.php:485`) and `wp_set_password` (`MyAccountEndpoint.php:223`) don't, and `/auth/refresh` accepts tokens up to `REFRESH_GRACE_SECONDS` past `exp` — so a stolen 7-day token survives the victim's password reset and can be renewed indefinitely. *(R1-A3-1 + R4-S1; CONFIRMED)* → **✅ FIXED (bcc-trust #56)** — both handlers now bump `bcc_token_version`.
 - **[H-3] Authenticated SSRF via web-push subscription URL** — the push endpoint URL is fully attacker-controlled and validated only with `FILTER_VALIDATE_URL` (no scheme/host allowlist), then fetched. *(R4-S4; CONFIRMED)* → route through `SafeHttpClient` or allowlist push-service hosts.
 - **[H-4] OAuth SSO bridge = single-secret account-takeover SPOF** — `/auth/oauth` mints a full session JWT from body-supplied `provider`/`email` with no external-token verification; the *only* gate is a static `BCC_OAUTH_BRIDGE_SECRET` (fail-closed, constant-time — correctly built). If that secret leaks, it is pre-auth takeover of **every** account by email, bypassing password + 2FA. *(R1-A3-2 + R4-S1; CONFIRMED)* → add request signing/nonce/timestamp binding; treat the secret as tier-0.
 
@@ -99,7 +118,7 @@ Scores are computed from the classified inventory + confirmed-only findings; for
 |---|---|---|
 | Onchain txns no depth-guard | 7 onchain repos + `ChallengeRepository` issue raw `START TRANSACTION` (unlike Disputes' checked helper); under DB failover the nonce `FOR UPDATE` degrades to a plain read → **nonce-replay window** | route through a checked `beginTx` helper |
 | Group rejoin by banned user | **Banned/pending user can rejoin** an open/trust-passing group via `POST /me/groups/{id}/join` — no suspension check | gate join on not-suspended |
-| Rank writer missing | `bcc_user_ranks` has **no writer** — `UserRankRepository::award/revoke` never called; read-only scaffold (0 rows) | wire the writer or cut the feature |
+| Rank writer missing | `bcc_user_ranks` has **no writer** — `UserRankRepository::award/revoke` never called; read-only scaffold (0 rows) | ✅ **being CUT** (parallel lane): repo + schema deleted, drop-migration added — ranks are derived from level, table only backed an unconferred Foreman role |
 | Helius never ran e2e | Webhook feature fully coded but **never executed end-to-end** (0 rows — subscription registration gap) | verify subscription provisioning on live keys |
 | Indexer no backfill | V2 EVM walker forward-only; first run anchors checkpoint at head−12 so **pre-existing holdings never backfilled** | one-shot backfill pass |
 | X refresh_token discarded | X OAuth requests `offline.access` but `connect()` **discards the refresh_token** → reconnection breaks | persist + use refresh_token |

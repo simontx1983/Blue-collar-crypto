@@ -14,9 +14,10 @@ None of these overlap the main report's findings.
 
 ## Remediation log — 2026-07-09
 
-Non-feed findings fixed (each re-read in code before fixing; verified php -l +
-arch-guardrails + unit tests + PHPStan L8). Feed-pipeline findings (**H-B1**, **M-B1**,
-**L-B6**) intentionally left untouched to avoid colliding with parallel feed work.
+Every finding here is now shipped except the one intentional no-op (**L-B2**). Each fix
+was re-read in code before applying; verified php -l + arch-guardrails + unit tests +
+PHPStan L8. The feed-pipeline findings (originally deferred to avoid colliding with parallel
+feed work) landed once that lane cleared.
 
 - ✅ **M-B3** (score tier) — bcc-trust PR #60
 - ✅ **M-B2** (recalc retries in one tick) — PR #60
@@ -25,7 +26,9 @@ arch-guardrails + unit tests + PHPStan L8). Feed-pipeline findings (**H-B1**, **
 - ✅ **L-B4** (holder-community double-bell) — PR #60
 - ✅ **L-B3** (block-writer race) — bcc-core PR #18
 - ✅ **L-B1** (inbox count overcount) — bcc-core PR #18
-- ⏳ **H-B1 / M-B1 / L-B6** — feed pipeline, deferred (parallel owner)
+- ✅ **H-B1** (feed group-context keyed on `act_id`) — bcc-trust PR #62
+- ✅ **M-B1** (200-follow feed cap) — bcc-core PR #19 (`filterFollowed` + 5000 whitelist cap)
+- ✅ **L-B6** (cold-start hot-feed cache-key miss) — bcc-trust PR #63 (shared `HOT_WARM_LIMIT`)
 - ➖ **L-B2** (muted-unread inconsistency) — left as-is (likely intentional)
 
 ---
@@ -143,3 +146,40 @@ deletes; `AccountRecoveryService`/mailer send-wrapper.
    user-facing state at scale.
 3. The rest are edge-triggered or cosmetic. Adversarially refute HIGH/MEDIUM before shipping,
    per the main audit's discipline.
+
+---
+
+## Round 2 (2026-07-09) — least-covered subsystems + adversarial verification
+
+A second, independent bug hunt (4 read-only finders) over the areas round 1 and the main audit
+scrutinized least — the onchain indexer + chain fetchers, the crypto signature verifiers, the
+bcc-search engine, and onchain signals/gating — followed by **4 R5-style adversarial refuters**.
+This round *did* apply the refutation discipline the triage above recommends, and it paid off:
+**3 of the 4 HIGH/MED candidates were overturned.** The crypto verifiers came back clean
+(EVM low-S enforcement, constant-time compares, chain-type from a trusted DB row).
+
+- ✅ **H3 — Secret-page search leak** (bcc-search) · CONFIRMED → **FIXED (bcc-search #6)**.
+  Page search + trending filtered only `post_status='publish'`, but a PeepSo page's privacy is a
+  `peepso_page_privacy=2` post-meta on a *published* page, and raw `$wpdb` bypasses `WP_Query`'s
+  `posts_clauses` privacy filter — so SECRET pages (name / url / score) leaked to anonymous
+  callers. Added the `pm_priv` LEFT JOIN + `<>2` exclusion at all three page-ID sources
+  (`searchCandidates` FT + title-prefix, `getFallbackPageIds`, `hydratePages`), mirroring the
+  existing secret-*group* exclusion, plus `SearchRepositoryPrivacySqlTest`. CLOSED pages stay findable.
+- ✅ **M1 — Claim-bonus mis-attribution** (bcc-trust) · DOWNGRADED→LOW but **FIXED (bcc-trust #70)**.
+  `ClaimRepository::computePageClaimBonus` summed every verified claim on any entity wallet-linked
+  to a page, with no `cl.user_id` filter — so a holder's verified claim on a creator-linked
+  collection credited the **creator's** page (the holder got nothing). Farming was cap-gated (real
+  on-chain holding + verified wallet + `UNIQUE(user,entity)` + hard +20 cap), hence LOW, but the
+  attribution was a category error. Rewrote it claimant-centric (each claim credits the claimant's
+  own page); pinned by `ClaimBonusAttributionSqlTest`.
+- ❌ **H1 — ERC-1155 revoke-on-provider-outage** · REFUTED. Provider degradation *freezes* the
+  persistent 1155 index positive (it never zeroes holdings), so a holder is retained, not revoked.
+  721-live-vs-1155-frozen both fail **safe**.
+- ❌ **H2 — Helius `markSeen` before ingest** · REFUTED (HIGH→LOW). Solana ownership is never read
+  from the webhook index — the gate and gallery re-derive it live via `getAssetsByOwner`; the
+  persistent index is 1155/EVM only. A dropped index row has no correctness impact, and the
+  always-200 endpoint means Helius never re-delivers anyway. Left as-is by design.
+
+**Lesson (again):** the "1155 outage" and "Helius permanent loss" HIGHs both rested on the
+unchecked assumption that the persistent index is the authoritative liveness source for Solana
+ownership — which the refuters disproved from code. Only the two survivors (H3, M1) were fixed.
