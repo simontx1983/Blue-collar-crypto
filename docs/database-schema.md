@@ -6,9 +6,18 @@
 >
 > The watch tables (`wp_bcc_watch_meta` / `wp_bcc_watch_batches`) and the
 > `page_follows.tier_at_watch` column were reconciled to live on 2026-06-28 after the
-> pull→watch rename; the rest of the doc remains the 2026-06-25 snapshot.
+> pull→watch rename.
+>
+> **2026-07-09 reconciliation:** the 17 legacy orphan tables were dropped from the dev
+> DB (they never had owning code; `includes/database/drop-legacy-orphans.php` already
+> auto-drops them on fresh/prod installs). The retired `wp_bcc_trust_endorsements`
+> (folded into `trust_attestations`) and `wp_bcc_trust_flags` (disputes reconciliation)
+> were removed from this inventory, and three live-but-undocumented tables
+> (`attestor_reliability_cache`, `collection_signals`, `trust_stokes`) were added. The
+> inventory now matches code-declared == live. Row counts below remain the 2026-06-25
+> snapshot unless noted.
 
-Prefix: `wp_`. Engine: InnoDB. **64** `wp_bcc_*` tables live (47 active, 17 orphan).
+Prefix: `wp_`. Engine: InnoDB. **48** `wp_bcc_*` tables live — all active; no orphans.
 
 Row counts are exact (`SELECT COUNT(*)`) for orphan candidates and ambiguous
 tables; the rest are the InnoDB `information_schema` estimate (≈), adequate for a
@@ -26,11 +35,11 @@ Repository/Service that reads it.
 | wp_bcc_trust_page_scores | 403 | Per-(page,category) aggregate score row (self-page tier lives here) | TableRegistry::scores / PageScoreRepository | Active |
 | wp_bcc_trust_score_events | 3969 | Audit trail of score/tier transitions per page | TableRegistry::scoreEvents | Active |
 | wp_bcc_trust_page_scores_velocity | 1 | Daily score-delta track per page | TableRegistry::scoreVelocity | Active |
-| wp_bcc_trust_endorsements | 2 | Endorsements toward a page (weight, vesting, status) | TableRegistry::endorsements | Active |
-| wp_bcc_trust_attestations | 9 | §J attestation layer (Vouch / Stand Behind); successor to endorsements | TableRegistry::trustAttestations / schema-trust-attestations.php | Active |
+| wp_bcc_trust_attestations | 9 | §J attestation layer (Vouch / Stand Behind); successor to the retired endorsements table | TableRegistry::trustAttestations / schema-trust-attestations.php | Active |
+| wp_bcc_attestor_reliability_cache | 4 | Nightly recompute cache of AttestationOutcomeClassifier per attestor (PK user_id); cron owns writes, reads fall back to live compute | TableRegistry::attestorReliabilityCache / schema-attestor-reliability-cache.php | Active |
+| wp_bcc_trust_stokes | 7 | One row per (act_id,user_id) stoke; feeds feed heat_stage + public stoke_count (never scores) | TableRegistry::stokes / schema-stokes.php | Active |
 | wp_bcc_trust_activity | 571 | Recent trust-action activity log (rate-limit + fraud signal) | TableRegistry::activity | Active |
 | wp_bcc_trust_activity_archive | 115 | Aged-out rows from trust_activity | TableRegistry::activityArchive | Active |
-| wp_bcc_trust_flags | 0 | Per-(vote,flagger) vote flags | TableRegistry::flags | Active |
 | wp_bcc_trust_page_flags | 0 | Public page flags (signal only, no score impact) | TableRegistry::pageFlags / schema-page-flags.php | Active |
 | wp_bcc_trust_edges | 1 | Directed trust graph edges (PageRank inputs) | TableRegistry::edges | Active |
 | wp_bcc_trust_patterns | 0 | Detected behavioral patterns per user (fraud) | TableRegistry::patterns | Active |
@@ -62,30 +71,21 @@ Repository/Service that reads it.
 | wp_bcc_onchain_signals | 3 | Unified on-chain trust signals (wallet age/tx/role boost) | schema-core.php / OnchainSignalRepository | Active |
 | wp_bcc_onchain_claims | 0 | Entity claims (incl. page claims via entity_type='page') | schema-claims.php | Active |
 | wp_bcc_onchain_collections | 314 | NFT collection metadata cache (TTL) | schema-collections.php | Active |
+| wp_bcc_collection_signals | 2 | Per-(user,collection) demand/verify stance signals (airdrop-proof demand queue) | schema-collection-signals.php / CollectionSignalRepository | Active |
 | wp_bcc_onchain_collection_pieces | 0 | Individual NFT pieces within a collection (TTL) | schema-collection-pieces.php | Active |
 | wp_bcc_onchain_validators | 3060 | Validator registry + enrichment (Cosmos/etc.) | schema-validators.php | Active |
 | wp_bcc_onchain_delegations | 0 | Per-wallet validator delegations (TTL) | schema-delegations.php | Active |
-| wp_bcc_onchain_dao_stats | 0 | (was per-wallet DAO governance stats) | none (no creator/reader) | ORPHAN — Phase 5 drop |
-| wp_bcc_onchain_treasury | 0 | (was DAO treasury holdings) | none (no creator/reader) | ORPHAN — Phase 5 drop |
 | wp_bcc_nft_holdings | 0 | Confirmed NFT holdings per wallet link | schema-nft-holdings.php | Active |
 | wp_bcc_nft_spam_contracts | 0 | NFT spam contract allow/deny rules | schema-nft-spam-contracts.php | Active |
 | wp_bcc_user_nft_selections | 2 | User-curated NFT showcase selections | schema-nft-selections.php | Active |
 | wp_bcc_helius_seen_signatures | 0 | Solana Helius webhook dedup (seen signatures) | schema-helius-seen-signatures.php | Active |
-| wp_bcc_user_locals | 0 | (was Locals membership ledger) | none (removal comment) | ORPHAN — Phase 5 drop |
-| wp_bcc_page_claims | 0 | (was page-claim ledger) | none (removal comment) | ORPHAN — Phase 5 drop |
-| wp_bcc_wallet_signals | 0 | (was wallet trust signals) | none (removal comment) | ORPHAN — Phase 5 drop |
-| wp_bcc_trust_eligibility | 0 | (was vote-eligibility cache) | none (removal comment) | ORPHAN — Phase 5 drop |
-| wp_bcc_trust_user_risk | 0 | (was per-user risk summary) | none (removal comment) | ORPHAN — Phase 5 drop |
-| wp_bcc_endorsement_types | 5 | (was endorsement type catalog) | none | ORPHAN — Phase 5 drop |
-| wp_bcc_trust_endorsement_types | 5 | (was endorsement type catalog, dup) | none | ORPHAN — Phase 5 drop |
-| wp_bcc_project_identities | 0 | (was project identity links) | none (stale installer) | ORPHAN — Phase 5 drop |
-| wp_bcc_project_scores | 0 | (was project score rows) | none (stale installer) | ORPHAN — Phase 5 drop |
-| wp_bcc_project_metrics_history | 0 | (was project metric history) | none (stale installer) | ORPHAN — Phase 5 drop |
-| wp_bcc_project_verifications | 0 | (was project verifications) | none (stale installer) | ORPHAN — Phase 5 drop |
-| wp_bcc_trust_page_composites | 0 | (was page composite scores) | none (stale installer) | ORPHAN — Phase 5 drop |
-| wp_bcc_trust_page_identities | 0 | (was page identity links) | none (stale installer) | ORPHAN — Phase 5 drop |
-| wp_bcc_trust_page_metrics | 0 | (was page metric history) | none (stale installer) | ORPHAN — Phase 5 drop |
-| wp_bcc_trust_page_verifications | 0 | (was page verifications) | none (stale installer) | ORPHAN — Phase 5 drop |
+
+> The 17 legacy orphan tables previously listed here (`onchain_dao_stats`,
+> `onchain_treasury`, `user_locals`, `page_claims`, `wallet_signals`,
+> `trust_eligibility`, `trust_user_risk`, `endorsement_types`,
+> `trust_endorsement_types`, and the six `project_*` / `trust_page_*` pre-self-page
+> tables) were dropped 2026-07-09. They had no owning code; see
+> `includes/database/drop-legacy-orphans.php`.
 
 ---
 
@@ -157,20 +157,9 @@ Daily score-delta per page (velocity tracking).
 - score_delta · decimal(8,4) · NO
 - Indexes: PRIMARY (page_id,track_date) [uq]; idx_date (track_date)
 
-#### wp_bcc_trust_endorsements
-Endorsements toward a page (weight, vesting, status).
-- id · bigint unsigned · NO · PK auto
-- endorser_user_id · bigint unsigned · NO · K
-- page_id · bigint unsigned · NO · K
-- context · varchar(50) · NO
-- endorsement_type_id · bigint unsigned · YES · K (FK → now-orphan type catalog)
-- weight / base_weight · decimal(5,2) · NO
-- vesting_stage · tinyint unsigned · NO · K
-- fraud_score_at_endorsement · tinyint unsigned · NO
-- reason · text · YES
-- status · tinyint · NO
-- created_at · datetime · NO
-- Indexes: PRIMARY (id) [uq]; unique_endorsement (endorser_user_id,page_id,context) [uq]; idx_page_endorsements (page_id,status,created_at); idx_page_endorser (page_id,endorser_user_id,status); idx_endorser_history (endorser_user_id,created_at); idx_vesting (vesting_stage,status,created_at); fk_endorsement_type (endorsement_type_id)
+#### wp_bcc_trust_endorsements — RETIRED (2026-07-02)
+Folded into `wp_bcc_trust_attestations` (kind=`vouch`); dropped by
+`includes/database/drop-endorsements-table.php`. Column detail removed.
 
 #### wp_bcc_trust_attestations
 §J attestation layer (Vouch / Stand Behind); generalized successor to endorsements.
@@ -198,17 +187,9 @@ Recent trust-action log (rate-limit + fraud signal); archive holds aged-out rows
 - Indexes (activity): PRIMARY (id) [uq]; idx_user (user_id); idx_action (action); idx_action_created (action,created_at); idx_user_action_date (user_id,action,created_at); idx_target (target_type,target_id); idx_ip_created / idx_ip_lookup (ip_address,created_at); idx_created (created_at).
 - Indexes (archive): PRIMARY (id); idx_user; idx_action; idx_target; idx_ip_lookup (ip_address,created_at); idx_created (created_at); idx_archive_created (created_at).
 
-#### wp_bcc_trust_flags
-Per-(vote,flagger) vote flags.
-- id · bigint unsigned · NO · PK auto
-- vote_id · bigint unsigned · NO · K
-- flagger_user_id · bigint unsigned · NO · K
-- reason · varchar(100) · NO
-- status · tinyint · NO · K
-- resolved_by · bigint unsigned · YES
-- resolved_at · datetime · YES
-- created_at · datetime · NO
-- Indexes: PRIMARY (id) [uq]; unique_vote_flagger (vote_id,flagger_user_id) [uq]; idx_vote (vote_id); idx_flagger (flagger_user_id); idx_status (status)
+#### wp_bcc_trust_flags — RETIRED (2026-07-08)
+Write-dead vote-flag table; disputes now live in `wp_bcc_disputes` (Domain/Disputes).
+Dropped by `includes/database/drop-trust-flags-table.php`. Column detail removed.
 
 #### wp_bcc_trust_page_flags
 Public page flags (signal only, no score impact).
@@ -706,11 +687,12 @@ Web-push VAPID subscriptions per user/device.
 
 ---
 
-## Orphan tables (scheduled Phase 5 drop)
+## Orphan tables — DROPPED 2026-07-09 (historical record)
 
-All 14 have **zero active reads/writes in current plugin code**. Each is flagged
-**drop via guarded migration in Phase 5 after prod-empty confirmation** (verify the
-prod row count is 0 before dropping — dev counts below).
+All 17 had **zero reads/writes in current plugin code**. `drop-legacy-orphans.php`
+(`add_action('init', …, 26)`) drops them on fresh/prod installs; they were removed
+from the dev DB manually on 2026-07-09. The rationale table below is kept as a record
+of what each table was and why it was retired — dev row counts are pre-drop.
 
 | Table | rows (dev) | Why orphaned |
 |---|---|---|
