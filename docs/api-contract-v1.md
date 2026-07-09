@@ -3878,9 +3878,9 @@ Change the user's WordPress email. Body `{ "current_password": "...", "email": "
 
 #### `PATCH /bcc/v1/me/account/password` (V2 Phase 2.5)
 
-Change password. Body `{ "current_password": "...", "password": "..." }`. New password ≥ 10 chars (server-enforced). Server calls `wp_set_password` (which destroys all session tokens) and immediately re-issues the current session's auth cookie so the user is not kicked out mid-flow.
+Change password. Body `{ "current_password": "...", "password": "..." }`. New password ≥ 10 chars (server-enforced). Server calls `wp_set_password` (which destroys all session tokens) and immediately re-issues the current session's auth cookie so the user is not kicked out mid-flow. It also bumps the per-user JWT token-version (revoking every outstanding bearer token, the bearer analogue of the session-token wipe) and mints a **fresh token** for the current session, returned below — bearer clients must swap to it.
 
-- **Response 200:** `{ "ok": true }`
+- **Response 200:** `{ "ok": true, "token": "<jwt>", "expires_in": 604800, "token_type": "Bearer" }`
 
 #### `DELETE /bcc/v1/me/account` (V2 Phase 2.5)
 
