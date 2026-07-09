@@ -1417,7 +1417,8 @@ promoting it to a tier-affecting recovery signal is a deliberate follow-up.
 
 The bonus is observable to operators via the `contribution_recovery`
 DegradationMetric subsystem; no `Contribution Score` is ever rendered to
-users (identity stays Rank · Trust Tier · Role — see glossary §1).
+users (identity stays Rank · Trust Tier — see glossary §1; the Foreman
+Role was retired unbuilt in contract v1.36).
 
 ---
 
