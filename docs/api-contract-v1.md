@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.36 · 2026-07-09 · Phase 1 deliverable
+**Status:** Draft v1.37 · 2026-07-09 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2703,7 +2703,7 @@ Join a Local. The join/leave verb is `/membership` — same path, two methods.
     }
   }
   ```
-- **Errors:** `bcc_unauthorized`, `bcc_conflict` (already a member), `bcc_rate_limited`
+- **Errors:** `bcc_unauthorized`, `bcc_forbidden` (403 — account suspended "Your account is suspended.", or the Local does not accept open membership), `bcc_conflict` (already a member), `bcc_rate_limited`
 - **Rate limit:** 10/hour/user
 - **Mapping:** PeepSo group join + `bcc_user_locals` insert. Emits `bcc_local_joined` (§A3 async).
 
@@ -2830,19 +2830,22 @@ Explicit user-initiated join. Verifies eligibility server-side, clears any activ
   ```
   `code` ∈ `ok` | `already_member` (idempotent re-join). Both are 200; the code distinguishes the side effect.
 - **Errors:**
+  - `bcc_forbidden` (403) — account suspended ("Your account is suspended."). Holding the NFT is the eligibility gate, not an override of moderation; admin bypass off.
   - `bcc_invalid_request` (400) — group is not a holder group
   - `bcc_permission_denied` (403) with `unlock_hint`:
     - opt-out cooldown active: "You opted out of this community recently. Try again later or rejoin from the discovery page."
     - holder check failed: "Hold a `<CollectionName>` NFT to join this community." (or "Hold at least N NFTs from this collection..." for `min_balance > 1`)
   - `bcc_internal_error` (503) — chain unsupported (transient infra issue)
   - `bcc_upstream_unavailable` (503) — the chain provider could not verify NFT
-    ownership (timeout / 429 / circuit-breaker open / malformed response).
+    ownership (timeout / 429 / circuit-breaker open / malformed response), OR
+    the membership write itself failed / was refused (PeepSo unavailable, or
+    the writer refused a banned membership row — v1.37).
     Transient; retry with backoff. The join **fails closed** — the user is NOT
     added when ownership can't be confirmed, so an outage never grants access.
     (Mirrors the §J read-time 503 precedent; the §1.4.6 standard-codes table
     lists this code at 502, but holder-gating emits 503 — both are valid for
     this code.)
-- **Mapping:** `NftGroupGateService::joinIfEligible` → `PeepSoGroupWriter::join` (which fires `peepso_action_group_user_join` and recomputes `peepso_group_members_count`). A provider-verification failure short-circuits to `bcc_upstream_unavailable` before any join write.
+- **Mapping:** `NftGroupGateService::joinIfEligible` → `PeepSoGroupWriter::join` (which fires `peepso_action_group_user_join` and recomputes `peepso_group_members_count`). A provider-verification failure short-circuits to `bcc_upstream_unavailable` before any join write; a `false` writer return maps to the same code (fail-closed, opt-out untouched, no audit row).
 
 #### `POST /bcc/v1/me/holder-groups/:id/leave`
 
@@ -2944,12 +2947,14 @@ For non-gated, non-Local PeepSo groups (the residual case: user/system groups cr
 - **Auth:** Bearer (401 anonymous)
 - **Response 200:** `{ "joined": true, "group_id": 4231 }`
 - **Errors:**
+  - `bcc_forbidden` (403) — account suspended ("Your account is suspended."). Checked before everything else; admin bypass off — a suspended account is blocked regardless of role.
   - `bcc_invalid_request` (404) — group not found
   - `bcc_invalid_request` (400) — group is a holder group or Local; use the dedicated endpoint
   - `bcc_permission_denied` (403):
     - `closed` group: "This community requires admin approval. Visit the group page to request access."
     - `secret` group: "This community is invite-only."
-- **Mapping:** Resolves `GroupContext`; if `type` is `nft` or `local` rejects (use the dedicated endpoint); for `open` groups calls `PeepSoGroupWriter::join`. Closed/secret are not joined here — PeepSo's request-flow / invitation machinery is not replicated by this endpoint.
+  - `bcc_unavailable` (503) — the membership write failed or was refused (PeepSo unavailable, or the writer refused a banned membership row). Fail-closed; nothing was joined. Same surface as the Locals join.
+- **Mapping:** Resolves `GroupContext`; if `type` is `nft` or `local` rejects (use the dedicated endpoint); for `open` groups calls `PeepSoGroupWriter::join` and honors its verdict — a `false` return is surfaced as `bcc_unavailable`, never as `joined: true`. Closed/secret are not joined here — PeepSo's request-flow / invitation machinery is not replicated by this endpoint.
 
 #### `POST /bcc/v1/me/groups/:id/leave`
 
@@ -5439,7 +5444,7 @@ Create a plain (non-gated, non-Local) PeepSo group owned by the viewer. (Join/le
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized 401`.
 - **Body (JSON):** `name` (**required**, 3–100 chars) · `description` (optional, ≤ 2000, `wp_kses_post`) · `privacy` (optional, default `open`) ∈ `open|closed|secret|trust` (→ PeepSo 0/1/2; `trust` = open + a BCC reputation gate at join) · `trust_min` (**required when `privacy=trust`**) ∈ `25|50|75` · `chain` (**required**) — chain-tag slug, immutable after creation, validated via `ChainRepository::getBySlug`.
 - **Response 201:** `{ "group_id": 5120, "slug": "evm-builders", "name": "EVM Builders", "privacy": "trust", "chain_tag": "ethereum", "trust_min": 50 }` (`trust_min` echoes the threshold for `privacy=trust`, else `null`).
-- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (name length, description > 2000, missing/unknown chain, `trust` without valid `trust_min`) · `bcc_rate_limited` 429 (5/hour/user) · `bcc_internal_error` 500
+- **Errors:** `bcc_unauthorized` 401 · `bcc_forbidden` 403 (account suspended — "Your account is suspended.", admin bypass off) · `bcc_invalid_request` 400 (name length, description > 2000, missing/unknown chain, `trust` without valid `trust_min`) · `bcc_rate_limited` 429 (5/hour/user) · `bcc_internal_error` 500
 - **Rate limit:** 5/hour/user (`group_create:{user_id}`)
 - **Cache:** `no-store`.
 - **Mapping:** `MyGroupsEndpoint::postCreate` (route `MyGroupsEndpoint.php:75`) → `PeepSoGroupWriter::createPlainGroup`; emits `group_create` audit. FE `my-groups-endpoints.ts:createPlainGroup`.
@@ -5970,6 +5975,39 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.37 — 2026-07-09 — Suspension-gate parity on all group-membership writes
+
+The 2026-07-08 audit's "group rejoin" MEDIUM was fixed for
+`POST /me/groups/:id/join` (bcc-trust PR #56): the join is gated on
+`Permissions::is_not_suspended(userId, false)` — 403 `bcc_forbidden`, admin
+bypass off. This entry documents that gate (omitted from the contract when
+it shipped) and extends the same gate to the sibling membership-write doors
+that were still open. Additive error case only; no response-shape changes.
+
+- **`POST /me/groups/:id/join` (§4.7.3):** documents the already-shipped
+  suspension 403.
+- **`POST /me/locals/:id/membership` (§4.7.x):** suspension 403 added; the
+  entry now also documents the existing `bcc_forbidden` for a non-open
+  Local (shipped with the trust#54 join gate).
+- **`POST /me/holder-groups/:id/join` (§4.7.1):** suspension 403 added —
+  holding the NFT is eligibility, not an override of moderation.
+- **`POST /me/groups` create (§4.7.3):** suspension 403 added — a
+  suspended account cannot create communities (it would land as
+  `member_owner` of a brand-new group).
+- **Auto-join reconcile** (`PATCH /me/holder-groups/preferences` immediate
+  reconcile + the cron sweep) now skips suspended users server-side.
+  Response shape unchanged (`reconciled` reports zeros).
+- **bcc-core `PeepSoGroupWriter::join`** now refuses to upgrade an
+  existing `gm_user_status='banned'` row (returns `false` instead of
+  silently flipping a group-level ban back to `member`). Defense-in-depth:
+  no BCC surface can currently create a group-level ban, but the invariant
+  is now enforced centrally for every present and future join door.
+- **Writer verdict honored everywhere:** `POST /me/groups/:id/join` gains
+  a `bcc_unavailable` 503 case and `POST /me/holder-groups/:id/join` folds
+  writer refusal into its existing `bcc_upstream_unavailable` 503 — the two
+  callers that previously ignored the writer's return no longer report
+  `joined: true` for a write that didn't happen.
 
 ### v1.36 — 2026-07-09 — Conferred-Foreman **Role** scaffolding retired (never built)
 
