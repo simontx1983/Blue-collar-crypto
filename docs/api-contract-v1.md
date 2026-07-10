@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.36 · 2026-07-09 · Phase 1 deliverable
+**Status:** Draft v1.37 · 2026-07-09 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -523,7 +523,7 @@ Encodes §N11. Appears on the **own** User view-model (not on others' profiles).
 
 - Rank mirrors the feature-access **level** (Apprentice=New, Journeyman=Active, Master=Veteran), so `next_rank_thresholds` is exactly the next level's gate from §2.6 `next_level_thresholds`: **Apprentice → Journeyman** = `pulls` (≥5); **Journeyman → Master** = `reviews_written` (≥3) + `days_active` (≥30).
 - `next_rank` is `null` when the user is at the top of the earned ladder (Master) — `next_rank_thresholds` is then `[]`.
-- The Foreman **Role** never appears here — it is orthogonal to Rank (surfaced via `foreman_insignia`, see §4.8), not a step above Master.
+- Master is the top of the earned ladder — there is no rung above it. (The conferred Foreman **Role** is retired for V1; see §4.8.)
 - The frontend renders the `current/required` ratio for each threshold as a progress bar.
 - `trust_score_recent_changes` is the most recent 5 reputation events (sorted desc by `at`). Reason strings are plain English, ≤ 80 chars. (Trust score drives the *Tier* axis, not Rank — it's surfaced here only as recent-activity context.)
 - `quests` is the §N11 completion checklist and the earned **vote-weight multiplier** (`multiplier`, 1.00–1.30) it grants — the value `VoteWeightCalculator` applies to the operator's votes at cast time. `items` is a stable-ordered list (the quest catalogue order), each with `done` and the `weight_bonus` that quest contributes. `pct` is `round(completed_count / total_count × 100)`. Own-only, like the rest of the block. Copy is descriptive per §2.7 — the frontend never renders a prescriptive "complete this" nudge.
@@ -822,10 +822,10 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
 
 **Field rules:**
 
-- `trust_score`, `reputation_tier`, `reputation_tier_label`, `card_tier`, `tier_label`, `rank`, `rank_label`, `current_rank_label`, `foreman_insignia`, `is_in_good_standing`, `flags` — all derived per §A4 by `bcc-trust`. Frontend renders, never derives.
+- `trust_score`, `reputation_tier`, `reputation_tier_label`, `card_tier`, `tier_label`, `rank`, `rank_label`, `current_rank_label`, `is_in_good_standing`, `flags` — all derived per §A4 by `bcc-trust`. Frontend renders, never derives.
 - `card_tier` follows §C1 mapping: `elite → legendary`, `trusted → rare`, `neutral → uncommon`, `caution → common`, `risky → null` (hidden from card UI per §C1). This is **entity-card rarity** vocabulary.
 - `reputation_tier_label` is the **honest member trust-tier name** (the chip a human reads): `risky → "Risky"`, `caution → "Caution"`, `neutral → "Neutral"`, `trusted → "Trusted"`, `elite → "Proven"`. Distinct from `card_tier`/`tier_label` rarity — a *caution* member must not read as "Common". Always present on member surfaces.
-- `current_rank_label` is the pre-rendered §A2 label for the level-derived **Rank** (`rank_label`'s display string; e.g. `"Master"`). `foreman_insignia` is a boolean — `true` iff the member holds the conferred Foreman **Role** (orthogonal to Rank; see §4.8). Both are member-axis fields; `foreman_insignia` is always `false` for non-member kinds.
+- `current_rank_label` is the pre-rendered §A2 label for the level-derived **Rank** (`rank_label`'s display string; e.g. `"Master"`). It is a member-axis field.
 - `flags` is an array of short slugs; if non-empty, the frontend may render moderation chips. V1 codes: `suspended`, `shadow_limited`, `hidden`, `under_review`.
 - Hidden privacy fields (per `privacy.*_hidden: true`) cause the corresponding sections in `counts`, `wallets`, etc. to either be omitted or zeroed depending on the viewer's relationship — server decides, client doesn't.
 - `cover_photo_url` is `null` when no custom cover photo is set; the frontend renders a default treatment in that case. URL is absolute (per §1.7) and points at PeepSo's stored cover image. Self-edits go through `PATCH /me/profile/cover` (multipart upload) — see §V2 Phase 2 endpoints.
@@ -851,7 +851,6 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
   "tier_label": "Legendary",
   "rank_label": null,
   "current_rank_label": null,
-  "foreman_insignia": false,
   "is_in_good_standing": true,
   "flags": [],
   "is_claimed": true,
@@ -880,7 +879,6 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
 - `chains` (per §K3) — list of `CardChain` objects when 2+ chains back the same page; `null` otherwise. V1.5 validator-only; creator gallery filter is V2.
 - `rank_label` — **populated on `member` cards** (the level-derived Rank label — Apprentice/Journeyman/Master — via `UserViewService::getSummary`); may be `""` when the member has no derived rank yet. `null` on page kinds (`validator`/`project`/`creator`) — Rank is member-only. The field is always present (the union is `string | null`). `current_rank_label` mirrors it (own/profile surfaces).
 - `reputation_tier_label` — **honest member trust-tier name** (Risky/Caution/Neutral/Trusted/Proven). Populated on `member` cards; `null` on page kinds (entity cards use `card_tier`/`tier_label` rarity instead). Always present (`string | null`).
-- `foreman_insignia` — boolean, `true` iff the member holds the conferred Foreman **Role** (see §4.8). `false` on page kinds and on members without the role. The Role is orthogonal to Rank — it is never folded into `rank_label`.
 - `member_dossier` — **non-null object on `member` cards, `null` on page kinds** (always present for shape uniformity, like `chains`). Carries the back-of-card signal blocks the `/members`, watchers, and followers/following lists previously emitted as a bare `MemberSummary`. Server-composed from the same `UserViewService::getSummary` resolution (no parallel query). Shape:
   ```json
   "member_dossier": {
@@ -2155,7 +2153,7 @@ Full User view-model.
   - Identity fields ← `wp_users` + `wp_usermeta.bcc_handle`
   - `trust_score`, `reputation_tier`, `card_tier`, `rank`, `is_in_good_standing`, `flags` ← `bcc-trust` services (§A4)
   - `living` ← derived from `peepso_activities` + `bcc_trust_score_events` (§A4 owns)
-  - `progression` ← `bcc_user_ranks` + `bcc-trust` threshold service
+  - `progression` ← `bcc-trust` level + threshold service (rank auto-derived from feature-access level; §4.8)
   - `feature_access` ← `bcc-trust` feature-access service (§O5)
   - `wallets` ← `bcc_wallet_links`
   - `primary_local`, `locals` ← `bcc_user_locals` (joined to `peepso_groups`)
@@ -2841,7 +2839,7 @@ Explicit user-initiated join. Verifies eligibility server-side, clears any activ
   - `bcc_upstream_unavailable` (503) — the chain provider could not verify NFT
     ownership (timeout / 429 / circuit-breaker open / malformed response), OR
     the membership write itself failed / was refused (PeepSo unavailable, or
-    the writer refused a banned membership row — v1.36).
+    the writer refused a banned membership row — v1.37).
     Transient; retry with backoff. The join **fails closed** — the user is NOT
     added when ownership can't be confirmed, so an outage never grants access.
     (Mirrors the §J read-time 503 precedent; the §1.4.6 standard-codes table
@@ -3043,15 +3041,14 @@ Cross-kind discovery list. Sort key: `verified DESC, heat_score DESC, member_cou
 
 The rank catalog and the viewer's current rank.
 
-**Identity is three orthogonal axes (locked 2026-06-22):** **Rank** (this
-endpoint's earned ladder), **Trust Tier** (`reputation_tier` / new
-`reputation_tier_label`, see §3.2), and **Role** (Foreman). A member holds
-one value on each axis, independently. **Rank mirrors the feature-access
-level** (§2.6): `apprentice = New`, `journeyman = Active`, `master = Veteran`
-— earned from activity, **not** from reputation tier. **Foreman is a conferred
-Role, not a rank**: it is NOT in the `ranks` catalog and never appears as
-`current_rank`; it surfaces only via `viewer.foreman_insignia`. Reaching
-`master` does not confer it.
+**Identity is two orthogonal axes (v1.36):** **Rank** (this endpoint's
+earned ladder) and **Trust Tier** (`reputation_tier` / `reputation_tier_label`,
+see §3.2). A member holds one value on each axis, independently. **Rank mirrors
+the feature-access level** (§2.6): `apprentice = New`, `journeyman = Active`,
+`master = Veteran` — earned from activity, **not** from reputation tier. Rank is
+**fully auto-derived**; there are no conferred-Role fields on this endpoint.
+(The conferred Foreman **Role** — locked as a third axis on 2026-06-22 — was
+never given a conferral path and is retired for V1; see the note below.)
 
 - **Auth:** Anonymous OR Bearer
 - **Response 200:**
@@ -3067,44 +3064,35 @@ Role, not a rank**: it is NOT in the `ranks` catalog and never appears as
       "current_rank_label": "Journeyman",
       "auto_derived_rank": "journeyman",
       "next_rank": "master",
-      "next_rank_label": "Master",
-      "is_admin_conferred": false,
-      "foreman_insignia": false
+      "next_rank_label": "Master"
     }
   }
   ```
 - **Cache:** `Cache-Control: public, max-age=300`
 - **Mapping:** Static rank catalog from `RankCatalog::all()` (the three earned
-  rungs only — Foreman is a Role, excluded). `viewer.*` from
-  `RankService::getViewerBlock()`. `current_rank` / `auto_derived_rank` are the
-  **level-derived** earned rank and are always equal in V1 (no demotion path).
-  `next_rank` / `next_rank_label` are `null` at `master` (top of the ladder).
-  `foreman_insignia` is `true` iff the user holds an active conferred Foreman
-  role row in `bcc_user_ranks`; it never changes `current_rank`. `is_admin_conferred`
-  is `true` iff any conferred Role row is active (today only Foreman), kept for
-  future-build readiness.
+  rungs only). `viewer.*` from `RankService::getViewerBlock()`. `current_rank` /
+  `auto_derived_rank` are the **level-derived** earned rank and are always equal
+  in V1 (no demotion path). `next_rank` / `next_rank_label` are `null` at
+  `master` (top of the ladder). The viewer block carries no conferred-Role
+  fields — Rank is fully level-derived.
 
-#### Foreman role + admin-conferral REST surface — deferred (V1 ships auto-derivation only)
+#### Rank is fully auto-derived — conferred Foreman **Role** retired (v1.36)
 
-V1 contract previously documented `POST /admin/ranks/award` and
-`DELETE /admin/ranks/:rank/:user_id` for admin-conferred ranks. Those
-endpoints were never registered in `register_rest_route` and have no
-frontend caller. V1 **Rank** is **fully auto-derived** from feature-access
-level by [`RankProgressionListener`](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/RankProgressionListener.php),
-which fires `bcc_rank_awarded` on real promotions; admin override is
-not a V1 capability.
+V1 **Rank** is **fully auto-derived** from feature-access level by
+[`RankProgressionListener`](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/RankProgressionListener.php),
+which fires `bcc_rank_awarded` on real promotions. There is no admin-conferral
+path: the contract once documented `POST /admin/ranks/award` and
+`DELETE /admin/ranks/:rank/:user_id`, but those endpoints were never registered
+in `register_rest_route` and had no frontend caller (parity guard correctly
+flagged them as documenting endpoints that don't exist).
 
-The **Foreman Role** conferral path (admin assigns/revokes the role, panel
-powers) is a later slice — see the roadmap. Until it ships:
-- `foreman_insignia` in `GET /ranks` is in the contract but always `false`
-  in V1 (no path sets a conferred role row).
-- `is_admin_conferred` is likewise always `false` in V1.
-- The read-side artifacts are kept for future-build readiness.
-
-When admin-conferral becomes a real feature, the REST surface gets
-designed against the contract at that point — not resurrected from
-this retracted spec, which the parity guard correctly flagged as
-documenting endpoints that don't exist.
+The **Foreman Role** was locked as a third identity axis on 2026-06-22 (v1.28)
+with read-side placeholders (`foreman_insignia`, `is_admin_conferred`), but a
+conferral path was never built — the fields were always `false`. In v1.36 the
+scaffolding is **retired**, not deferred: the read artifacts and the dropped
+`bcc_user_ranks` table are gone, and the viewer block carries no conferred-Role
+fields. If a role/moderator-authority concept is wanted later, it is designed
+fresh against the contract at that point — not resurrected from this spec.
 
 ### 4.9 Directory (§G1 / §G2)
 
@@ -5773,8 +5761,7 @@ For each view-model field, the table below names the existing BCC system that ow
 | `reputation_tier` | `bcc-trust` `ReputationCalculatorService` |
 | `reputation_tier_label` | Server-side mapping `reputation_tier → honest label` (`ReputationTierMap::TIER_LABEL`; elite → "Proven") — the member trust chip, distinct from `card_tier` rarity |
 | `card_tier`, `tier_label` | Server-side mapping `reputation_tier → card_tier` (§C1), in `bcc-trust` (entity-card rarity) |
-| `rank`, `rank_label`, `current_rank_label` | Auto-derived from the feature-access **level** (`RankService::rankForLevel`: New→Apprentice, Active→Journeyman, Veteran→Master). `bcc_user_ranks` stores only conferred **Role** rows (Foreman), not earned ranks |
-| `foreman_insignia` | `bcc_user_ranks` active conferred Foreman Role row (always `false` in V1 — conferral path deferred, see §4.8) |
+| `rank`, `rank_label`, `current_rank_label` | Auto-derived from the feature-access **level** (`RankService::rankForLevel`: New→Apprentice, Active→Journeyman, Veteran→Master). Fully level-derived — no conferred-Role rows (§4.8) |
 | `is_in_good_standing` | `bcc-trust` derived from tier ≥ neutral AND no moderation flags (§E1) |
 | `flags` | suspension state + `wp_usermeta` moderation flags (`bcc_shadow_limited`/`bcc_hidden`/`bcc_under_review`) via `UserViewService::resolveFlags` — NOT the retired `bcc_trust_flags` vote-flag table |
 | `bio` | PeepSo profile description |
@@ -5802,7 +5789,7 @@ For each view-model field, the table below names the existing BCC system that ow
 | `name`, `handle` | `peepso_pages.name` + slug |
 | `chain` | `peepso_page` meta (existing AbstractPageType) |
 | `trust_score`, `reputation_tier`, `card_tier`, `tier_label`, `is_in_good_standing`, `flags` | `bcc_page_read_model` (denormalized read model, §A4) |
-| `rank_label` | `null` for V1 entity cards (members only have ranks); for member cards, mapped from `bcc_user_ranks` |
+| `rank_label` | `null` for V1 entity cards (members only have ranks); for member cards, auto-derived from the feature-access **level** (`RankService::rankForLevel`; §4.8) |
 | `is_claimed` | `peepso_pages.claimed_by IS NOT NULL` (new V1 column, per §B5) |
 | `claimed_by_handle` | JOIN to `wp_usermeta.bcc_handle` |
 | `crest` | `peepso_pages` meta + AbstractPageType convention |
@@ -5843,7 +5830,6 @@ The following schema additions are **referenced but not implemented** by Phase 1
 - `bcc_onchain_claims.recovery_pending` — new column on the EXISTING `bcc_onchain_claims` table for §B5 page-claim recovery (no new table; entity_type='page' for page claims, single-claim-wins via existing `ClaimRepository::createExclusiveClaim()` advisory lock)
 - `bcc_photo_alts` — `(pho_id, owner_id, alt_text, updated_at)` (v1.5 §3.3.9 / §4.18; sidecar to `peepso_photos`, PK = `pho_id`, BCC-owned so PeepSo updates can't clobber)
 - `bcc_watch_meta` — `(follow_id, tier_at_watch, batch_id, watched_at)` (§C2). Renamed from `bcc_pull_meta` (and `*_at_pull` columns → `*_at_watch`) via the data-preserving migration documented in §4.5.1.
-- `bcc_user_ranks` — `(user_id, rank_key, awarded_by, awarded_at, revoked_at, revoke_reason)` (§E2)
 - `wp_usermeta.bcc_handle` (§B6)
 - `wp_usermeta.bcc_primary_local_group_id` — singleton pointer to the user's primary Local; membership ledger itself stays in PeepSo's `peepso_group_members` per the single graph rule (§E3)
 - `wp_usermeta.bcc_ui_familiar` (§N5 — boolean for UI dual-label drop-off only)
@@ -5857,6 +5843,9 @@ The following schema additions are **referenced but not implemented** by Phase 1
 
 **Removed via 2026-05-14 gate-pruning pass:**
 - `wp_usermeta.bcc_floor_visits` — was the Level-2 unlock gate's second axis. Removed because visiting the Floor is passive consumption, not a deliberate signal. LEVEL_ACTIVE now requires only pulls ≥ 5. Existing rows in production are ignored; no migration needed.
+
+**Removed via 2026-07-09 conferred-Role retirement pass (v1.36):**
+- `bcc_user_ranks` — `(user_id, rank_key, awarded_by, awarded_at, revoked_at, revoke_reason)` — was reserved for conferred **Role** rows (Foreman). The conferral path was never built and the read placeholders (`foreman_insignia`, `is_admin_conferred`) were always `false`; the table is dropped. Rank is fully auto-derived from the feature-access **level** (§4.8), which never used this table.
 
 ---
 
@@ -5987,7 +5976,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.36 — 2026-07-09 — Suspension-gate parity on all group-membership writes
+### v1.37 — 2026-07-09 — Suspension-gate parity on all group-membership writes
 
 The 2026-07-08 audit's "group rejoin" MEDIUM was fixed for
 `POST /me/groups/:id/join` (bcc-trust PR #56): the join is gated on
@@ -6019,6 +6008,31 @@ that were still open. Additive error case only; no response-shape changes.
   writer refusal into its existing `bcc_upstream_unavailable` 503 — the two
   callers that previously ignored the writer's return no longer report
   `joined: true` for a write that didn't happen.
+
+### v1.36 — 2026-07-09 — Conferred-Foreman **Role** scaffolding retired (never built)
+
+Cleanup release. The 2026-06-22 identity slice (v1.28) shipped read-side
+placeholders for a conferred **Foreman Role** that never got a conferral
+path — the fields were always `false` and no code ever set them. Option B:
+retire the scaffolding rather than keep dead future-readiness on the wire.
+
+- **`foreman_insignia` removed** from the member/card view-models (§3.1,
+  §3.2) and from the `GET /ranks` viewer block (§4.8). It was a boolean
+  that was always `false` in V1.
+- **`is_admin_conferred` removed** from the `GET /ranks` viewer block
+  (§4.8). Likewise always `false`.
+- **`GET /members?rank=` filter removed.** The dead filter queried the
+  now-dropped `bcc_user_ranks` table and always returned empty; the
+  endpoint's documented query set was already `page`/`per_page`/`q`/`type`.
+- **Rank is unchanged** — it remains the auto-derived **level** label
+  (Apprentice/Journeyman/Master). `rank`, `rank_label`, `current_rank_label`,
+  `next_rank`, `next_rank_label` all stay. §4.8 now documents rank as
+  fully level-derived with no conferred-Role fields.
+- The identity model is now **Rank (level) · Trust Tier** (two axes). The
+  Foreman **Role** is deferred entirely — there was never a conferral path,
+  so it is retired, not "deferred with read artifacts." Historical
+  changelog entries (v1.19/v1.23/v1.28) that describe these fields as
+  shipped are left as history.
 
 ### v1.35 — 2026-07-08 — Disputes reconciliation: dead `bcc_trust_flags`/`can_dispute` layer retired
 
