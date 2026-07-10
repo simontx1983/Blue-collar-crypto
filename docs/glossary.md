@@ -32,11 +32,12 @@ lives in `bcc-frontend/`.
 | **Delegator** | A wallet that has staked with a validator, surfaced from indexed on-chain signals. | `bcc_onchain_signals`, signal `role` = `delegator`. |
 | **Collector** | A wallet that holds NFTs from a creator, surfaced from indexed on-chain signals. | `bcc_onchain_signals`, signal `role` = `holder`/`collector`. |
 | **Rank** | An earned capability label derived from a member's feature-access **level**. Three rungs: **Apprentice → Journeyman → Master**. Surfaced as a pre-rendered `rank_label` on the member card. | `RankCatalog.php` (`RANK_APPRENTICE`/`RANK_JOURNEYMAN`/`RANK_MASTER`); `RankService::LEVEL_TO_RANK` maps `new→apprentice`, `active→journeyman`, `veteran→master` (`bcc-trust/app/Domain/Core/Services/RankService.php`). Rendered uppercase in `bcc-frontend/src/components/profile/RankChip.tsx`. |
-| **Foreman** | A **conferred role** (moderator authority), *not* a rank. Reaching Master does not confer it. Emitted as a boolean `foreman_insignia` in the viewer block. | `RankCatalog::ROLES` (`foreman => 'Foreman'`); `foreman_insignia` set in `RankService.php`. |
+| **Foreman** | A conferred moderator-authority **role** that was scoped but **never built** — no conferral path ever existed. **Retired for V1** (contract v1.36): the `foreman_insignia` / `is_admin_conferred` placeholders and the `bcc_user_ranks` table are gone. Not emitted anywhere. | Retired — see api-contract-v1.md §4.8 / v1.36 changelog. |
 
-> **Rank vs Trust Tier vs Role** are three independent axes. Rank = earned capability
-> (level). Trust Tier = reputation quality (see §3). Foreman = an assigned role. A member
-> holds one value on each, in any combination.
+> **Rank vs Trust Tier** are the two live independent axes. Rank = earned capability
+> (a relabel of the feature-access **level**). Trust Tier = reputation quality (see §3).
+> A member holds one value on each. (A third **Foreman** role axis was scoped on
+> 2026-06-22 but never built and is retired for V1 — see api-contract-v1.md v1.36.)
 
 ---
 
