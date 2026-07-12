@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.38 · 2026-07-12 · Phase 1 deliverable
+**Status:** Draft v1.39 · 2026-07-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -299,6 +299,7 @@ Every response carries a `Cache-Control` header. The Next.js app uses React Quer
   - reserved handles blocked (server-managed list: `admin`, `bcc`, `support`, `system`, `api`, `null`, etc.)
   - **required before any posting/reacting/pulling/vouching/dispute-signing.** Endpoints that gate on posting MUST return `bcc_permission_denied` with `unlock_hint: "Pick a handle to start posting."` if the authenticated user has no `bcc_handle`.
 - **Slugs:** strings, lowercase, kebab-case, no leading slash. **Immutable post-creation** — once assigned, a slug never changes. Admins rename via display name only (e.g., a Local's `name` updates, the slug does not). This guarantees `links.self` URLs stay stable forever.
+  - **Feed-item nuance (v1.39):** a post's `links.self` is `/u/{handle}/post/{shortcode}`. The **shortcode** is the immutable, canonical resolver key (8 letters, `wp_bcc_post_shortcodes`); the **handle prefix is display context only** and follows the author's current handle — after a handle change the old URL's shortcode still resolves, and the frontend redirects to the canonical handle. Immutability attaches to the shortcode, not the full string.
 - **Navigation URLs:** root-relative (`/v/blacksmith-node`, not `https://bluecollar.crypto/v/blacksmith-node`). Used in `links.*` fields. The frontend prepends host as needed.
 - **Asset / media URLs (avatars, NFT images, drop images, blog images):** **absolute** (`https://bluecollar.crypto/wp-content/uploads/...`). CDN-ready: the server controls the host so we can swap to a CDN origin without a contract change. The frontend never rewrites these. **No relative paths for media.**
 - **External URLs (`release_url`, cross-origin `mint_link`, etc.):** absolute.
@@ -1051,7 +1052,7 @@ Feed items share an envelope and vary by `post_kind`.
     "can_report": { "allowed": true, "unlock_hint": null }
   },
   "links": {
-    "self":   "/p/feed_98712",
+    "self":   "/u/simontx/post/aBcDeFgH",
     "author": "/u/simontx"
   },
   "group": {
@@ -2056,10 +2057,13 @@ Anonymous-friendly hashtag feed — the hot feed narrowed to a single tag.
 
 #### `GET /bcc/v1/feed/:id`
 
-Single-activity permalink read (v1.33 backfill — shipped with the post-detail page; the route pattern is numeric-only so it never collides with `/feed/hot` / `/feed/tag`). Backs the post-detail page and quick-view modal.
+Single-activity permalink read (v1.33 backfill — shipped with the post-detail page). Backs the post-detail page and shared links. Two sibling route patterns share one handler, and their input domains are disjoint by construction so neither collides with the other or with `/feed/hot` / `/feed/tag`:
+
+- numeric (`\d+`) — the raw activity id, i.e. the numeric tail of the feed's opaque `feed_<act_id>`. Kept as the dev/legacy fallback.
+- shortcode (`[a-zA-Z]{8}`, v1.39) — the post's canonical 8-letter code from `wp_bcc_post_shortcodes`, the tail of `links.self` = `/u/{handle}/post/{code}`. Letters-only (never digits) is what keeps the two domains unambiguous. Unknown code → the same `bcc_not_found` 404 as an unknown numeric id.
 
 - **Auth:** Anonymous OR Bearer
-- **Path:** `id` (int — the raw activity id, i.e. the numeric tail of the feed's opaque `feed_<act_id>`)
+- **Path:** `id` (int act_id **or** 8-letter shortcode — see above)
 - **Response 200:** a single §3.3 `FeedItem` (bare object in the §1.4 envelope — NOT a `CursorEnvelope`), same hydration pipeline as `/feed`
 - **Errors:** `bcc_not_found` 404 — covers both "no such activity" and "not visible to this viewer" (§O4.1 caution/risky author exclusion, §K1 mutual-block invisibility, §K1-C moderation hide all collapse to 404; no existence oracle)
 - **Rate limit:** none route-specific
@@ -5991,6 +5995,34 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.39 — 2026-07-12 — Canonical post permalinks (`/u/{handle}/post/{shortcode}`)
+
+Post `links.self` moves from `/post/{act_id}` to `/u/{handle}/post/{code}`
+(bcc-trust 1.2.23 / PR #82). Decision record: bcc-frontend
+`docs/post-url-shortcode-brief.md` — **stored `short_id` chosen over Hashids**
+(production launches empty, so the backfill cost that motivated Hashids
+doesn't exist; stored codes need no salt, no package, no dual resolver).
+
+- **§3.3 `links.self`:** now `/u/{handle}/post/{code}` on every feed surface
+  (list, hot, tag, single-item, author wall, group feeds, blog tab). The old
+  example (`/p/feed_98712`) was doubly stale — code had emitted
+  `/post/{act_id}` since the v1.33 permalink fix; both prior shapes are
+  superseded. Numeric `/post/{act_id}` remains only as a degraded fallback
+  when a code can't be ensured.
+- **§1.7:** immutability nuance — the shortcode is the immutable key; the
+  handle prefix is display context (redirect-on-rename is frontend behavior).
+- **`GET /feed/:id` (§4):** gains a sibling `[a-zA-Z]{8}` route pattern
+  resolving shortcodes; numeric ids keep working. Letters-only codes keep the
+  input domains disjoint (and can't collide with `/feed/hot` / `/feed/tag`).
+- **Storage:** new `wp_bcc_post_shortcodes` sidecar (act_id PK, unique
+  CHAR(8) code), codes ensured lazily at emission + option-guarded dev
+  backfill. Cosmetic/navigational only — no trust-surface impact.
+- **Canonical-handle backfill:** legacy accounts missing `bcc_handle` get one
+  derived + validated via HandleService (one-shot). Root-cause fix for
+  space-bearing byline handles that could never resolve through the §B6
+  route patterns (supersedes the v1.2.21 nicename fallback, which the route
+  regex prevented from ever firing).
 
 ### v1.38 — 2026-07-12 — Stoke on comments
 
