@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.39 · 2026-07-12 · Phase 1 deliverable
+**Status:** Draft v1.40 · 2026-07-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -3625,7 +3625,8 @@ Paginated list of visible comments on the parent post.
 - **Holder-Groups gate:** when the parent post is in a PeepSo group (post-meta `peepso_group_id` set), the viewer MUST be a member (`gm_user_status` ∈ `member`, `member_owner`, `member_manager`, `member_moderator`, `member_readonly`). Non-members get `bcc_forbidden 403`.
 - **Query params:**
   - `limit` (int, optional, default 20, max 50)
-  - `cursor` (string, optional) — base64url-encoded JSON `{t: ISO-8601, id: act_id}`. Same encoding as `/feed`.
+  - `sort` (string, optional, v1.40) — `relevant` (**default**) | `top` | `new`. `relevant` = lean stoke×recency-decay heuristic (server-owned; frontend never re-sorts); `top` = most-stoked; `new` = chronological newest-first (the pre-v1.40 behavior — note the default CHANGED from chronological to relevant). Unknown values fall back to `relevant`.
+  - `cursor` (string, optional) — base64url-encoded JSON `{k: sort-key, id: act_id}` (v1.40; the key is the active sort's ordering value). Legacy `{t, id}` chronological cursors still decode. Cursors are only valid within the sort that issued them.
 - **Response 200 data shape:**
   ```json
   {
@@ -5995,6 +5996,23 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.40 — 2026-07-12 — Comment sort: relevant / top / new
+
+`GET /posts/:feed_id/comments` gains a `sort` param (bcc-trust 1.2.24 / PR
+#81 + frontend PR #39 — Tia; CI-fix + rebump merged in by Phillip's side).
+
+- **`sort`** = `relevant` (default) | `top` | `new`. **Default flip:** the
+  list was chronological-newest before; it now defaults to `relevant` — a
+  lean `(stoke_count+1)/(age_hours+2)^1.5` gravity score, rounded to 6
+  decimals so keyset cursors tiebreak stably. `top` orders on the v1.38
+  comment stoke count; richer relevance inputs (replies, author tier) are
+  deferred.
+- **Cursor** payload is now `{k, id}` where `k` is the active sort's
+  ordering key; legacy `{t, id}` cursors still decode. Cursors don't
+  transfer across sorts.
+- `stoke_count` now computes inline in the list query (`stoke_total`),
+  replacing the v1.38 batched read — response shape unchanged.
 
 ### v1.39 — 2026-07-12 — Canonical post permalinks (`/u/{handle}/post/{shortcode}`)
 
