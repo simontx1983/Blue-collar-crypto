@@ -3621,12 +3621,16 @@ Paginated list of visible comments on the parent post.
 - **Holder-Groups gate:** when the parent post is in a PeepSo group (post-meta `peepso_group_id` set), the viewer MUST be a member (`gm_user_status` ∈ `member`, `member_owner`, `member_manager`, `member_moderator`, `member_readonly`). Non-members get `bcc_forbidden 403`.
 - **Query params:**
   - `limit` (int, optional, default 20, max 50)
-  - `cursor` (string, optional) — base64url-encoded JSON `{t: ISO-8601, id: act_id}`. Same encoding as `/feed`.
+  - `sort` (string, optional, default **`relevant`**) — one of `new` | `top` | `relevant`.
+    - `new` — chronological, newest first (`post_date_gmt DESC, act_id DESC`).
+    - `top` — most-stoked first (`stoke_count DESC, act_id DESC`).
+    - `relevant` — "best first" **lean v1 heuristic**: `stoke_count` blended with recency decay (Hacker-News-style gravity `(stoke_count + 1) / (age_hours + 2)^1.5`, `ROUND`ed to 6dp and age-clamped ≥ 0). No upvote/downvote — Stoke is the only signal. Richer blend (reply_count, author trust-tier, viewer-follows-author) deferred. Score is server-computed (§A2) — never derived client-side. Invalid values fall back to `relevant`.
+  - `cursor` (string, optional) — base64url-encoded JSON `{k: <sort-key>, id: act_id}`, where `k` is the active sort's ordering value (ISO-8601 timestamp for `new`, stoke count for `top`, 6dp float score for `relevant`). Keyset-paginates per sort so pages stay stable within one sort. Legacy `{t, id}` cursors (chronological) are still accepted. **A cursor is only valid for the `sort` it was issued under** — the frontend caches each sort separately and resets pagination on sort change.
 - **Response 200 data shape:**
   ```json
   {
     "items":       [ "...Comment view-model per §3.5..." ],
-    "next_cursor": "eyJ0IjoiMjAyNi0wNS0wNlQxMzo1OToxMVoiLCJpZCI6MjIxMDE4MX0"
+    "next_cursor": "eyJrIjoiMjAyNi0wNS0wNlQxMzo1OToxMVoiLCJpZCI6MjIxMDE4MX0"
   }
   ```
 - **Errors:**
