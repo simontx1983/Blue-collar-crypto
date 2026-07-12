@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.37 · 2026-07-09 · Phase 1 deliverable
+**Status:** Draft v1.38 · 2026-07-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1473,7 +1473,9 @@ The `Comment` view-model used by §4.13 endpoints. One row per visible comment o
   "posted_at": "2026-05-06T14:09:33Z",
   "permissions": {
     "can_delete": { "allowed": true, "unlock_hint": null }
-  }
+  },
+  "stoke_count": 0,
+  "viewer_has_stoked": false
 }
 ```
 
@@ -1486,11 +1488,12 @@ The `Comment` view-model used by §4.13 endpoints. One row per visible comment o
 - `posted_at` is ISO-8601 UTC.
 - `permissions.can_delete.allowed` is `true` only when the viewer is the comment's author. V1 does not support cross-author or admin moderation deletes through this endpoint.
 - `author.viewer_attestation` + `author.can_vouch` — **authed-only**, identical shape + semantics to the §3.3 feed-item author block: the per-author **Vouch toggle** behind the commenter's name (vouch is author credibility, one vouch per person, full-weight via `POST /bcc/v1/me/attestations`). **Both OMITTED for anonymous viewers.** The same author vouched from a feed byline reads as already-VOUCHED here (and vice-versa) — one vouch, one weight, everywhere. Batched server-side across the page's distinct comment authors (no N+1).
+- `stoke_count` + `viewer_has_stoked` (v1.38) — the comment's **Stoke** pair, a plain X-"like" toggle (NO `heat_stage`: a comment is not the post rail's velocity signal). `stoke_count` is the public total (present for anonymous viewers too); `viewer_has_stoked` is the viewer's own toggle (`false` when anonymous). Both **additive-optional**: a pre-1.2.22 backend omits them, and the frontend hides the comment's stoke rail when absent rather than posting to a route that doesn't exist. Batched server-side across the page's comment act_ids (two bounded IN-list reads — no N+1). Toggled via §4's `POST`/`DELETE /comments/:id/stoke`.
 
 **V1 deferred:**
 
 - **Threading.** PeepSo's storage is flat at the (act_comment_object_id) index; replies-in-replies in PeepSo's UI surface as @-mentions in body. V1 lists comments flat; surfacing reply-context is V1.5+ work.
-- **Per-comment reactions.** No reaction rail on individual comments. Reactions remain on the parent post only. V2.
+- **Per-comment reactions.** No §2.11 reaction-kind rail on individual comments — reaction kinds remain on the parent post only. V2. (Comment **Stoke** is NOT this: it shipped v1.38 as its own `wp_bcc_trust_stokes`-backed like-toggle, see `stoke_count` above.)
 - **Edit.** No edit endpoint. Delete + recreate is the V1 model.
 
 ### 3.6 `IndexerState` (V2 Phase 1c)
@@ -5355,6 +5358,19 @@ Stoke — the forge-fire engagement toggle (v1.33 backfill). X-"like" model: one
 - **Cache:** `no-store`.
 - **Mapping:** `StokeEndpoint::addStoke` / `removeStoke` → `StokeRepository`. FE `stoke-endpoints.ts`.
 
+#### `POST /bcc/v1/comments/:id/stoke` · `DELETE /bcc/v1/comments/:id/stoke`
+
+Stoke on a **comment** (v1.38). A comment is itself a `peepso_activities` row, so its act_id keys `wp_bcc_trust_stokes` exactly like a post's — same `StokeRepository`, no schema change. Dedicated endpoint (not a reuse of `/feed/:id/stoke`) because the group gate MUST resolve membership off the comment's **parent post**: the comment's own wp_post carries no `peepso_group_id`, so gating on the comment's act_id would silently pass every gated thread. Plain X-"like" toggle — **no `heat_stage`** (a comment is not a velocity rail). **Cosmetic for trust** — never writes `bcc_trust_scores`.
+
+- **Auth:** required (in-handler). Anonymous → `bcc_unauthorized 401`.
+- **Path:** `id` (int — the comment's raw act_id; the FE strips its `comment_` prefix client-side).
+- **Rate limit:** 60/min/user (key `comment_stoke`, shared across add/remove, separate bucket from post `stoke`).
+- **Response 200 (both verbs):** the comment's stoke pair only — `{ stoke_count, viewer_has_stoked }`. No reaction envelope, no `heat_stage`.
+- **Errors:** `bcc_unauthorized` 401 · `bcc_rate_limited` 429 · `bcc_invalid_request` 400 (non-positive id) · `bcc_not_found` 404 (act_id is not a published comment row — top-level post act_ids 404 here by design) · `bcc_permission_denied` 403 (parent post is group-scoped, viewer not a member — `GroupInteractionGate::checkPost`) · `bcc_internal_error` 500 (repository write failed)
+- **Side effects:** `bcc_stoke_added` / `bcc_stoke_removed` on the §A3 bus (same events as post stokes; the payload act_id may now be a comment's).
+- **Cache:** `no-store`.
+- **Mapping:** `CommentStokeEndpoint::addStoke` / `removeStoke` → `CommentRepository::getCommentMeta` (parent resolve) + `StokeRepository`. FE `comment-endpoints.ts:setCommentStoke/removeCommentStoke` via `useCommentStoke`.
+
 #### `GET /bcc/v1/blog/chain-options`
 
 Public picker source for the §D6 composer's chain-tag multi-select. Returns active `bcc_onchain_chains` rows with only display fields (chain internals omitted).
@@ -5975,6 +5991,24 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.38 — 2026-07-12 — Stoke on comments
+
+Comment rows gain a plain X-"like" Stoke toggle (bcc-trust 1.2.22 / PR #80,
+frontend PR #38 — Tia). Additive only; no breaking changes.
+
+- **New endpoint `POST`/`DELETE /comments/:id/stoke` (§4):** same
+  auth/throttle/gate/event shape as `/feed/:id/stoke`, but the group gate
+  resolves off the comment's PARENT post (`GroupInteractionGate::checkPost`
+  via `CommentRepository::getCommentMeta`) because the comment's own wp_post
+  carries no `peepso_group_id`. Response is the bare
+  `{ stoke_count, viewer_has_stoked }` pair — no `heat_stage`.
+- **§3.5 `Comment` view-model:** gains additive-optional `stoke_count` +
+  `viewer_has_stoked` (batched per page, two bounded IN-list reads). Absent
+  from pre-1.2.22 responses; the frontend hides the rail when absent.
+- Comment stoke shares `wp_bcc_trust_stokes` + `StokeRepository` with the
+  post rail — no schema change, still cosmetic for trust (never writes
+  `bcc_trust_scores`).
 
 ### v1.37 — 2026-07-09 — Suspension-gate parity on all group-membership writes
 
