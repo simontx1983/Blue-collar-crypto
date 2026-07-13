@@ -307,15 +307,49 @@ storms — none of those regimes were exercised. The question that matters for
 capacity is the origin: how many logged-in users the box supports before
 performance degrades.
 
-**Still unmeasured** (the remaining capacity questions):
-1. **Origin capacity** — cache-miss traffic. Measurable anon-side with
-   cache-busting query params (deliberately adversarial; operator sign-off
-   required) or, more honestly, via the authed path.
-2. **Authed traffic** — bypasses the anon edge cache entirely; the harness's
-   Mailpit auto-auth is local-only, so staging authed runs need a JWT minted
-   server-side (SSH + wp-cli) or a staging test account + real mailbox.
-3. **With/without-Redis comparison** — needs SSH to flip the drop-in.
-4. Box spec (vCPU / FPM workers) — unconfirmed; readable over SSH.
+### Measured staging — authed origin (2026-07-12, k6 authed session mix)
+
+Authenticated run per the operator-approved protocol (SSH-minted short-lived
+JWT for a throwaway subscriber, deleted+revoked after; LiteSpeed/Redis/config
+untouched). Load = the weighted logged-in session mix (feed 40 / me-*
+30 / rotating profiles 20 / edge-served cards-members-groups tail 10); the
+Bearer-required routes reach origin on every request (verified via
+`x-litespeed-cache`). Client over residential WAN — numbers include RTT.
+
+| step | VUs | duration | reqs | failures | p50 | p95 | p99 | max |
+|---|---|---|---|---|---|---|---|---|
+| verify | 1 | 3m | 145 | 0% | 270ms | 339ms | 397ms | 414ms |
+| 2 | 3 | 3m | 435 | 0% | 263ms | 331ms | 399ms | 560ms |
+| 3 | 5 | 3m | 725 | 0% | 264ms | 325ms | 374ms | 413ms |
+| 4 | 10 | 4m | 1,911 | 0% | 273ms | 344ms | 538ms | 913ms |
+
+**Zero failures / zero 429/5xx across ~4,200 authed requests; latency flat
+from 1→10 VUs.** Origin routes sit at p50 ~250–295ms (incl. WAN RTT); the
+edge-served tail at ~80–95ms. Envelope checks passed 6,424/6,424.
+
+**Server telemetry** (5s sampling over SSH; account-scoped): idle = 2 lsphp
+workers / 117MB RSS. At 10 VUs: 8–11 lsphp workers, ~1.0–1.8 cores of CPU,
+0.8–1.17GB RSS, ≤4 DB connections, MySQL `Threads_running` pinned at 1 the
+entire session — **origin cost is PHP-time-dominated; MySQL is essentially
+idle** (consistent with the local query audit: reads are batched and cheap).
+No resource-saturation signal, no LVE entry-process (508) events. Shared-host
+note: Hostinger reaped the long-running monitor process after ~15 min —
+background daemons don't survive there; the 10-VU window was re-measured with
+a fresh monitor + 2-min burst (identical latency: p50 268ms / p95 332ms).
+
+**Bounded conclusion:** no degradation up to ~8 req/s of sustained
+authenticated origin traffic (10 paced VUs) on the current shared-hosting
+tier; the saturation knee was NOT located — it lies above the approved
+ceiling. Finding the knee needs a higher operator-approved VU ceiling.
+
+**Still unmeasured:**
+1. The authed saturation knee (above 10 VUs / ~8 req/s origin).
+2. **With/without-Redis comparison** — POSTPONED by operator decision until
+   there is a specific hypothesis + rollback plan (LiteSpeed already caches;
+   known drop-in conflict history). MySQL idleness above suggests Redis
+   object caching would mainly relieve PHP-time (options/meta lookups), not
+   DB pressure — worth folding into the hypothesis when this is picked up.
+3. Spike/stampede/attack regimes and edge-cache-miss storms (anon side).
 
 ---
 
