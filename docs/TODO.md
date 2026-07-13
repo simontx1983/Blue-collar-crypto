@@ -45,7 +45,17 @@ Deferred from the 2026-07-09 backend security/bug-hunt pass (real, lower-severit
 
 <!-- /feed/hot warm shipped 2026-07-02 (bcc-trust feat/feed-hot-warm) + the "20s cold" RE-ATTRIBUTED to the Local FPM cliff — see Recently shipped below -->
 - [ ] **Staging load validation — anon reads DONE 2026-07-12, origin + Redis A/B remain** — first staging run recorded in `capacity-model.md` "Measured staging" (0% failures to 10 VUs, p95 ≤101ms, flat latency — but anon traffic is served by the LiteSpeed edge cache with a 15s TTL, so origin PHP/MySQL capacity is still unmeasured). Remaining: authed/origin-capacity runs (needs SSH-minted JWT or staging test account — the harness's Mailpit auto-auth is local-only) and the with/without-Redis comparison (needs SSH). Harness: pass `-e ALLOW_NON_LOCAL=1 -e BASE_URL=https://stage.bluecollarcrypto.io`; legacy `-e URL=` mode preserved for comparability.
-- [ ] **PRODUCTION BUG — LiteSpeed serves cached anon variants to Authorization-bearing API requests** (found 2026-07-12 during the staging authed pre-flight). LSCache varies on login *cookies*; JWT Bearer auth sets none, so logged-in calls to the Anonymous-OR-Bearer routes (`/cards`, `/members`, `/groups`, `/feed/hot`) can receive the cached **anonymous** payload for up to the 15s TTL — missing `viewer_attestation`, `permissions`, and viewer-privacy fields (wrong Vouch/permission states in the UI). Verified the safe direction holds: Authorization-bearing responses do NOT populate the cache (no anon-side leak observed; one-shot test on `/users/:handle`). Fix is LSCache config, not code — exclude `/wp-json/bcc/*` from cache *serving* when an `Authorization` header is present (or vary on it). Deliberately NOT fixed during the 2026-07-12 measurement phase to keep results comparable (operator decision). Bearer-required routes (`/feed`, `/me/*`) are unaffected.
+- [ ] **PRODUCTION BUG — LiteSpeed serves cached anon variants to Authorization-bearing API requests. STAGING FIXED 2026-07-13; production application pending.** (Found 2026-07-12 during the staging authed pre-flight.) LSCache varies on login *cookies*; JWT Bearer auth sets none, so logged-in calls to the Anonymous-OR-Bearer routes (`/cards`, `/members`, `/groups`, `/feed/hot`) received the cached **anonymous** payload for up to the 15s TTL — missing `viewer_attestation`, `permissions`, and viewer-privacy fields. Authed responses never populated the cache (no anon-side leak).
+  **Staging fix (config-only, verified):** a marked block in `public_html/stage/.htaccess`, inserted before the plugin-managed `# BEGIN LSCACHE` section (backup kept at `.htaccess.bcc-backup-20260713` beside it):
+  ```apache
+  <IfModule LiteSpeed>
+  RewriteEngine On
+  RewriteCond %{REQUEST_URI} ^/wp-json/
+  RewriteCond %{HTTP:Authorization} .
+  RewriteRule .* - [E=Cache-Control:no-cache]
+  </IfModule>
+  ```
+  Regression-verified on staging: anon-warmed URL + Bearer → `miss` (read bypass); authed responses never store (write bypass; anon after authed stays anon-shaped); anon REST caching still `hit`; Bearer-required routes 200. **Remaining: apply the identical block to production `public_html/.htaccess` (operator go required — production is out of scope for the current SSH mandate).**
 
 ## Docs
 
