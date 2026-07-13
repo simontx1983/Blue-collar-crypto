@@ -31,6 +31,14 @@
 # not the team.
 /.claude/settings.local.json
 
+# k6 result artifacts (scripts/perf/load-test.js handleSummary output);
+# contents ignored rather than the directory itself so the .gitkeep
+# re-allow works (git never descends into fully-excluded directories).
+# The .gitkeep keeps the directory present in every checkout because
+# k6 won't create parent directories itself.
+/scripts/perf/results/*
+!/scripts/perf/results/.gitkeep
+
 # Common junk that may appear inside allowed directories
 .DS_Store
 Thumbs.db

@@ -242,6 +242,43 @@ thing the per-tier model assumes proper FPM pool sizing removes.
 > Not done: a with-vs-without-Redis comparison. On this box the FPM cliff swamps
 > any cache delta, so that comparison is only meaningful on the staging box above.
 
+### Re-running the harness
+
+`scripts/perf/load-test.js` grew into a scenario harness on 2026-07-12 (same
+file, same baseline methodology). It is **LOCAL-ONLY by default** — any host
+other than `blue-collar-crypto-custom.local`/`localhost`/`127.0.0.1` aborts
+(exit 108) unless `-e ALLOW_NON_LOCAL=1` is passed. Local runs are capped at
+25 VUs / 5 min (`-e ALLOW_UNCAPPED=1` lifts). Run from repo root:
+
+```bash
+k6 run scripts/perf/load-test.js                                        # smoke: 1 VU, one pass over 8 hot reads, checks
+k6 run -e SCENARIO=baseline -e DURATION=60s scripts/perf/load-test.js   # 1 VU constant, per-endpoint bcc_* trends
+k6 run -e SCENARIO=ramp scripts/perf/load-test.js                       # staged ramp 0→3→10→10→0, weighted mix
+k6 run -e SCENARIO=authed -e AUTH_IDENTIFIER=<email> -e AUTH_PASSWORD=<pw> scripts/perf/load-test.js
+```
+
+- **Comparability:** `baseline` is the 1-VU sequential warm-cache methodology of
+  the table above (same `summaryTrendStats`); `ramp` reproduces the 10-VU
+  signature. Hard thresholds are error-rate/checks only — latency has NO
+  thresholds locally because the 2-worker FPM pool and the ~10s cron/indexer
+  ticks own the tails (compare `bcc_*` p50s against the baseline by hand, and
+  don't flush caches right before measuring: the post-flush wp-cron chain
+  sweep occupies an FPM worker for ~17s).
+- **Legacy mode preserved:** `-e URL=<full url> -e VUS=… -e DURATION=…` still
+  runs the original single-endpoint shape — that is the with/without-Redis
+  staging methodology; do not replace it with the scenario runs.
+- **Authed scenario:** performs the full login → Mailpit OTP → 2FA verify → JWT
+  chain in `setup()` (login is throttled 5/60s per IP — the harness authenticates
+  exactly once). Credentials come from env only, never committed. Local test
+  account: `k6-harness@bcc.local` (subscriber, handle `k6-harness`; reset its
+  password via wp-cli if lost). Mailpit's port drifts on Local re-provision —
+  `-e MAILPIT_URL=` overrides the `127.0.0.1:10006` default (see GOLDEN_PATHS §6.2).
+- **Staging:** the WP REST base is `https://stage.bluecollarcrypto.io`
+  (`app.stage.` is the Next.js frontend). Example:
+  `k6 run -e ALLOW_NON_LOCAL=1 -e BASE_URL=https://stage.bluecollarcrypto.io -e SCENARIO=baseline scripts/perf/load-test.js`.
+- **Results:** every run writes `scripts/perf/results/<timestamp>-<scenario>.{json,md}`
+  (gitignored) plus the normal console summary.
+
 ---
 
 ## Related
