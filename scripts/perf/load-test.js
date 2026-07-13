@@ -8,6 +8,7 @@
 //   k6 run -e SCENARIO=baseline -e DURATION=60s scripts/perf/load-test.js   # 1 VU constant, per-endpoint trends
 //   k6 run -e SCENARIO=ramp scripts/perf/load-test.js                       # staged ramp to 10 VUs, weighted mix
 //   k6 run -e SCENARIO=authed -e AUTH_IDENTIFIER=<email-or-handle> -e AUTH_PASSWORD=<pw> scripts/perf/load-test.js
+//   k6 run -e SCENARIO=authed -e BEARER=<jwt> scripts/perf/load-test.js   # pre-minted token (staging: no Mailpit)
 //
 // Legacy single-URL mode (byte-compatible with the 2026-06-19 baseline
 // methodology in docs/capacity-model.md — used for the staging re-run and
@@ -16,9 +17,13 @@
 //
 // Optional env: BASE_URL (default http://blue-collar-crypto-custom.local),
 //   MAILPIT_URL (default http://127.0.0.1:10006), AUTH_EMAIL (mailbox when
-//   AUTH_IDENTIFIER is a handle), USER_HANDLE (for /users/:handle; otherwise
+//   AUTH_IDENTIFIER is a handle), BEARER (pre-minted JWT — skips the Mailpit
+//   login flow entirely), USER_HANDLE (for /users/:handle; otherwise
 //   discovered from /members in setup), VUS, DURATION, ALLOW_NON_LOCAL=1,
-//   ALLOW_UNCAPPED=1 (lift the local 25-VU/5-min caps), AUTHED_MIX=1.
+//   ALLOW_UNCAPPED=1 (lift the local 25-VU/5-min caps).
+//   The authed scenario iterates a weighted logged-in session mix (feed 40%,
+//   me/notifications 15%, me/watching 10%, me/badges 5%, rotating profile
+//   views 20%, cards/members/groups tail 10%).
 // Results: scripts/perf/results/<timestamp>-<scenario>.{json,md} (gitignored).
 // Exit codes: 108 = guard/setup abort, 99 = threshold failed, 0 = pass.
 
@@ -52,8 +57,8 @@ if (!isLocal && __ENV.ALLOW_NON_LOCAL !== '1') {
     'Pass -e ALLOW_NON_LOCAL=1 only for a provisioned staging box (docs/TODO.md).'
   );
 }
-if (SCENARIO === 'authed' && (!__ENV.AUTH_IDENTIFIER || !__ENV.AUTH_PASSWORD)) {
-  exec.test.abort('SCENARIO=authed requires -e AUTH_IDENTIFIER=... -e AUTH_PASSWORD=...');
+if (SCENARIO === 'authed' && !__ENV.BEARER && (!__ENV.AUTH_IDENTIFIER || !__ENV.AUTH_PASSWORD)) {
+  exec.test.abort('SCENARIO=authed requires -e BEARER=<jwt> (pre-minted) or -e AUTH_IDENTIFIER=... -e AUTH_PASSWORD=... (Mailpit auto-auth, local only).');
 }
 
 // Local runs are capped so a fat-fingered VUS/DURATION can't flatten the
@@ -100,14 +105,41 @@ const ENDPOINTS = {
   cards_search: () => `${API}/cards/search?q=${pick(SEARCH_TERMS)}`,
 };
 
+// Authed logged-in session mix (2026-07-12 staging finding: LiteSpeed serves
+// cached ANON variants to Authorization-bearing requests on the
+// Anonymous-OR-Bearer routes, so real logged-in ORIGIN load concentrates on
+// the Bearer-required surfaces below; the cards/members/groups tail is kept
+// at realistic weight — those being edge-served IS production behavior).
+const AUTHED_ENDPOINTS = {
+  feed_authed:      () => `${API}/feed?per_page=20`,
+  me_notifications: () => `${API}/me/notifications`,
+  me_watching:      () => `${API}/me/watching`,
+  me_badges:        () => `${API}/me/badges`,
+  profile_rotate:   (data) => {
+    const handles = (data && data.handles && data.handles.length)
+      ? data.handles
+      : [__ENV.USER_HANDLE || 'phillipcosmos'];
+    return `${API}/users/${pick(handles)}`;
+  },
+  cards:   ENDPOINTS.cards,
+  members: ENDPOINTS.members,
+  groups:  ENDPOINTS.groups,
+};
+const AUTHED_MIX = [['feed_authed', 40], ['me_notifications', 15], ['me_watching', 10],
+                    ['me_badges', 5], ['profile_rotate', 20], ['cards', 4], ['members', 3], ['groups', 3]];
+
 const TRENDS = {};
 for (const key of Object.keys(ENDPOINTS)) {
   TRENDS[key] = new Trend(`bcc_${key}_ms`, true);
 }
-TRENDS.feed_authed = new Trend('bcc_feed_authed_ms', true);
+for (const key of Object.keys(AUTHED_ENDPOINTS)) {
+  if (!TRENDS[key]) {
+    TRENDS[key] = new Trend(`bcc_${key}_ms`, true);
+  }
+}
 
-function hitEndpoint(key, data, token) {
-  const url = ENDPOINTS[key](data);
+function hitEndpoint(key, data, token, table = ENDPOINTS) {
+  const url = table[key](data);
   const params = { headers: { Accept: 'application/json' }, tags: { name: key, endpoint: key } };
   if (token) {
     params.headers.Authorization = `Bearer ${token}`;
@@ -142,6 +174,9 @@ if (!ALL_SCENARIOS[SCENARIO]) {
 
 export const options = {
   insecureSkipTLSVerify: true, // Local serves a self-signed cert
+  // The authed Mailpit poll alone can take 60s (30 × 2s); the k6 default
+  // setupTimeout is also 60s, so a slow OTP e-mail times setup() out.
+  setupTimeout: '150s',
   scenarios: { [SCENARIO]: ALL_SCENARIOS[SCENARIO] },
   // Unchanged from the 2026-06-19 baseline so runs stay comparable.
   summaryTrendStats: ['avg', 'p(50)', 'p(90)', 'p(95)', 'p(99)', 'max'],
@@ -163,17 +198,23 @@ export function setup() {
     return data;
   }
 
-  if (!__ENV.USER_HANDLE) {
-    const r = http.get(`${API}/members?per_page=5`, { headers: { Accept: 'application/json' } });
-    try {
-      const members = r.json('data.items') || [];
-      if (members.length && members[0].handle) {
-        data.handle = members[0].handle;
-      }
-    } catch (e) { /* smoke checks will surface a broken /members */ }
-  }
+  const r = http.get(`${API}/members?per_page=10`, { headers: { Accept: 'application/json' } });
+  try {
+    const members = r.json('data.items') || [];
+    data.handles = members.map((m) => m.handle).filter(Boolean);
+    if (!__ENV.USER_HANDLE && data.handles.length) {
+      data.handle = data.handles[0];
+    }
+  } catch (e) { /* smoke checks will surface a broken /members */ }
 
   if (SCENARIO !== 'authed') {
+    return data;
+  }
+
+  // Pre-minted token path (staging: Mailpit doesn't exist there; the JWT is
+  // minted server-side via wp-cli instead).
+  if (__ENV.BEARER) {
+    data.token = __ENV.BEARER;
     return data;
   }
 
@@ -277,21 +318,18 @@ export function weightedMixPass(data) {
   sleep(1);
 }
 
-export function authedPass(data) {
-  const res = http.get(`${API}/feed?per_page=20`, {
-    headers: { Accept: 'application/json', Authorization: `Bearer ${data.token}` },
-    tags: { name: 'feed_authed', endpoint: 'feed_authed' },
-  });
-  TRENDS.feed_authed.add(res.timings.duration, { endpoint: 'feed_authed' });
-  check(res, {
-    'feed_authed: status 200': (r) => r.status === 200,
-    'feed_authed: envelope has data': (r) => {
-      try { return r.json('data') !== undefined; } catch (e) { return false; }
-    },
-  }, { endpoint: 'feed_authed' });
-  if (__ENV.AUTHED_MIX === '1') {
-    hitEndpoint(pickWeighted(), data, data.token);
+// Weighted authed-session mix — every request carries the Bearer.
+const AUTHED_MIX_TOTAL = AUTHED_MIX.reduce((s, [, w]) => s + w, 0);
+function pickAuthed() {
+  let r = Math.random() * AUTHED_MIX_TOTAL;
+  for (const [key, w] of AUTHED_MIX) {
+    r -= w;
+    if (r < 0) return key;
   }
+  return AUTHED_MIX[0][0];
+}
+export function authedPass(data) {
+  hitEndpoint(pickAuthed(), data, data.token, AUTHED_ENDPOINTS);
   sleep(1);
 }
 
