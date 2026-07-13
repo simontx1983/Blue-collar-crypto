@@ -299,9 +299,13 @@ INCLUDES client RTT; server-side time is lower than shown.
 **Read this with the cache tier in mind:** staging serves anon REST responses
 from **LiteSpeed edge cache** (`x-litespeed-cache: hit`, `Cache-Control:
 private, max-age=15`; PHP 8.3.30 origin). With a 15s TTL, PHP regenerated each
-endpoint at most ~4×/min regardless of VUs — so this run validates the
-**production anon architecture** (edge absorbs anon load; it will not dent at
-any realistic anon RPS), NOT origin PHP/MySQL capacity.
+endpoint at most ~4×/min regardless of VUs — so this run exercised the
+**production anon cache tier**, NOT origin PHP/MySQL capacity. It performed
+flawlessly at the 17.4 req/s tested, which is encouraging but does NOT prove
+immunity to traffic spikes, cache stampedes, attacks, or edge-cache-miss
+storms — none of those regimes were exercised. The question that matters for
+capacity is the origin: how many logged-in users the box supports before
+performance degrades.
 
 **Still unmeasured** (the remaining capacity questions):
 1. **Origin capacity** — cache-miss traffic. Measurable anon-side with
