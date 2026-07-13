@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.40 · 2026-07-12 · Phase 1 deliverable
+**Status:** Draft v1.41 · 2026-07-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1476,7 +1476,8 @@ The `Comment` view-model used by §4.13 endpoints. One row per visible comment o
     "can_delete": { "allowed": true, "unlock_hint": null }
   },
   "stoke_count": 0,
-  "viewer_has_stoked": false
+  "viewer_has_stoked": false,
+  "media": { "kind": "photo", "url": "https://bluecollar.crypto/wp-content/uploads/2026/07/jobsite.jpg", "width": 1280, "height": 960 }
 }
 ```
 
@@ -1490,6 +1491,7 @@ The `Comment` view-model used by §4.13 endpoints. One row per visible comment o
 - `permissions.can_delete.allowed` is `true` only when the viewer is the comment's author. V1 does not support cross-author or admin moderation deletes through this endpoint.
 - `author.viewer_attestation` + `author.can_vouch` — **authed-only**, identical shape + semantics to the §3.3 feed-item author block: the per-author **Vouch toggle** behind the commenter's name (vouch is author credibility, one vouch per person, full-weight via `POST /bcc/v1/me/attestations`). **Both OMITTED for anonymous viewers.** The same author vouched from a feed byline reads as already-VOUCHED here (and vice-versa) — one vouch, one weight, everywhere. Batched server-side across the page's distinct comment authors (no N+1).
 - `stoke_count` + `viewer_has_stoked` (v1.38) — the comment's **Stoke** pair, a plain X-"like" toggle (NO `heat_stage`: a comment is not the post rail's velocity signal). `stoke_count` is the public total (present for anonymous viewers too); `viewer_has_stoked` is the viewer's own toggle (`false` when anonymous). Both **additive-optional**: a pre-1.2.22 backend omits them, and the frontend hides the comment's stoke rail when absent rather than posting to a route that doesn't exist. Batched server-side across the page's comment act_ids (two bounded IN-list reads — no N+1). Toggled via §4's `POST`/`DELETE /comments/:id/stoke`.
+- `media` (v1.41) — the comment's single attachment: `{kind: "photo"|"gif", url}`, with `width`/`height` riding on `photo` only (from the attachment metadata; may be `0` when unknown — treat 0 as absent). One photo XOR gif per comment, set at create time via §4.13 `attachment_id`/`gif_url`; no post-hoc attach/detach (delete + recreate, matching the comment edit model). **Additive-optional:** absent on text-only comments and from pre-1.2.26 backends — render the row unchanged when absent. `photo` URLs are same-site WP uploads; `gif` URLs are Giphy-CDN (`giphy.com` host-validated server-side). Render both as plain `<img>`; the internal WP `attachment_id` is never emitted on the wire. Batched per page (one bounded IN-list post-meta read — no N+1). Media is stored as a sidecar on the comment's own wp_post, so a deleted comment takes its media record with it.
 
 **V1 deferred:**
 
@@ -3647,9 +3649,12 @@ Create a comment on the parent post.
 - **Auth:** required. Anonymous → `bcc_unauthorized 401`.
 - **Request body:**
   ```json
-  { "body": "love this — finally a watchlist that respects watches." }
+  { "body": "love this — finally a watchlist that respects watches.", "attachment_id": 8123 }
   ```
   - `body` (string, required, 1–2000 chars after trim). PeepSo applies its own sanitization on top (`htmlspecialchars` + `strip_content`).
+  - `attachment_id` (int, optional, v1.41) — a WP attachment the **caller uploaded** via the shared `POST /blog/cover-image` route. The server verifies the caller owns it (`post_author` = viewer) and that it is an `image/*` mime before stamping it. Resolves to a §3.5 `media` block of `kind: "photo"`.
+  - `gif_url` (string, optional, v1.41) — a remote Giphy CDN URL. Host-validated server-side (`giphy.com` or a subdomain, parsed host — not a substring match); the GIF stays on Giphy's CDN, nothing is staged locally. Resolves to `kind: "gif"`.
+  - `attachment_id` XOR `gif_url` — **one attachment per comment**; if both are sent, the photo wins and `gif_url` is ignored. Attachment validation runs BEFORE the comment write: a rejected attachment fails the whole request and no comment is created. Media-only comments are not supported (`body` stays required — PeepSo's comment write needs a non-empty body).
 - **Holder-Groups gate:** writes require write-grade membership (`gm_user_status` ∈ `member`, `member_owner`, `member_manager`, `member_moderator`). `member_readonly` can read but not create. Non-members get `bcc_forbidden 403`.
 - **Rate limit:** burst seatbelt — `BCC_TRUST_RATE_LIMIT_COMMENT` (20) per `BCC_TRUST_RATE_WINDOW_COMMENT` (300s) per author.
 - **Response 200 data shape:**
@@ -3659,9 +3664,9 @@ Create a comment on the parent post.
   }
   ```
 - **Errors:**
-  - `bcc_invalid_request 400` — malformed `feed_id`, empty body, body over cap.
+  - `bcc_invalid_request 400` — malformed `feed_id`, empty body, body over cap; (v1.41) `attachment_id` resolves to no attachment / a non-image attachment, or `gif_url` is not a Giphy-host URL.
   - `bcc_unauthorized 401` — anonymous.
-  - `bcc_forbidden 403` — gate fails OR PeepSo refused (parent has `peepso_disable_comments`, parent owner blocked the commenter).
+  - `bcc_forbidden 403` — gate fails OR PeepSo refused (parent has `peepso_disable_comments`, parent owner blocked the commenter); (v1.41) `attachment_id` exists but is not owned by the caller.
   - `bcc_invalid_mention_target 400` — body contains `@peepso_user_<id>(name)` token for a user_id that fails the §3.3.12 `MentionPolicy` privacy filter. Error payload echoes `{user_id: <int>}` but does NOT leak the failure reason (privacy posture).
   - `bcc_too_many_mentions 400` — body contains more than `max` mention tokens. Error payload echoes `{max: 10}`.
   - `bcc_rate_limited 429` — burst seatbelt fired.
@@ -5996,6 +6001,26 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.41 — 2026-07-12 — Comment media attachments (photo XOR gif)
+
+`POST /posts/:feed_id/comments` gains optional media (bcc-trust 1.2.26 / PR
+#85 + frontend PR #40 — Tia). Additive only; a text-only comment is unchanged.
+
+- **§4.13 POST:** new optional `attachment_id` (caller-owned `image/*` WP
+  attachment via the shared `POST /blog/cover-image` upload) XOR `gif_url`
+  (Giphy-host URL, host-parsed). Photo wins if both are sent. Validation
+  runs BEFORE the comment write — a bad attachment leaves no orphan comment.
+  New error surface: `bcc_invalid_request` (missing/non-image attachment,
+  non-Giphy URL), `bcc_forbidden` (foreign attachment).
+- **§3.5 `Comment` view-model:** gains additive-optional `media`
+  `{kind: "photo"|"gif", url, width?, height?}` (dims on photo only; the
+  internal `attachment_id` never hits the wire). Absent on text-only
+  comments and pre-1.2.26 backends. Batched per page — one bounded IN-list
+  post-meta read, no N+1.
+- **Storage:** `_bcc_comment_media` post-meta JSON sidecar on the comment's
+  own wp_post — no new table, no migration; PeepSo's comment delete trashes
+  the sidecar with the post.
 
 ### v1.40 — 2026-07-12 — Comment sort: relevant / top / new
 
