@@ -45,8 +45,7 @@ Deferred from the 2026-07-09 backend security/bug-hunt pass (real, lower-severit
 
 <!-- /feed/hot warm shipped 2026-07-02 (bcc-trust feat/feed-hot-warm) + the "20s cold" RE-ATTRIBUTED to the Local FPM cliff — see Recently shipped below -->
 - [ ] **Staging load validation — anon reads DONE 2026-07-12, origin + Redis A/B remain** — first staging run recorded in `capacity-model.md` "Measured staging" (0% failures to 10 VUs, p95 ≤101ms, flat latency — but anon traffic is served by the LiteSpeed edge cache with a 15s TTL, so origin PHP/MySQL capacity is still unmeasured). Remaining: authed/origin-capacity runs (needs SSH-minted JWT or staging test account — the harness's Mailpit auto-auth is local-only) and the with/without-Redis comparison (needs SSH). Harness: pass `-e ALLOW_NON_LOCAL=1 -e BASE_URL=https://stage.bluecollarcrypto.io`; legacy `-e URL=` mode preserved for comparability.
-- [ ] **PRODUCTION BUG — LiteSpeed serves cached anon variants to Authorization-bearing API requests. STAGING FIXED 2026-07-13; production application pending.** (Found 2026-07-12 during the staging authed pre-flight.) LSCache varies on login *cookies*; JWT Bearer auth sets none, so logged-in calls to the Anonymous-OR-Bearer routes (`/cards`, `/members`, `/groups`, `/feed/hot`) received the cached **anonymous** payload for up to the 15s TTL — missing `viewer_attestation`, `permissions`, and viewer-privacy fields. Authed responses never populated the cache (no anon-side leak).
-  **Staging fix (config-only, verified):** a marked block in `public_html/stage/.htaccess`, inserted before the plugin-managed `# BEGIN LSCACHE` section (backup kept at `.htaccess.bcc-backup-20260713` beside it):
+- [x] **FIXED (staging 2026-07-13, production 2026-07-13) — LiteSpeed served cached anon variants to Authorization-bearing API requests.** LSCache varies on login *cookies*; JWT Bearer auth sets none, so logged-in calls to the Anonymous-OR-Bearer routes received the cached **anonymous** payload for ≤15s (missing `viewer_attestation`, `permissions`, viewer-privacy fields). Authed responses never populated the cache (no anon-side leak). **Fix (config-only, both environments):** identical marked block in `stage/.htaccess` and `public_html/.htaccess`, placed before the plugin-managed `# BEGIN LSCACHE` section; timestamped backups beside each (`.htaccess.bcc-backup-20260713*`):
   ```apache
   <IfModule LiteSpeed>
   RewriteEngine On
@@ -55,7 +54,8 @@ Deferred from the 2026-07-09 backend security/bug-hunt pass (real, lower-severit
   RewriteRule .* - [E=Cache-Control:no-cache]
   </IfModule>
   ```
-  Regression-verified on staging: anon-warmed URL + Bearer → `miss` (read bypass); authed responses never store (write bypass; anon after authed stays anon-shaped); anon REST caching still `hit`; Bearer-required routes 200. **Remaining: apply the identical block to production `public_html/.htaccess` (operator go required — production is out of scope for the current SSH mandate).**
+  Regression-verified 4/4 in BOTH environments (read bypass, write bypass + anon-shaped isolation, anon REST caching retained, authed `/feed` 200). Survives LSCache plugin settings-saves: proven by two live plugin `.htaccess` rewrites on staging — the plugin only touches its own marker blocks (`Htaccess::MARKER*` in `htaccess.cls.php`).
+- [ ] **Production runs bcc-trust 1.1.0 (staging: 1.2.26)** — noticed 2026-07-13 during the cache-fix verification: prod's `bcc/v1` has 65 routes but none of the recent surfaces (`/cards` list, `/members`, comment media/sort, post shortcodes…). Presumably intentional pre-launch staleness — flagging so the eventual prod deploy is a conscious step, not a surprise.
 
 ## Docs
 
