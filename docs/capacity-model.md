@@ -279,6 +279,40 @@ k6 run -e SCENARIO=authed -e AUTH_IDENTIFIER=<email> -e AUTH_PASSWORD=<pw> scrip
 - **Results:** every run writes `scripts/perf/results/<timestamp>-<scenario>.{json,md}`
   (gitignored) plus the normal console summary.
 
+## Measured staging — 2026-07-12 (k6 harness, anon reads)
+
+First staging run, per the operator-approved envelope (hard ceiling 10 VUs;
+stop rules: sustained failures >1%, p95 >2s, climbing 429/5xx — none tripped).
+Load generator: dev machine over residential WAN, so every number below
+INCLUDES client RTT; server-side time is lower than shown.
+
+| run | VUs | duration | reqs | req/s | failures | p50 | p95 | p99 | max |
+|---|---|---|---|---|---|---|---|---|---|
+| baseline | 3 | 5m | 1,585 | 5.3 | 0% | 67ms | 90ms | 129ms | 339ms |
+| ramp step 1 | 1 | 3m | 321 | 1.8 | 0% | 67ms | 93ms | 139ms | 239ms |
+| ramp step 2 | 5 | 3m | 1,601 | 8.7 | 0% | 69ms | 98ms | 144ms | 197ms |
+| ramp step 3 | 10 | 4m | 4,241 | 17.4 | 0% | 70ms | 101ms | 141ms | 211ms |
+
+**Zero failures across ~7,750 requests; latency flat from 1→10 VUs** (p50
+67→70ms). The local ~10s cron-stall artifact does not exist on staging.
+
+**Read this with the cache tier in mind:** staging serves anon REST responses
+from **LiteSpeed edge cache** (`x-litespeed-cache: hit`, `Cache-Control:
+private, max-age=15`; PHP 8.3.30 origin). With a 15s TTL, PHP regenerated each
+endpoint at most ~4×/min regardless of VUs — so this run validates the
+**production anon architecture** (edge absorbs anon load; it will not dent at
+any realistic anon RPS), NOT origin PHP/MySQL capacity.
+
+**Still unmeasured** (the remaining capacity questions):
+1. **Origin capacity** — cache-miss traffic. Measurable anon-side with
+   cache-busting query params (deliberately adversarial; operator sign-off
+   required) or, more honestly, via the authed path.
+2. **Authed traffic** — bypasses the anon edge cache entirely; the harness's
+   Mailpit auto-auth is local-only, so staging authed runs need a JWT minted
+   server-side (SSH + wp-cli) or a staging test account + real mailbox.
+3. **With/without-Redis comparison** — needs SSH to flip the drop-in.
+4. Box spec (vCPU / FPM workers) — unconfirmed; readable over SSH.
+
 ---
 
 ## Related
