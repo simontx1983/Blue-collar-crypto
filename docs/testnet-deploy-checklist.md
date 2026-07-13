@@ -143,6 +143,27 @@ cache **anonymous** GETs of the public read endpoints:
       viewer's personalized data to another):**
   - Bypass cache whenever the `Authorization` header is present (authed =
     personalized, must always hit origin).
+
+    **This is not automatic — LSCWP only varies on login cookies, and JWT
+    auth sets none.** The 2026-07 staging/prod environments shipped LSCache
+    without this exclusion and served cached anonymous payloads to logged-in
+    API calls for the full TTL (found + fixed 2026-07-13, see the closed bug
+    in [TODO.md](TODO.md)). Concrete implementation — add this marked block
+    to the environment's `.htaccess`, ABOVE the plugin-managed
+    `# BEGIN LSCACHE` section (the plugin rewrites only its own marker
+    blocks, so a custom block placed outside survives settings saves —
+    verified against two live plugin rewrites):
+
+    ```apache
+    # BEGIN BCC AUTH CACHE BYPASS
+    <IfModule LiteSpeed>
+    RewriteEngine On
+    RewriteCond %{REQUEST_URI} ^/wp-json/
+    RewriteCond %{HTTP:Authorization} .
+    RewriteRule .* - [E=Cache-Control:no-cache]
+    </IfModule>
+    # END BCC AUTH CACHE BYPASS
+    ```
   - Bypass whenever any `wordpress_logged_in_*` / session cookie is present.
   - Never cache non-GET methods, `/auth/*`, `/me/*`, `/admin/*`, or any
     write/mutation route.
