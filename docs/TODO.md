@@ -44,7 +44,7 @@ Deferred from the 2026-07-09 backend security/bug-hunt pass (real, lower-severit
 ## Performance / Ops
 
 <!-- /feed/hot warm shipped 2026-07-02 (bcc-trust feat/feed-hot-warm) + the "20s cold" RE-ATTRIBUTED to the Local FPM cliff — see Recently shipped below -->
-- [ ] **Re-run the load test on a provisioned staging box** — the Local k6 run is dominated by a dev-box FPM cliff (~2–4 workers + Xdebug), so the per-tier DAU numbers in `capacity-model.md` stay modeled, not measured. Re-run [`scripts/perf/load-test.js`](../scripts/perf/load-test.js) on a 4 vCPU + Redis + tuned-FPM box, including the with/without-Redis comparison.
+- [ ] **Re-run the load test on a provisioned staging box** — the Local k6 run is dominated by a dev-box FPM cliff (2 static workers), so the per-tier DAU numbers in `capacity-model.md` stay modeled, not measured. Re-run [`scripts/perf/load-test.js`](../scripts/perf/load-test.js) on a 4 vCPU + Redis + tuned-FPM box, including the with/without-Redis comparison. The script is now LOCAL-ONLY by default — pass `-e ALLOW_NON_LOCAL=1` for the staging run; the legacy `-e URL=` single-endpoint mode is preserved for baseline comparability. Staging REST base: `https://stage.bluecollarcrypto.io` (see capacity-model.md "Re-running the harness").
 
 ## Docs
 
