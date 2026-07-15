@@ -176,6 +176,25 @@ cache **anonymous** GETs of the public read endpoints:
       cache HIT on the second call; the same URL **with** `Authorization:
       Bearer <token>` must always MISS (origin) and return the viewer-aware
       body.
+- [ ] **Public TTL trap (P1 — silent staleness).** LSCWP's default
+      `cache-ttl_pub` is **604800 (1 week)**, and it overrides the endpoints'
+      own `Cache-Control: max-age` (15–60s), so anon feed/profile/cards can be
+      served up to a week stale. Set it to **60s** — still ~99% hit at any real
+      traffic (origin regenerates each URL ≤once/min; load-tested), staleness
+      bounded. `wp litespeed-option set cache-ttl_pub 60`. Both staging + prod
+      were found at the 604800 default and fixed to 60 on 2026-07-15.
+- [ ] **Headless hygiene:** WP serves only REST + wp-admin here, so turn OFF
+      the entire **Page Optimization** menu — especially CSS/JS **Minify**
+      (`optm-css_min`/`optm-js_min`), the top cause of wp-admin breakage and
+      pure overhead for pages no human loads. `wp litespeed-option set
+      optm-css_min 0; wp litespeed-option set optm-js_min 0`. After any option
+      change: `wp litespeed-purge all`.
+- [ ] **Object cache:** Redis is NOT offered on Hostinger shared plans (VPS/
+      Agency only — see `capacity-model.md`); the shared-tier substitute is
+      **LSMCD** (LiteSpeed Memcached) via LSCWP → Cache → Object → Test. If
+      enabled, turn on **Purge All on Upgrade** (or purge in the deploy step),
+      else a stale cached `bcc_trust_schema_version` re-runs the ~200-query
+      schema installer every request (see §1.5 + boot-floor fix).
 
 Bundle this with the Redis/object-cache upgrade — both are the same
 "persistent cache shows up when traffic does" milestone (see
