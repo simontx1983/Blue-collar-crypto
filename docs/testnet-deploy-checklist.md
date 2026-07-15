@@ -7,6 +7,11 @@ testnet-ready BCC deployment. It consolidates requirements that were
 previously scattered across `GOLDEN_PATHS.md`, `cron-registry.md`,
 `operator-runbook.md`, and the smoke-test pre-flight.
 
+> **Deploying plugin code?** See [deploy-runbook.md](deploy-runbook.md) — the
+> commit-driven GitHub Actions pipeline (staging auto on merge, production
+> manual) that replaced Git Updater. This checklist is for *provisioning* a
+> fresh environment; the runbook is for *shipping code* to an existing one.
+
 **No secret VALUES belong in this file** — only the names, where they live,
 and how to generate them. Actual values go in wp-config.php / Vercel env
 only (see `feedback_secrets_admin_visibility` doctrine).
