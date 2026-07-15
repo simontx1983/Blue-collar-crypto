@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.41 · 2026-07-12 · Phase 1 deliverable
+**Status:** Draft v1.42 · 2026-07-13 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1477,7 +1477,9 @@ The `Comment` view-model used by §4.13 endpoints. One row per visible comment o
   },
   "stoke_count": 0,
   "viewer_has_stoked": false,
-  "media": { "kind": "photo", "url": "https://bluecollar.crypto/wp-content/uploads/2026/07/jobsite.jpg", "width": 1280, "height": 960 }
+  "media": { "kind": "photo", "url": "https://bluecollar.crypto/wp-content/uploads/2026/07/jobsite.jpg", "width": 1280, "height": 960 },
+  "parent_id": null,
+  "reply_count": 3
 }
 ```
 
@@ -1492,10 +1494,11 @@ The `Comment` view-model used by §4.13 endpoints. One row per visible comment o
 - `author.viewer_attestation` + `author.can_vouch` — **authed-only**, identical shape + semantics to the §3.3 feed-item author block: the per-author **Vouch toggle** behind the commenter's name (vouch is author credibility, one vouch per person, full-weight via `POST /bcc/v1/me/attestations`). **Both OMITTED for anonymous viewers.** The same author vouched from a feed byline reads as already-VOUCHED here (and vice-versa) — one vouch, one weight, everywhere. Batched server-side across the page's distinct comment authors (no N+1).
 - `stoke_count` + `viewer_has_stoked` (v1.38) — the comment's **Stoke** pair, a plain X-"like" toggle (NO `heat_stage`: a comment is not the post rail's velocity signal). `stoke_count` is the public total (present for anonymous viewers too); `viewer_has_stoked` is the viewer's own toggle (`false` when anonymous). Both **additive-optional**: a pre-1.2.22 backend omits them, and the frontend hides the comment's stoke rail when absent rather than posting to a route that doesn't exist. Batched server-side across the page's comment act_ids (two bounded IN-list reads — no N+1). Toggled via §4's `POST`/`DELETE /comments/:id/stoke`.
 - `media` (v1.41) — the comment's single attachment: `{kind: "photo"|"gif", url}`, with `width`/`height` riding on `photo` only (from the attachment metadata; may be `0` when unknown — treat 0 as absent). One photo XOR gif per comment, set at create time via §4.13 `attachment_id`/`gif_url`; no post-hoc attach/detach (delete + recreate, matching the comment edit model). **Additive-optional:** absent on text-only comments and from pre-1.2.26 backends — render the row unchanged when absent. `photo` URLs are same-site WP uploads; `gif` URLs are Giphy-CDN (`giphy.com` host-validated server-side). Render both as plain `<img>`; the internal WP `attachment_id` is never emitted on the wire. Batched per page (one bounded IN-list post-meta read — no N+1). Media is stored as a sidecar on the comment's own wp_post, so a deleted comment takes its media record with it.
+- `parent_id` + `reply_count` (v1.42) — the comment's **threading** pair. `parent_id` is the `comment_<int>` id of the comment this is a reply to, or `null` for a top-level comment; it always uses the same id form as `id`, so the frontend threads the flat page client-side. `reply_count` is the number of **DIRECT** replies to this comment (not the whole subtree) — it drives the "Follow the thread" drill control once a branch passes the visual-indent cap. **Additive-optional:** a pre-1.2.27 backend omits both, so every row reads as a root and the drawer renders the flat list unchanged; absent `reply_count` is treated as `0`. The list endpoint keeps returning the flat paginated page — threading is a client-side transform over the whole loaded set, and a reply whose parent isn't in the loaded pages surfaces at root (orphan-safe, nothing disappears). Set at create time via §4.13 `parent_id`; stored as a sidecar on the reply's own wp_post (deleted with the comment). `reply_count` is batched per page (one bounded IN-list post-meta read — no N+1).
 
 **V1 deferred:**
 
-- **Threading.** PeepSo's storage is flat at the (act_comment_object_id) index; replies-in-replies in PeepSo's UI surface as @-mentions in body. V1 lists comments flat; surfacing reply-context is V1.5+ work.
+- **Deeper threading loads.** Comment threading (parent link + direct-reply count) ships v1.42 — see `parent_id`/`reply_count` above. What remains deferred: per-subtree pagination (a `?parent=` load for a branch that outgrows the flat page) and a shareable `?thread=<id>` deep-link. The v1 drill-down is a client-side re-root over the already-loaded flat set.
 - **Per-comment reactions.** No §2.11 reaction-kind rail on individual comments — reaction kinds remain on the parent post only. V2. (Comment **Stoke** is NOT this: it shipped v1.38 as its own `wp_bcc_trust_stokes`-backed like-toggle, see `stoke_count` above.)
 - **Edit.** No edit endpoint. Delete + recreate is the V1 model.
 
@@ -3655,6 +3658,7 @@ Create a comment on the parent post.
   - `attachment_id` (int, optional, v1.41) — a WP attachment the **caller uploaded** via the shared `POST /blog/cover-image` route. The server verifies the caller owns it (`post_author` = viewer) and that it is an `image/*` mime before stamping it. Resolves to a §3.5 `media` block of `kind: "photo"`.
   - `gif_url` (string, optional, v1.41) — a remote Giphy CDN URL. Host-validated server-side (`giphy.com` or a subdomain, parsed host — not a substring match); the GIF stays on Giphy's CDN, nothing is staged locally. Resolves to `kind: "gif"`.
   - `attachment_id` XOR `gif_url` — **one attachment per comment**; if both are sent, the photo wins and `gif_url` is ignored. Attachment validation runs BEFORE the comment write: a rejected attachment fails the whole request and no comment is created. Media-only comments are not supported (`body` stays required — PeepSo's comment write needs a non-empty body).
+  - `parent_id` (string, optional, v1.42) — the `comment_<int>` id of the comment being replied to; omit for a top-level comment. Validated BEFORE the write: it MUST resolve to a live comment on the **same** parent post, else `bcc_invalid_request 400` (invalid id form, a deleted/missing parent, or a parent belonging to a different post all reject and no comment is created). Stored as a sidecar on the reply's own wp_post and echoed back as `parent_id` on the §3.5 response row.
 - **Holder-Groups gate:** writes require write-grade membership (`gm_user_status` ∈ `member`, `member_owner`, `member_manager`, `member_moderator`). `member_readonly` can read but not create. Non-members get `bcc_forbidden 403`.
 - **Rate limit:** burst seatbelt — `BCC_TRUST_RATE_LIMIT_COMMENT` (20) per `BCC_TRUST_RATE_WINDOW_COMMENT` (300s) per author.
 - **Response 200 data shape:**
@@ -3664,7 +3668,7 @@ Create a comment on the parent post.
   }
   ```
 - **Errors:**
-  - `bcc_invalid_request 400` — malformed `feed_id`, empty body, body over cap; (v1.41) `attachment_id` resolves to no attachment / a non-image attachment, or `gif_url` is not a Giphy-host URL.
+  - `bcc_invalid_request 400` — malformed `feed_id`, empty body, body over cap; (v1.41) `attachment_id` resolves to no attachment / a non-image attachment, or `gif_url` is not a Giphy-host URL; (v1.42) `parent_id` is malformed, resolves to no live comment, or points at a comment on a different post.
   - `bcc_unauthorized 401` — anonymous.
   - `bcc_forbidden 403` — gate fails OR PeepSo refused (parent has `peepso_disable_comments`, parent owner blocked the commenter); (v1.41) `attachment_id` exists but is not owned by the caller.
   - `bcc_invalid_mention_target 400` — body contains `@peepso_user_<id>(name)` token for a user_id that fails the §3.3.12 `MentionPolicy` privacy filter. Error payload echoes `{user_id: <int>}` but does NOT leak the failure reason (privacy posture).
@@ -6001,6 +6005,28 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.42 — 2026-07-13 — Comment threading (parent link + reply count)
+
+Nested / threaded replies (bcc-trust 1.2.27 + frontend PR #41 — Tia). Additive
+only; a pre-1.2.27 backend omits both fields, so every comment reads as a root
+and the drawer renders the flat list unchanged.
+
+- **§4.13 POST:** new optional `parent_id` (the `comment_<int>` being replied
+  to). Validated BEFORE the write — it must resolve to a live comment on the
+  **same** parent post; a malformed id, deleted parent, or cross-post parent
+  rejects with `bcc_invalid_request` and no comment is created.
+- **§3.5 `Comment` view-model:** gains additive-optional `parent_id`
+  (`comment_<int>` | `null` for top-level) + `reply_count` (count of DIRECT
+  replies; absent → 0). The list stays flat + paginated — the frontend threads
+  the loaded set client-side; an orphan (parent not in the loaded pages)
+  surfaces at root. `reply_count` is batched per page (one bounded IN-list
+  post-meta read, no N+1).
+- **Storage:** `_bcc_parent_comment` post-meta on the reply's own wp_post (the
+  parent's numeric act_id) — same single-graph sidecar as v1.41 media; no new
+  table, no migration; PeepSo's comment delete trashes it with the post.
+- **Deferred:** per-subtree (`?parent=`) pagination + a shareable `?thread=<id>`
+  deep-link — the v1 drill-down is an in-drawer client-side re-root.
 
 ### v1.41 — 2026-07-12 — Comment media attachments (photo XOR gif)
 
