@@ -14,6 +14,9 @@
 // methodology in docs/capacity-model.md — used for the staging re-run and
 // the with/without-Redis single-endpoint comparison):
 //   k6 run -e URL='http://blue-collar-crypto-custom.local/wp-json/bcc/v1/cards?per_page=20' -e VUS=10 -e DURATION=15s scripts/perf/load-test.js
+//   ... -e CACHE_BUST=1   # unique _cb= param per request: forces LiteSpeed
+//                         # edge MISSES so origin takes every hit (stampede
+//                         # regime); lsc_hit/lsc_miss counters report the split
 //
 // Optional env: BASE_URL (default http://blue-collar-crypto-custom.local),
 //   MAILPIT_URL (default http://127.0.0.1:10006), AUTH_EMAIL (mailbox when
@@ -30,7 +33,7 @@
 import http from 'k6/http';
 import exec from 'k6/execution';
 import { check, sleep } from 'k6';
-import { Trend } from 'k6/metrics';
+import { Trend, Counter } from 'k6/metrics';
 import { textSummary } from 'https://jslib.k6.io/k6-summary/0.1.0/index.js';
 
 const LEGACY_URL = __ENV.URL || '';
@@ -335,8 +338,25 @@ export function authedPass(data) {
 
 // Byte-compatible with the pre-harness 13-line script — the recorded
 // baseline and the staging/Redis methodology depend on this exact shape.
+// Two opt-ins for the edge-cache-miss regime (2026-07-15, capacity-model
+// "Still unmeasured" §3): -e CACHE_BUST=1 appends a per-request unique
+// param so EVERY request misses the LiteSpeed edge and hits origin PHP
+// (forced-miss / stampede shape); the lsc_* counters split responses by
+// the x-litespeed-cache header so TTL-roll runs can report hit ratio.
+// Default behavior (no env) is byte-identical to the recorded baseline.
+const lscCounters = {
+  hit:   new Counter('lsc_hit'),
+  miss:  new Counter('lsc_miss'),
+  other: new Counter('lsc_none'),
+};
 export function legacyPass() {
-  http.get(LEGACY_URL, { headers: { Accept: 'application/json' } });
+  const url = __ENV.CACHE_BUST === '1'
+    ? LEGACY_URL + (LEGACY_URL.includes('?') ? '&' : '?') +
+      `_cb=${exec.vu.idInTest}-${exec.vu.iterationInScenario}`
+    : LEGACY_URL;
+  const res = http.get(url, { headers: { Accept: 'application/json' } });
+  const lsc = (res.headers['X-Litespeed-Cache'] || '').toLowerCase();
+  (lscCounters[lsc] || lscCounters.other).add(1);
 }
 
 // ── Summary: console (unchanged) + timestamped JSON/markdown artifacts. ──
