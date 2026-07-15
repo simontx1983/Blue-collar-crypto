@@ -408,16 +408,51 @@ hPanel shows an "Object Cache" toggle for the site, that's **LSMCD
 A/B against it would test the same hypothesis (relieves PHP-time
 options/meta lookups, not DB).
 
+### Measured staging — write path, throttle seatbelts, short soak (2026-07-15, k6)
+
+Write + auth-limit + soak regimes, same SSH-minted-throwaway methodology
+(5 subscribers users 70–74 + one throwaway `peepso-post`, all deleted after
+— verified zero residue in wp_posts / peepso_activities / activity_ranking).
+Residential-WAN client, so latencies include RTT.
+
+**Comment-write burst** (4 concurrent users POSTing to one post, 25s): the
+heaviest write path (PeepSo synchronous wp_post + activity). Successful-write
+latency **p50 303ms / p90 345ms / p95 384ms / p99 522ms / max 590ms — on par
+with reads**, not the multiple typical of a synchronous social write. 80
+writes succeeded, then the per-author throttle took over; zero 5xx. Telemetry
+peak: 9 lsphp / 924MB RSS — writes are not materially heavier on the box than
+reads (consistent with MySQL staying idle; the cost is PHP time either way).
+
+**Throttle seatbelts — verified live:**
+- **Comment** (`BCC_TRUST_RATE_LIMIT_COMMENT` 20 / 300s per author): one user
+  posting rapidly got **20 clean 200s then a hard 429 wall from request #21**.
+  Under the 4-way concurrent burst the same limit held exactly (4 × 20 = 80
+  admitted, remainder 429) — the limiter is correct under concurrency, not
+  just sequentially.
+- **Login** (5 / 60s per IP): sequentially, **5 × 401 then 429**. The race
+  test — 20 *simultaneous* attempts against a fresh bucket — admitted **only
+  4, blocked 16**: no over-admission, so the counter is atomic (no TOCTOU
+  flood bypass). This is the security-relevant result; a concurrent
+  credential-stuffing burst cannot slip past the per-IP cap.
+
+**Short soak** (2 authed VUs, 30 min, origin read mix): 2,892 iterations,
+**0 failures, 100% checks, p50 235ms / p95 300ms / p99 481ms**, flat for the
+full window. RSS across 5-min telemetry snapshots oscillated
+453 → 671 → 672 → 461 → 453MB — **no monotonic climb, so no memory-leak
+signal at 30 min** (the rise-and-fall tracks lsphp worker recycling). Bounded:
+this is a 30-minute soak, not the multi-hour test that would catch a slow leak
+or a once-a-few-hours cron interaction.
+
 **Still unmeasured** (updated 2026-07-15):
 1. The HARD failure point (above 25 VUs / 17.4 req/s authed origin —
    expected to be account memory first; needs a raised operator ceiling and
    close RSS watch).
-2. **With/without-Redis comparison** — now BLOCKED on hosting (no Redis
-   service on the account), in addition to the standing operator
-   postponement.
-3. Write-heavy bursts, login storms, and multi-hour soak — no write-path
-   load has ever been exercised (all runs are read mixes; per-endpoint
-   Throttle seatbelts exist but are unexercised under load).
+2. **With/without-Redis comparison** — BLOCKED on hosting (no Redis service
+   on the account; Hostinger shared plans don't offer it), in addition to the
+   standing operator postponement.
+3. Other write paths (votes, reviews, photo/gif posts) — only comment-create
+   was load-tested. And a **multi-hour soak** — only the 30-min short soak
+   above has run.
 
 ---
 
