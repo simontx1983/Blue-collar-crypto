@@ -398,10 +398,15 @@ reached inside the approved ceiling.
 
 **Redis A/B: not runnable on this tier.** No Redis or memcached server is
 reachable from the account (TCP 6379 refused, no sockets under the account,
-`redis-cli` absent; the PHP extensions exist but no service). Running the
-A/B requires enabling Redis via hPanel first (if the plan offers it) — the
-comparison stays postponed, with the standing hypothesis unchanged (would
-relieve PHP-time, not DB).
+`redis-cli` absent; the PHP extensions exist but no service). Confirmed
+2026-07-15 against [Hostinger's support doc](https://www.hostinger.com/support/9581774-is-redis-supported-at-hostinger/):
+**Redis is NOT offered on web/cloud (shared) plans at all** — VPS
+(self-managed) or Agency hosting only, so the A/B arrives with the VPS
+upgrade, matching the tier table above. Possible interim substitute: if
+hPanel shows an "Object Cache" toggle for the site, that's **LSMCD
+(LiteSpeed Memcached)** — the LSCWP plugin supports it as a backend and an
+A/B against it would test the same hypothesis (relieves PHP-time
+options/meta lookups, not DB).
 
 **Still unmeasured** (updated 2026-07-15):
 1. The HARD failure point (above 25 VUs / 17.4 req/s authed origin —
