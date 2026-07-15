@@ -342,14 +342,77 @@ authenticated origin traffic (10 paced VUs) on the current shared-hosting
 tier; the saturation knee was NOT located — it lies above the approved
 ceiling. Finding the knee needs a higher operator-approved VU ceiling.
 
-**Still unmeasured:**
-1. The authed saturation knee (above 10 VUs / ~8 req/s origin).
-2. **With/without-Redis comparison** — POSTPONED by operator decision until
-   there is a specific hypothesis + rollback plan (LiteSpeed already caches;
-   known drop-in conflict history). MySQL idleness above suggests Redis
-   object caching would mainly relieve PHP-time (options/meta lookups), not
-   DB pressure — worth folding into the hypothesis when this is picked up.
-3. Spike/stampede/attack regimes and edge-cache-miss storms (anon side).
+### Measured staging — knee ramp + edge-miss regimes (2026-07-15, k6)
+
+Operator-approved envelope: authed ramp ceiling **25 VUs**, stop rules
+fail >1% / p95 >2s / any 429/508 — none tripped. Same methodology as the
+2026-07-12 authed run (SSH-minted short-lived JWT for a throwaway subscriber
+— user 69, deleted after; 5s SSH telemetry sampling; residential-WAN client,
+so latencies include RTT). Box context this night: 64 cores, host load ~40
+(other tenants), idle account = 3–5 lsphp / ~150–370MB RSS.
+
+**Authed knee ramp** (weighted session mix, 2-min stages):
+
+| step | VUs | reqs | req/s | failures | p50 | p95 | p99 | max |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 10 | 932 | 7.8 | 0% | 279ms | 424ms | 641ms | 744ms |
+| 2 | 15 | 1,383 | 11.4 | 0% | 289ms | 434ms | 791ms | 939ms |
+| 3 | 20 | 1,793 | 14.8 | 0% | 297ms | 642ms | 1.30s | 1.65s |
+| 4 | 25 | 2,110 | 17.4 | 0% | 334ms | 949ms | 1.59s | 1.78s |
+
+Per-stage telemetry maxima: lsphp workers 18 → 23 → **29 → 29** (pool
+plateaus between 20→25 VUs); account CPU burst 2.7 → 3.0 → 4.4 → **4.6
+cores**; RSS 1.55 → 2.47 → 2.96 → **3.01GB**; MySQL `Threads_running` ≤9
+server-wide (shared instance; deltas small — still not the bottleneck).
+
+**Interpretation:** p50 stays flat (~280–335ms) while tails grow smoothly —
+graceful queueing/CPU-throttle onset, not collapse. The **SLA-knee (p95
+crossing ~500ms) sits between 15 and 20 VUs ≈ 12–15 req/s authed origin.**
+The worker plateau at ~29 plus ~3GB RSS says the first HARD limit above the
+tested ceiling is most likely account memory, then the LVE CPU cap (~5-core
+burst observed). Comfortable sustained envelope on this tier: **≤~11 req/s
+authed origin (15 paced VUs) at p95 ≤450ms**; degraded-but-stable to at
+least 17.4 req/s (25 VUs, p95 ~950ms). The hard failure point was NOT
+reached inside the approved ceiling.
+
+**Anon edge-miss regimes** (`/feed/hot?per_page=20`):
+
+- **TTL-roll stampede** — 20 unpaced VUs on the fixed URL, 75s: 18,292 reqs
+  at **243 req/s, 0% failures, p50 78ms / p95 95ms**; 99.9% edge hits with
+  exactly 1 origin miss (+19 no-header responses) across ~5 TTL windows.
+  **LiteSpeed does not stampede origin at TTL expiry** — one regeneration
+  per roll while everyone else keeps getting served.
+- **Forced-miss** (new `-e CACHE_BUST=1` harness mode; per-request unique
+  param so every request reaches origin PHP): 5 VUs = 996 reqs, all misses,
+  16.5 req/s at p50 296ms / p95 350ms, 0% failures; 10 VUs = 35.2 req/s of
+  which **18.7 true-miss req/s at p95 560ms, 0% failures**. Anon origin
+  (feed/hot's server-side warm payload cache) comfortably absorbs ~17–19
+  pure-miss req/s at 5–10 concurrent — an edge-cache wipe is survivable at
+  these traffic levels.
+- Honest observation: in the 10-VU run, `_cb` URLs repeated from the
+  previous run returned edge HITs minutes later — the anon edge TTL for
+  `/feed/hot` is currently **longer than the 15s recorded on 2026-07-12**
+  (entries survived ≥2–3min). Conclusions above use the miss-only
+  population and are unaffected; re-verify the TTL if edge freshness ever
+  matters for product behavior.
+
+**Redis A/B: not runnable on this tier.** No Redis or memcached server is
+reachable from the account (TCP 6379 refused, no sockets under the account,
+`redis-cli` absent; the PHP extensions exist but no service). Running the
+A/B requires enabling Redis via hPanel first (if the plan offers it) — the
+comparison stays postponed, with the standing hypothesis unchanged (would
+relieve PHP-time, not DB).
+
+**Still unmeasured** (updated 2026-07-15):
+1. The HARD failure point (above 25 VUs / 17.4 req/s authed origin —
+   expected to be account memory first; needs a raised operator ceiling and
+   close RSS watch).
+2. **With/without-Redis comparison** — now BLOCKED on hosting (no Redis
+   service on the account), in addition to the standing operator
+   postponement.
+3. Write-heavy bursts, login storms, and multi-hour soak — no write-path
+   load has ever been exercised (all runs are read mixes; per-endpoint
+   Throttle seatbelts exist but are unexercised under load).
 
 ---
 
