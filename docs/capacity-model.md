@@ -542,6 +542,40 @@ thing to measure after the cron flip.
 3. Prod's LSCWP install should be checked for the same **missing
    `lib/object-cache.php`** before its Object Cache toggle is trusted.
 
+### Staging reaches full target state — cron flip + final stage (2026-07-16)
+
+`DISABLE_WP_CRON=true` is live on staging (mu-plugin define uncommented on
+the server) with **two out-of-band drivers, both verified firing**:
+
+- **hPanel system cron at a measured 60-second cadence** hitting
+  `wp-cron.php?doing_wp_cron` — so the "Hostinger Business caps cron at
+  5–15 min" claim carried by the api-contract and the relay docblocks is
+  **wrong for this plan**; hPanel accepts `* * * * *`. Gotcha for the
+  record: hPanel executes cron commands WITHOUT a shell — `>` redirection
+  and quoted URLs are passed as literal argv (first attempt failed with
+  `curl: (6) Could not resolve host: >`); the working form is
+  `curl -s -o /dev/null <url>` (program flags only, no quotes).
+- **Vercel Cron minutely** → `/api/internal/cron/indexer-tick` relay →
+  staging tick endpoint (indexer + hot-feed warm). This had NEVER worked:
+  `CRON_SECRET` and `BCC_INTERNAL_CRON_SECRET` were absent from the
+  Vercel project env (set 2026-07-16, sensitive, production) and the WP
+  side constant was also newly defined. Verified live via
+  `bcc_nft_eth_indexer_tick_last_success` advancing every minute. The
+  deployed frontend's `BCC_API_URL` targets **staging** (proven
+  empirically — sensitive env vars pull as empty).
+
+**Final 25-VU × 2-min stage** (warm cache + real cron, throwaway user 77
+revoked+deleted after): 18.4 req/s, **0% failures, checks 4,476/4,476**
+(the earlier profile_rotate artifact gone after purging both cache layers).
+Client-observed p50 284ms / p95 684ms — noisier than the earlier warm
+stage; box telemetry stayed at **≤5 lsphp / 0.40GB / 0.5 cores** in the
+sampled window (sampler covered only the first ~30s — partial), so the
+tail movement is attributed to WAN/tenant variance, not the server. The
+tail-attribution question (cron-in-band vs out) is therefore judged
+inconclusive between single runs at this noise level; the box-side
+metrics are unambiguous across all cache-era runs: **the account-memory
+ceiling is no longer the binding constraint at ≤25 VU.**
+
 ---
 
 ## Related
