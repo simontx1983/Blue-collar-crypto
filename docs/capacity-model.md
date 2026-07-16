@@ -576,6 +576,56 @@ inconclusive between single runs at this noise level; the box-side
 metrics are unambiguous across all cache-era runs: **the account-memory
 ceiling is no longer the binding constraint at ≤25 VU.**
 
+### Measured staging — ceiling hunt to 100 VUs (2026-07-16, operator-approved)
+
+First ramp above the old 25-VU ceiling (authed weighted mix, 2-min stages,
+throwaway user 78 revoked+deleted after; single client IP over residential
+WAN). NB: both cache layers had been purged minutes before the ramp
+(post-test hygiene), so this ran **cold-ish — treat it as a conservative
+bound**.
+
+| VUs | req/s | fail | p50 | p95 | lsphp | RSS | CPU |
+|---|---|---|---|---|---|---|---|
+| 25 | 19.2 | 0% | 240ms | 653ms | 28 | 2.68GB | 4.5 |
+| 40 | 19.9 | 0% | 1.11s | 1.56s | 43 | 4.08GB | 4.8 |
+| 60 | 20.6 | 0% | 2.17s | 2.64s | 65 | 6.50GB | **5.0** |
+| 80 | 21.3 | 0% | 2.88s | 3.51s | 82 | 8.24GB | **5.0** |
+| 100 | collapse | **97%** | 0ms* | — | 102 | **9.96GB** | 5.0 |
+
+\* p50 0ms = instant TCP read resets, not served responses.
+
+**Findings (several prior beliefs corrected):**
+
+1. **The ~3GB account-memory ceiling is REFUTED.** RSS grew linearly with
+   admitted concurrency to **9.96GB at 102 workers with no memory failure**.
+   The 07-15 "3.01GB plateau ⇒ nearest hard limit is memory" inference was
+   a concurrency artifact (29 workers × ~104MB), not a wall.
+2. **The binding resource is CPU: the LVE burst cap pins at exactly 5.0
+   cores from 60 VUs**, which caps authed-origin throughput at **~20–21
+   req/s** — every VU beyond ~25 only deepens the queue (p50 rises ~linearly
+   with VUs while req/s stays flat). Little's law holds throughout.
+3. **The 100-VU wall is per-source-IP protection, not capacity**: the stage
+   died by TCP connection resets and the client IP was then temp-banned at
+   the TLS layer (server-side health stayed 200 throughout — the site never
+   went down for anyone else). Real multi-IP traffic won't trip this, but
+   the account CPU cap binds regardless of IP distribution.
+4. Worker count ≈ admitted concurrency (~1 lsphp per in-flight request,
+   ~100MB each). No 508/LVE-EP events; no memory kill.
+
+**DAU translation (capacity-model §1 formulas, expected-case):** sustained
+SLA-grade authed origin ≈ **~19–20 req/s** (25 VUs; p95 crosses 500ms just
+above it). At ~0.07 req/s per concurrent session → **~285 concurrent
+sessions**, ÷10% peak-concurrency → **~2,800 DAU expected-case**
+(best 5% → ~5,700; worst 15% → ~1,900) — the anon/edge tier (243 req/s
+proven) rides on top of this. The standing "don't plan past ~2k DAU on this
+tier" guidance is now **measured, not inferred**, and sits at the
+conservative end of the measured band. The VPS remains the answer past
+that; its case is now "CPU cores," not "memory."
+
+Still unexercised: warm-cache ramp above 25 VUs (tonight's was purged-cold),
+multi-hour soak, write-heavy + login-storm regimes, and any multi-IP
+distributed load (single-IP bans at ~100 concurrent are a harness limit).
+
 ---
 
 ## Related
