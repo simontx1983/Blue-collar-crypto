@@ -716,6 +716,40 @@ The **plugin-floor hypothesis** — that deactivating Wordfence + Rank Math
 recovers part of the ~160–180ms fixed floor (~20–45% capacity) — is
 **untested**; a controlled staging A/B is queued.
 
+### Plan limits CONFIRMED from hPanel (2026-07-16, operator-provided)
+
+Hostinger plan panel: **CPU Cores 4 · RAM 4096MB · PHP Workers 100 ·
+Max Processes 200** (inodes 2M, bandwidth unlimited). This settles three
+previously-inferred items with hosting telemetry:
+
+1. **The CPU cap is 4 cores, not ~5.** Sampled means (4.0–4.3) match;
+   the isolated 5.04 samples were `ps pcpu` lifetime-average smear.
+   Closing arithmetic: 4 cores ÷ ~20.5 req/s ≈ **195ms CPU/request** —
+   consistent with the measured ~160–180ms server-wall floor: authed
+   requests are essentially pure CPU. Every earlier "~5-core LVE cap"
+   mention should be read as **4-core plan limit (confirmed)**.
+2. **The 100-VU wall was the `PHP Workers 100` plan cap** — the collapse
+   hit at exactly 100–102 lsphp with instant TCP resets. The hours-long
+   per-IP TLS ban that followed is a separate protection layer (still
+   unidentified, still real — it also caught the operator's own home IP
+   during normal troubleshooting the same day).
+3. **RAM 4096MB reframes the memory readings**: summed worker RSS
+   (9.96GB at 102 workers) overcounts physical use ~2–3× because shared
+   code pages are counted per-process; LVE evidently charges physical.
+   Memory headroom exists but is smaller than the summed figures imply —
+   at ~100MB-summed/worker, ~40 workers ≈ plan RAM if charged fully,
+   and the box demonstrably ran 102, so real physical per-worker is
+   likely ~35–40MB.
+
+**VPS-planning consequence:** a 4-vCPU VPS offers the SAME core count as
+this plan — its gains are dedicated (unshared) cores, root control
+(persistent PHP workers, no per-request full boot), and freedom from the
+shared-host protection layer. Capacity beyond ~20 req/s comes from
+cutting per-request CPU cost (the plugin-floor A/B measures the cheapest
+lever), not from the VPS's core count. The tier-2 "7–8k DAU" row remains
+model-derived and must be re-based on measured per-request CPU before it
+is used for purchasing decisions.
+
 ---
 
 ## Related
