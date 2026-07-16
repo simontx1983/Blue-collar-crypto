@@ -489,6 +489,59 @@ cap changes no steady-state behavior (it bounds runaways). LSMCD A/B and the
 cron flip remain the next measured steps; the "Still unmeasured" list above
 is unchanged.
 
+### Measured staging — LSMCD object cache, first live A/B (2026-07-16, k6)
+
+**Wiring story (matters for reproducing on prod):** the hPanel "Object
+Cache" toggle DID start LSMCD (memcached 1.6.42) — but on **IPv6 `[::1]:11211`
+only** (an IPv4 `127.0.0.1` probe reports closed), and LSCWP set
+`litespeed.conf.object=1` without ever installing the `object-cache.php`
+drop-in because the staging plugin install was **missing its own
+`lib/object-cache.php` source file** (LSCWP 7.8.1's installer `copy()` failed
+silently on settings-save). Healed by restoring that file from the official
+7.8.1 release zip and re-running `wp litespeed-option set object true`.
+Verified live: `wp_using_ext_object_cache()` true, cross-process
+`wp cache set/get` persists, `wp_cache_incr` works (generation counters
+safe). LSMCD runs as a system service — its memory does NOT count against
+the account RSS allowance. Staging only; prod untouched.
+
+Three 25-VU × 2-min authed stages (same protocol; throwaway user 76,
+revoked+deleted after):
+
+| regime | req/s | fail* | p50 | p95 | p99 | lsphp | RSS | CPU |
+|---|---|---|---|---|---|---|---|---|
+| cold-fill (first-ever) | 19.3 | 2.5%* | 239ms | 539ms | 1.25s | 11 | 1.10GB | 2.6 |
+| rebuild (post-flush stampede) | 19.4 | 2.2%* | 234ms | 563ms | 1.16s | 27 | 2.37GB | 3.8 |
+| **warm** | **19.5** | 1.8%* | **234ms** | 538ms | 1.04s | **4** | **0.32GB** | **0.5** |
+
+\* Every failure across all three stages was one endpoint (`profile_rotate`)
+404ing on a **test artifact**: the deleted throwaway user from the earlier
+ramp lingered in the cached anon `/members` payload (object cache first, then
+the LiteSpeed **edge** variant, which `wp cache flush` does not touch), and
+k6's setup() kept re-discovering the dead handle. All other endpoints were
+100% 200s in every stage. Cache-busted origin fetches confirmed the fresh
+list was clean.
+
+**Headline: at the same 25 VU / ~19.5 req/s, warm-cache staging serves the
+load on 4 lsphp workers / 0.32GB RSS / 0.5 cores** — vs 26/2.60GB post-prune
+and 29/3.01GB at the 07-15 baseline. That is ~10× less peak memory than the
+baseline at equal load; Little's-law-consistent (19.5 req/s × ~0.25s ≈ 5 busy
+workers). p50 is the best of any run (234ms); the p95 tail (~540ms) sits
+ABOVE the prune-only run's 382ms — cron is still traffic-triggered loopback
+(minutely indexer/warm ticks land inside the window), single-run tenancy
+noise applies, and the cache was < 15 min old. Tail attribution is the next
+thing to measure after the cron flip.
+
+**New findings surfaced by cache persistence (previously unobservable):**
+1. **User deletion does not invalidate cached member lists** — a deleted
+   user lingers in anon `/members` (object + edge layers) until TTL, and
+   their profile link 404s. Consider folding a generation bump on user
+   delete/ban. Tracked in TODO.md.
+2. The anon REST **edge TTL again measured far above the declared
+   `max-age=15`** (stale entry survived ≥8 min across an object-cache flush)
+   — re-flagging the 07-15 observation, now with a product-visible case.
+3. Prod's LSCWP install should be checked for the same **missing
+   `lib/object-cache.php`** before its Object Cache toggle is trusted.
+
 ---
 
 ## Related
