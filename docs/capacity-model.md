@@ -9,6 +9,18 @@ single biggest swing is **peak concurrent share of DAU** — it is carried
 through every metric. Practical limits use a **30% safety margin** (size to
 70% utilization of the binding resource).
 
+> **Reconciliation note (2026-07-16):** the analytic model below (§1–§10,
+> "First bottleneck", "Practical DAU limits") predates the staging
+> measurement campaign and several of its inputs are now known to be wrong:
+> per-worker RAM is ~100–105MB (not 60MB), staging now runs LSMCD (the
+> "no persistent object cache" penalty rows describe **production** today,
+> not staging), and the measured binding resource on this tier is the
+> **5-core LVE CPU cap** — not PHP-worker exhaustion, not memory, not
+> MySQL. The authoritative current numbers are the dated "Measured
+> staging" sections, newest last ("Ceiling hunt", 2026-07-16). Sections
+> below are labeled **SUPERSEDED** where a measurement replaced them; the
+> model is kept for its formulas and for sizing the future VPS.
+
 > **Architecture scope:** "Vercel" hosts only the Next.js frontend. **All
 > data/queries hit the WordPress/PHP backend** (`bcc-frontend/src/lib/api/client.ts`:
 > Vercel→WP, Bearer-only). PHP-FPM + MySQL are the real ceiling regardless of
@@ -118,6 +130,10 @@ Little's Law: `busy = RPS × latency`; provision `busy / 0.7`.
 | Cold-cache busy (×2.5) | ~6 | ~20 | ~80 → provision ~115 |
 | Worker RAM @60MB | 0.2GB | 0.7–1.2GB | 3–7GB |
 
+> **SUPERSEDED input (2026-07-16, MEASURED):** per-worker RSS on staging is
+> **~100–105MB** (Wordfence + Rank Math load in every worker), not 60MB —
+> scale this row and §9's PHP-FPM row by ~1.7× when reusing the model.
+
 ## 8. MySQL CPU requirements
 
 ~2,000 q/s per vCPU (mixed read-model/join). `vCPU = QPS / 2,000`, provision `÷0.7`.
@@ -163,6 +179,15 @@ Little's Law: `busy = RPS × latency`; provision `busy / 0.7`.
 
 ## First bottleneck that actually fails
 
+> **SUPERSEDED (2026-07-16, MEASURED):** the ceiling hunt found the actual
+> first bottleneck on the current shared tier is the **LVE 5-core CPU
+> burst cap** (pins at exactly 5.0 cores from 60 VUs; ~20–21 authed origin
+> req/s). Worker count and memory both grew far past this section's limits
+> without failing (102 workers / 9.96GB RSS), and MySQL stayed essentially
+> idle (`Threads_running` ≈ 1) in every measured regime — the cold-cache
+> MySQL leg of the thesis below never materialized. Kept for the VPS-era
+> reasoning only.
+
 **Shared hosting: PHP-FPM worker exhaustion, compounded by cold-cache MySQL
 CPU.** Without a persistent object cache, every request pays ~2.5× queries
 *and* ~2.5× latency → workers stay busy longer → the ~25–40 worker pool
@@ -178,6 +203,15 @@ connection/write contention past ~20–40k DAU (→ needs a read replica, F3).
 ## Practical DAU limits (70% utilization = 30% safety margin)
 
 Binding resource at each tier, expected-load column.
+
+> **Status (2026-07-16):** row 1 is superseded by measurement — the shared
+> tier's measured band is **~1,900–5,700 DAU (expected-case ~2,800)** with
+> the binding resource being the **LVE CPU cap**, not workers/MySQL (see
+> "Ceiling hunt"). Rows 2–4 are **UNVERIFIED projections**: they were built
+> on the 60MB-worker and Redis assumptions above and have never been
+> benchmarked — do not treat the 4-vCPU "7,000–8,000" or "10k DAU box"
+> claims as fact until the same k6 protocol runs on that hardware. The
+> VPS's case is now "CPU cores," not "memory."
 
 | Platform | Binding resource | Practical safe DAU | Notes |
 |---|---|---|---|
@@ -298,9 +332,13 @@ INCLUDES client RTT; server-side time is lower than shown.
 
 **Read this with the cache tier in mind:** staging serves anon REST responses
 from **LiteSpeed edge cache** (`x-litespeed-cache: hit`, `Cache-Control:
-private, max-age=15`; PHP 8.3.30 origin). With a 15s TTL, PHP regenerated each
-endpoint at most ~4×/min regardless of VUs — so this run exercised the
-**production anon cache tier**, NOT origin PHP/MySQL capacity. It performed
+private, max-age=15`; PHP 8.3.30 origin). ~~With a 15s TTL, PHP regenerated
+each endpoint at most ~4×/min regardless of VUs~~ — **corrected 2026-07-16:
+the `max-age=15` header only governs browsers. The real edge TTL is LSCWP's
+`cache-ttl_rest`, verified at 604800s (one week) on both staging and prod**,
+so PHP regenerated each endpoint essentially once. Either way the point
+stands: this run exercised the **production anon cache tier**, NOT origin
+PHP/MySQL capacity. It performed
 flawlessly at the 17.4 req/s tested, which is encouraging but does NOT prove
 immunity to traffic spikes, cache stampedes, attacks, or edge-cache-miss
 storms — none of those regimes were exercised. The question that matters for
@@ -515,11 +553,14 @@ revoked+deleted after):
 
 \* Every failure across all three stages was one endpoint (`profile_rotate`)
 404ing on a **test artifact**: the deleted throwaway user from the earlier
-ramp lingered in the cached anon `/members` payload (object cache first, then
-the LiteSpeed **edge** variant, which `wp cache flush` does not touch), and
-k6's setup() kept re-discovering the dead handle. All other endpoints were
-100% 200s in every stage. Cache-busted origin fetches confirmed the fresh
-list was clean.
+ramp lingered in the cached anon `/members` payload, and k6's setup() kept
+re-discovering the dead handle. All other endpoints were 100% 200s in every
+stage. Cache-busted origin fetches confirmed the fresh list was clean.
+(Corrected 2026-07-16: the staleness was the LiteSpeed **edge** entry —
+which `wp cache flush` does not touch — full root cause below. The original
+"object cache first, then edge" attribution was an inference; the code trace
+shows `/members` has no object-cache layer and `wp user delete` bumps WP
+core's `users:last_changed`, so the origin self-corrects immediately.)
 
 **Headline: at the same 25 VU / ~19.5 req/s, warm-cache staging serves the
 load on 4 lsphp workers / 0.32GB RSS / 0.5 cores** — vs 26/2.60GB post-prune
@@ -531,16 +572,29 @@ ABOVE the prune-only run's 382ms — cron is still traffic-triggered loopback
 noise applies, and the cache was < 15 min old. Tail attribution is the next
 thing to measure after the cron flip.
 
-**New findings surfaced by cache persistence (previously unobservable):**
-1. **User deletion does not invalidate cached member lists** — a deleted
-   user lingers in anon `/members` (object + edge layers) until TTL, and
-   their profile link 404s. Consider folding a generation bump on user
-   delete/ban. Tracked in TODO.md.
-2. The anon REST **edge TTL again measured far above the declared
-   `max-age=15`** (stale entry survived ≥8 min across an object-cache flush)
-   — re-flagging the 07-15 observation, now with a product-visible case.
-3. Prod's LSCWP install should be checked for the same **missing
-   `lib/object-cache.php`** before its Object Cache toggle is trusted.
+**New findings surfaced by cache persistence (previously unobservable) —
+root causes CONFIRMED 2026-07-16 (code trace + read-only SSH inspection):**
+1. **User deletion does not invalidate cached member lists** — CONFIRMED,
+   and the stale layer is the **LiteSpeed edge only**: `/members`
+   (`UsersEndpoint::members()`) is a live `WP_User_Query` with no BCC cache
+   layer, so the origin is correct the moment the user row is gone; but no
+   bcc-* code ever emitted `X-LiteSpeed-*` headers or fired a
+   `litespeed_purge*` action, so the edge entry lived out its full TTL.
+   **Fixed** (bcc-trust `fix/members-edge-cache-correctness`): `/members`
+   responses now pin a 15s edge TTL + `bcc_members` tag via LSCWP's API
+   (`EdgeCache`), and user delete (`deleted_user`) / suspend / unsuspend
+   purge the tag (+ the deleted user's profile REST URL).
+2. The anon REST edge TTL mystery is solved: **LSCWP `cache-ttl_rest` was
+   still 604800s (one week) on BOTH staging and prod** — the 07-15 tuning
+   changed `cache-ttl_pub` to 60 but REST responses use the separate REST
+   TTL. The declared `max-age=15` never governed the edge. Operator fix:
+   set `cache-ttl_rest` to 60 on both boxes (see TODO.md).
+3. Prod's LSCWP install **has the same defect and worse** (verified
+   read-only over SSH 2026-07-16): `lib/object-cache.php` MISSING, **no
+   `wp-content/object-cache.php` drop-in at all**, and a stale 120-byte
+   `.litespeed_conf.dat` from Apr 29 — prod has NO persistent object cache
+   today, and the hPanel Object Cache toggle will silently fail exactly as
+   staging's did until the lib file is restored.
 
 ### Staging reaches full target state — cron flip + final stage (2026-07-16)
 
@@ -613,14 +667,19 @@ bound**.
    ~100MB each). No 508/LVE-EP events; no memory kill.
 
 **DAU translation (capacity-model §1 formulas, expected-case):** sustained
-SLA-grade authed origin ≈ **~19–20 req/s** (25 VUs; p95 crosses 500ms just
-above it). At ~0.07 req/s per concurrent session → **~285 concurrent
-sessions**, ÷10% peak-concurrency → **~2,800 DAU expected-case**
-(best 5% → ~5,700; worst 15% → ~1,900) — the anon/edge tier (243 req/s
-proven) rides on top of this. The standing "don't plan past ~2k DAU on this
-tier" guidance is now **measured, not inferred**, and sits at the
-conservative end of the measured band. The VPS remains the answer past
-that; its case is now "CPU cores," not "memory."
+authed origin under the 500ms-p95 target ≈ **~19–20 req/s** — MEASURED for
+**warm-cache steady state** (warm 25-VU runs: p95 382–538ms); a fully cold
+start exceeds the target at the same load (this ramp's cold 25-VU p95 was
+653ms), so "SLA-grade" applies to warm operation only. The translation from
+there is **CALCULATED, not measured**: at an *assumed* ~0.07 req/s per
+concurrent session → ~285 concurrent sessions, ÷ an *assumed* 10%
+peak-concurrency → **~2,800 DAU expected-case** (best 5% → ~5,700; worst
+15% → ~1,900) — the anon/edge tier (243 req/s proven) rides on top of this.
+Net: the origin **req/s ceiling is measured**; the DAU figures inherit the
+two behavioral assumptions and move linearly with them. The standing "don't
+plan past ~2k DAU on this tier" guidance sits at the conservative end of
+that modeled band. The VPS remains the answer past that; its case is now
+"CPU cores," not "memory."
 
 Still unexercised: warm-cache ramp above 25 VUs (tonight's was purged-cold),
 multi-hour soak, write-heavy + login-storm regimes, and any multi-IP
