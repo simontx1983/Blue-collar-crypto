@@ -454,6 +454,41 @@ or a once-a-few-hours cron interaction.
    was load-tested. And a **multi-hour soak** — only the 30-min short soak
    above has run.
 
+### Measured staging — post-prune knee re-run (2026-07-16, k6)
+
+Same protocol as 2026-07-15 (authed weighted mix, SSH-minted throwaway
+subscriber user 75 — revoked+deleted after; 2-min stages, residential-WAN
+client, 5s SSH telemetry). **What changed between runs (memory-headroom plan
+step 2/4):** four staging plugins deactivated (`redis-cache` — active with no
+Redis service, `debug-log-manager`, `akismet`, `all-in-one-wp-migration`),
+`stage/.user.ini` capping `memory_limit` 3072M→512M, and the bcc-trust #91 /
+bcc-search #8 deploys. **NOT yet changed:** no persistent object cache (LSMCD
+toggle pending), WP-Cron still loopback, LSCache config untouched.
+
+| step | VUs | reqs | req/s | fail | p50 | p95 | p99 | max | lsphp | RSS | CPU |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 10 | 954 | 7.9 | 0% | 249ms | 348ms | 570ms | 1.01s | 15 | 1.49GB | 1.5 |
+| 2 | 15 | 1,432 | 11.8 | 0% | 254ms | 348ms | 504ms | 785ms | 17 | 1.64GB | 3.7 |
+| 3 | 20 | 1,884 | 15.5 | 0% | 258ms | 409ms | 797ms | 989ms | 22 | 1.58GB | 3.6 |
+| 4 | 25 | 2,359 | 19.4 | 0% | 254ms | 382ms | 884ms | 1.38s | 26 | 2.60GB | 3.8 |
+
+Versus the 2026-07-15 baseline at the same stages: **p95 at 25 VUs 949ms →
+382ms; p50 flat ~254ms at every stage (was climbing 279→334ms); throughput at
+25 VUs 17.4 → 19.4 req/s; peak RSS 3.01GB → 2.60GB; worker plateau 29 → 26.**
+The **SLA-knee (p95 > 500ms) is no longer crossed anywhere in the tested
+0–25 VU range** — it moved above ~19 req/s authed origin. Per-worker RSS is
+~unchanged (~100MB — Wordfence and Rank Math still load); the win is fewer,
+faster workers: less per-request PHP time → less concurrency at the same
+offered load.
+
+Honest caveats: single run vs single run on a multi-tenant box (the 07-15
+baseline noted host load ~40 from other tenants; tonight's tenancy is
+unknown), so treat the deltas as strong-but-not-controlled evidence. The
+plugin prune is the dominant suspect for the latency drop; the `memory_limit`
+cap changes no steady-state behavior (it bounds runaways). LSMCD A/B and the
+cron flip remain the next measured steps; the "Still unmeasured" list above
+is unchanged.
+
 ---
 
 ## Related
