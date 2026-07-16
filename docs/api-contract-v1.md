@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.42 · 2026-07-13 · Phase 1 deliverable
+**Status:** Draft v1.43 · 2026-07-16 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -6005,6 +6005,29 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.43 — 2026-07-16 — Internal indexer tick also warms the anon hot feed
+
+Internal-endpoint change only (bcc-trust #91 + bcc-frontend #42); nothing
+consumed by the typed frontend clients changes.
+
+- **Internal `POST /internal/indexer/tick`:** the minutely tick now also
+  rebuilds the anonymous `/feed/hot` first-page payload cache (reuses
+  `CronService::warmHotFeed()`, run before the indexer since the warm is
+  sub-second while the indexer may spend its full `MAX_RUNTIME_SECONDS`
+  budget). The `bcc_trust_feed_hot_warm` WP-Cron hook stays registered as
+  the local-dev/fallback driver, same as the indexer hook; racing is
+  harmless (same payload, last write wins). Success body gains additive
+  `warm_ms` alongside `elapsed_ms` (which still times the indexer alone):
+  ```
+  { "ok": true, "ran_at": "…", "elapsed_ms": 1203, "warm_ms": 142 }
+  ```
+- **Driver correction:** the Vercel Cron for this endpoint was shipped
+  scheduled daily; fixed to `* * * * *` (bcc-frontend #42 — the project is
+  on Vercel Pro, which supports minutely crons; the v1.18 note claiming
+  free-tier 1-min support was wrong). Purpose: keep both 1-minute jobs at
+  cadence once `DISABLE_WP_CRON` is enabled on shared hosting (hPanel cron
+  floor 5–15 min).
 
 ### v1.42 — 2026-07-13 — Comment threading (parent link + reply count)
 
