@@ -545,11 +545,20 @@ the account RSS allowance. Staging only; prod untouched.
 Three 25-VU × 2-min authed stages (same protocol; throwaway user 76,
 revoked+deleted after):
 
-| regime | req/s | fail* | p50 | p95 | p99 | lsphp | RSS | CPU |
+| regime | req/s | fail* | p50 | p95 | p99 | lsphp† | RSS† | CPU† |
 |---|---|---|---|---|---|---|---|---|
-| cold-fill (first-ever) | 19.3 | 2.5%* | 239ms | 539ms | 1.25s | 11 | 1.10GB | 2.6 |
+| cold-fill (first-ever) | 19.3 | 2.5%* | 239ms | 539ms | 1.25s | ≤28 | ≤2.9GB | ≤4.4 |
 | rebuild (post-flush stampede) | 19.4 | 2.2%* | 234ms | 563ms | 1.16s | 27 | 2.37GB | 3.8 |
-| **warm** | **19.5** | 1.8%* | **234ms** | 538ms | 1.04s | **4** | **0.32GB** | **0.5** |
+| **warm** | **19.5** | 1.8%* | **234ms** | 538ms | 1.04s | 14 mean / 27 max | 1.39GB mean | **2.63 mean / 3.77 max** |
+
+† **CORRECTION (2026-07-16, forensic re-read):** the originally published
+warm row (“4 lsphp / 0.32GB / 0.5 cores”) was a **post-run idle sample** —
+k6 result-file timestamps mark run *end*, and the telemetry windows were
+shifted one run-length late. Corrected values above come from the true load
+windows (`telemetry-lsmcd-warm-20260716.log` 13:09:49–13:11:49). The same
+misattribution affected the cold-fill row (window peaked ~28/2.9GB/4.4, not
+the last-sample 11/1.10GB/2.6). Telemetry columns are 5s `ps` samples
+(lifetime-averaged pcpu) — treat as approximate.
 
 \* Every failure across all three stages was one endpoint (`profile_rotate`)
 404ing on a **test artifact**: the deleted throwaway user from the earlier
@@ -562,15 +571,18 @@ which `wp cache flush` does not touch — full root cause below. The original
 shows `/members` has no object-cache layer and `wp user delete` bumps WP
 core's `users:last_changed`, so the origin self-corrects immediately.)
 
-**Headline: at the same 25 VU / ~19.5 req/s, warm-cache staging serves the
-load on 4 lsphp workers / 0.32GB RSS / 0.5 cores** — vs 26/2.60GB post-prune
-and 29/3.01GB at the 07-15 baseline. That is ~10× less peak memory than the
-baseline at equal load; Little's-law-consistent (19.5 req/s × ~0.25s ≈ 5 busy
-workers). p50 is the best of any run (234ms); the p95 tail (~540ms) sits
-ABOVE the prune-only run's 382ms — cron is still traffic-triggered loopback
-(minutely indexer/warm ticks land inside the window), single-run tenancy
-noise applies, and the cache was < 15 min old. Tail attribution is the next
-thing to measure after the cron flip.
+**Headline (REWRITTEN after the telemetry correction): LSMCD's measured
+win at 25 VU is latency-side only** — best p50 of any run (234ms) — while
+box cost (workers/RSS/CPU) is **roughly equal to the post-prune run at the
+same load** (~2.6 cores warm vs the post-prune table's 3.8; within tenancy
+noise). The originally claimed "~10× less peak memory" was an idle-sample
+artifact and is retracted. Warm vs cold-started 25 VU are near-identical
+(2.63 vs ~2.8 mean cores at equal req/s): the object cache does not remove
+the dominant per-request CPU cost, which is a fixed ~160–180ms server-side
+floor per authed request (~35–45ms lsphp+Wordfence-WAF pre-WP + ~120–140ms
+WP+plugin boot/REST — measured by server-side TTFB partition probes,
+2026-07-16). The p95 tail (~540ms vs the prune-only run's 382ms) is
+unattributed single-run variance.
 
 **New findings surfaced by cache persistence (previously unobservable) —
 root causes CONFIRMED 2026-07-16 (code trace + read-only SSH inspection):**
@@ -622,21 +634,27 @@ the server) with **two out-of-band drivers, both verified firing**:
 revoked+deleted after): 18.4 req/s, **0% failures, checks 4,476/4,476**
 (the earlier profile_rotate artifact gone after purging both cache layers).
 Client-observed p50 284ms / p95 684ms — noisier than the earlier warm
-stage; box telemetry stayed at **≤5 lsphp / 0.40GB / 0.5 cores** in the
-sampled window (sampler covered only the first ~30s — partial), so the
-tail movement is attributed to WAN/tenant variance, not the server. The
-tail-attribution question (cron-in-band vs out) is therefore judged
-inconclusive between single runs at this noise level; the box-side
-metrics are unambiguous across all cache-era runs: **the account-memory
-ceiling is no longer the binding constraint at ≤25 VU.**
+stage. **CORRECTION (2026-07-16):** the originally published "≤5 lsphp /
+0.40GB / 0.5 cores, first ~30s" figures were **pre-run idle samples** (the
+same window-misattribution as the LSMCD table above); the sampler in fact
+covered the full run, showing **10–26 lsphp / ≤2.6GB / 2.0–3.7 cores** —
+in line with every other 25-VU run. The tail movement is therefore
+**unattributed** (tenancy/WAN/cron all candidates; single runs cannot
+separate them). The account-memory conclusion no longer rests on these
+figures — it rests solely on the ceiling ramp below (9.96GB with no
+memory failure).
 
 ### Measured staging — ceiling hunt to 100 VUs (2026-07-16, operator-approved)
 
 First ramp above the old 25-VU ceiling (authed weighted mix, 2-min stages,
 throwaway user 78 revoked+deleted after; single client IP over residential
-WAN). NB: both cache layers had been purged minutes before the ramp
-(post-test hygiene), so this ran **cold-ish — treat it as a conservative
-bound**.
+WAN). Both cache layers had been purged minutes before the ramp, but
+**cache temperature turned out immaterial**: stage-1 per-endpoint p50s
+matched the warm 25-VU run within 2–4%, and LSMCD refilled within the
+first seconds — do NOT read this ramp as a conservative cold bound.
+
+Telemetry columns below are **per-stage 5s-sample maxima** (means are
+lower: ~4.0 cores at 60 VU, ~4.3 at 80).
 
 | VUs | req/s | fail | p50 | p95 | lsphp | RSS | CPU |
 |---|---|---|---|---|---|---|---|
@@ -654,15 +672,23 @@ bound**.
    admitted concurrency to **9.96GB at 102 workers with no memory failure**.
    The 07-15 "3.01GB plateau ⇒ nearest hard limit is memory" inference was
    a concurrency artifact (29 workers × ~104MB), not a wall.
-2. **The binding resource is CPU: the LVE burst cap pins at exactly 5.0
-   cores from 60 VUs**, which caps authed-origin throughput at **~20–21
-   req/s** — every VU beyond ~25 only deepens the queue (p50 rises ~linearly
-   with VUs while req/s stays flat). Little's law holds throughout.
-3. **The 100-VU wall is per-source-IP protection, not capacity**: the stage
-   died by TCP connection resets and the client IP was then temp-banned at
-   the TLS layer (server-side health stayed 200 throughout — the site never
-   went down for anyone else). Real multi-IP traffic won't trip this, but
-   the account CPU cap binds regardless of IP distribution.
+2. **The binding resource is CPU: sampled account CPU plateaus at ~4–5
+   cores from 40–60 VUs** (means 4.0–4.3, single samples touching 5.04) —
+   **consistent with a ~5-core LVE cap but not directly confirmed**
+   (`ps pcpu` is lifetime-averaged; `lveinfo`/CloudLinux fault counters or
+   the hPanel resource panel would prove the configured limit). Throughput
+   caps at **~20–21 req/s** — every VU beyond ~25 only deepens the queue
+   (p50 rises ~linearly with VUs while req/s stays flat; per-VU rate falls
+   0.77→0.27, proving the server, not the harness, is the limiter).
+3. **The 100-VU wall is a protection/limit layer, not application
+   failure**: the stage died by TCP connection resets (9,279 RSTs, zero
+   4xx/5xx bodies) at lsphp ≈ 100–102, workers collapsed to idle within 5s,
+   a server-side probe of the same URL returned 200, debug.log stayed
+   clean, and the client IP remained TLS-refused for ≥1h afterward. The
+   exact layer is **unidentified** (per-source-IP firewall and an
+   entry-process cap ≈100 both fit). Multi-IP traffic is expected not to
+   trip the per-IP part, but this is untested; the account CPU cap binds
+   regardless of IP distribution.
 4. Worker count ≈ admitted concurrency (~1 lsphp per in-flight request,
    ~100MB each). No 508/LVE-EP events; no memory kill.
 
@@ -681,9 +707,14 @@ plan past ~2k DAU on this tier" guidance sits at the conservative end of
 that modeled band. The VPS remains the answer past that; its case is now
 "CPU cores," not "memory."
 
-Still unexercised: warm-cache ramp above 25 VUs (tonight's was purged-cold),
-multi-hour soak, write-heavy + login-storm regimes, and any multi-IP
+Still unexercised: multi-hour soak, write-heavy + login-storm regimes
+(**comment-create was tested at read-parity on 2026-07-15 — do NOT
+generalize that to other write paths**; attestation cast does a synchronous
+score recompute and has never been load-tested), and any multi-IP
 distributed load (single-IP bans at ~100 concurrent are a harness limit).
+The **plugin-floor hypothesis** — that deactivating Wordfence + Rank Math
+recovers part of the ~160–180ms fixed floor (~20–45% capacity) — is
+**untested**; a controlled staging A/B is queued.
 
 ---
 
