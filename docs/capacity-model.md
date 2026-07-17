@@ -750,6 +750,51 @@ lever), not from the VPS's core count. The tier-2 "7–8k DAU" row remains
 model-derived and must be re-based on measured per-request CPU before it
 is used for purchasing decisions.
 
+### Plugin-floor A/B — Wordfence MATERIAL, Rank Math INCONCLUSIVE, decision: keep both (2026-07-16)
+
+Five-regime staging-only A/B (A both-on baseline → B RankMath-off →
+C Wordfence-off → D both-off → E restored-baseline), fresh throwaway user
+(revoked+deleted, verified zero residue), no cache purges, host loadavg
+stable 37–44 throughout. Two measurement legs:
+
+- **Floor probes (server-side TTFB, 6 samples/regime — VALID, decisive):**
+
+  | regime | pre-WP median | full-boot median | Δ vs A |
+  |---|---|---|---|
+  | A both on | 67ms | 172ms | — |
+  | B RM off | 63ms | 149ms | −23ms |
+  | C WF off | **22ms** | **97ms** | **−75ms** |
+  | D both off | 20ms | 102ms | −71ms |
+  | E restored | 62ms | 151ms | −21ms (= drift) |
+
+  Noise: prewp probe ±5ms; full-boot probe ±20ms (E-vs-A drift is the
+  yardstick). **Wordfence: MATERIAL** — ~45ms WAF (pre-WP) + ~30ms plugin
+  boot ≈ 40% of the ~170ms fixed floor, reproduced across C and D at
+  3.5× noise. **Rank Math: INCONCLUSIVE** — its apparent −23ms equals the
+  drift band and vanished in regime D.
+- **k6 load leg (25 VU × 2m × 2/regime): VOID in all regimes** — the
+  hosting burst sensor TCP-reset 100% of sustained-load requests from the
+  allowlisted client (single requests pass; the browsing allowlist does
+  not exempt the burst layer); box telemetry confirms near-idle (≤6
+  lsphp) in every window. **CPU core-seconds per request therefore remain
+  unmeasured**; the ~28–33 req/s post-bypass ceiling is a **calculated
+  hypothesis** (floor −40% on ~195ms CPU/req), unconfirmed.
+
+Restoration proof: `.htaccess` prepend lines restored from timestamped
+backup (lines 146/149), `wordfence-waf.php` md5 unchanged, both plugins
+active, anon+authed REST 200, tick heartbeat 45s, regime-E probes match
+baseline within drift.
+
+**DECISION (Phillip, 2026-07-16): keep Wordfence and Rank Math unchanged.**
+Strongest security configuration retained pre-launch; the cost is reaching
+the CPU ceiling ~40% sooner. The measured lever stays in the drawer: a
+4-line early-return in `wordfence-waf.php` scoping the WAF off `/wp-json/`
+(instant rollback; ~45ms/request recovered; WAF keeps covering
+wp-login/wp-admin/xmlrpc; plugin scanning unaffected). **Revisit when
+sustained authed origin traffic approaches ~15–20 req/s** — pull the lever
+first, buy hardware second. Load-test confirmation of the projection is
+blocked until Hostinger exempts the test client from burst protection.
+
 ---
 
 ## Related
