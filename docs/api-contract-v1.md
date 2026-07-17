@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.43 · 2026-07-16 · Phase 1 deliverable
+**Status:** Draft v1.44 · 2026-07-17 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -3654,10 +3654,10 @@ Create a comment on the parent post.
   ```json
   { "body": "love this — finally a watchlist that respects watches.", "attachment_id": 8123 }
   ```
-  - `body` (string, required, 1–2000 chars after trim). PeepSo applies its own sanitization on top (`htmlspecialchars` + `strip_content`).
+  - `body` (string, optional since v1.44 — was required, 0–2000 chars after trim). PeepSo applies its own sanitization on top (`htmlspecialchars` + `strip_content`). **Body OR media required:** an empty/omitted `body` is accepted only when `attachment_id` or `gif_url` is present; empty body with no media → `bcc_invalid_request 400`.
   - `attachment_id` (int, optional, v1.41) — a WP attachment the **caller uploaded** via the shared `POST /blog/cover-image` route. The server verifies the caller owns it (`post_author` = viewer) and that it is an `image/*` mime before stamping it. Resolves to a §3.5 `media` block of `kind: "photo"`.
   - `gif_url` (string, optional, v1.41) — a remote Giphy CDN URL. Host-validated server-side (`giphy.com` or a subdomain, parsed host — not a substring match); the GIF stays on Giphy's CDN, nothing is staged locally. Resolves to `kind: "gif"`.
-  - `attachment_id` XOR `gif_url` — **one attachment per comment**; if both are sent, the photo wins and `gif_url` is ignored. Attachment validation runs BEFORE the comment write: a rejected attachment fails the whole request and no comment is created. Media-only comments are not supported (`body` stays required — PeepSo's comment write needs a non-empty body).
+  - `attachment_id` XOR `gif_url` — **one attachment per comment**; if both are sent, the photo wins and `gif_url` is ignored. Attachment validation runs BEFORE the comment write: a rejected attachment fails the whole request and no comment is created. Media-only comments are supported since v1.44: PeepSo's own non-empty-body requirement is satisfied internally by a zero-width-space placeholder (`PeepSoCommentWriter::EMPTY_BODY_PLACEHOLDER`) that `CommentRepository` strips back out on read — the placeholder is a write-path internal and never appears in any API response (`body` reads back as `""`).
   - `parent_id` (string, optional, v1.42) — the `comment_<int>` id of the comment being replied to; omit for a top-level comment. Validated BEFORE the write: it MUST resolve to a live comment on the **same** parent post, else `bcc_invalid_request 400` (invalid id form, a deleted/missing parent, or a parent belonging to a different post all reject and no comment is created). Stored as a sidecar on the reply's own wp_post and echoed back as `parent_id` on the §3.5 response row.
 - **Holder-Groups gate:** writes require write-grade membership (`gm_user_status` ∈ `member`, `member_owner`, `member_manager`, `member_moderator`). `member_readonly` can read but not create. Non-members get `bcc_forbidden 403`.
 - **Rate limit:** burst seatbelt — `BCC_TRUST_RATE_LIMIT_COMMENT` (20) per `BCC_TRUST_RATE_WINDOW_COMMENT` (300s) per author.
@@ -3668,7 +3668,7 @@ Create a comment on the parent post.
   }
   ```
 - **Errors:**
-  - `bcc_invalid_request 400` — malformed `feed_id`, empty body, body over cap; (v1.41) `attachment_id` resolves to no attachment / a non-image attachment, or `gif_url` is not a Giphy-host URL; (v1.42) `parent_id` is malformed, resolves to no live comment, or points at a comment on a different post.
+  - `bcc_invalid_request 400` — malformed `feed_id`, empty body **with no media** (v1.44 — a body-less comment carrying `attachment_id`/`gif_url` is valid), body over cap; (v1.41) `attachment_id` resolves to no attachment / a non-image attachment, or `gif_url` is not a Giphy-host URL; (v1.42) `parent_id` is malformed, resolves to no live comment, or points at a comment on a different post.
   - `bcc_unauthorized 401` — anonymous.
   - `bcc_forbidden 403` — gate fails OR PeepSo refused (parent has `peepso_disable_comments`, parent owner blocked the commenter); (v1.41) `attachment_id` exists but is not owned by the caller.
   - `bcc_invalid_mention_target 400` — body contains `@peepso_user_<id>(name)` token for a user_id that fails the §3.3.12 `MentionPolicy` privacy filter. Error payload echoes `{user_id: <int>}` but does NOT leak the failure reason (privacy posture).
@@ -6005,6 +6005,29 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.44 — 2026-07-17 — Media-only comments (photo/GIF, no text)
+
+bcc-trust #92 + bcc-core #26 (two halves of one fix) + bcc-frontend #43
+(composer half). Additive relaxation of §4.13 `POST /posts/:feed_id/comments`.
+
+- **`body` is now optional** (was required): 0–2000 chars after trim. The
+  validation rule is **body OR media** — an empty/omitted `body` is accepted
+  when `attachment_id` or `gif_url` (v1.41 media sidecar) is present; empty
+  body with no media still rejects `bcc_invalid_request 400`. The REST-arg
+  layer (`required: false`) and `CommentService::createComment()` enforce
+  this together.
+- **Write-path internal:** PeepSo's `add_comment` predates media-only
+  comments and hard-requires non-empty content, so
+  `PeepSoCommentWriter::addComment()` (bcc-core) gained
+  `bool $hasMedia = false`; when the body is empty and `$hasMedia` is true
+  it writes `EMPTY_BODY_PLACEHOLDER` (a zero-width space) instead.
+  `CommentRepository` strips the placeholder back out on every read path —
+  it never appears in any API response; a media-only comment's `body` reads
+  back as `""`. Clients MUST treat empty `body` + `media` as a valid,
+  renderable comment (the frontend composer already sends exactly this).
+- No wire-shape changes to the §3.5 Comment view-model; `media` block,
+  mentions, replies (v1.42), and stoke semantics are unchanged.
 
 ### v1.43 — 2026-07-16 — Internal indexer tick also warms the anon hot feed
 
