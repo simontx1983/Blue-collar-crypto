@@ -684,11 +684,19 @@ lower: ~4.0 cores at 60 VU, ~4.3 at 80).
    failure**: the stage died by TCP connection resets (9,279 RSTs, zero
    4xx/5xx bodies) at lsphp ≈ 100–102, workers collapsed to idle within 5s,
    a server-side probe of the same URL returned 200, debug.log stayed
-   clean, and the client IP remained TLS-refused for ≥1h afterward. The
-   exact layer is **unidentified** (per-source-IP firewall and an
-   entry-process cap ≈100 both fit). Multi-IP traffic is expected not to
-   trip the per-IP part, but this is untested; the account CPU cap binds
-   regardless of IP distribution.
+   clean, and the client IP remained TLS-refused for ≥1h afterward.
+   **Layer IDENTIFIED (operator-confirmed, later that day): the Hostinger
+   CDN** — deactivating it in hPanel instantly restored access for every
+   banned IP (including the owner's own home IP, which the CDN had banned
+   during normal troubleshooting). The worker collapse at lsphp ≈ 100–102
+   coincides with the plan's PHP Workers=100 cap; CDN resets + worker cap
+   likely compounded. With CDN off, origin LiteSpeed still serves the edge
+   tier (`X-LiteSpeed-Cache: hit` verified direct), so the 243 req/s edge
+   result stands. Multi-IP traffic remains untested; the account CPU cap
+   binds regardless of IP distribution. **Record CDN on/off state in every
+   future test; re-enabling for launch requires a deliberate decision (its
+   per-IP thresholds banned real, benign clients — a CGNAT/shared-IP risk
+   on launch day).**
 4. Worker count ≈ admitted concurrency (~1 lsphp per in-flight request,
    ~100MB each). No 508/LVE-EP events; no memory kill.
 
@@ -730,9 +738,9 @@ previously-inferred items with hosting telemetry:
    mention should be read as **4-core plan limit (confirmed)**.
 2. **The 100-VU wall was the `PHP Workers 100` plan cap** — the collapse
    hit at exactly 100–102 lsphp with instant TCP resets. The hours-long
-   per-IP TLS ban that followed is a separate protection layer (still
-   unidentified, still real — it also caught the operator's own home IP
-   during normal troubleshooting the same day).
+   per-IP TLS ban that followed was **the Hostinger CDN** (identified by
+   the operator later that day — deactivating it restored access; it had
+   also banned the operator's own home IP during normal troubleshooting).
 3. **RAM 4096MB reframes the memory readings**: summed worker RSS
    (9.96GB at 102 workers) overcounts physical use ~2–3× because shared
    code pages are counted per-process; LVE evidently charges physical.
