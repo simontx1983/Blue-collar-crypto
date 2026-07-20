@@ -1,6 +1,6 @@
 # Testnet Deploy Checklist
 
-Last updated: 2026-06-12
+Last updated: 2026-07-19 (§1.6 caching content current through the 2026-07-13/15/19 fixes)
 
 One pass through this document takes a fresh server + Vercel project to a
 testnet-ready BCC deployment. It consolidates requirements that were
@@ -80,7 +80,10 @@ of silently attributing the proxy IP to every user.
 
 ### 1.5 Object cache
 
-Redis drop-in (`WP_REDIS_HOST/PORT/PREFIX/DATABASE`) + `WP_CACHE`.
+**On the current shared tier: LSMCD** (LiteSpeed Memcached via LSCWP → Cache
+→ Object — live on staging since 2026-07-16; Redis is **not offered** on
+shared plans, see §1.6). The Redis path below applies to a **VPS/Agency
+tier** move: Redis drop-in (`WP_REDIS_HOST/PORT/PREFIX/DATABASE`) + `WP_CACHE`.
 After ANY restore/clone of wp_options: `wp cache flush`. A stale persistent
 cache serving an old `bcc_trust_schema_version` re-runs the ~200-query
 schema installer on every request (see boot-floor fix, 2026-06-12 — the

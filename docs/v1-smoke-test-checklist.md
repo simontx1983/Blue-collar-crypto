@@ -33,8 +33,8 @@ Before starting, confirm:
 
 - [ ] **WordPress + bcc-trust running.** Local-by-Flywheel site on
   `http://blue-collar-crypto-custom.local` reachable in a browser.
-  `wp-admin` loads. Active plugins include: bcc-core, bcc-trust,
-  blue-collar-crypto-peepso-integration, peepso-core.
+  `wp-admin` loads. Active plugins include: bcc-core, bcc-trust, and the
+  PeepSo family (`peepso` + `peepso-*` modules).
 - [ ] **Next.js dev server running.** `cd bcc-frontend && npm run dev`.
   `http://localhost:3000` returns the Floor home (anon shape).
 - [ ] **Mailpit running.** Local's mail catcher (API on

@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-07-19** — dated audit record (2026-07-08) with its remediation log; all 4 HIGH + medium fixes shipped 2026-07-09 (see [TODO.md](../TODO.md) ▸ Recently shipped). The §5 residue-cleanup items were ported to [TODO.md](../TODO.md) ▸ Backend/Contract ▸ Residue cleanup on 2026-07-19. Retained for the R5 refutation methodology, the 219-surface clean-list, and the readiness-score rationale. Not current guidance.
+
 # BCC Backend — Implementation-State Audit (Full 10-Phase)
 
 **Method:** reverse-engineering from executable code. Docs/tests/comments treated as claims; every conclusion is anchored to `file:line`. Read-only throughout (MySQL SELECT-only). Every negative/high finding was **adversarially refuted** (R5) before inclusion.

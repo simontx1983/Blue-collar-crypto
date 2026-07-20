@@ -17,7 +17,6 @@ How to actually use the subagents in [.claude/agents/](agents/) for parallel wor
 - [duplicate-scanner](agents/duplicate-scanner.md) — runs the §11 cross-codebase scan. **Always before new code.**
 - [arch-guardrails-reviewer](agents/arch-guardrails-reviewer.md) — PHP §1–§9 enforcement, after backend edits.
 - [frontend-reviewer](agents/frontend-reviewer.md) — Next.js rules, after frontend edits.
-- [holder-groups-reviewer](agents/holder-groups-reviewer.md) — feature-scoped to NFT→PeepSo group-gating; retire when that feature ships.
 
 **Implementers** (build, run their own checks):
 

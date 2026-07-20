@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-07-19** — point-in-time "path to launch" status map dated 2026-06-28. Every feature/debt item on it shipped (see [TODO.md](../TODO.md) ▸ Recently shipped); the remaining launch gates live in [testnet-deploy-checklist.md](../testnet-deploy-checklist.md) §7 and [v1-smoke-test-checklist.md](../v1-smoke-test-checklist.md). Superseded by [TODO.md](../TODO.md) as the sole active-work source. Do not treat as current.
+
 # Build Plan — Path to Launch
 
 **Status date:** 2026-06-28 · **Scope:** the road to testnet / closed-beta launch.
@@ -5,9 +7,9 @@
 This is the at-a-glance "where are we" map. It summarises what's built and
 what's left **before launch**, grouped by feature system. It deliberately
 leaves out the demand-gated V2 wishlist — that lives in
-[`v2-roadmap.md`](v2-roadmap.md). For the detailed near-term tracker see
-[`TODO.md`](TODO.md); for how to verify a live deploy see
-[`GOLDEN_PATHS.md`](GOLDEN_PATHS.md).
+[`v2-roadmap.md`](../v2-roadmap.md). For the detailed near-term tracker see
+[`TODO.md`](../TODO.md); for how to verify a live deploy see
+[`GOLDEN_PATHS.md`](../GOLDEN_PATHS.md).
 
 **Legend:** ✅ shipped · 🔄 in progress · ⬜ remaining (pre-launch) ·
 ⏭ deferred (V2 / out of scope here).
@@ -26,9 +28,9 @@ digest), auth/2FA, admin moderation, and search — is built and wired
 end-to-end.
 
 The remaining path to launch is **not new features**. It's a short list of
-cleanup / observability / perf items (see [`TODO.md`](TODO.md)), then the
-[deploy checklist](testnet-deploy-checklist.md) and a final
-[beta smoke pass](v1-smoke-test-checklist.md). The 2026-06-18 perf/upgrade
+cleanup / observability / perf items (see [`TODO.md`](../TODO.md)), then the
+[deploy checklist](../testnet-deploy-checklist.md) and a final
+[beta smoke pass](../v1-smoke-test-checklist.md). The 2026-06-18 perf/upgrade
 audit and the testnet-readiness review found **no architectural blockers** —
 what's left is finishing, hardening, and verifying.
 
@@ -66,7 +68,7 @@ validator pages, NFT-gated holder groups, entity claims.*
   dedup); validator page minting + logos; NFT-gated holder-group
   provisioning; entity claims.
 - ⏭ Indexing edge-case iteration is ongoing but **not a launch blocker** —
-  tracked under NFT scaling in [`v2-roadmap.md`](v2-roadmap.md).
+  tracked under NFT scaling in [`v2-roadmap.md`](../v2-roadmap.md).
 
 ### Social / feed
 *Ranked feed, composer, reactions, mentions, watching, messaging,
@@ -131,7 +133,7 @@ observability, guard scripts.*
 
 These aren't feature-shaped, but they block going live.
 
-### Deploy config — see [`testnet-deploy-checklist.md`](testnet-deploy-checklist.md)
+### Deploy config — see [`testnet-deploy-checklist.md`](../testnet-deploy-checklist.md)
 - ⬜ Rotate **all** §1.1 secrets fresh (local values are burned).
 - ⬜ SMTP reachable end-to-end (security email is the trust anchor).
 - ⬜ Real system cron + `DISABLE_WP_CRON=true`; confirm plugin self-heal +
@@ -150,10 +152,10 @@ These aren't feature-shaped, but they block going live.
 ### Performance
 - ⬜ **Re-run the k6 load test on a provisioned staging box** (4 vCPU + Redis
   + tuned FPM). The Local run is dominated by a dev-box FPM cliff, so the
-  per-tier DAU numbers in [`capacity-model.md`](capacity-model.md) stay
+  per-tier DAU numbers in [`capacity-model.md`](../capacity-model.md) stay
   modeled, not measured. Include the with/without-Redis comparison.
 
-### Beta smoke — see [`v1-smoke-test-checklist.md`](v1-smoke-test-checklist.md)
+### Beta smoke — see [`v1-smoke-test-checklist.md`](../v1-smoke-test-checklist.md)
 - ⬜ Final manual walkthrough before opening the beta. The 8 intentional V2
   deferrals in §14 (chain-tab filtering, live signals ticker, NFT showcase,
   on-chain panel, composer embeds, per-event email filter, fraud dashboard)
@@ -167,16 +169,16 @@ Pointers only — these are real, but not on the path to launch:
 
 - **Deferred V2 / demand-gated** (public API, native mobile, i18n, Backer
   concept, Injective / long-tail NFT chains, engagement polish) →
-  [`v2-roadmap.md`](v2-roadmap.md).
+  [`v2-roadmap.md`](../v2-roadmap.md).
 - **Trust attestation Phase 1.5+** (profile-scoped disputes, reliability
   badges, validator/builder gauges, meta-dispute) →
-  [`archive/trust-attestation-phase-1-plan.md`](archive/trust-attestation-phase-1-plan.md).
+  [`archive/trust-attestation-phase-1-plan.md`](trust-attestation-phase-1-plan.md).
 - **Post-MVP structural debt** (dual-namespace REST collapse,
   `bcc_project_*` rename, ERROR_COPY centralization) →
-  [`archive/stabilization-plan-2026-05-13.md`](archive/stabilization-plan-2026-05-13.md).
+  [`archive/stabilization-plan-2026-05-13.md`](stabilization-plan-2026-05-13.md).
 
 ---
 
 *This file is a summary map. When a ⬜ item lands, check it off in
-[`TODO.md`](TODO.md) (the source of truth) and refresh the matching line
+[`TODO.md`](../TODO.md) (the source of truth) and refresh the matching line
 here.*

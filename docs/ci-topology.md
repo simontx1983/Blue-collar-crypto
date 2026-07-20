@@ -3,17 +3,19 @@
 The project is **five separate GitHub repos** (all under `github.com/simontx1983/`):
 `Blue-collar-crypto` (umbrella), `bcc-trust`, `bcc-core`, `bcc-search`, `bcc-frontend`. CI is
 split into two tiers — per-repo correctness gates, plus umbrella cross-repo static guards —
-wired together by a `repository_dispatch` notify shim. This doc explains where each check lives
+wired together by a `repository_dispatch` notify shim. Since 2026-07-15 the three plugin repos
+also carry a **deploy layer** (`deploy.yml` — staging auto / production manual; mechanics in
+[deploy-runbook.md](deploy-runbook.md)). This doc explains where each check lives
 and what (cannot be confirmed to) block merge.
 
 ## Per-location workflows
 
 | Location | Workflow(s) | Triggers (`on:`) | Runs | Gates |
 |---|---|---|---|---|
-| **umbrella** (root) | `.github/workflows/ci.yml` | `push:[main]`, `pull_request`, `workflow_dispatch`, `repository_dispatch:[sibling-push]` | Reassembles the WP layout (checks out all 4 siblings into their dev paths), PHP 8.2, then **4 static guards**: `contract-parity-guard.php`, `subsystem-count-guard.php`, `cadence-pressure-guard.sh`, `dead-file-scan.php` | the cross-repo static guards |
-| **bcc-trust** | `ci.yml` + `notify-root.yml` | `push:[main]`, `pull_request` | job `php`: checks out bcc-core as sibling, `composer update`, **PHPStan L8**, **PHPUnit**, **arch-guardrails**. job `integration`: **MySQL 8.0 service** + integration tests vs real `$wpdb` | bcc-trust's PHPStan/PHPUnit/integration/guardrails |
-| **bcc-core** | `ci.yml` + `notify-root.yml` | `push:[main]`, `pull_request` | `composer install`, **PHPStan L8** (`--memory-limit=4G`), **PHPUnit**. No integration/guardrails job. | bcc-core's PHPStan/PHPUnit |
-| **bcc-search** | `notify-root.yml` **only** | `push:[main]` | only the cross-repo notify shim — **no PHPStan/PHPUnit/lint of its own** | nothing locally (only triggers umbrella guards) |
+| **umbrella** (root) | `.github/workflows/ci.yml` + `staging-cache-probe.yml` | ci: `push:[main]`, `pull_request`, `workflow_dispatch`, `repository_dispatch:[sibling-push]`; probe: schedule (weekly) + `workflow_dispatch` | ci: reassembles the WP layout (checks out all 4 siblings into their dev paths), PHP 8.2, then **4 static guards**: `contract-parity-guard.php`, `subsystem-count-guard.php`, `cadence-pressure-guard.sh`, `dead-file-scan.php`. probe: runs `scripts/auth-cache-isolation-probe.sh` against staging (Authorization cache-isolation regression watch, 2026-07-19) | the cross-repo static guards |
+| **bcc-trust** | `ci.yml` + `deploy.yml` + `notify-root.yml` | `push:[main]`, `pull_request`; deploy: `workflow_run` (CI success on main) + `workflow_dispatch` | job `php`: checks out bcc-core as sibling, `composer update`, **PHPStan L8**, **PHPUnit**, **arch-guardrails**. job `integration`: **MySQL 8.0 service** + integration tests vs real `$wpdb` | bcc-trust's PHPStan/PHPUnit/integration/guardrails |
+| **bcc-core** | `ci.yml` + `deploy.yml` + `notify-root.yml` | `push:[main]`, `pull_request`; deploy: as above | `composer install`, **PHPStan L8** (`--memory-limit=4G`), **PHPUnit**. No integration/guardrails job. | bcc-core's PHPStan/PHPUnit |
+| **bcc-search** | `ci.yml` + `deploy.yml` + `notify-root.yml` | `push:[main]`, `pull_request`; deploy: as above | **PHP syntax · PHPStan L8 · PHPUnit** (test harness landed 2026-07-08 — this doc previously said "no CI of its own"; that is no longer true) | bcc-search's PHPStan/PHPUnit (not yet required by branch protection — see below) |
 | **bcc-frontend** | `ci.yml` + `notify-root.yml` | `push:[main]`, `pull_request` | `npm ci`, **tsc** (`--noEmit`), **ESLint** (`next lint`), **Vitest**. `next build` is **not** run in CI (validated by Vercel preview deploys). | frontend typecheck/lint/unit |
 
 ## How it fits together
@@ -27,7 +29,12 @@ and what (cannot be confirmed to) block merge.
    subsystem-count parity, cadence-pressure policy, dead-file scan. The umbrella workflow
    reassembles the WordPress layout in the runner so these path-spanning scripts can see both.
    It runs **only static guards** — no PHPStan/PHPUnit/tsc.
-3. **Cross-repo trigger.** Because the repos are separate, a route/contract change in a plugin
+3. **Deploy layer (2026-07-15).** Each plugin repo's `deploy.yml` rsyncs the CI-green merge
+   commit to **staging automatically** (`workflow_run` on CI success for a push to `main`) and to
+   **production only via manual `workflow_dispatch`**. Staging and production use different
+   docroots (`stage/…` vs `public_html/…`). Full mechanics, secrets, and the `DEPLOY_BASE`
+   gotcha: [deploy-runbook.md](deploy-runbook.md). `bcc-frontend` deploys via Vercel, not Actions.
+4. **Cross-repo trigger.** Because the repos are separate, a route/contract change in a plugin
    wouldn't otherwise re-check the contract docs in the umbrella. Each sibling has an identical
    `notify-root.yml` that, on push to `main`, calls
    `POST repos/simontx1983/Blue-collar-crypto/dispatches` with `event_type=sibling-push`. The
@@ -47,7 +54,9 @@ and what (cannot be confirmed to) block merge.
   - `enforce_admins = true` on all four — required checks block **everyone**, including the two
     admin engineers (no override escape hatch; chosen 2026-06-25). `strict = false` (PRs need not
     be up to date with main before merge).
-  - **bcc-search** — intentionally **not protected**: it has no CI checks of its own to require.
+  - **bcc-search** — still **not protected** (verified `gh api …/branches/main/protection` → 404,
+    2026-07-19). The original reason ("no CI checks of its own to require") no longer holds — it
+    gained PHPStan/PHPUnit CI on 2026-07-08; protecting it is an open operator decision.
   Once the Phase-5 `schema-drift-guard.php` is armed, add it to the umbrella required-checks list.
 - **`bcc-search` has no test/type CI** — only the notify shim. Any quality gate for it is not
   expressed as a workflow.

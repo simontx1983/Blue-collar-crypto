@@ -49,7 +49,7 @@ Repository/Service that reads it.
 | wp_bcc_trust_user_info | 119 | Denormalized per-user trust/fraud summary (source of truth) | TableRegistry::userInfo / schema-user-info.php | Active |
 | wp_bcc_trust_user_verifications | 2 | Per-user external verifications (GitHub/X/domain/wallet) | TableRegistry::userVerifications | Active |
 | wp_bcc_trust_quest_log | 9 | Onboarding quest completions per user | TableRegistry::questLog | Active |
-| wp_bcc_user_ranks | 0 | Awarded ranks per user (Foreman role etc.) | TableRegistry::userRanks / UserRankRepository | Active |
+| wp_bcc_user_ranks | 0 | Awarded ranks per user — backed the never-built conferred-Foreman role | none (repo + schema deleted 2026-07-09) | **RETIRED** — dropped by `includes/database/drop-user-ranks-table.php` |
 | wp_bcc_page_read_model | 2777 | Denormalized page read model for discovery/search | TableRegistry::pageReadModel / schema-project.php | Active |
 | wp_bcc_rm_dirty_queue | 0 | Dirty-page queue driving read-model recompute | TableRegistry::dirtyQueue | Active |
 | wp_bcc_page_follows | 12 | User→page follow edges | TableRegistry::pageFollows | Active |
@@ -304,8 +304,13 @@ Onboarding quest completions per user.
 - completed_at · datetime · NO
 - Indexes: PRIMARY (id) [uq]; uq_user_quest (user_id,quest_slug) [uq]; idx_user (user_id)
 
-#### wp_bcc_user_ranks
-Awarded ranks per user (e.g. Foreman role).
+#### wp_bcc_user_ranks — RETIRED (2026-07-09)
+Awarded ranks per user (e.g. Foreman role). **Retired with the never-built conferred-Foreman
+role** (contract v1.36, Option B ranking slice): `UserRankRepository` + schema deleted, and
+`includes/database/drop-user-ranks-table.php` drops the table on `init` (resurrection-guarded).
+Ranks are a 1:1 relabel of the feature-access LEVEL — no table backs them. If this table
+physically exists on a box, it is leftover data, not an active surface. Column shape below kept
+for historical reference:
 - id · bigint unsigned · NO · PK auto
 - user_id · bigint unsigned · NO · K
 - rank_key · varchar(32) · NO · K
@@ -716,4 +721,4 @@ of what each table was and why it was retired — dev row counts are pre-drop.
 
 ### Notes / prior-cleanup confirmations
 - `wp_bcc_collections`, `wp_bcc_collection_images`, `wp_bcc_onchain_contracts` (dropped in the 2026-06-04 legacy cleanup) are **absent from live** — confirmed gone. Active `wp_bcc_onchain_collections` (314 rows) is the live NFT collection cache and is unrelated to the dead `bcc_collections`.
-- Known-orphan candidates that turned out **ACTIVE** (kept off the drop list): `wp_bcc_user_ranks`, `wp_bcc_trust_patterns`, `wp_bcc_trust_page_flags` (all registered in `TableRegistry::all()` / created by active schema files), and `wp_bcc_trust_edges` (1 row, registered).
+- Known-orphan candidates that turned out **ACTIVE** (kept off the drop list): `wp_bcc_trust_patterns`, `wp_bcc_trust_page_flags` (registered in `TableRegistry::all()` / created by active schema files), and `wp_bcc_trust_edges` (1 row, registered). (`wp_bcc_user_ranks` was on this list until 2026-07-09 — since RETIRED and actively dropped; see its section above.)

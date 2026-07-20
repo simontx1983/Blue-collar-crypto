@@ -1,6 +1,8 @@
 # Cadence-Pressure Policy
 
-**Status:** stub (PR-11a). Full editorial register lands in PR-11c.
+**Status:** this PR-11a "stub" is the **final policy as of 2026-07-19** — the planned PR-11b
+tone audit and PR-11c editorial register never landed and are not scheduled; reopen them
+deliberately if ever needed (see the parked notes at the bottom).
 **Enforces:** `scripts/cadence-pressure-guard.sh`
 **Threat model reference:** plan §J.5 critical-risk-mitigation item #11
 + §2.7 status-anxiety mitigation + §J.3.2 asymmetric display.
@@ -31,6 +33,14 @@ policy doc must be able to name what it forbids):
 | `consider attesting` | Softer prescription, same vector |
 <!-- cadence-pressure-guard:allow — enumeration of forbidden phrases -->
 | `active operators attest weekly` | Implies cadence-as-signal |
+<!-- cadence-pressure-guard:allow — enumeration of forbidden phrases -->
+| `in the last N days/weeks/months` | Temporal pressure framing (guard pattern added 2026-07-06) |
+<!-- cadence-pressure-guard:allow — enumeration of forbidden phrases -->
+| `remind(er) to attest/vouch/cast/stand behind` | Soft nudge + action verb (guard pattern added 2026-07-06) |
+
+> The authoritative pattern list is the `PATTERNS` array in
+> `scripts/cadence-pressure-guard.sh` — this table mirrors it (synced 2026-07-19,
+> 8 patterns). If they ever disagree again, the script wins; update this table.
 
 The mechanical guard catches these obvious tells. Subtler tone work is
 human judgment — that's PR-11b walkthrough + PR-11c register.
@@ -78,14 +88,14 @@ Out of scope: technical PHP/TS where identifiers like `daysSince`
 or `lastSeen` legitimately appear — those don't render as
 operator-facing English.
 
-## Coming in PR-11b
+## Parked: PR-11b (never landed — not scheduled)
 
 Subjective tone audit of every operator-facing page in the app —
 the kind of judgment the regex can't make. Each visible string
 walked through, classified, lifted to the shared `lib/copy/trust-layer.ts`
 module when load-bearing, marked with a tone annotation.
 
-## Coming in PR-11c
+## Parked: PR-11c (never landed — not scheduled)
 
 The full editorial register — "what to say / what not to say"
 examples, anti-pattern catalogue, community-management voice

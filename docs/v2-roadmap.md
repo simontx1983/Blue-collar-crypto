@@ -1,6 +1,6 @@
 # V2 Roadmap
 
-**Status as of 2026-05-13:** V1 + V1.5 are scope-complete. V2 is in flight — Push Notifications + NFT Scaling Phase 1 (a/b/c) + Cosmos CW-721 + NFT-piece detail + @mention dispatch + "primary Local" post dispatch + "comment received" dispatch + Good Standing directory filter have all shipped. Remaining items below.
+**Status as of 2026-07-19** (originally drafted 2026-05-13; body rows carry their own dated UPDATED/SHIPPED stamps): V1 + V1.5 are scope-complete. V2 is in flight — Push Notifications + NFT Scaling Phase 1 (a/b/c) + Cosmos CW-721 + NFT-piece detail + @mention dispatch + "primary Local" post dispatch + "comment received" dispatch + Good Standing directory filter have all shipped. Remaining items below.
 
 This doc inventories every deferral logged in the V1 plan's §P4 ("the deferred list is real"), groups them by theme, and notes what each one actually buys vs. what it costs. It is **not** a build commitment — it is a working list to drive V2 phase planning.
 

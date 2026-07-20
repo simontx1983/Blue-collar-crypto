@@ -1,8 +1,11 @@
 # BCC Capacity Model
 
-Quantitative capacity model for the Blue Collar Crypto platform, anchored to
-the system's **actual** behavior as of 2026-06-18 (post-F1 polling cadence,
-≤50-query boot floor, Redis-backed read-models, Vercel→WP-PHP split).
+Quantitative capacity model for the Blue Collar Crypto platform, originally
+anchored to the system's behavior as of 2026-06-18 (post-F1 polling cadence,
+≤50-query boot floor, Vercel→WP-PHP split — and a "Redis-backed read-models"
+assumption now **SUPERSEDED**: staging runs LSMCD, Redis is not offered on
+this shared tier, and read-models live in the `bcc_page_read_model` DB table;
+see the 2026-07-16 reconciliation note below).
 
 Every number traces to a stated assumption and an explicit formula. The
 single biggest swing is **peak concurrent share of DAU** — it is carried
@@ -37,9 +40,9 @@ through every metric. Practical limits use a **30% safety margin** (size to
 | → Concurrent sessions `C` (at 10k DAU) | 500 | 1,000 | 1,500 | `DAU × %` |
 | Badge poll cadence (weighted avg) | 28s | 28s | 20s | F1: 10% chat@10s, 30% unread@25s, 60% idle@45s |
 | Feed/nav/action reqs per session | 0.02/s | 0.03/s | 0.05/s | 1 req per ~20–50s of activity |
-| Avg queries/request (Redis warm) | 12 | 18 | 28 | Read-model + prefetcher; boot floor caps at 50 |
+| Avg queries/request (Redis warm — **SUPERSEDED**: no Redis on this tier; LSMCD is the persistent object cache) | 12 | 18 | 28 | Read-model + prefetcher; boot floor caps at 50 |
 | Avg request latency | 80ms | 120ms | 220ms | Warm-cache REST; SSR data heavier |
-| Cold-cache penalty (no Redis) | — | ×2–4 queries & latency | — | Per-request caches don't persist |
+| Cold-cache penalty (no Redis — **SUPERSEDED**: "no persistent object cache" describes production today, not staging) | — | ×2–4 queries & latency | — | Per-request caches don't persist |
 
 **Concurrency cross-check (independent):** 10k DAU × 3 sessions × 10 min =
 5,000 user-hours/day; if 15% lands in the peak hour → ~750 concurrent. The
@@ -108,7 +111,16 @@ Negligible vs badge/feed.
 
 The cold-cache row is what kills shared hosting.
 
-## 6. Redis operations per second
+> **SUPERSEDED (2026-07-16):** the "Redis warm / NO Redis" split above is
+> analytic-era framing. Staging's warm object cache is **LSMCD**, and the
+> measured binding resource is per-request PHP CPU (LVE cap), not query
+> volume — see the Measured-staging sections.
+
+## 6. Redis operations per second — **SUPERSEDED (2026-07-16)**
+
+> This whole section presupposes a Redis deployment that does not exist on
+> the current shared tier (Redis is not offered; LSMCD serves the
+> object-cache role). Kept for future VPS sizing only.
 
 `redis_ops = RPS × 30` (cache ops/request).
 
@@ -148,6 +160,12 @@ Little's Law: `busy = RPS × latency`; provision `busy / 0.7`.
 ## 9. Memory requirements (backend box)
 
 `PHP-FPM×60MB + InnoDB buffer pool + Redis + OS`
+
+> **SUPERSEDED inputs (2026-07-16, MEASURED):** workers are ~100–105MB (not
+> 60MB — scale the PHP-FPM row ~1.7×, per §7's note), and the Redis row
+> applies only to a future VPS (no Redis on the current tier). Measured
+> staging reality: ~1.4GB warm at 25 VU; memory is not the binding
+> constraint (CPU binds first).
 
 | Component | Best | Expected | Worst |
 |---|---|---|---|
@@ -834,5 +852,5 @@ blocked until Hostinger exempts the test client from burst protection.
 
 - Deploy/ops gates: [testnet-deploy-checklist.md](testnet-deploy-checklist.md)
   (§1.5 object cache, §1.6 LiteSpeed anon edge cache).
-- Boot-floor probe + load-check commands: [GOLDEN_PATHS.md](GOLDEN_PATHS.md) §5.6.
+- Boot-floor probe: `scripts/bcc-query-floor-probe.php` (temporary diagnostic); k6 load harness + regimes: `scripts/perf/load-test.js`.
 - Hosting/Redis strategy: see the project memory `project_hosting_redis_strategy`.
