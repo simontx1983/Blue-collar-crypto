@@ -3191,7 +3191,7 @@ Direct bcc-search project search and trending mode — the upstream that `cards/
 
 - **Auth:** Anonymous OR Bearer (token silently ignored by handler; sent only so viewer-aware ranking signals stay warm when the user is signed in)
 - **Query:**
-  - `q` (string) — 2..100 chars (server returns empty for shorter; `QueryQualityGate` rejects pure-stopword / low-entropy queries to empty too)
+  - `q` (string) — 2..100 chars (server returns empty for shorter; `QueryQualityGate` rejects pure-stopword / low-entropy queries to empty too). **Over 100 chars → `rest_invalid_param` 400** at the REST validation layer (v1.47) — previously undefined behaviour, now rejected before any handler work.
   - `type` (string, optional) — reputation category slug (e.g. `validator`, `builder`, `creator`). Falls through to category routing in `SearchController`.
   - `trending` (string, optional) — when `=1`, ignores `q` / `type` and returns top-scored projects regardless of query.
 - **Response 200:**
@@ -3235,7 +3235,7 @@ Users vertical — separate cache + rate-limit bucket from project search so the
 
 - **Auth:** Anonymous OR Bearer (token silently ignored by handler)
 - **Query:**
-  - `q` (string) — 2..100 chars (`QueryQualityGate` shared with project search)
+  - `q` (string) — 2..100 chars (`QueryQualityGate` shared with project search). Over 100 chars → `rest_invalid_param` 400 (v1.47).
   - `limit` (int, optional) — default 20, capped at 50
 - **Response 200:**
   ```json
@@ -3264,7 +3264,7 @@ Groups vertical — separate cache + rate-limit bucket. Returns PeepSo group row
 
 - **Auth:** Anonymous OR Bearer (token silently ignored by handler)
 - **Query:**
-  - `q` (string) — 2..100 chars
+  - `q` (string) — 2..100 chars. Over 100 chars → `rest_invalid_param` 400 (v1.47).
   - `limit` (int, optional) — default 20, capped at 50
 - **Response 200:**
   ```json
@@ -6006,6 +6006,13 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.47 — 2026-07-20 — Search query-length guard (oversized `q` → 400)
+
+bcc-search; hardening only, no shape change to valid responses.
+
+- All three search verticals (`GET /bcc/v1/search`, `/search/users`, `/search/groups`) now declare `maxLength: 100` + an explicit `validate_callback` on the `q` arg, so a query over 100 characters is rejected with WordPress's standard `rest_invalid_param` **400** at the REST validation layer — before any handler/sanitize work. This defines behaviour that was previously undefined (the contract only specified 2..100 and the empty-for-shorter case); valid queries (≤100) are unaffected. The in-handler length window remains as defense-in-depth.
+- Ships alongside the bcc-search correctness batch (projects `page_url` off-app-navigation fix — implementation now matches the already-documented `/v//p//c/` route; secret-page cache/LKG invalidation on privacy flips; trending trust-engine-failure fail-closed) and bcc-trust (trending read-model privacy filter; cards-autocomplete post-cache prime). Those are implementation-conformance / internal-behaviour fixes with no contract-shape change.
 
 ### v1.46 — 2026-07-19 — Search hygiene: users-vertical conformance, categories diet, FT-index observability
 
