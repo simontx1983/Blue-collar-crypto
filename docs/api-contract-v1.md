@@ -3218,6 +3218,7 @@ Direct bcc-search project search and trending mode — the upstream that `cards/
     ]
   }
   ```
+- **`categories` scope (v1.46):** the full category list ships only on result-bearing responses. Empty-result short-circuits (query under 2 / over 100 chars, junk-gate rejection, unknown `type`) return `categories: []` — autocomplete fires these per keystroke and nothing reads categories off an empty response.
 - **Errors (legacy WP shape — not §L5 envelope):**
   - `rate_limit_exceeded` (HTTP 429) — `10 req / 5s` per subnet
   - `dependency_unavailable` (HTTP 503) — PeepSo plugin not loaded
@@ -6005,6 +6006,31 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.46 — 2026-07-19 — Search hygiene: users-vertical conformance, categories diet, FT-index observability
+
+bcc-search + bcc-core; no frontend changes required.
+
+- **`GET /bcc/v1/search/users` conformance fix (implementation, not contract):**
+  the implementation had drifted from the documented shape — it returned the
+  login-derived `user_nicename` (BCC signup derives login `u_<handle>` AND
+  nicename from the credential name, so "@u_…" rendered in the FE and the
+  credential name leaked to anonymous callers) and an absolute WP-origin
+  permalink as `profile_url` (navigating users off the headless frontend).
+  It now returns the §B6 canonical `bcc_handle` as `username` (nicename
+  fallback for handle-less legacy accounts, never the login) and the
+  relative `/u/{handle}` route as `profile_url` — exactly what §4 always
+  documented. Also removes a per-row `PeepSoUser` instantiation.
+- **`GET /bcc/v1/search` `categories` scope:** empty-result short-circuits
+  now return `categories: []` (see the §4 note). Result-bearing responses
+  are unchanged.
+- **Junk-gate consolidation (internal):** `SearchController`'s private
+  Phase-1 copy of the query-quality gate collapsed into the shared
+  `QueryQualityGate`. No wire-visible change.
+- **New degradation subsystem `search_ft_index`** (`title_only_fallback`) —
+  recorded when an FT-eligible query is served by the title-prefix fallback
+  because the FULLTEXT index is missing. Registered in the bcc-core
+  canonical map; surfaced via `/system/health`.
 
 ### v1.45 — 2026-07-19 — Reply notifications route to the replied-to comment's author
 

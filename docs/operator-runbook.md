@@ -100,6 +100,7 @@ Bottom of Health page shows the 18-subsystem table. Hot rows (nonzero current OR
 | `null_trust_read.*` | Trust engine on NullObject (encryption key missing) | §1 step 3 |
 | `peepso_absence.*` | PeepSo class or method missing for a specific writer | Check PeepSo plugin is active + at expected version |
 | `search_lkg.unavailable_503` | Search returned 503 (LKG cache also empty) | Force FT-index rebuild: BCC System → Developer → Search Index → Rebuild |
+| `search_ft_index.title_only_fallback` | FULLTEXT index missing — search silently degraded to title-prefix matching (no content/category matching) | Same rebuild as above; sustained activation means the hourly self-heal cron isn't landing the index |
 | `read_model_fallback.legacy_aggregation` | RM read fell back to live aggregation | Recalc cron stalled — see §3 |
 | `audit_log_swallow.log_write_failed` | Audit log insert returned false | DB write-failure on audit table. Check disk space + table schema |
 | `account_security_mail.*_send_failed` | wp_mail failure on credential-rotation canary email | **P1 alert posture** — the user who was supposed to receive a canary notification did NOT. Investigate mail backend immediately. The audit_log row is the only remaining trail. |

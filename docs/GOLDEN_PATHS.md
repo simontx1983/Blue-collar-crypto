@@ -802,6 +802,7 @@ foreach (($dm["degradation_metrics"]["subsystems"] ?? []) as $name => $events) {
 - `null_trust_read` + 9 other `null_*` NullService activations
 - `peepso_absence` (18 events)
 - `search_lkg` (2 events)
+- `search_ft_index` (1 event — FT-eligible query served by title-prefix fallback because the FULLTEXT index is missing; added 2026-07-19)
 - `read_model_fallback` (1 event)
 - `audit_log_swallow` (3 events)
 - `legacy_ajax` (3 events — was 9; 6 wallet/collection AJAX handlers retired 2026-05-25)
