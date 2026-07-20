@@ -3324,7 +3324,7 @@ PeepSo's `peepso_notifications` table is the storage layer (§I1 "extend, don't 
   - `bcc_welcome` → `/` (the floor — the user is probably already there when they see it)
   - `bcc_mention` → `/?focus=<act_id>` (jump to the floor focused on the post containing the @-tag; for comment mentions `act_id` is the **parent post's** act_id — the FE has no comment-anchor consumer in V1)
   - `bcc_local_post` → `/locals/<slug>` resolved from `external_id` (the Local's group_id). Falls back to `/locals` when the group is no longer a Local (deleted, renamed off-prefix).
-  - `bcc_comment_received` → `/?focus=<act_id>` (jump to the floor focused on the parent post that received the comment; mirrors REACTION + MENTION shape — the FE has no comment-anchor consumer in V1).
+  - `bcc_comment_received` → `/?focus=<act_id>` (jump to the floor focused on the parent post that received the comment; mirrors REACTION + MENTION shape — the FE has no comment-anchor consumer in V1). Covers both the "commented on your post" and the v1.45 "replied to your comment" messages — same type, same link shape.
 - Self-notifications are emitted only for `bcc_rank_up` + `bcc_welcome` (audit trail beyond the §O1.2 Heavy toast / first-touch retention). Other types skip the dispatch when actor === recipient.
 
 #### `GET /bcc/v1/me/notifications`
@@ -3417,12 +3417,12 @@ Defense in depth:
 
 The `bcc_post_created` event fires **both** subscribers when a mention sits inside a post in your primary Local — by design. Mention and Local-post are semantically distinct events ("you were called out" vs. "activity in your Local") and each is independently toggleable in prefs.
 
-##### Comment-received dispatch — policy locks (V2 retention slice, 2026-05-13)
+##### Comment-received dispatch — policy locks (V2 retention slice, 2026-05-13; reply routing v1.45, 2026-07-19)
 
 Three behaviours are intentional and load-bearing — do not relitigate without explicit re-planning:
 
-1. **Single recipient = parent post's author.** Resolved fresh at dispatch time by walking `parentActId → PeepSoActivityRepository::getById → act_external_id → wp_posts.post_author`. No fan-out cost concern (one recipient per comment); dispatch is sync. Author self-comments are skipped.
-2. **Bell coalesced via 5-min per-(recipient, post) transient** (`bcc_comment_received_notified_{userId}_{postId}`). A hot post with 50 comments in 10 min produces at most 2 bell rows for the author (one per 5-min window). Push uses the existing `PushDispatcher` 5-min `(recipient, eventType)` debounce + count aggregation, coalescing rapid bursts into "N new comments on your post."
+1. **Recipients (v1.45).** A **top-level comment** notifies the parent post's author ("@x commented on your post."). A **threaded reply** (v1.42 `parent_id`) notifies the replied-to comment's author ("@x replied to your comment.") AND the post author — except when they are the same user, who then receives ONLY the reply notification, never both. Post author resolved fresh at dispatch time by walking `parentActId → PeepSoActivityRepository::getById → act_external_id → wp_posts.post_author`; reply recipient via the reply's `_bcc_parent_comment` meta → `CommentRepository::getCommentMeta` (a parent comment that no longer resolves — deleted/unpublished — degrades to top-level routing). Self-activity is never notified (self-comment, self-reply). Both notifications ride the **same `bcc_comment_received` type** — same bell/push pref toggles, same payload shape and `link` — only the server-rendered `message` differs. At most two recipients per comment; dispatch is sync.
+2. **Bell coalesced via 5-min per-(recipient, post) transient** (`bcc_comment_received_notified_{userId}_{postId}`). A hot post with 50 comments in 10 min produces at most 2 bell rows for the author (one per 5-min window). Recipient-scoped, so reply recipient and post author never share a window. Push uses the existing `PushDispatcher` 5-min `(recipient, eventType)` debounce + count aggregation, coalescing rapid bursts into "N new comments on your post." / "N new replies."
 3. **Original-write only.** Comment edits do not re-dispatch — no `bcc_comment_edited` action emission exists in bcc-trust, so the edit-as-ping vector is structurally closed by absence (same posture as mention + local-post).
 
 The `bcc_comment_created` event fires **both** subscribers when a commenter @-tags the post author — by design. Mention and comment-received are semantically distinct events ("you were called out" vs. "your post has activity") and each is independently toggleable in prefs.
@@ -6005,6 +6005,23 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.45 — 2026-07-19 — Reply notifications route to the replied-to comment's author
+
+bcc-trust only; **no wire-shape change** — no new notification `type`, no
+prefs keys, no frontend edits (messages render verbatim per §I1).
+
+- **Bug fixed:** a threaded reply (v1.42 `parent_id`) notified only the
+  post owner; the comment author being replied to heard nothing.
+- **New behaviour:** a reply notifies the replied-to comment's author
+  ("@x replied to your comment.") AND the post author ("@x commented on
+  your post."). When they're the same user, only the reply notification
+  is sent. Self-replies never notify. See the updated §I1
+  comment-received policy locks for the full decision table
+  (`NotificationDispatcher::resolveCommentRecipients`).
+- Both messages ride the existing `bcc_comment_received` type — same
+  bell/push toggles, same `/?focus=<act_id>` link. Push copy branches on
+  an internal `is_reply` payload flag ("N new replies." when aggregated).
 
 ### v1.44 — 2026-07-17 — Media-only comments (photo/GIF, no text)
 
