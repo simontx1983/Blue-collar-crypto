@@ -172,10 +172,23 @@ cache **anonymous** GETs of the public read endpoints:
   - Bypass whenever any `wordpress_logged_in_*` / session cookie is present.
   - Never cache non-GET methods, `/auth/*`, `/me/*`, `/admin/*`, or any
     write/mutation route.
-- [ ] Confirm with two curls: a bare `GET …/users/<handle>` should become a
-      cache HIT on the second call; the same URL **with** `Authorization:
-      Bearer <token>` must always MISS (origin) and return the viewer-aware
-      body.
+- [ ] **REQUIRED PRE-PRODUCTION GATE — run
+      [`scripts/auth-cache-isolation-probe.sh`](../scripts/auth-cache-isolation-probe.sh)
+      against staging and require exit 0.** It codifies the manual check:
+      a fresh anon REST URL twice (second must be an edge HIT), then the
+      same primed URL twice with a dummy `Authorization: Bearer` header
+      (neither may be a HIT). Exit 2 = a Bearer request was served the
+      cached anonymous variant — a **P0 isolation regression**: restore the
+      AUTH CACHE BYPASS block from the timestamped `.htaccess` backup before
+      anything else. Exit 1 = inconclusive (cache not exercised, or
+      client-IP ban) — re-run from the server over SSH before trusting a
+      pass. Manual fallback (same protocol): bare `GET …/cards` twice →
+      second call HIT; same URL **with** `Authorization: Bearer <any value>`
+      → must never HIT and must return the viewer-aware body.
+      **Production freeze (2026-07-19): do not access, modify, deploy to,
+      purge, test, or configure production until Phillip explicitly
+      authorizes the production phase. The probe refuses the production
+      hostname by design; probing prod belongs to that later phase.**
 - [ ] **Public TTL trap (P1 — silent staleness).** LSCWP's default
       `cache-ttl_pub` is **604800 (1 week)**, and it overrides the endpoints'
       own `Cache-Control: max-age` (15–60s), so anon feed/profile/cards can be

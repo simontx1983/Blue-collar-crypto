@@ -1,0 +1,27 @@
+# Weekly Authorization cache-isolation probe — STAGING ONLY.
+#
+# Runs scripts/auth-cache-isolation-probe.sh against
+# https://stage.bluecollarcrypto.io (4 sequential requests, >=2s apart —
+# a verification probe, not a load test). A Bearer cache HIT (exit 2) is a
+# P0 cache-isolation regression; exit 1 means the cache layer could not be
+# exercised (investigate before trusting green).
+#
+# PREPARED, NOT ACTIVE: this file is intentionally uncommitted. GitHub
+# Actions only schedules workflows that exist on the default branch, so
+# nothing runs until it is committed and pushed — which requires explicit
+# operator approval. Production is out of scope for this workflow entirely.
+name: staging-cache-probe
+
+on:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays 06:17 UTC
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Auth-cache isolation probe (staging)
+        run: bash scripts/auth-cache-isolation-probe.sh

@@ -200,6 +200,28 @@ connection/write contention past ~20–40k DAU (→ needs a read replica, F3).
 
 ---
 
+## Population terminology (read before quoting any capacity number)
+
+Four different populations get conflated in capacity talk — they differ by
+an order of magnitude each, and only the last one is what k6 VUs approximate:
+
+| Term | Meaning | Relationship |
+|---|---|---|
+| **Registered members** | Total accounts in the database | Near-zero cost at rest (DB rows). The launch target of **5,000 registered members** is THIS number. |
+| **DAU** | Distinct members active on a given day | A fraction of registered — community norms sit well below 1:1. |
+| **Peak active sessions** | Concurrent sessions at the busiest moment | Modeled here as ~10% of DAU (**ASSUMED**, unmeasured). |
+| **Simultaneous in-flight requests** | Requests being served at one instant | What VUs / lsphp worker counts approximate; ~0.07 req/s per active session (**ASSUMED**). |
+
+**5,000 registered members is NOT 5,000 DAU.** The current conservative
+planning level is **~2,000 DAU** — a planning estimate, not a measured cap
+(do not describe the platform as "capped at 2,000 users"). **5,000 DAU has
+not been proven**; it lies in the upper half of the calculated band and
+only under favorable behavioral assumptions. The measured facts underneath
+are: **~19–21 authed origin req/s** and **~243 cached anon req/s**. All
+measurements in this document are **staging** evidence — production
+readiness cannot be claimed from staging measurements alone. Re-base the
+two ASSUMED constants from real production traffic after launch.
+
 ## Practical DAU limits (70% utilization = 30% safety margin)
 
 Binding resource at each tier, expected-load column.
@@ -713,7 +735,10 @@ Net: the origin **req/s ceiling is measured**; the DAU figures inherit the
 two behavioral assumptions and move linearly with them. The standing "don't
 plan past ~2k DAU on this tier" guidance sits at the conservative end of
 that modeled band. The VPS remains the answer past that; its case is now
-"CPU cores," not "memory."
+"CPU cores," not "memory." (These are **DAU** figures — see "Population
+terminology" above; the 5,000 **registered-member** launch target is a
+different, far cheaper population and is NOT contradicted by a ~2,000-DAU
+planning level.)
 
 Still unexercised: multi-hour soak, write-heavy + login-storm regimes
 (**comment-create was tested at read-parity on 2026-07-15 — do NOT
