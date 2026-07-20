@@ -5,9 +5,12 @@ and — if needed — roll the backend, frontend, and database back to the last 
 Companion to [testnet-deploy-checklist.md](testnet-deploy-checklist.md) (the deploy steps) and
 [operator-runbook.md](operator-runbook.md) (live incident response).
 
-> **Status (2026-06-25):** target is **local + testnet** (testnet not yet stood up; written to
-> be in place *before* first deploy). Backend deploys by **git pull on the server**; frontend is
-> **Vercel**. **There are no automated DB backups yet** — see the DR gap below.
+> **Status (2026-07-19):** staging is stood up and load-tested; production exists but is
+> **frozen pre-launch** (intentionally runs an older plugin set — do not touch without explicit
+> authorization). Backend deploys by the **commit-driven CI pipeline**
+> ([deploy-runbook.md](deploy-runbook.md) — staging auto on CI-green merge, production manual
+> dispatch; the "git pull on the server" model this doc originally assumed is retired).
+> Frontend is **Vercel**. **There are no automated DB backups yet** — see the DR gap below.
 
 ---
 
@@ -25,15 +28,16 @@ at launch — establish at least a scheduled daily dump (offsite copy) before re
 Capture two things so "roll back" has a concrete target:
 
 1. **Code (per repo).** Each of the 5 repos deploys independently (see
-   [ci-topology.md](ci-topology.md)). Record/tag the currently-deployed commit of each so you can
-   return to it:
+   [ci-topology.md](ci-topology.md)). Record the currently-deployed commit of each so you can
+   return to it: the deployed SHA is the head of the latest **successful Deploy workflow run**
+   in each plugin repo (Actions → Deploy), or `git rev-parse origin/main` captured at deploy
+   time. Tag it locally if helpful:
    ```bash
-   # On the server (or from a clean checkout), per plugin repo + frontend:
-   git -C <repo> rev-parse HEAD          # record the SHA
-   git -C <repo> tag -f last-good-$(...) # or tag it; push the tag if the host pulls tags
+   git -C <repo> tag -f last-good-<date> <sha> && git -C <repo> push origin last-good-<date>
    ```
    The repos: `bcc-core`, `bcc-trust`, `bcc-search` (under `app/public/wp-content/plugins/`),
-   `bcc-frontend`, and the umbrella. Roll back is a `git checkout <last-good-sha>` + redeploy.
+   `bcc-frontend`, and the umbrella. Roll back is a **pipeline re-deploy at that SHA** (§4b) —
+   not a git operation on the server.
 2. **Database.** Take the pre-deploy snapshot in §2.
 
 ---
@@ -65,8 +69,10 @@ your only restore source.
 
 ## 3. Deploy & smoke
 
-1. Deploy per [testnet-deploy-checklist.md](testnet-deploy-checklist.md) (git pull on the server;
-   activate bcc-core first; `wp cache flush`).
+1. Deploy per [deploy-runbook.md](deploy-runbook.md) (plugin-scoped rsync via Actions — staging
+   auto, production manual dispatch). First-time provisioning of a fresh box:
+   [testnet-deploy-checklist.md](testnet-deploy-checklist.md) (activate bcc-core first;
+   `wp cache flush`).
 2. Run the **post-deploy health gates** (checklist §5) and the smoke walk in
    [GOLDEN_PATHS.md](GOLDEN_PATHS.md): `/system/ping` → auth critical path → `/system/health` all
    GREEN → DegradationMetric noise floor → guard scripts exit 0 → boot-floor probe.
@@ -82,13 +88,15 @@ Roll back the layer that broke; you rarely need all three.
 Vercel keeps every deployment. **Promote the previous good deployment** (Vercel dashboard →
 Deployments → the last-good build → "Promote to Production"), or `vercel rollback`. No DB impact.
 
-### 4b. Backend (git pull) — code only
-On the server, per affected plugin repo:
-```bash
-git -C <plugin-repo> fetch --tags
-git -C <plugin-repo> checkout <last-good-sha-or-tag>   # from §1
-wp cache flush
-```
+### 4b. Backend (CI pipeline) — code only
+The deployed tree is an **rsync target, not a git checkout** — never `git checkout` on the
+server. Redeploy the last-good commit through the pipeline, per affected plugin repo:
+1. Point a ref at the last-good SHA from §1 (use the tag, or `git branch rollback/<date> <sha>`
+   pushed to origin).
+2. **Actions → Deploy → Run workflow** → select that ref → pick the environment. The
+   plugin-scoped rsync (with `--delete`) makes the server tree match that commit exactly.
+3. After the run's version-confirm step passes: `wp cache flush` on the box (over SSH).
+
 Re-run the §3 health gates. If the bad deploy ran a schema migration, also do §4c.
 
 ### 4c. Database — restore the pre-deploy dump

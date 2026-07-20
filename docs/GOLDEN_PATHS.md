@@ -17,7 +17,7 @@ If a procedure in this document fails on the current branch and you cannot expla
 
 ## Prerequisites
 
-- **WordPress + bcc-trust running.** Local-by-Flywheel site at `http://blue-collar-crypto-custom.local`. `wp-admin` loads. `bcc-core`, `bcc-trust`, `blue-collar-crypto-peepso-integration`, `peepso-core` all active.
+- **WordPress + bcc-trust running.** Local-by-Flywheel site at `http://blue-collar-crypto-custom.local`. `wp-admin` loads. `bcc-core`, `bcc-trust`, and the PeepSo family (`peepso` + `peepso-*` modules) all active.
 - **Next.js dev server running.** `cd bcc-frontend && npm run dev` → reachable at `http://localhost:3000`.
 - **`BCC_FRONTEND_ORIGIN` set** in `wp-config.php` to `http://localhost:3000`.
 - **At least one test user** signed up + onboarded.
@@ -312,7 +312,6 @@ grep -rn --include='*.php' -E 'wpdb->(insert|update|delete|query|prepare).*peeps
   "app/public/wp-content/plugins/bcc-core/src" \
   "app/public/wp-content/plugins/bcc-trust/app" \
   "app/public/wp-content/plugins/bcc-search/app" \
-  "app/public/wp-content/plugins/blue-collar-crypto-peepso-integration/app" \
   | grep -v 'PeepSo[A-Z][a-zA-Z]*Writer\.php' \
   | grep -v 'src/Repositories/PeepSo' \
   | grep -v 'app/Repositories/PeepSoCategoryRepository\.php'
@@ -336,7 +335,7 @@ For each result, read the file at the cited line and confirm an explicit gate pr
 - `MyGroupsEndpoint::postJoin` — privacy=open check + closed/secret rejection → then `::join`.
 - `LocalsService::setPrimary` — Locals are intentionally open-membership.
 
-**Failure means:** A new code path is calling `PeepSoGroupWriter::join` without a gate. This is the most dangerous regression in the platform. Stop, revert, and invoke the `holder-groups-reviewer` agent.
+**Failure means:** A new code path is calling `PeepSoGroupWriter::join` without a gate. This is the most dangerous regression in the platform. Stop, revert, and run the `peepso-write-guard` skill (the durable gate check; it replaced the retired `holder-groups-reviewer` agent).
 
 ### 3.3 Status post round-trip
 
@@ -617,9 +616,11 @@ foreach ($rows as $r) echo "  id={$r->id} wallet_link_id={$r->target_id} at={$r-
 
 **Constitutional law verified:** §II.7 (the load-bearing-est invariant in the platform).
 
-### 8.1 Run the `holder-groups-reviewer` agent
+### 8.1 Run the `peepso-write-guard` skill
 
-This is the canonical check. Invoke the subagent on every PR that touches:
+This is the canonical check (`/peepso-write-guard` — it replaced the retired
+`holder-groups-reviewer` agent when the Holder Groups feature shipped). Run it on every PR
+that touches:
 - `bcc-trust/app/Domain/Onchain/Services/NftGroupGateService.php`
 - `bcc-trust/app/Domain/Onchain/REST/HolderGroupsEndpoint.php`
 - `bcc-core/src/PeepSo/PeepSoGroupWriter.php`
@@ -843,7 +844,7 @@ wp cron event list --fields=hook,next_run_relative,recurrence
 |---|---|---|
 | `bcc_trust_daily_cleanup` | daily | Audit-log retention via archiveBatch |
 | `bcc_trust_process_recalculations` | bcc_five_minutes | Read-model recalc |
-| `bcc_trust_hourly_safety_recalc` | hourly | Read-model safety net |
+| `bcc_trust_hourly_recalc` | hourly | Read-model safety net (page-score recalc sweep) |
 | `bcc_search_ensure_ft_index` | hourly | FT index self-heal |
 | `bcc_helius_dedupe_sweep` | bcc_five_minutes | Helius dedup table sweep |
 | `bcc_onchain_daily_refresh` | daily | NFT/wallet refresh |
@@ -954,7 +955,7 @@ console.table(out);
 The recognition logic has a hand-rolled CLI test that runs without WP:
 
 ```bash
-php app/public/wp-content/plugins/bcc-trust/tests/EnvelopeRecognitionTest.php
+php app/public/wp-content/plugins/bcc-trust/tests/Unit/EnvelopeRecognitionTest.php
 ```
 
 **Expected:** `PASS: 20/20 assertions`.

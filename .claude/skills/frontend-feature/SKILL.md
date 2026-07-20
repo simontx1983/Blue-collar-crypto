@@ -5,7 +5,7 @@ description: Build a new feature in the bcc-frontend Next.js app following the e
 
 # /frontend-feature
 
-Scaffolds frontend work in [bcc-frontend/](../../../bcc-frontend/) the way this codebase actually does it. The architectural rule from [bcc-frontend/README.md](../../../bcc-frontend/README.md) and reinforced in [code-cleanup.md](../code-cleanup.md) Step 4: **no business logic in the frontend.** Tier labels, trust scores, rank strings, and feature-access flags arrive pre-computed from the API per §A2 / §L5 of [docs/api-contract-v1.md](../../../docs/api-contract-v1.md).
+Scaffolds frontend work in [bcc-frontend/](../../../bcc-frontend/) the way this codebase actually does it. The architectural rule from [bcc-frontend/README.md](../../../bcc-frontend/README.md) and reinforced in [code-cleanup](../code-cleanup/SKILL.md) Step 4: **no business logic in the frontend.** Tier labels, trust scores, rank strings, and feature-access flags arrive pre-computed from the API per §A2 / §L5 of [docs/api-contract-v1.md](../../../docs/api-contract-v1.md).
 
 Run [/duplicate-scan](../duplicate-scan/SKILL.md) first. Most "new" components are extensions of existing ones in [bcc-frontend/src/components/](../../../bcc-frontend/src/components/) (cards, feed, profile, directory, etc.).
 
@@ -68,7 +68,7 @@ Hooks return `{ data, isLoading, error }`. **Components do not construct their o
 
 ### 5. Decide client vs server component
 
-`'use client'` only when you need state, effects, or browser APIs. A profile-card render that just displays data should stay server-rendered so Next can cache it. Audit `src/app/<route>/` for unnecessary client components — see [code-cleanup.md](../code-cleanup.md) Step 3.
+`'use client'` only when you need state, effects, or browser APIs. A profile-card render that just displays data should stay server-rendered so Next can cache it. Audit `src/app/<route>/` for unnecessary client components — see [code-cleanup](../code-cleanup/SKILL.md) Step 3.
 
 ### 6. Verify
 

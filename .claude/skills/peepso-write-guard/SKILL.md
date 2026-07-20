@@ -33,8 +33,7 @@ Run this whenever an edit adds, moves, or modifies a call to:
 grep -rn "PeepSoGroupWriter::\|->member_join(" \
   app/public/wp-content/plugins/bcc-core \
   app/public/wp-content/plugins/bcc-trust \
-  app/public/wp-content/plugins/bcc-search \
-  app/public/wp-content/plugins/blue-collar-crypto-peepso-integration
+  app/public/wp-content/plugins/bcc-search
 ```
 
 The wrapper itself (`bcc-core/src/PeepSo/PeepSoGroupWriter.php`) is the only legitimate place that *names* `member_join()` directly — it is the primitive. Everywhere else should call `PeepSoGroupWriter::join(...)`.

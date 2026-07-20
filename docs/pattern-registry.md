@@ -231,8 +231,9 @@ truth ownership check still goes through the third-party reader.
 
 **Canonical instances:**
 
-- `bcc_pull_meta` — sidecar for `peepso_follower` (BCC card pulls per §C2)
-  → [PullMetaRepository](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Repositories/PullMetaRepository.php)
+- `bcc_watch_meta` (legacy name `bcc_pull_meta` — renamed in the 2026-06-28
+  watch-vocabulary collapse) — sidecar for `peepso_follower` (BCC card pulls per §C2)
+  → [WatchMetaRepository](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Repositories/WatchMetaRepository.php)
 - `bcc_photo_alts` — sidecar for `peepso_photos` (author-supplied alt
   text per §3.3.9 / §4.18, v1.5 a11y)
   → [PhotoAltRepository](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Repositories/PhotoAltRepository.php),
@@ -339,13 +340,14 @@ The Floor uses a three-axis vocabulary for what PeepSo calls follow:
 update the other in the same commit, or the legacy WP screens drift away
 from the Next.js app.
 
-- **PHP — gettext / ngettext overrides** (PeepSo + peepso-pages +
-  peepso-groups text domains) →
-  `BCC\PeepSo\Services\PeepSoLabelOverrides`
-  ([app/public/wp-content/plugins/blue-collar-crypto-peepso-integration/app/Services/PeepSoLabelOverrides.php](../app/public/wp-content/plugins/blue-collar-crypto-peepso-integration/app/Services/PeepSoLabelOverrides.php)).
-  Exact-string match on purpose — substring replacement would corrupt
-  generic English uses ("the following services", "they will follow
-  their default order"). Filters all four flavors: `gettext`,
+- **PHP — gettext / ngettext overrides** — **RETIRED with the
+  `blue-collar-crypto-peepso-integration` plugin** (headless pivot; the
+  plugin and its `PeepSoLabelOverrides` no longer exist — no equivalent
+  was rebuilt in `bcc-core`, and none is needed: the legacy WP screens
+  the overrides styled are not user-facing in the headless architecture).
+  If label overrides are ever needed again, rebuild them in
+  `bcc-core/src/PeepSo/` using exact-string match (substring replacement
+  corrupts generic English uses) across all four flavors: `gettext`,
   `gettext_with_context`, `ngettext`, `ngettext_with_context`.
 - **Frontend — display constants** →
   `FOLLOW_COPY` in
@@ -918,11 +920,11 @@ V-29).
 - `*Controller.php` files register under `/bcc-trust/v1/*`.
 
 The frontend mirrors this: `bcc-frontend/src/lib/api/client.ts` for
-`/bcc/v1`, `bcc-trust-client.ts` for `/bcc-trust/v1`. The same rule is
-codified from the backend side in
-[NAMING.md](../app/public/wp-content/plugins/blue-collar-crypto-peepso-integration/NAMING.md).
-Collapsing the namespaces is a Phase D / post-MVP candidate; do not
-attempt during active migration.
+`/bcc/v1`, `bcc-trust-client.ts` for `/bcc-trust/v1`. (The backend-side
+NAMING.md that once codified this rule was retired with the
+`blue-collar-crypto-peepso-integration` plugin — this section is now the
+canonical statement.) Collapsing the namespaces is a Phase D / post-MVP
+candidate; do not attempt during active migration.
 
 ## Scan-correction notes (recorded for future stabilization passes)
 
@@ -954,11 +956,10 @@ attempt during active migration.
   rule above.
 - **V-26 retired in Phase C.** `OptionsHelper::parse_options_string`
   was removed on 2026-05-09 after grep across all bcc-* plugins and
-  bcc-frontend confirmed zero callers. The class shell at
-  [OptionsHelper.php](../app/public/wp-content/plugins/blue-collar-crypto-peepso-integration/app/Helpers/OptionsHelper.php)
-  remains so cached classmaps resolve through deploys. Reintroduce
-  methods here only when a current consumer materializes — don't
-  reinstate the old `key1:value1,key2:value2` parser without one.
+  bcc-frontend confirmed zero callers. (The class shell that was kept
+  for classmap continuity is now gone too — it lived in the since-retired
+  `blue-collar-crypto-peepso-integration` plugin.) Don't reinstate the
+  old `key1:value1,key2:value2` parser without a current consumer.
 
 ## V-30 frontend inventory addendum (Phase C §5.7 — 2026-05-09)
 

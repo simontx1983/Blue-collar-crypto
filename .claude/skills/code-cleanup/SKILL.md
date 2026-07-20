@@ -1,16 +1,18 @@
-# Skill: Code Cleanup
+---
+name: code-cleanup
+description: Post-hoc quality sweep across the BCC stack — dead-code and duplicate hunting, performance audit at scale, and convention spot-checks that the mechanical guards (arch-guardrails, PHPStan, ESLint) cannot catch. Use when reviewing a branch for quality, auditing a domain, hunting dead code before a milestone cut, or investigating a performance regression.
+---
 
-## Purpose
+# /code-cleanup
 
 Procedure for finding and fixing code quality issues across the BCC stack
 — `bcc-trust` (PHP, Domain-Driven), `bcc-core` (PHP, shared services),
-`bcc-search`, `blue-collar-crypto-peepso-integration`, and `bcc-frontend`
-(Next.js / TypeScript).
+`bcc-search`, and `bcc-frontend` (Next.js / TypeScript).
 
 The architectural rules this skill enforces are documented in
-[bcc-trust/CLAUDE.md](../app/public/wp-content/plugins/bcc-trust/CLAUDE.md).
+[bcc-trust/CLAUDE.md](../../../app/public/wp-content/plugins/bcc-trust/CLAUDE.md).
 Most of them are mechanically checked by
-[scripts/arch-guardrails.sh](../app/public/wp-content/plugins/bcc-trust/scripts/arch-guardrails.sh)
+[scripts/arch-guardrails.sh](../../../app/public/wp-content/plugins/bcc-trust/scripts/arch-guardrails.sh)
 and `scripts/phpstan-all.sh`. **Always run those first** — anything they
 catch is non-negotiable. This skill catches the things they can't.
 
@@ -28,65 +30,22 @@ catch is non-negotiable. This skill catches the things they can't.
 
 ## Step 0 — Run the mechanical checks first
 
-Before reading code by hand:
-
-```bash
-cd app/public/wp-content/plugins/bcc-trust
-bash scripts/arch-guardrails.sh                # all plugins
-bash scripts/arch-guardrails.sh bcc-trust      # one plugin (also runs php -l)
-bash scripts/phpstan-all.sh bcc-trust          # PHPStan level 8
-```
-
-For the frontend:
-
-```bash
-cd bcc-frontend
-npx tsc --noEmit
-npx eslint .
-```
-
-If any of these fail, fix those first. The hand audit below assumes a
-clean baseline.
+The command set (guardrails, PHPStan, `php -l`, `tsc --noEmit`, ESLint) is
+documented in [bcc-trust/CLAUDE.md ▸ Commands](../../../app/public/wp-content/plugins/bcc-trust/CLAUDE.md)
+— run it verbatim. If any check fails, fix those first; the hand audit
+below assumes a clean baseline.
 
 ---
 
 ## Step 1 — Layer-boundary audit (PHP)
 
-The plugin uses bounded contexts inside one plugin:
-
-- `app/Domain/Core/` — reputation, voting, scoring, fraud, read model
-- `app/Domain/Disputes/` — dispute panel adjudication
-- `app/Domain/Onchain/` — wallets, validator / NFT / builder / DAO signals
-
-Each context follows the same internal layering:
-
-```
-Controllers / REST  →  Services  →  Repositories  →  $wpdb
-                                ↘   DTO / ValueObjects
-```
-
-**Layer rules — violations are blockers:**
-
-- [ ] `$wpdb` only appears in `app/Domain/*/Repositories/`,
-  `app/Database/TableRegistry.php`, or
-  `app/Security/TransactionManager.php`. Never in `Services/`,
-  `Controllers/`, `Admin/`, `Integration/`, `templates/`, `blocks/`.
-- [ ] Repositories use explicit column lists — no `SELECT *`. Columns
-  typically live in `private const COLUMNS`.
-- [ ] Every `SELECT` is bounded — `LIMIT`, unique-key filter, bounded
-  `IN ()`, or aggregate (`COUNT`, `SUM`, `GROUP BY`).
-- [ ] Templates and blocks receive data; they do not query.
-- [ ] Cross-plugin calls go through `BCC\Core\ServiceLocator` — never
-  direct `new` on classes from another plugin.
-- [ ] Cross-plugin function calls use **positional args only**. Named
-  parameters break compiled autoloads under `composer dump`.
-- [ ] Cache invalidation uses generation counters
-  (`wp_cache_incr( 'bcc_trust_gen_*' )`), not bulk `delete()`.
-- [ ] No `@var` or `assert()` overrides to silence PHPStan — fix the
-  types instead.
-
-If `arch-guardrails.sh` passed but you still find a violation, add it
-to the script as a new check.
+The layer rules (repository-only `$wpdb`, explicit column lists, bounded
+`SELECT`s, ServiceLocator-only cross-plugin calls, positional cross-plugin
+args, generation-counter cache invalidation, no PHPStan `@var` silencing)
+are §1–§9 of [bcc-trust/CLAUDE.md](../../../app/public/wp-content/plugins/bcc-trust/CLAUDE.md)
+— audit against that list; don't re-derive it here. One rule of this
+skill's own: **if `arch-guardrails.sh` passed but you still find a
+violation, add it to the script as a new check.**
 
 ---
 
@@ -131,7 +90,7 @@ Bias toward the things that bite at 50k users / 500 concurrent reqs:
   `bcc_trust_page_scores` / `bcc_page_read_model`
 - [ ] `get_option()` called inside loops — hoist to a static or pass in
 - [ ] Missing index on a hot `WHERE` column — confirm with
-  `EXPLAIN` against the schema in [docs/database-schema.md](../docs/database-schema.md)
+  `EXPLAIN` against the schema in [docs/database-schema.md](../../../docs/database-schema.md)
 - [ ] Frontend: a React Query hook fetching on mount that should be
   `enabled: false` until an interaction. Check
   `bcc-frontend/src/hooks/use*.ts` for missing `enabled` guards.
@@ -145,38 +104,26 @@ Bias toward the things that bite at 50k users / 500 concurrent reqs:
 
 ## Step 4 — Frontend-specific checks (Next.js)
 
-The architectural rule from [bcc-frontend/README.md](../bcc-frontend/README.md):
-**no business logic in the frontend.** All trust scores, reputation
-tiers, card tiers, ranks, permissions, and feature-access flags are
-pre-computed by the API per §A2 / §L5.
-
-- [ ] No `if (tier === 'elite') return 'Legendary'` style mappings —
-  push to the server view-model builder
-- [ ] No client-side trust-score arithmetic — the API provides
-  `presentation.trust_label`, `presentation.tier_class`, etc.
-- [ ] No `as any` outside `lib/api/types.ts` — fix the type or
-  add it to the contract
-- [ ] No direct `fetch()` outside `lib/api/client.ts` — the wrapper
-  handles auth, envelope unwrapping, and error mapping
-- [ ] Hooks return `{ data, isLoading, error }` shape; components
-  don't construct their own loading state
-- [ ] Reduced-motion: any animation respects
-  `usePrefersReducedMotion()`. Falls back to a static state, not a
-  shorter animation.
+The architectural rule from [bcc-frontend/README.md](../../../bcc-frontend/README.md):
+**no business logic in the frontend** — trust scores, tiers, ranks,
+permissions arrive pre-computed per §A2 / §L5. The full rule set (no
+client-side tier mapping, no `as any`, no raw `fetch()` outside the
+client, `{ data, isLoading, error }` hook shape, reduced-motion respect)
+is what the `frontend-reviewer` agent enforces — audit against that
+agent's checklist and bcc-frontend's own docs rather than a copy here.
 
 ---
 
 ## Step 5 — Convention spot-checks
 
-- [ ] PHP files declare `declare(strict_types=1);`
-- [ ] PHPStan level 8 clean across touched files
+Beyond what PHPStan/ESLint already gate (`strict_types`, level 8, no
+`any` / `@ts-ignore` without reason — see Step 0):
+
 - [ ] No `error_log()` in production paths — use
   `BCC\Core\Log\Logger`
 - [ ] No raw `wp_die()` in REST controllers — return a
   `WP_Error` with the right `bcc_*` code
 - [ ] TypeScript: no `console.log` left in
-- [ ] No `any`, no `// @ts-ignore`, no `// eslint-disable-next-line`
-  without an inline reason
 
 ---
 

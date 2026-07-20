@@ -117,7 +117,19 @@ background audits, worktree-based parallelism), see
   endpoints (code, no contract entry) as WARN. **Currently exits 0**
   — all drift surfaced by the 2026-05-26 first run was addressed
   (contract v1.22 locals retraction + v1.23 admin/ranks retraction);
-  safe to wire into a blocking CI check now.
+  wired as a blocking umbrella CI check since Phase 2c (2026-06-25).
+
+- `scripts/dead-file-scan.php` — scans bcc-core/bcc-search/bcc-trust for
+  dead PHP files. **CI-wired and blocking** in the umbrella `ci.yml`
+  alongside the three guards above.
+
+Also present in `scripts/` but not documentation-load-bearing:
+`schema-drift-guard.php` (declared-vs-documented-vs-live schema diff —
+not yet armed in CI), `wallet-case-preservation-check.php` (throwaway
+live-DB check, deliberately excluded from CI), `bcc-query-floor-probe.php`
+(temporary boot-floor diagnostic), `auth-cache-isolation-probe.sh`
+(staging Authorization-cache probe; weekly via
+`.github/workflows/staging-cache-probe.yml`), and `perf/` (k6 harness).
 
 ### Subagents (invoke via the Agent tool)
 
@@ -127,9 +139,6 @@ background audits, worktree-based parallelism), see
 - `arch-guardrails-reviewer` — reviews PHP changes against §1–§9.
 - `frontend-reviewer` — reviews `bcc-frontend/` against the "no business
   logic / no raw fetch / no `as any`" rules.
-- `holder-groups-reviewer` — feature-scoped to NFT→PeepSo group-gating;
-  retire when that feature ships.
-
 **Implementers** (build, run their own checks):
 
 - `backend-implementer` — PHP under `app/public/wp-content/plugins/bcc-*/`.
@@ -143,7 +152,11 @@ background audits, worktree-based parallelism), see
   `vendor/`, `node_modules/`, lock files, `.env*`, and TypeScript build
   artifacts. Bypass means editing those files outside Claude.
 - **PostToolUse** — `php-lint.sh` runs `php -l` on PHP edits;
-  `ts-check.sh` runs `tsc --noEmit` on `bcc-frontend/` TypeScript edits.
+  `ts-check.sh` runs `tsc --noEmit` and `eslint-frontend.sh` runs ESLint
+  on `bcc-frontend/` TypeScript edits; `color-token-check.sh` blocks
+  hardcoded colors and cardstock-token leaks outside `cards/` in
+  `bcc-frontend/` (whole-file guard; see bcc-frontend/CLAUDE.md ▸ Color
+  rule — note the hook script itself is not yet committed).
 - **UserPromptSubmit** — `section-11-reminder.sh` injects a §11 reminder
   when the prompt looks like new-code work.
 

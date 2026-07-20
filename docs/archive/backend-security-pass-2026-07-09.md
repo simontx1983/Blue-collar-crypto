@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-07-19** — dated security/concurrency pass record (2026-07-09); the 3 confirmed fixes shipped (bcc-trust #54/#55, bcc-search #4) and the deferred observability items are mirrored in [TODO.md](../TODO.md) ▸ Observability. Retained for the A1–A9 verdict/refutation table and the live exploit proof (group 2043). Not current guidance.
+
 # Backend Security + Bug-Hunt Pass — 2026-07-09
 
 **Scope.** Slim, targeted security + concurrency/data-integrity review of the 3

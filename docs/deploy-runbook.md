@@ -38,10 +38,14 @@ Each plugin repo has `.github/workflows/deploy.yml`:
   server. `vendor/` is committed, so there is **no build step** — the
   checkout *is* the artifact. A final step greps the deployed `Version:`
   header back over SSH as a confirmation.
+- **The environment selects the docroot** (`deploy.yml:57-61`): staging
+  targets `…/stage/wp-content/plugins/<plugin>/`, production targets
+  `…/wp-content/plugins/<plugin>/` — same account, different tree.
 
 ### Why plugin-scoped rsync is safe
 
-The target is exactly `…/wp-content/plugins/<plugin>/`. That means the
+The target is exactly the one plugin dir — `…/stage/wp-content/plugins/<plugin>/`
+for staging, `…/wp-content/plugins/<plugin>/` for production. That means the
 **webroot `.htaccess` is never in range** — critically, it holds the
 hand-added LSCache Authorization-bypass block (see
 [testnet-deploy-checklist.md](testnet-deploy-checklist.md) §1.6 and the

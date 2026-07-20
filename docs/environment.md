@@ -34,7 +34,7 @@ feature-gated and silent-degrades when absent — add only what you use.
 
 | Constant | Purpose | Default | Secret | Read at |
 |---|---|---|---|---|
-| `BCC_ENCRYPTION_KEY` | AES-256-GCM key for wallet/PII encryption + fingerprint salt. Missing ⇒ **bcc-trust inert** (all non-admin 403, cron cleared). | none (fail-closed) | **yes** | `bcc-trust.php:135,1511`; `Core/Support/Encryption.php:16,32`; `Core/Security/DeviceFingerprinter.php:52` |
+| `BCC_ENCRYPTION_KEY` | AES-256-GCM key for wallet/PII encryption + fingerprint salt. Missing ⇒ **bcc-trust inert** (all non-admin 403, cron cleared). | none (fail-closed) | **yes** | `bcc-trust.php:150` (inert-guard; further reads 166/185/646/1849); `Core/Support/Encryption.php:16,32`; `Core/Security/DeviceFingerprinter.php:52` |
 | `BCC_FRONTEND_ORIGIN` | Canonical Next.js origin (comma-separated allowlist OK). Drives CORS, JWT audience, login redirects, Polkadot verify-route URL. Empty ⇒ frontend can't talk to backend. | `''` ⇒ disabled | no | `Core/Support/CorsHandler.php:177`; `JwtToken.php:326`; `FrontendRedirect.php:113,127`; `bcc-core/src/Crypto/PolkadotSignatureVerifier.php:202,205` |
 
 `BCC_CORE_VERSION` is defined by bcc-core itself; bcc-trust/bcc-search gate activation on it
@@ -44,8 +44,8 @@ feature-gated and silent-degrades when absent — add only what you use.
 
 | Constant | Feature | Default | Secret | Read at |
 |---|---|---|---|---|
-| `BCC_OAUTH_BRIDGE_SECRET` | NextAuth SSO bridge (`POST /auth/oauth`). Fail-closed. | `''`⇒off | **yes** | `Core/REST/AuthEndpoint.php:1200` |
-| `BCC_INTERNAL_CRON_SECRET` | `X-Bcc-Internal` for `POST /internal/indexer/tick` (Vercel cron → ETH indexer). Fail-closed. | `''`⇒off | **yes** | `Onchain/REST/IndexerTickEndpoint.php:133` |
+| `BCC_OAUTH_BRIDGE_SECRET` | NextAuth SSO bridge (`POST /auth/oauth`). Fail-closed. | `''`⇒off | **yes** | `Core/REST/Auth/OAuthController.php:159-160` (moved out of AuthEndpoint; its logger prefix still says `[AuthEndpoint]`) |
+| `BCC_INTERNAL_CRON_SECRET` | `X-Bcc-Internal` for `POST /internal/indexer/tick` (Vercel cron → ETH indexer). Fail-closed. | `''`⇒off | **yes** | `Onchain/REST/IndexerTickEndpoint.php:150-151` |
 | `BCC_HELIUS_WEBHOOK_SECRET` | `Authorization` for the Helius (Solana) webhook. Fail-closed (rejects all). | `''`⇒reject | **yes** | `Onchain/REST/HeliusWebhookEndpoint.php:257` |
 | `BCC_INTERNAL_VERIFY_SECRET` | Internal Polkadot signature-verify route (backend→frontend). | `''` | **yes** | `bcc-core/src/Crypto/PolkadotSignatureVerifier.php:186` |
 | `BCC_ETHERSCAN_API_KEY` | ETH on-chain signal fetch. Missing ⇒ ETH signals empty (scores understated) + admin notice. | `''` | **yes** | `bcc-trust.php:1793`; `Onchain/Services/SignalFetcher.php:183` |

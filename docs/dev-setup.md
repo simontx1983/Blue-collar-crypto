@@ -46,8 +46,10 @@ checked where.
   Windows/Local path-hash gotcha) is documented in
   [GOLDEN_PATHS.md §Prerequisites](GOLDEN_PATHS.md). Use that recipe rather than assuming `wp`
   is on PATH.
-- Active WordPress plugins this stack assumes: `bcc-core`, `bcc-trust`, `bcc-search`,
-  `peepso-core`, and `blue-collar-crypto-peepso-integration`.
+- Active WordPress plugins this stack assumes: `bcc-core`, `bcc-trust`, `bcc-search`, and the
+  PeepSo family (`peepso` core plugin + `peepso-friends`/`-groups`/`-messages`/`-pages`/`-photos`).
+  (The old `blue-collar-crypto-peepso-integration` plugin is retired — its PeepSo-writer surface
+  lives in `bcc-core/src/PeepSo/`.)
 
 ---
 
@@ -65,7 +67,7 @@ cd ../bcc-search                            && composer install
 
 **Activate in dependency order:** `bcc-core` **first** (the others refuse to activate without
 `BCC_CORE_VERSION`, which bcc-core defines), then `bcc-trust`, then `bcc-search`. Ensure
-`peepso-core` and `blue-collar-crypto-peepso-integration` are active too.
+the PeepSo plugins (`peepso` + the `peepso-*` modules) are active too.
 
 Set the minimum config in `wp-config.php` (full reference: [environment.md](environment.md)):
 

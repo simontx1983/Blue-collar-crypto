@@ -4,9 +4,10 @@ A blue-collar-worker crypto **trust & reputation** platform: WordPress (PHP plug
 trust engine + REST API, a headless **Next.js** frontend, and on-chain signal indexing.
 
 > **Heads-up for new contributors:** this looks like one repo but is **five separate Git
-> repos** checked out into a WordPress + Next.js layout (an umbrella that tracks only
-> `docs/`, `.claude/`, `scripts/`, plus three WordPress plugins and the frontend). Start with
-> the setup guide before cloning anything.
+> repos** checked out into a WordPress + Next.js layout. The umbrella repo tracks only
+> `docs/`, `.claude/`, `scripts/`, `.github/`, and `bcc-global-library/`; the three WordPress
+> plugins (`bcc-core`, `bcc-trust`, `bcc-search`) and `bcc-frontend` are separate, gitignored
+> sibling repos — reassembled only in CI. Start with the setup guide before cloning anything.
 
 ## Start here
 

@@ -68,7 +68,7 @@ If the field disappeared and a frontend component still references it, fail loud
 ## Hard rules
 
 - **No silent contract changes.** If the response shape moved, [docs/api-contract-v1.md](../../../docs/api-contract-v1.md) and `bcc-frontend/src/lib/api/types.ts` must move with it, in the same change.
-- **No view-model logic in the frontend.** The frontend rule from [code-cleanup.md](../code-cleanup.md) Step 4 is the contract's other half — labels, tier classes, and trust strings are pre-computed server-side.
+- **No view-model logic in the frontend.** The frontend rule from [code-cleanup](../code-cleanup/SKILL.md) Step 4 is the contract's other half — labels, tier classes, and trust strings are pre-computed server-side.
 - **Error codes are part of the contract.** A new `WP_Error` code under a `bcc_*` prefix counts as an additive contract change and belongs in the contract doc.
 
 ## What this skill does NOT do

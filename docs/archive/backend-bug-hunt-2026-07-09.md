@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-07-19** — dated bug-hunt record (2026-07-09); every finding fixed or refuted (L-B2 = intentional no-op per its own remediation log). Retained for the refutation reasoning (ERC-1155 fail-safe freeze, Helius live re-derivation) and the high-signal clean-list. Not current guidance.
+
 # BCC Backend — Bug-Hunt Addendum (2026-07-09)
 
 Follow-up to `backend-implementation-audit-2026-07-08.md`. Three read-only agents hunted
