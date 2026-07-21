@@ -809,7 +809,7 @@ foreach (($dm["degradation_metrics"]["subsystems"] ?? []) as $name => $events) {
 - `account_security_mail` (7 events — Tier D `sessions_revoked_all_send_failed` added 2026-05-16; `password_reset_requested_send_failed` added 2026-05-30)
 - `cron_dispatch` (2 events — soft wp_schedule_single_event / AsyncDispatcher enqueue failures on the unrecoverable trust async surface)
 - `post_commit_task` (2 events — `vote_subtask_failed` + `dispute_backfill_failed`; a post-commit trust step threw during execution and was swallowed; NOT a wp_options signal)
-- `helius_dedup` (1 event — Helius webhook replay-protection activations; sustained = double-send or replay attempt)
+- `helius_dedup` (3 events — `replay_skipped` (webhook replay-protection activations; sustained = double-send or replay attempt), `ingest_failed_unmarked` (ingest threw, signatures unmarked so Helius can redeliver — recovered), `unmark_failed` (ingest threw and unmark incomplete — batch lost, resend refused, P1 manual replay))
 - `gated_group_provision` (3 events — `bcc_gated_group_provision` cron sweep failure modes; sustained = retry path not catching up)
 - `contribution_recovery` (1 event — `user_eval_failed`; per-user failure in the daily trust-recovery sweep; sustained = caution/risky cohort silently stops climbing back)
 - `attestation_synthesis` (2 events — `event_recompute_failed` (per cast/revoke/reaffirm) + `decay_recompute_failed` (daily decay sweep); Slice E attestation→score fold; sustained = `attestation_bonus` going stale, backing stops moving the score)
