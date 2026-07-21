@@ -92,6 +92,16 @@ Multi-month bets that change *who* and *where* the platform serves.
 
 ---
 
+## Operator tooling
+
+Admin-surface work. Governed by the §8 admin split (bcc-trust/CLAUDE.md): wp-admin = infrastructure cockpit, Next.js `/admin/*` = daily operational command center.
+
+| Item | What it buys | What it costs | Status |
+|---|---|---|---|
+| **Unify daily moderation into `/admin/*`** (logged 2026-07-21) | One surface for the daily loop: user-report adjudication + dispute force-resolve (today wp-admin-only under Trust Engine) join the content-reports queue, ending the app↔wp-admin bounce. Optionally a small system-health glance. | New `/admin` pages + typed clients for the already-reserved internal endpoints (`GET /disputes/health`, `POST /disputes/:id/resolve` — kept alive for exactly this, see `trust-engine-coverage.md`); a user-reports read/adjudicate REST surface. wp-admin keeps config/repair/infra permanently — this migrates only the daily workflows §8 already assigns to the ops center. | OPEN — completes the §8 design (moderation/disputes are "operational command center" work that never migrated). Not launch-blocking: 2 operators, bounce cost = one extra tab. |
+
+---
+
 ## New product concepts
 
 These aren't features — they're product directions. Need design + data-model work before any engineering.
