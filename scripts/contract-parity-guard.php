@@ -89,14 +89,9 @@ const EXEMPT_INTERNAL = [
     // — Admin (manage_options / admin_permission_check) —
     'GET /bcc/v1/system/health'                 => 'admin: health aggregate',
     'GET /bcc-trust/v1/health/read-model'       => 'admin: read-model coverage/drift',
-    'GET /bcc-trust/v1/fraud/stats'             => 'admin: fraud dashboard',
-    'GET /bcc-trust/v1/users/high-risk'         => 'admin: fraud dashboard',
-    'GET /bcc-trust/v1/activity/fraud'          => 'admin: fraud dashboard',
-    'GET /bcc-trust/v1/stats/trust-trend'       => 'admin: analytics',
-    'GET /bcc-trust/v1/stats/risk-distribution' => 'admin: analytics',
-    'GET /bcc-trust/v1/stats/fraud-trend'       => 'admin: analytics',
-    'GET /bcc-trust/v1/stats/devices'           => 'admin: analytics',
-    'POST /bcc-trust/v1/analyze-user/:id'       => 'admin: on-demand fraud analysis',
+    // The eight bcc-trust/v1 fraud/stats + analyze-user entries were
+    // pruned 2026-07-21 with their routes (admin-audit dead-endpoint
+    // cleanup) — the wp-admin fraud surface renders server-side.
     'POST /bcc/v1/admin/digest/run-now'         => 'admin: digest trigger (in-handler manage_options)',
     'GET /bcc/v1/admin/reports'                 => 'admin: moderation queue (in-handler manage_options)',
     'POST /bcc/v1/admin/reports/:id/resolve'    => 'admin: moderation resolve',

@@ -33,7 +33,7 @@ Small-surface retention work. Most items are 1–10 days each.
 |---|---|---|---|
 | Sound on Heavy celebrations (§O1.2) | Extra dopamine on rare events (rank-up, tier-upgrade) | Asset pipeline + mute-respecting logic + iOS gesture rules | OPEN |
 | Streak-freeze / streak-saver mechanic | Retention without punishing one missed day | New rules + UI + cap logic + abuse vector | OPEN |
-| `/me/progression` standalone page (§N11) | Full progression map vs. just the Living Header strip | New route + richer view-model | SHIPPED 2026-05-13 — server-component route at `/me/progression` reusing the §3.1 own-only `progression` block (no new endpoint). Renders ALL `next_rank_thresholds` (vs. the leading-only LivingHeader bar) + the `trust_score_recent_changes` timeline. Discoverable via the `ViewerMenu` "Progression" item. |
+| `/me/progression` standalone page (§N11) | Full progression map vs. just the Living Header strip | New route + richer view-model | SHIPPED 2026-05-13 — server-component route at `/me/progression` reusing the §3.1 own-only `progression` block (no new endpoint). Renders ALL `next_rank_thresholds` (vs. the leading-only LivingHeader bar) + the `trust_score_recent_changes` timeline. Discoverable via the SiteHeader avatar menu's "My Progression" item. |
 | Network percentile shown on **others'** profiles (§O3.1) | Status display visible to others | Privacy toggle (some users won't want their rank visible) | OPEN |
 | Per-card watchlist visibility toggle (§C2) | More granular hide control | Whole-watchlist hide (§K2) already covers the privacy job | WON'T SHIP |
 | Rich-text status composer | Format expression for status posts | Conflicts with §D2 500-char rule; long-form is what the §D6 blog tab is for | WON'T SHIP |
