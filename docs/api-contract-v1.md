@@ -30,7 +30,7 @@ REST endpoints live under two namespaces, by deliberate split:
 | Namespace | Purpose | Examples |
 |---|---|---|
 | `/wp-json/bcc/v1/` | Shared cross-plugin **read** API + cross-plugin mutations consumed by bcc-search and the headless frontend | `GET /cards/:type/:id`, `GET /feed`, `GET /users/:handle`, `POST /disputes`, `POST /posts`, `POST /reactions` |
-| `/wp-json/bcc-trust/v1/` | Trust-engine-internal **mutations** (endorse/revoke/device-fingerprint), admin stats, OAuth | `POST /endorse`, `POST /revoke-endorsement`, `POST /device-fingerprint`, `GET /fraud/stats`, `GET /github/*`, `GET /x/*` |
+| `/wp-json/bcc-trust/v1/` | Trust-engine-internal **mutations** (endorse/revoke/device-fingerprint), OAuth | `POST /endorse`, `POST /revoke-endorsement`, `POST /device-fingerprint`, `GET /github/*`, `GET /x/*` |
 
 The host is the WordPress site. The Next.js app proxies cross-origin via its API client. The split is enforced by convention (see `bcc-trust/app/Domain/Core/Plugin.php::registerRoutes` docblock): new reads → `bcc/v1`; new trust-engine mutations → `bcc-trust/v1`.
 
