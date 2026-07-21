@@ -41,9 +41,9 @@ Remediation · Touches**.
 
 ## Gate 4 — CDN / cache posture, esp. Authorization-header isolation
 - **Required:** cache never serves an anon-cached REST body to an `Authorization`-scoped request; a repeatable probe backs it.
-- **Current:** STAGING — `.htaccess` AUTH CACHE BYPASS installed + probe green. PRODUCTION — `.htaccess` block documented-installed (2026-07-13) but **no prod probe** (script refuses prod hostname) and **prod has NO persistent object cache** (`lib/object-cache.php` missing). Weekly staging probe workflow exists but is **uncommitted** (not actually scheduled).
+- **Current:** STAGING — `.htaccess` AUTH CACHE BYPASS installed + probe green. PRODUCTION — `.htaccess` block documented-installed (2026-07-13) but **no prod probe** (script refuses prod hostname) and **prod has NO persistent object cache** (`lib/object-cache.php` missing). Weekly staging probe workflow is **committed and ACTIVE** on GitHub (verified 2026-07-21 via `gh workflow list` → `staging-cache-probe active`; committed in `e5d25b6`, 2026-07-19) — its own header comment still says "intentionally uncommitted" and is **stale**.
 - **Evidence:** `docs/TODO.md:62-69` (.htaccess both envs), `:58` (prod object-cache MISSING); `scripts/auth-cache-isolation-probe.sh:22-48` (staging-only guard); `.github/workflows/staging-cache-probe.yml:9-17` (prepared, not active); spec `docs/testnet-deploy-checklist.md:165-175`.
-- **Verdict:** STAGING isolation **PASS** · weekly CI automation **FAIL** (uncommitted) · PRODUCTION isolation **UNKNOWN** · prod object cache **FAIL**.
+- **Verdict:** STAGING isolation **PASS** · weekly CI automation **PASS** (armed/active on GitHub; only the workflow header comment is stale) · PRODUCTION isolation **UNKNOWN** · prod object cache **FAIL**.
 - **Remediation:** commit the weekly workflow to arm staging verification; provision prod persistent object cache (restore `lib/object-cache.php`, gate `BCC_REDIS_ENABLED`, avoid the `WP_REDIS_TIMEOUT=1` P0 trap); after prod authorized, verify the bypass block is live and run the isolation sequence against prod.
 - **Touches:** DOCUMENTATION/repo (commit workflow) + STAGING + PRODUCTION + EXTERNAL SERVICES (GitHub Actions).
 - **Note (functional):** with no object cache, `Throttle` **fails closed** (`bcc-core/src/Security/Throttle.php:176`) → rate-limited actions are denied on prod. This makes prod object cache a functional launch prerequisite, not just perf.
@@ -150,7 +150,7 @@ all of which are deliberately gated behind your production authorization.
 - Decide the `public_all`-in-secret-group policy (A/B) and record it.
 - Doc fixes: add `BCC_INTERNAL_CRON_SECRET` + `CRON_SECRET` to `.env.local.example` and checklist §4; correct `api-contract-v1.md:2082-2084`; commit the admin-audit report.
 - Run the full v1 smoke checklist against **staging** over HTTP (anon + authed, incl. §8/§11 notifications); record results.
-- Optionally commit the weekly staging auth-cache probe workflow to arm it.
+- (Weekly staging auth-cache probe is already armed/active — only its stale "intentionally uncommitted" header comment needs a trivial fix.)
 - Stand up an automated offsite DB backup for the prod DB (provisioning; no app change).
 
 **Phase 1 — requires your EXPLICIT production authorization:**
