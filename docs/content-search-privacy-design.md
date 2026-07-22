@@ -361,13 +361,79 @@ viewer-**dependent** gate: author **blocks** (both directions).
    | secret (2) | **any** (incl. `public_all`) | ❌ |
 
    (All ✅ still subject to `post_status='publish'`, moderation-hide, reputation
-   shadow-limit, and viewer author-blocks.) The build-gate visibility test must
+   shadow-limit, and viewer author-blocks.) ~~The build-gate visibility test must
    assert the `closed/secret × public_all` cells return **empty** for content
-   search even though the same post IS visible in the feed.
+   search even though the same post IS visible in the feed.~~ **[SUPERSEDED
+   2026-07-22 — REVERSED by Note C:** content search **mirrors the feed** for
+   `public_all`, so those cells must return the post; the build-gate test must
+   assert they are **included**, not empty.**]**
 
    **Separately (independent of F3):** the stale `api-contract-v1.md` §2082-2084
    text misdescribes current global-*feed* visibility (claims secret-group posts
    are blocked upstream — they are not) and is corrected on its own track.
+
+## Note C — Canonical group-stream visibility (Phillip, 2026-07-22) — AUTHORITATIVE
+
+This section is the **current, authoritative** group/stream visibility policy and
+**supersedes** the "content search is stricter" material in Note B above —
+including its matrix **and** the earlier "build-gate must assert `closed/secret ×
+public_all` returns empty for content search" test, which is **reversed**: those
+cells now **return** the post (content search mirrors the feed for `public_all`).
+
+**Content-search rule.** Content search must use the **same authoritative public
+visibility rule as the global feed**. An explicit, valid `public_all` post may be
+**indexed and returned publicly regardless of the originating group's
+open/closed/secret classification**. **Content search is not yet built;
+enforcement and tests remain open** (checklist CL-87).
+
+**Canonical visibility matrix.**
+
+| Visibility value | Member group stream | Non-member open/closed group stream | Non-member secret-group preview | Global feed / permalink / search |
+|---|---|---|---|---|
+| `members_only` | Yes | No | No | No |
+| `public_group` | Yes | Yes | No | No |
+| `public_all` | Yes | Yes | Yes | Yes |
+
+- **Member stream** remains subject to existing moderation, blocking, suspension,
+  deletion, and hidden-content exclusions — "all" never means bypassing those.
+- `public_group` stays confined to the group's public stream; it does **not**
+  enter the global feed or public content search.
+- A non-member of a **secret** group gets a **limited public community
+  landing/stream** showing only `public_all` posts. The current blanket 404 must
+  eventually be replaced/supplemented by a safe public-preview route (protected
+  member routes keep returning 404/denial). **NOT BUILT** (checklist CL-FN04,
+  before-production).
+- **Anonymous** = same public visibility as a non-member; a join/request action
+  may require authentication *after* the viewer chooses it; the public landing
+  itself needs no authentication.
+
+**Security requirements (backend-enforced, when built).** Visibility filtering in
+the **backend** (not FE hiding); unknown/absent/malformed visibility ⇒
+`members_only`; a guessed activity id must not reveal a non-public post;
+group-preview queries use an explicit visibility allowlist keyed to viewer + group
+privacy; public preview must **not** reuse a member-authorized response or cache
+entry; **cache keys vary by public/member authorization state**, and
+authorization-bearing responses are **never** served from anonymous cache;
+`members_only` posts must not appear in counts, pagination/"load more" boundaries,
+trending, previews, or empty-state text visible to non-members; public comment
+counts follow the approved comment policy (no private-volume leak); public
+attachments/media belong to a publicly-visible post; hidden/deleted content is
+removed from **both** member and public streams; downgrading `public_all` /
+`public_group` must invalidate public-stream, global, permalink, search, and edge
+caches when that capability is built (checklist CL-73).
+
+**`public_all` authorization** is owner/moderator-controlled — closed/secret groups
+default to owners + moderators; an owner/admin may enable it for ordinary posting
+members; backend-enforced; non-members cannot post at all (checklist CL-FN06).
+
+**Current vs target (the target is NOT shipped):** open/closed non-member teasers
+already show `public_group` + `public_all`; **secret-group non-member access
+returns 404 today → the public secret-group preview is NOT BUILT**; members already
+receive the unrestricted group stream subject to moderation/access gates. The
+secret-group public preview + discovery context are **OPEN, before-production
+implementation** (CL-FN04); content search is **NOT BUILT** (CL-87); the
+`public_all` authorization control is **NOT BUILT** (CL-FN06). None of this is
+implemented in this documentation-only change.
 
 ## Honest caveat
 
