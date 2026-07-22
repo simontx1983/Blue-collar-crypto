@@ -293,8 +293,41 @@ viewer-**dependent** gate: author **blocks** (both directions).
      group posts are dropped for non-members) and is **stale/drifted** relative to
      the live code.
 
-   **DECISION (2026-07-21, Phillip): OPTION B — content search is STRICTER than the
-   feed.** Content search excludes posts belonging to closed/secret groups
+   > ### ⚠ SUPERSEDED — see the 2026-07-22 decision below
+   >
+   > **DECISION (2026-07-22, Phillip) — Gate 12 = "public_all wins" (authoritative).**
+   > An explicit, valid `public_all` post **may appear on ALL public surfaces —
+   > global/hot/tag feed, public permalink, PUBLIC CONTENT-SEARCH RESULTS, and
+   > public group-discovery — even inside a closed or secret group**, exposing only
+   > minimum discovery context (public body/media, author public identity, public
+   > timestamp, public engagement, group name/avatar/URL, and a join/request/follow
+   > action). Private-by-default, fail-closed on unknown/legacy visibility,
+   > explicit-choice-only, server-side authorization, and moderator/admin removal
+   > all remain in force (policy points 4–9).
+   >
+   > **Business rationale:** BCC communities — including NFT and private-membership
+   > communities — need a controlled way to demonstrate activity publicly and
+   > attract new followers/prospective members; group privacy protects membership
+   > and private-by-default discussion, but must not prevent an author from
+   > deliberately publishing an individual post publicly.
+   >
+   > **⚠ Label-collision + reversal note.** Phillip's "Option B (public_all wins)"
+   > is the **Gate-12** label; it means content search **MIRRORS the feed for
+   > `public_all`** — the *opposite* of this file's earlier "Option B (content
+   > search STRICTER)". The earlier decision below is therefore **reversed**:
+   > content search must **not** blanket-exclude secret/closed-group `public_all`
+   > posts; it mirrors the feed's `public_all` gate (subject to the no-private-leak
+   > boundaries above). *(By substance this equals this file's original "Option A —
+   > mirror feed"; recorded by Phillip's Gate-12 "B" label.)*
+   >
+   > **Content search is NOT BUILT** (this file remains "design only, not built"),
+   > so this is a **forward** policy: its exact enforcement is **OPEN** and must be
+   > confirmed against this decision when F3 is built. The "stricter" text, matrix,
+   > and `filterVisibleActIds()` consequence below are retained as **superseded
+   > history**.
+
+   **~~DECISION (2026-07-21, Phillip): OPTION B — content search is STRICTER than the
+   feed.~~ [SUPERSEDED 2026-07-22 — see banner above]** Content search excludes posts belonging to closed/secret groups
    (`peepso_group_privacy ∈ {1,2}`) from the global surface **regardless of
    `public_all`**. Rationale: search should not surface content from private
    groups even when an author flagged an individual post `public_all`; the feed's
@@ -314,8 +347,10 @@ viewer-**dependent** gate: author **blocks** (both directions).
      (group privacy is not per-viewer), so it does not change the cache-scope
      reasoning in Decision 4 (blocks remain the only per-viewer variance).
 
-   **Content-search visibility matrix under Policy B** (differs from the feed
-   matrix above only in the group-post rows):
+   **~~Content-search visibility matrix under Policy B (STRICTER)~~ [SUPERSEDED
+   2026-07-22]** — under the "public_all wins" decision, content search **mirrors
+   the feed** for `public_all`, so the closed/secret × `public_all` rows below flip
+   from ❌ to ✅ when F3 is built. Retained as superseded history:
 
    | Group privacy | `_bcc_post_visibility` | In content search? |
    |---|---|---|

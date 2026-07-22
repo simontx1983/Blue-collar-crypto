@@ -128,11 +128,11 @@ Remediation · Touches**.
 
 ## Gate 12 (added) — Content-search product policy: `public_all` in a secret group
 - **Required:** platform intent for whether a `public_all` post inside a **secret** group syndicates globally must be a *decision*, not an accident — it is **live feed behavior today**, and it blocks F3.
-- **Current:** **AMBIGUOUS.** Behavior proven live (global gate is group-privacy-independent, `PeepSoActivityRepository.php:273`; old group-exclusion inert); unblocked upstream (a secret-group member can pick `public_all` — `PostsService.php:1902-1928,194-199`, `PeepSoStatusWriter.php:174`, all composer routes); intent undocumented, and the one doc that speaks to it (`api-contract-v1.md:2082-2084`) asserts the **opposite** and is **stale**.
-- **Verdict:** **DECISION REQUIRED** (recorded as a build-blocking decision in `docs/content-search-privacy-design.md` Note B; option A "mirror feed" vs B "search is stricter").
-- **Remediation:** product decides A or B and records it; separately correct the stale `api-contract-v1.md:2082-2084` text (doc-drift bug).
+- **Current — *↻ RESOLVED 2026-07-22*:** behavior proven live (global gate is group-privacy-independent, `PeepSoActivityRepository.php:273`; old group-exclusion inert; unblocked upstream at `PostsService.php:1902-1928/194-199`, `PeepSoStatusWriter.php:174`) — and the **intent is now decided**.
+- **Verdict — *↻ RESOLVED 2026-07-22 (Phillip): Option B — "public_all wins."*** An explicit, valid `public_all` post **may** syndicate to all public surfaces (global/hot/tag feed, public permalink, **public content-search results**, public group-discovery) **even inside a closed/secret group**, exposing only minimum discovery context; private-by-default, fail-closed, explicit-choice, server-authz, and moderator/admin removal all remain in force. **Rationale:** communities need to show selected public activity to attract followers/members. Recorded in `docs/content-search-privacy-design.md` (2026-07-22 banner, which **supersedes** that file's earlier opposite "Option B = search stricter"). **Naming note:** Phillip's Gate-12 label "B" = content search **mirrors** the feed for `public_all` (≡ that file's original "Option A").
+- **Remediation:** decision **done** (recorded). Feed/permalink behavior **already matches** the policy (verified in a 2026-07-22 read-only trace). **Content search is NOT BUILT** — its privacy enforcement stays **OPEN** and must mirror the feed's `public_all` gate when F3 is built. Correct the stale `api-contract-v1.md:2082-2084` text (done in this PR).
 - **Touches:** DOCUMENTATION (+ CODE only if option B is chosen, later, inside F3). No prod action.
-- ***↻ Note 2026-07-22 — this gate is CORRECT as written; do not mark it resolved.*** The A/B intent is **genuinely unresolved**: `content-search-privacy-design.md` Note B (verified 2026-07-22) explicitly calls `secret × public_all` an "**explicit BUILD-BLOCKING DECISION (do not choose it silently)**" with intent "**unresolved**" — no Option-B (or A) decision is recorded anywhere in this PR. F3 content search is **design-only / not built** on `main`, so this decision blocks the **future F3 build**, not the V1 launch. *(The separately-tracked stale `api-contract-v1.md:2082-2084` text is corrected by this same PR.)*
+- ***↻ Note 2026-07-22:*** an interim amendment had (correctly, at the time) recorded this gate as still-undecided because no decision was on file. Phillip's decision has since landed (Option B, above), so the gate is now **RESOLVED**. F3 content search remains **design-only / not built**, so the decision is a **forward policy**: it authorizes the shipped feed/permalink behavior and directs the future content-search build to mirror the feed's `public_all` gate — it does **not** mark content search implemented. See the master tracker `docs/audit-remediation-checklist-2026-07-21.md` (CL-7C + the FN-02..FN-05 verification items from the trace).
 
 ---
 
@@ -155,7 +155,7 @@ all of which are deliberately gated behind your production authorization.
 6. **Prod auth-cache isolation confidence** (Gate 4) — verify bypass block live + run the probe against prod.
 7. **External uptime monitor + alerts** (Gate 2) — nothing watches prod health today.
 8. ~~**bcc-search `main` unprotected** (Gate 8)~~ — *↻ RESOLVED 2026-07-22:* bcc-search `main` branch protection is armed (enforce_admins + "PHP — syntax · PHPStan L8 · PHPUnit").
-9. **Content-search `public_all`-in-secret-group policy** (Gate 12) — decide A/B; it's live feed behavior. *(Decision now; no prod action.)*
+9. ~~**Content-search `public_all`-in-secret-group policy** (Gate 12)~~ — *↻ RESOLVED 2026-07-22:* Option B, "public_all wins" (feed/permalink already compliant; content-search enforcement OPEN until F3 is built). No prod action.
 10. **Full anon+authed smoke against staging** (Gate 10) — no recorded green run vs current `main`.
 11. **Doc fixes** — cron vars into checklist §4 (this PR) + `.env.local.example` (fe#52); correct stale `api-contract-v1.md:2082-2084` (this PR). *↻ 2026-07-22: "commit admin-audit report" is **done** — merged via umbrella#76.*
 
@@ -163,7 +163,7 @@ all of which are deliberately gated behind your production authorization.
 
 **Phase 0 — safe NOW (staging / repo / GitHub; no prod authorization needed):**
 - ~~Enable bcc-search `main` branch protection~~ — *DONE 2026-07-22* (armed: enforce_admins + "PHP — syntax · PHPStan L8 · PHPUnit").
-- Decide the `public_all`-in-secret-group policy (A/B) and record it (still open — blocks the future F3 build, not V1).
+- ~~Decide the `public_all`-in-secret-group policy (A/B) and record it~~ — *DONE 2026-07-22* (Option B, "public_all wins"; recorded in `content-search-privacy-design.md`).
 - Doc fixes: add `BCC_INTERNAL_CRON_SECRET` + `CRON_SECRET` to `.env.local.example` (fe#52) and checklist §4 (this PR); correct `api-contract-v1.md:2082-2084` (this PR). *(The admin-audit report is already committed — umbrella#76.)*
 - Run the full v1 smoke checklist against **staging** over HTTP (anon + authed, incl. §8/§11 notifications); record results.
 - (Weekly staging auth-cache probe is already armed/active — only its stale "intentionally uncommitted" header comment needs a trivial fix.)

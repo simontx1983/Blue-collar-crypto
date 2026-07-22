@@ -5,7 +5,7 @@ deferral, decision, operator action, refuted item, and the post-audit finding **
 represented exactly once (as a primary item or an attached related F-ID). This supersedes ad-hoc
 tracking of the audit; `docs/TODO.md` remains the curated near-term operator list.
 
-- **Source dataset:** the audit's `findings-final.json` — 291 rows (F001–F291), +FN-01 (post-audit).
+- **Source dataset:** the audit's `findings-final.json` — 291 rows (F001–F291); +FN-01..FN-05 (post-audit findings).
 - **Status:** `OPEN` · `BLOCKED` (cannot proceed — usually PROD FROZEN) · `DECISION` (needs Phillip) · `DEFERRED` (valid future work, not now) · `DONE` (merged code / verified operator evidence) · `REFUTED` / `EXCLUDED`.
 - **Priority:** P0/P1/P2/P3 (**no P0** in this audit). Shown per item as the **operational** (governing) priority; where it differs from the finding's **source** classification, both are shown (this happens only for CL-01/F058 — see the priority reconciliation).
 - **Timing:** staging / before-production / post-launch. **Type:** code / test / docs / operator / external / decision.
@@ -18,8 +18,9 @@ tracking of the audit; `docs/TODO.md` remains the curated near-term operator lis
 IDs are **stable and assigned once** (never renumbered). Format `CL-⟨group⟩⟨seq⟩`: the leading
 character maps to the group — `0x`→G1, `1x`→G2, `3x`–`9x`→G3–G9 (G3+ match the group number; G1/G2
 are the two lowest sequences). Special entries use a **separate mnemonic namespace** so they can't
-be mistaken for active work: **`CL-FN01`** = the post-audit finding FN-01; **`CL-REF`** = refuted
-findings; **`CL-EXC`** = the excluded non-finding. (There is no `CL-2x`; Group 2 uses `CL-10/11`.)
+be mistaken for active work: **`CL-FN##`** = post-audit findings (`CL-FN01`..`CL-FN05`, IDs
+`FN-01`..`FN-05`); **`CL-REF`** = refuted findings; **`CL-EXC`** = the excluded non-finding.
+(There is no `CL-2x`; Group 2 uses `CL-10/11`.)
 
 ---
 
@@ -29,14 +30,14 @@ findings; **`CL-EXC`** = the excluded non-finding. (There is no `CL-2x`; Group 2
 |---|---|
 | **What blocks staging completion?** | Only **CL-02**: the known-module-6 (DM) staging permalink probe — BLOCKED, needs staging DB/SSH lookup. F058 code, deploy, and anon-feed smoke are all done. |
 | **What must happen before production?** | ~9 operator/external actions (CL-30–38) + the CDN decision (CL-7B). All `BLOCKED — PROD FROZEN`. Zero prod **code** blockers. |
-| **What needs my (Phillip's) decision?** | **12 decisions** (CL-70…CL-7B) + legal approval (CL-38). |
+| **What needs my (Phillip's) decision?** | **13 decisions** (CL-70…CL-7B + CL-FN04) + legal approval (CL-38). *(Gate 12 / CL-7C is now **RESOLVED** — Option B.)* |
 | **What's blocked by the prod freeze?** | Object cache, monitoring, DB backups, cron flip, prod redeploy, OAuth+secret rotation, cron secrets, auth-cache prod probe, legal, CDN. |
-| **What can wait until after launch?** | Post-launch tech debt (CL-90–95), FN-01 (CL-FN01), and all Group-8 deferrals. |
+| **What can wait until after launch?** | Post-launch tech debt (CL-90–95), post-audit findings FN-01..FN-05 (CL-FN01..05; FN-05 composer-disclosure is before-prod verify), and all Group-8 deferrals. |
 | **What should Claude do next?** | **Batch B** — correct PR #77's stale readiness gates, then merge PR #77 + fe#50. Then **C** (FN-01 liveness), **D** (moderation hardening), **E** (small fixes). |
-| **Are all 291 rows accounted for?** | Yes — machine-validated: 291/291 mapped exactly once + FN-01 (see Validation). |
+| **Are all 291 rows accounted for?** | Yes — machine-validated: 291/291 mapped exactly once; +FN-01..FN-05 (see Validation). |
 
-- **Recently completed:** CL-01 (F058 feed-module privacy) — bcc-core **PR #33**, merge **f9553f6**, staging-deployed 2026-07-22.
-- **Item tally (65 primary):** Active **52** (OPEN 31 · BLOCKED 9 · DECISION 12) · Deferred **10** · Done **1** · Refuted **1** · Excluded **1**.
+- **Recently completed / resolved:** CL-01 (F058 feed-module privacy) — bcc-core **PR #33**, merge **f9553f6**, staging-deployed 2026-07-22; **CL-7C — Gate 12 RESOLVED (Option B, "public_all wins", Phillip 2026-07-22)** — feed/permalink verified compliant; content-search enforcement OPEN (CL-87) + trace gaps FN-02..FN-05.
+- **Item tally (70 primary):** Active **55** (OPEN 33 · BLOCKED 9 · DECISION 13) · Deferred **11** · Done **1** · Resolved **1** · Refuted **1** · Excluded **1**.
 
 ### Priority reconciliation — source vs operational
 The audit **executive summary** counted F058 as **P1** (operational — a verified privacy leak);
@@ -219,9 +220,9 @@ trail it. Land contract-file edits **after PR #77 merges** to avoid touching the
 - **Priority:** P2 · **Timing:** before-staging · **Type:** docs · **Surface:** umbrella (branch `docs/staging-hardening-2026-07-21`)
 - **F-IDs:** F002, F179, F220, F272, F186, F242, F273
 - **Location:** `docs/production-readiness-2026-07-21.md` (Gates 8/11/12/4, throttle note) — on the PR #77 branch
-- **Current:** the readiness doc is stale on arrival — Gate 8 (bcc-search unprotected→armed), Gate 11 (admin P1s merged), Gate 12 (Option B recorded), Gate 4 (workflow already armed), throttle "fails closed" note wrong.
-- **Outcome:** amend the branch so the canonical readiness record is accurate, then merge PR #77 (+ fe#50).
-- **Acceptance:** gates 8/11/12/4 + throttle note corrected; PR #77 merged.
+- **Current:** the readiness doc was stale on arrival — Gate 8 (bcc-search unprotected→armed), Gate 11 (admin P1s merged), Gate 12 (**RESOLVED 2026-07-22: Option B — public_all wins**; see CL-7C), Gate 4 (workflow already armed), throttle "fails closed" note wrong. **All corrected on the PR #77 branch (2026-07-22 commits); awaiting PR #77 merge.**
+- **Outcome:** amend the branch so the canonical readiness record is accurate (**done**), then merge PR #77 (+ fe#50).
+- **Acceptance:** gates 8/11/12/4 + throttle note corrected (**done on branch**); PR #77 merged (pending).
 - **Deps:** feeds Batch B; pairs with CL-46 · **Risk:** low · **Size:** small · **Tracker:** PR #77 · **Evidence:** —.
 
 ### ☐ CL-42 — `api-contract-v1.md` truth sweep — **OPEN**
@@ -492,6 +493,18 @@ Deps/Risk/Size/Tracker apply to the *resulting* work once decided.)
 - **Q:** Hostinger CDN on or off for launch (it was the load-test ban layer)?
 - **Rec:** **Decide, then record** the on/off choice + hPanel deactivate/unban procedure in the deploy checklist; if on, get per-IP burst thresholds first. **Consequence:** unmade → launch-week risk. **Options:** on (tuned) / off. **Deps:** produces a Group-3 operator step. **Size:** small (doc) + operator. **Tracker:** this item.
 
+### ☑ CL-7C — Gate 12: `public_all`-in-secret-group policy — **RESOLVED (Option B)**
+- **Priority:** P2 · **Timing:** before-staging · **Type:** decision · **Surface:** product policy → feed/permalink (shipped) + future F3 content search
+- **F-IDs:** — (Gate-12 product decision; the underlying audit findings are owned by CL-87 and CL-41)
+- **Location:** `production-readiness-2026-07-21.md` Gate 12; `content-search-privacy-design.md` (2026-07-22 banner); `api-contract-v1.md` §feed
+- **Q:** Should an explicit `public_all` post syndicate to public surfaces (incl. content search + group discovery) even inside a closed/secret group?
+- **Decision:** **RESOLVED — Option B, "public_all wins"** · **owner:** Phillip · **date:** 2026-07-22.
+- **Rationale:** communities (incl. NFT / private-membership) need a controlled way to show selected public activity to attract followers/members; group privacy protects membership + private-by-default discussion but must not block an author from deliberately publishing an individual post publicly.
+- **Current shipped behavior (verified policy-compliant, 2026-07-22 read-only trace):** feed/hot/tag/cold-start/permalink enforce the `public_all` gate + F058 module allowlist + `publish` + moderation-hide + fail-closed; comments, member roster, and private group metadata stay private; no anonymous enumeration of non-`public_all` secret-group posts.
+- **Still OPEN / do NOT mark implemented:** content search **NOT BUILT** → enforcement OPEN (CL-87); discovery-context under-delivered (CL-FN04); composer public-visibility disclosure unverified (CL-FN05); delete/downgrade cache-purge lag (CL-FN02/CL-FN03). **Naming note:** Phillip's "Option B" = content search **mirrors** the feed for `public_all` — this **reverses** the design doc's earlier "Option B = search stricter."
+- **Outcome:** decision recorded across the three PR-#77 docs. **Acceptance:** recorded (**done on branch**); verification/build items tracked separately (below).
+- **Deps:** — · **Risk:** low (documentation) · **Size:** small · **Tracker:** this item + `content-search-privacy-design.md` · **Evidence:** Phillip's 2026-07-22 decision; read-only privacy trace 2026-07-22.
+
 ---
 
 ## GROUP 8 — INTENTIONAL DEFERRALS (by product area) — all **DEFERRED**
@@ -530,7 +543,7 @@ to their Batch-H doc item (not built here).
 
 ### ☐ CL-87 — F3 content search (design only) — **DEFERRED**
 - **Priority:** P3 · **Timing:** post-launch · **Type:** deferral · **Surface:** bcc-search (future)
-- **F-IDs:** F241 · **Unlock:** post-launch; Policy B recorded in `content-search-privacy-design.md`. **Current:** no content vertical on main (3 controllers, no visibility seam). **Outcome:** none now. **Acceptance:** n/a. **Deps:** PR #77 (design doc) · **Risk:** none · **Size:** large (future) · **Tracker:** content-search-privacy-design.md.
+- **F-IDs:** F241 · **Unlock:** post-launch. **Current:** **NOT BUILT** — no content vertical on `main` (3 controllers = page search only, no visibility seam). Privacy **policy is now decided** (Gate 12 / CL-7C: **Option B — public_all wins**, 2026-07-22), but **enforcement is OPEN** — when built, the content vertical must **mirror the feed's `public_all` gate** (this supersedes the design doc's earlier "content search is stricter" note; see the 2026-07-22 banner in `content-search-privacy-design.md`). **Outcome:** none now (deferred feature). **Acceptance:** n/a until build; at build, verify the search gate mirrors the feed + all no-private-leak boundaries. **Deps:** CL-7C (policy) · **Risk:** none (unbuilt) · **Size:** large (future) · **Tracker:** content-search-privacy-design.md.
 
 ### ☐ CL-88 — Misc parked / dev-flag / test-skip deferrals — **DEFERRED**
 - **Priority:** P3 · **Timing:** n/a · **Type:** deferral · **Surface:** umbrella + local + bcc-core
@@ -576,6 +589,43 @@ to their Batch-H doc item (not built here).
 - **Outcome:** determine surface liveness, then fix (pass the numeric id — `getNumericId('blog')=204`; give signals a real numeric module) **or** remove the dead path.
 - **Acceptance:** `/u/{handle}` blog tab + `/feed?scope=signals` liveness determined; fix-or-remove decision recorded; if fixed, a test proves `['blog']` returns module-204 rows.
 - **Deps:** **Batch C** (liveness investigation) precedes any fix · **Risk:** low · **Size:** small · **Tracker:** this item · **Evidence:** EXPLAIN/coercion verified during PR #33 review (`'blog'+0=0`; `IN('blog')`→module 0).
+
+### ☐ CL-FN02 — **FN-02** · delete/trash of a public post lags the anon cache — **OPEN (post-audit, Option-B trace)**
+- **Priority:** P2 · **Timing:** post-launch · **Type:** code · **Surface:** bcc-trust
+- **F-IDs:** **FN-02**
+- **Location:** `FeedRankingService.php:168-171` (hot-cache key stamps `HiddenActivityRepository::getGeneration()`); delete/trash path (no generation bump); `EdgeCache` purge wired for `TAG_MEMBERS` only.
+- **Current:** moderation **hide** bumps the generation counter → the anon hot-feed object cache re-keys instantly (**SAFE**). **Delete/trash** removes the post from live surfaces immediately (`post_status`) but does **not** bump that generation, so the anon hot-feed object cache + any LiteSpeed edge copy lag ≤~60s (warm cron) up to 300s TTL. Anon-only, bounded, self-healing.
+- **Outcome:** on delete/trash of a surfaced post, bump the hot-feed generation (or purge the feed tag) so anon cached/edge copies drop immediately.
+- **Acceptance:** deleting a public post evicts it from the anon hot feed + edge within one request; a test proves it.
+- **Deps:** relates to CL-73 (moderation edge-purge decision) · **Risk:** low-moderate (anon staleness) · **Size:** small · **Tracker:** this item · **Evidence:** 2026-07-22 read-only trace (gap G1). **Do not implement now.**
+
+### ☐ CL-FN03 — **FN-03** · no `public_all→private` downgrade + no purge event — **DEFERRED (pre-emptive)**
+- **Priority:** P3 · **Timing:** post-launch · **Type:** code · **Surface:** bcc-trust/bcc-core
+- **F-IDs:** **FN-03**
+- **Location:** `PeepSoStatusWriter.php:174` (the only `_bcc_post_visibility` write is at post creation).
+- **Current:** there is **no** operation to change a post's visibility after creation, so no live downgrade exists today; live gates read the meta per request. If a downgrade is ever added, cached/edge public copies would lag with no targeted invalidation.
+- **Outcome:** if/when a visibility-edit path is built, wire a cache purge / generation bump on downgrade (Option B point 9).
+- **Acceptance:** any future downgrade op ships with a purge + test.
+- **Deps:** — · **Risk:** low (absent today) · **Size:** small (future) · **Tracker:** this item · **Evidence:** 2026-07-22 trace (gap G2). **Do not implement now.**
+
+### ◆ CL-FN04 — **FN-04** · public-post discovery context under-delivered — **DECISION/BUILD (post-audit)**
+- **Priority:** P3 · **Timing:** post-launch · **Type:** decision/code · **Surface:** bcc-trust + bcc-frontend
+- **F-IDs:** **FN-04**
+- **Location:** `FeedHydrationPipeline.php:251-255` (group block = `{id,type,verification}` only); group detail 404s for secret groups.
+- **Current:** Option B authorizes exposing group **name/avatar/URL + a join/request/follow action** on a public post, but the feed group block exposes only `{id,type,verification}` — **less** than allowed; no inline join affordance; the group detail (where join lives) 404s for secret groups. Privacy-safe (it under-exposes), but under-delivers the approved discovery experience.
+- **Q:** Build the safe public group-discovery presentation (group name/avatar/URL + join/request/follow) for `public_all` posts?
+- **Rec:** build it as a **separate behavioral PR** (Phillip's "verify/build separately"), keeping secret-group private data protected. **Options:** build / accept the minimal `{id,type,verification}`.
+- **Acceptance:** if built, a public viewer of a `public_all` secret-group post gets a safe group identity + join path with **no** private-group data leak; verified.
+- **Deps:** CL-7C · **Risk:** medium (privacy surface) · **Size:** medium · **Tracker:** this item · **Evidence:** 2026-07-22 trace (gap G3). **Do not implement now.**
+
+### ☐ CL-FN05 — **FN-05** · composer public-visibility disclosure unverified — **OPEN (verify, post-audit)**
+- **Priority:** P2 · **Timing:** before-production · **Type:** test · **Surface:** bcc-frontend composer
+- **F-IDs:** **FN-05**
+- **Location:** bcc-frontend composer visibility selector + confirmation UI — **not covered by the backend trace**.
+- **Current:** Option B points 6/7 require the authoring UI to clearly disclose "This post will be visible publicly, including to people who are not members of this group," require an explicit selection/confirmation, show the selected visibility before publishing, and warn on editing a private post to `public_all`. Backend enforces explicit-choice + default-private (verified); the **frontend disclosure/confirmation UI is UNVERIFIED / UNKNOWN**.
+- **Outcome:** verify the composer shows the public-visibility disclosure + explicit confirmation; implement only in a **future behavioral PR** if absent.
+- **Acceptance:** composer disclosure + confirmation present (or a follow-up PR opened); documented.
+- **Deps:** CL-7C · **Risk:** medium (user awareness) · **Size:** small (verify) · **Tracker:** this item · **Evidence:** Option B policy point 6/7; **not** covered by the 2026-07-22 backend trace (UNKNOWN). **Verify only; do not implement here.**
 
 ---
 
@@ -626,7 +676,7 @@ search hygiene → CL-49/CL-4F.
 - **Verdicts:** CONFIRMED 241 · ADJUSTED 47 · REFUTED 2 = 290; **+1 no-verdict** (F178, excluded non-finding).
 - **Unique substantiated findings:** **288** (291 − 2 refuted − 1 excluded).
 - **Refuted:** 2 → F012, F216 (CL-REF). **Excluded non-finding:** 1 → F178 (CL-EXC).
-- **Additional post-audit findings:** 1 → **FN-01** (CL-FN01), its own ID; originals not renumbered.
+- **Additional post-audit findings:** 5 → **FN-01** (CL-FN01, explicit-string module coercion) + **FN-02..FN-05** (CL-FN02..05, from the 2026-07-22 Option-B privacy trace: delete cache-purge lag, downgrade-purge pre-emptive, discovery-context under-delivered, composer-disclosure verify). Each has its own stable `FN-##` ID; the original F001–F291 are not renumbered.
 
 **Counts by priority — source (dataset) vs operational:**
 
@@ -639,15 +689,15 @@ search hygiene → CL-49/CL-4F.
 
 **Counts by timing (288):** before-staging 14 · before-production 88 · after-launch 84 · n/a 102.
 
-**Counts by status (65 primary items):** OPEN 31 · BLOCKED 9 · DECISION 12 · DEFERRED 10 · DONE 1 · REFUTED 1 · EXCLUDED 1. → **Active 52 · Deferred 10 · Done/Refuted/Excluded 3.**
+**Counts by status (70 primary items):** OPEN 33 · BLOCKED 9 · DECISION 13 · DEFERRED 11 · DONE 1 · RESOLVED 1 · REFUTED 1 · EXCLUDED 1. → **Active 55 · Deferred 11 · Done/Resolved/Refuted/Excluded 4.** *(+5 items vs the 65-item merge: CL-7C RESOLVED decision + CL-FN02..05 from the Option-B trace; validated by the checklist validator.)*
 
-**Counts by type (primary items, approximate — mixed-type items counted by lead type):** code 12 · docs 20 · operator 6 · external 4 · test 3 · decision 12 · deferral 8.
+**Counts by type (primary items, approximate — mixed-type items counted by lead type):** code 14 · docs 20 · operator 6 · external 4 · test 4 · decision 14 · deferral 8. *(= 70; +2 code (FN-02/03), +1 test (FN-05), +2 decision (CL-7C, FN-04) vs the 65-item merge.)*
 
-**Counts by execution batch (CL items):** A 1 · B 1 · C 1 · D 1 · E 1 · F 4 · G 9 · H 7 · I 1 · J 15 (6 debt + 9 deferral) · K 10.
+**Counts by execution batch (CL items):** A 1 · B 2 (adds CL-7C — Gate-12 decision recorded in the PR-#77 docs) · C 1 · D 1 · E 1 · F 4 · G 9 · H 7 · I 1 · J 18 (6 debt + 9 deferral + FN-02/FN-03/FN-04 post-launch) · K 10; plus **FN-05** (composer-disclosure verify) as a **before-prod** verification step alongside Batch E.
 
 **Machine-checkable mapping:** every F-ID F001–F291 appears **exactly once** as a primary or
 attached/related ID across CL-01…CL-EXC (validated: 291/291 covered, 0 duplicates, 0 missing,
-0 unknown; +FN-01). The per-CL F-ID lists above are the authoritative assignment.
+0 unknown; +FN-01..FN-05). The per-CL F-ID lists above are the authoritative assignment.
 
 **Discrepancies found:** one, fully explained — the **29/74 (dataset) vs 30/73 (operational)** P1/P2
 split is entirely F058's source→operational reclassification (P2→P1). The dataset is preserved
