@@ -413,13 +413,13 @@ section on 2026-06-12.
 | `/bcc/v1/admin/reports` | GET | `admin-reports-endpoints.getAdminReports` | ✅ | moderation queue |
 | `/bcc/v1/admin/reports/{id}/resolve` | POST | `resolveAdminReport` | ✅ | |
 | `/bcc/v1/admin/reports/undo` | POST | `undoAdminReport` | ✅ | |
-| `/bcc-trust/v1/fraud/stats` | GET | — | ❌ | wp-admin fraud cockpit — V2 |
-| `/bcc-trust/v1/users/high-risk` | GET | — | ❌ | wp-admin |
-| `/bcc-trust/v1/activity/fraud` | GET | — | ❌ | wp-admin |
-| `/bcc-trust/v1/stats/{trust-trend,risk-distribution,fraud-trend,devices}` | GET | — | ❌ | wp-admin |
-| `/bcc-trust/v1/analyze-user/{id}` | POST | — | ❌ | wp-admin |
 
-These are deliberate V1 cuts — the fraud/stats surface lives in wp-admin for now.
+The eight `bcc-trust/v1` fraud/stats routes (`/fraud/stats`,
+`/users/high-risk`, `/activity/fraud`, `/stats/*`, `/analyze-user/{id}`)
+were **deleted 2026-07-21** (admin-audit dead-endpoint cleanup): their only
+consumer was admin.js fetch code targeting DOM the server-rendered Trust
+Engine dashboard tabs no longer emit. The fraud surface itself still lives
+in wp-admin — rendered server-side via `AdminDashboardRepository`.
 
 ---
 
@@ -461,7 +461,7 @@ These are deliberate V1 cuts — the fraud/stats surface lives in wp-admin for n
 | Wallets | ✅ list + unlink | project/chains/onchain-refresh — V2 |
 | On-chain detail (page-level read) | — | ❌ no read route exists — V2 |
 | NFT showcase | ✅ full | — |
-| Admin reports | ✅ | fraud/stats deliberately wp-admin-only |
+| Admin reports | ✅ | fraud surface wp-admin-only (server-rendered; its REST routes deleted 2026-07-21) |
 
 Every remaining ❌ is V2-scoped or deliberately wp-admin-only. There are no
 accidental gaps left from V1 / V1.5 work.

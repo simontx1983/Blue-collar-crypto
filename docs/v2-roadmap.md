@@ -33,7 +33,7 @@ Small-surface retention work. Most items are 1–10 days each.
 |---|---|---|---|
 | Sound on Heavy celebrations (§O1.2) | Extra dopamine on rare events (rank-up, tier-upgrade) | Asset pipeline + mute-respecting logic + iOS gesture rules | OPEN |
 | Streak-freeze / streak-saver mechanic | Retention without punishing one missed day | New rules + UI + cap logic + abuse vector | OPEN |
-| `/me/progression` standalone page (§N11) | Full progression map vs. just the Living Header strip | New route + richer view-model | SHIPPED 2026-05-13 — server-component route at `/me/progression` reusing the §3.1 own-only `progression` block (no new endpoint). Renders ALL `next_rank_thresholds` (vs. the leading-only LivingHeader bar) + the `trust_score_recent_changes` timeline. Discoverable via the `ViewerMenu` "Progression" item. |
+| `/me/progression` standalone page (§N11) | Full progression map vs. just the Living Header strip | New route + richer view-model | SHIPPED 2026-05-13 — server-component route at `/me/progression` reusing the §3.1 own-only `progression` block (no new endpoint). Renders ALL `next_rank_thresholds` (vs. the leading-only LivingHeader bar) + the `trust_score_recent_changes` timeline. Discoverable via the SiteHeader avatar menu's "My Progression" item. |
 | Network percentile shown on **others'** profiles (§O3.1) | Status display visible to others | Privacy toggle (some users won't want their rank visible) | OPEN |
 | Per-card watchlist visibility toggle (§C2) | More granular hide control | Whole-watchlist hide (§K2) already covers the privacy job | WON'T SHIP |
 | Rich-text status composer | Format expression for status posts | Conflicts with §D2 500-char rule; long-form is what the §D6 blog tab is for | WON'T SHIP |
@@ -89,6 +89,16 @@ Multi-month bets that change *who* and *where* the platform serves.
 | Localization / i18n | Non-English markets | Translation pipeline + RTL + locale routing + ongoing translation cost | OPEN — wait for non-English demand |
 
 **Open subtotal:** All remaining items are V2-of-V2 (demand-gated). Push notifications landed.
+
+---
+
+## Operator tooling
+
+Admin-surface work. Governed by the §8 admin split (bcc-trust/CLAUDE.md): wp-admin = infrastructure cockpit, Next.js `/admin/*` = daily operational command center.
+
+| Item | What it buys | What it costs | Status |
+|---|---|---|---|
+| **Unify daily moderation into `/admin/*`** (logged 2026-07-21) | One surface for the daily loop: user-report adjudication + dispute force-resolve (today wp-admin-only under Trust Engine) join the content-reports queue, ending the app↔wp-admin bounce. Optionally a small system-health glance. | New `/admin` pages + typed clients for the already-reserved internal endpoints (`GET /disputes/health`, `POST /disputes/:id/resolve` — kept alive for exactly this, see `trust-engine-coverage.md`); a user-reports read/adjudicate REST surface. wp-admin keeps config/repair/infra permanently — this migrates only the daily workflows §8 already assigns to the ops center. | OPEN — completes the §8 design (moderation/disputes are "operational command center" work that never migrated). Not launch-blocking: 2 operators, bounce cost = one extra tab. |
 
 ---
 
