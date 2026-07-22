@@ -5,7 +5,7 @@ deferral, decision, operator action, refuted item, and the post-audit finding **
 represented exactly once (as a primary item or an attached related F-ID). This supersedes ad-hoc
 tracking of the audit; `docs/TODO.md` remains the curated near-term operator list.
 
-- **Source dataset:** the audit's `findings-final.json` — 291 rows (F001–F291), +FN-01 (post-audit).
+- **Source dataset:** the audit's `findings-final.json` — 291 rows (F001–F291); +FN-01..FN-05 (post-audit findings).
 - **Status:** `OPEN` · `BLOCKED` (cannot proceed — usually PROD FROZEN) · `DECISION` (needs Phillip) · `DEFERRED` (valid future work, not now) · `DONE` (merged code / verified operator evidence) · `REFUTED` / `EXCLUDED`.
 - **Priority:** P0/P1/P2/P3 (**no P0** in this audit). Shown per item as the **operational** (governing) priority; where it differs from the finding's **source** classification, both are shown (this happens only for CL-01/F058 — see the priority reconciliation).
 - **Timing:** staging / before-production / post-launch. **Type:** code / test / docs / operator / external / decision.
@@ -18,8 +18,9 @@ tracking of the audit; `docs/TODO.md` remains the curated near-term operator lis
 IDs are **stable and assigned once** (never renumbered). Format `CL-⟨group⟩⟨seq⟩`: the leading
 character maps to the group — `0x`→G1, `1x`→G2, `3x`–`9x`→G3–G9 (G3+ match the group number; G1/G2
 are the two lowest sequences). Special entries use a **separate mnemonic namespace** so they can't
-be mistaken for active work: **`CL-FN01`** = the post-audit finding FN-01; **`CL-REF`** = refuted
-findings; **`CL-EXC`** = the excluded non-finding. (There is no `CL-2x`; Group 2 uses `CL-10/11`.)
+be mistaken for active work: **`CL-FN##`** = post-audit findings (`CL-FN01`..`CL-FN05`, IDs
+`FN-01`..`FN-05`); **`CL-REF`** = refuted findings; **`CL-EXC`** = the excluded non-finding.
+(There is no `CL-2x`; Group 2 uses `CL-10/11`.)
 
 ---
 
@@ -29,14 +30,14 @@ findings; **`CL-EXC`** = the excluded non-finding. (There is no `CL-2x`; Group 2
 |---|---|
 | **What blocks staging completion?** | Only **CL-02**: the known-module-6 (DM) staging permalink probe — BLOCKED, needs staging DB/SSH lookup. F058 code, deploy, and anon-feed smoke are all done. |
 | **What must happen before production?** | ~9 operator/external actions (CL-30–38) + the CDN decision (CL-7B). All `BLOCKED — PROD FROZEN`. Zero prod **code** blockers. |
-| **What needs my (Phillip's) decision?** | **12 decisions** (CL-70…CL-7B) + legal approval (CL-38). |
+| **What needs my (Phillip's) decision?** | **11 decisions** (CL-70…CL-7B **except CL-73**) + legal approval (CL-38). *(Gate 12 / CL-7C **RESOLVED** — Option B. CL-73 cache-invalidation and CL-FN04 group-discovery are now **OPEN before-prod impl** items, not decisions.)* |
 | **What's blocked by the prod freeze?** | Object cache, monitoring, DB backups, cron flip, prod redeploy, OAuth+secret rotation, cron secrets, auth-cache prod probe, legal, CDN. |
-| **What can wait until after launch?** | Post-launch tech debt (CL-90–95), FN-01 (CL-FN01), and all Group-8 deferrals. |
+| **What can wait until after launch?** | Post-launch tech debt (CL-90–95), Group-8 deferrals, and post-audit FN-01 (CL-FN01) + FN-03 (CL-FN03). *(**Before-production**, not after-launch: the Option-B follow-ups CL-FN04 group-discovery, CL-FN06 `public_all` authz, CL-73 cache-invalidation, CL-FN05 composer verify.)* |
 | **What should Claude do next?** | **Batch B** — correct PR #77's stale readiness gates, then merge PR #77 + fe#50. Then **C** (FN-01 liveness), **D** (moderation hardening), **E** (small fixes). |
-| **Are all 291 rows accounted for?** | Yes — machine-validated: 291/291 mapped exactly once + FN-01 (see Validation). |
+| **Are all 291 rows accounted for?** | Yes — machine-validated: 291/291 mapped exactly once; +FN-01..FN-05 (see Validation). |
 
-- **Recently completed:** CL-01 (F058 feed-module privacy) — bcc-core **PR #33**, merge **f9553f6**, staging-deployed 2026-07-22.
-- **Item tally (65 primary):** Active **52** (OPEN 31 · BLOCKED 9 · DECISION 12) · Deferred **10** · Done **1** · Refuted **1** · Excluded **1**.
+- **Recently completed / resolved:** CL-01 (F058 feed-module privacy) — bcc-core **PR #33**, merge **f9553f6**, staging-deployed 2026-07-22; **CL-7C — Gate 12 RESOLVED (Option B, "public_all wins", Phillip 2026-07-22)** — feed/permalink verified compliant; content-search enforcement OPEN (CL-87) + trace gaps FN-02..FN-05.
+- **Item tally (70 primary):** Active **55** (OPEN 35 · BLOCKED 9 · DECISION 11) · Deferred **11** · Done **1** · Resolved **1** · Refuted **1** · Excluded **1**.
 
 ### Priority reconciliation — source vs operational
 The audit **executive summary** counted F058 as **P1** (operational — a verified privacy leak);
@@ -219,9 +220,9 @@ trail it. Land contract-file edits **after PR #77 merges** to avoid touching the
 - **Priority:** P2 · **Timing:** before-staging · **Type:** docs · **Surface:** umbrella (branch `docs/staging-hardening-2026-07-21`)
 - **F-IDs:** F002, F179, F220, F272, F186, F242, F273
 - **Location:** `docs/production-readiness-2026-07-21.md` (Gates 8/11/12/4, throttle note) — on the PR #77 branch
-- **Current:** the readiness doc is stale on arrival — Gate 8 (bcc-search unprotected→armed), Gate 11 (admin P1s merged), Gate 12 (Option B recorded), Gate 4 (workflow already armed), throttle "fails closed" note wrong.
-- **Outcome:** amend the branch so the canonical readiness record is accurate, then merge PR #77 (+ fe#50).
-- **Acceptance:** gates 8/11/12/4 + throttle note corrected; PR #77 merged.
+- **Current:** the readiness doc was stale on arrival — Gate 8 (bcc-search unprotected→armed), Gate 11 (admin P1s merged), Gate 12 (**RESOLVED 2026-07-22: Option B — public_all wins**; see CL-7C), Gate 4 (workflow already armed), throttle "fails closed" note wrong. **All corrected on the PR #77 branch (2026-07-22 commits); awaiting PR #77 merge.**
+- **Outcome:** amend the branch so the canonical readiness record is accurate (**done**), then merge PR #77 (+ fe#50).
+- **Acceptance:** gates 8/11/12/4 + throttle note corrected (**done on branch**); PR #77 merged (pending).
 - **Deps:** feeds Batch B; pairs with CL-46 · **Risk:** low · **Size:** small · **Tracker:** PR #77 · **Evidence:** —.
 
 ### ☐ CL-42 — `api-contract-v1.md` truth sweep — **OPEN**
@@ -438,11 +439,16 @@ Deps/Risk/Size/Tracker apply to the *resulting* work once decided.)
 - **Q:** Wire to health, or remove?
 - **Rec:** **Remove for launch** — the F6 health endpoint is admin-gated, so wiring is costly; an always-green dot misleads. **Options:** remove / wire (needs a public health field) / keep. **Size:** tiny. **Tracker:** this item.
 
-### ◆ CL-73 — Moderation edge-cache purge — F234 · P2 · before-prod · bcc-trust
-- **Type:** decision · **Risk (resulting work):** low
-- **Location:** `app/Domain/Core/Services/ModerationQueueService.php:366` (hide path has no EdgeCache purge).
-- **Q:** Accept ≤ttl anon staleness on hide, or add a purge?
-- **Rec:** **Add a TAG_FEED purge on hide.** **Consequence:** hidden items linger at the edge, undercutting moderation. **Options:** add purge / qualify the "instant" claim + accept. **Deps:** CL-10. **Size:** small. **Tracker:** this item.
+### ☐ CL-73 — Public-cache invalidation on hide / delete / restore / downgrade (all layers) — **OPEN**
+- **Priority:** P2 · **Timing:** before-production · **Type:** code/test · **Surface:** bcc-trust + bcc-core + LiteSpeed edge
+- **F-IDs:** **F234** (primary) · **FN-02** (post-audit trace evidence) — *consolidated: one root problem = one item; this **supersedes/absorbs** the former separate CL-FN02 so there are not two competing root items.*
+- **Location:** `ModerationQueueService.php:366` (hide); `HiddenActivityRepository` generation (`FeedRankingService.php:168-171`); delete/trash via `post_status`; `EdgeCache` (wired for `TAG_MEMBERS` only — no feed/permalink tag); LiteSpeed `ttl_rest`.
+- **Current — two cache layers, described separately (corrected):**
+  - **Origin hot-feed object cache:** moderation **hide** bumps `HiddenActivityRepository`'s generation → the anon hot-feed object cache re-keys (code-verified). **Delete/trash does NOT** bump that generation (it drops from live queries via `post_status`, but a cached anon hot-feed copy persists until `HOT_CACHE_TTL=300s` or the 1-min warm-cron rebuild — both **code-verified origin** figures). A future `public_all→private` **downgrade** has no implementation and no purge path (CL-FN03).
+  - **LiteSpeed / edge REST cache:** feed/permalink/hot/tag endpoints have **no verified targeted purge or tag**. **An origin generation bump does NOT invalidate an already-cached edge response.** So moderation **hide is NOT universally "instant"** — it is instant at the *origin object cache* only; the *edge* copy persists until the REST TTL. **Edge staleness is bounded by `ttl_rest`, which is env-specific config, not a code constant:** staging `ttl_rest=60` (**verified** live 2026-07-19); prod `ttl_rest=604800` (a **documented** value, **not** a live-verified prod runtime). **No single "max stale" figure is claimed for the edge until the active per-env REST TTL is verified.**
+- **Outcome:** a targeted purge/tag (or generation path) for the **feed lists, hot feed, permalink, tag feed, and any future content-search cache** on **hide, delete/trash, restore, and any future visibility downgrade**, at **both** the origin object-cache and the LiteSpeed-edge layers.
+- **Acceptance:** for each of {hide, delete/trash, restore, downgrade}, the affected post disappears from {feed, hot, permalink, tag, future search} at **both** the origin object cache **and** the LiteSpeed edge within the expected window — **verified at both layers** (not assumed); tests cover each transition. *(Downgrade implementation stays deferred — CL-FN03 — but its invalidation is required as part of that feature when built.)*
+- **Deps:** CL-10 (moderation), CL-30 (prod `ttl_rest=60` shrinks the edge window), CL-FN03 (downgrade) · **Risk:** medium (removed content lingering on public surfaces) · **Size:** medium · **Tracker:** this item — **authoritative for public-cache invalidation** · **Evidence:** 2026-07-22 read-only trace (origin verified; **edge purge UNVERIFIED / REQUIRES TEST**).
 
 ### ◆ CL-74 — Additional report target types — F137 · P3 · before-prod · bcc-trust
 - **Type:** decision · **Risk (resulting work):** low
@@ -492,6 +498,18 @@ Deps/Risk/Size/Tracker apply to the *resulting* work once decided.)
 - **Q:** Hostinger CDN on or off for launch (it was the load-test ban layer)?
 - **Rec:** **Decide, then record** the on/off choice + hPanel deactivate/unban procedure in the deploy checklist; if on, get per-IP burst thresholds first. **Consequence:** unmade → launch-week risk. **Options:** on (tuned) / off. **Deps:** produces a Group-3 operator step. **Size:** small (doc) + operator. **Tracker:** this item.
 
+### ☑ CL-7C — Gate 12: `public_all`-in-secret-group policy — **RESOLVED (Option B)**
+- **Priority:** P2 · **Timing:** before-staging · **Type:** decision · **Surface:** product policy → feed/permalink (shipped) + future F3 content search
+- **F-IDs:** — (Gate-12 product decision; the underlying audit findings are owned by CL-87 and CL-41)
+- **Location:** `production-readiness-2026-07-21.md` Gate 12; `content-search-privacy-design.md` (2026-07-22 banner); `api-contract-v1.md` §feed
+- **Q:** Should an explicit `public_all` post syndicate to public surfaces (incl. content search + group discovery) even inside a closed/secret group?
+- **Decision:** **RESOLVED — Option B, "public_all wins"** · **owner:** Phillip · **date:** 2026-07-22.
+- **Rationale:** communities (incl. NFT / private-membership) need a controlled way to show selected public activity to attract followers/members; group privacy protects membership + private-by-default discussion but must not block an author from deliberately publishing an individual post publicly.
+- **Current shipped behavior (verified policy-compliant, 2026-07-22 read-only trace):** feed/hot/tag/cold-start/permalink enforce the `public_all` gate + F058 module allowlist + `publish` + moderation-hide + fail-closed; comments, member roster, and private group metadata stay private; no anonymous enumeration of non-`public_all` secret-group posts.
+- **Still OPEN / do NOT mark implemented:** content search **NOT BUILT** → enforcement OPEN (CL-87); public group-discovery/preview under-delivered + secret-group public preview not built (CL-FN04, before-prod); composer public-visibility disclosure unverified (CL-FN05); public-cache invalidation on hide/delete/restore/downgrade at both origin+edge (CL-73, absorbing FN-02) + future downgrade purge (CL-FN03); `public_all` **authorization** policy (owner/mod-controlled) not built (CL-FN06, before-prod). **Naming note:** Phillip's "Option B" = content search **mirrors** the feed for `public_all` — this **reverses** the design doc's earlier "Option B = search stricter."
+- **Outcome:** decision recorded across the three PR-#77 docs. **Acceptance:** recorded (**done on branch**); verification/build items tracked separately (below).
+- **Deps:** — · **Risk:** low (documentation) · **Size:** small · **Tracker:** this item + `content-search-privacy-design.md` · **Evidence:** Phillip's 2026-07-22 decision; read-only privacy trace 2026-07-22.
+
 ---
 
 ## GROUP 8 — INTENTIONAL DEFERRALS (by product area) — all **DEFERRED**
@@ -530,7 +548,7 @@ to their Batch-H doc item (not built here).
 
 ### ☐ CL-87 — F3 content search (design only) — **DEFERRED**
 - **Priority:** P3 · **Timing:** post-launch · **Type:** deferral · **Surface:** bcc-search (future)
-- **F-IDs:** F241 · **Unlock:** post-launch; Policy B recorded in `content-search-privacy-design.md`. **Current:** no content vertical on main (3 controllers, no visibility seam). **Outcome:** none now. **Acceptance:** n/a. **Deps:** PR #77 (design doc) · **Risk:** none · **Size:** large (future) · **Tracker:** content-search-privacy-design.md.
+- **F-IDs:** F241 · **Unlock:** post-launch. **Current:** **NOT BUILT** — no content vertical on `main` (3 controllers = page search only, no visibility seam). Privacy **policy is now decided** (Gate 12 / CL-7C: **Option B — public_all wins**, 2026-07-22), but **enforcement is OPEN** — when built, the content vertical must **mirror the feed's `public_all` gate** (this supersedes the design doc's earlier "content search is stricter" note; see the 2026-07-22 banner in `content-search-privacy-design.md`). **Outcome:** none now (deferred feature). **Acceptance:** n/a until build; at build, verify the search gate mirrors the feed + all no-private-leak boundaries. **Deps:** CL-7C (policy) · **Risk:** none (unbuilt) · **Size:** large (future) · **Tracker:** content-search-privacy-design.md.
 
 ### ☐ CL-88 — Misc parked / dev-flag / test-skip deferrals — **DEFERRED**
 - **Priority:** P3 · **Timing:** n/a · **Type:** deferral · **Surface:** umbrella + local + bcc-core
@@ -576,6 +594,52 @@ to their Batch-H doc item (not built here).
 - **Outcome:** determine surface liveness, then fix (pass the numeric id — `getNumericId('blog')=204`; give signals a real numeric module) **or** remove the dead path.
 - **Acceptance:** `/u/{handle}` blog tab + `/feed?scope=signals` liveness determined; fix-or-remove decision recorded; if fixed, a test proves `['blog']` returns module-204 rows.
 - **Deps:** **Batch C** (liveness investigation) precedes any fix · **Risk:** low · **Size:** small · **Tracker:** this item · **Evidence:** EXPLAIN/coercion verified during PR #33 review (`'blog'+0=0`; `IN('blog')`→module 0).
+
+*(FN-02 — delete/trash public-cache lag — has been **consolidated into CL-73** (the authoritative public-cache-invalidation item) per the 2026-07-22 direction; it is **not** a separate primary item, to avoid two competing root-problem entries. Its evidence is preserved on CL-73.)*
+
+### ☐ CL-FN03 — **FN-03** · no `public_all→private` downgrade + no purge event — **DEFERRED (pre-emptive)**
+- **Priority:** P3 · **Timing:** post-launch · **Type:** code · **Surface:** bcc-trust/bcc-core
+- **F-IDs:** **FN-03**
+- **Location:** `PeepSoStatusWriter.php:174` (the only `_bcc_post_visibility` write is at post creation).
+- **Current:** there is **no** operation to change a post's visibility after creation, so no live downgrade exists today; live gates read the meta per request. If a downgrade is ever added, cached/edge public copies would lag with no targeted invalidation.
+- **Outcome:** if/when a visibility-edit path is built, wire a cache purge / generation bump on downgrade (Option B point 9).
+- **Acceptance:** any future downgrade op ships with a purge + test.
+- **Deps:** — · **Risk:** low (absent today) · **Size:** small (future) · **Tracker:** this item · **Evidence:** 2026-07-22 trace (gap G2). **Do not implement now.**
+
+### ☐ CL-FN04 — **FN-04** · public group-stream discovery + secret-group public preview — **OPEN (before-production impl)**
+- **Priority:** P2 · **Timing:** before-production · **Type:** code (backend + frontend) · **Surface:** bcc-trust + bcc-core + bcc-frontend
+- **F-IDs:** **FN-04** (subsumes Phillip's 2026-07-22 group-stream discovery policy — one item, not a competing duplicate)
+- **Location:** `FeedHydrationPipeline.php:251-255` (group block = `{id,type,verification}` only); `GroupsService::resolveGroupAccess` (secret + non-member → 404); the group detail route.
+- **Current behavior (verified 2026-07-22 trace):** open/closed non-member **teaser already shows `public_group` + `public_all`** (INNER-JOIN on `['public_group','public_all']`); **secret-group non-member = 404** → **no public secret-group preview**; members get the unrestricted group stream (subject to moderation/access gates); a public post's group block exposes only `{id,type,verification}` — **no** name/avatar/URL/join affordance.
+- **Approved target (RESOLVED policy — Phillip 2026-07-22; implementation OPEN / NOT BUILT):** every group has a safe public-facing stream/preview; a `public_all` post must give a public viewer a safe path to identify + discover the originating community. **Required discovery outcome:** public group **name** · public **avatar/banner** (where approved) · public **description** · public verification/type badges · **safe public landing URL** · a `public_group`/`public_all` stream per the canonical matrix · a **join / request-to-join / follow** action appropriate to group config · sign-in prompt only when a protected action is attempted. **Must NOT expose:** member roster · private (`members_only`) posts · private comments · invitations · membership state · private group metadata.
+- **Secret-group note:** the current **blanket 404** for secret-group non-members must eventually be **replaced/supplemented by a safe public-preview route** returning ONLY `public_all` posts + the safe discovery context — while protected member routes / private API responses **keep** returning 404/denial (do **not** weaken them to build discovery).
+- **Canonical visibility matrix** (documented in `content-search-privacy-design.md` **Note C**): `members_only` = member stream only; `public_group` = member stream + non-member open/closed stream (**not** global/permalink/search); `public_all` = every stream incl. non-member **secret preview** + global feed/permalink/search.
+- **Backend-first security (required when built):** visibility filtering in the **backend** (not FE hiding); unknown/absent/malformed visibility ⇒ `members_only`; a guessed activity id must not reveal a non-public post; group-preview queries use an explicit visibility allowlist keyed to viewer + group-privacy; public preview must **not** reuse a member-authorized response or cache entry (cache keys vary by public/member auth state; authorization-bearing responses never served from anon cache); `members_only` posts must not appear in counts / pagination / "load more" / trending / previews / empty-state visible to non-members; public comment counts follow the approved comment policy (no private-volume leak); public media belongs to a publicly-visible post; hide/delete removes content from **both** member + public streams; downgrade invalidates all caches (**CL-73**).
+- **Required future tests:** anon open/closed/secret matrices; authed-non-member + active-member matrices for all group types; suspended/removed member; hidden/deleted exclusion; guessed permalink ids per visibility value; pagination/total-count privacy; cache isolation across anon/non-member/member/moderator/admin; `public_group` excluded from global feed + content search; `public_all` included in global + future search; `members_only` excluded from every public surface; unknown/missing visibility fails closed; join/request transitions to auth; secret-group private metadata + roster remain undiscoverable.
+- **Acceptance:** a public viewer of a `public_all` post (incl. secret-group) gets the safe discovery context + join path with **zero** private-group data leak, **backend-enforced**, test matrix green — **or** the minimal `{id,type,verification}` is explicitly accepted for launch. **Do NOT mark DONE merely because `public_all` posts currently syndicate.**
+- **Deps:** CL-7C (policy), CL-73 (cache), CL-FN06 (authz) · **Risk:** medium (privacy surface) · **Size:** large · **Tracker:** this item — authoritative for public group-discovery · **Evidence:** 2026-07-22 trace (gap G3) + Phillip's 2026-07-22 group-stream policy. **Behavioral implementation is separate from this PR-#77 doc update; do not implement here.**
+
+### ☐ CL-FN05 — **FN-05** · composer public-visibility disclosure unverified — **OPEN (verify, post-audit)**
+- **Priority:** P2 · **Timing:** before-production · **Type:** test · **Surface:** bcc-frontend composer
+- **F-IDs:** **FN-05**
+- **Location:** bcc-frontend composer visibility selector + confirmation UI — **not covered by the backend trace**.
+- **Current:** Option B points 6/7 require the authoring UI to clearly disclose "This post will be visible publicly, including to people who are not members of this group," require an explicit selection/confirmation, show the selected visibility before publishing, and warn on editing a private post to `public_all`. Backend enforces explicit-choice + default-private (verified); the **frontend disclosure/confirmation UI is UNVERIFIED / UNKNOWN**.
+- **Outcome:** verify the composer shows the public-visibility disclosure + explicit confirmation; implement only in a **future behavioral PR** if absent.
+- **Acceptance:** composer disclosure + confirmation present (or a follow-up PR opened); documented.
+- **Deps:** CL-7C · **Risk:** medium (user awareness) · **Size:** small (verify) · **Tracker:** this item · **Evidence:** Option B policy point 6/7; **not** covered by the 2026-07-22 backend trace (UNKNOWN). **Verify only; do not implement here.**
+
+### ☐ CL-FN06 — **FN-06** · `public_all` authorization is owner/moderator-controlled — **OPEN (before-production impl)**
+- **Priority:** P2 · **Timing:** before-production · **Type:** code (backend + frontend) + test · **Surface:** bcc-trust + bcc-frontend
+- **F-IDs:** **FN-06** (Phillip's 2026-07-22 authorization decision — resolved policy, OPEN implementation)
+- **Location:** `PostsService::gateGroupPost` (`:1902-1928`), `normalizeVisibility` (`:194-199`), `PostsEndpoint` visibility enum; a group-level "who may post `public_all`" setting (**does not exist yet**).
+- **Current behavior (verified 2026-07-22 trace):** **non-members cannot post at all** (membership required — `gateGroupPost`/`resolveGroupAccess`); and **any active member authorized to post may currently select `public_all`** for their own post — there is no owner/moderator-level restriction on who may choose `public_all`.
+- **Approved target policy (RESOLVED — Phillip 2026-07-22; implementation NOT BUILT):** group **owners/admins control** whether ordinary members may mark their own posts `public_all`. **Closed/secret groups default to owners + moderators only.** A group owner/admin **may enable** `public_all` for all authorized posting members. Open-group behavior must be **explicitly defined** and regression-tested.
+- **Required backend enforcement:** a **direct REST request cannot bypass** the group-level permission (server is the boundary — the FE gate is not sufficient).
+- **Required frontend behavior:** **hide or disable** the `public_all` option for an ineligible author, and explain why.
+- **Required tests:** anonymous denied · non-member denied · suspended member denied · ordinary member denied under the default closed/secret policy · moderator allowed · owner/admin allowed · ordinary member allowed **after** the group setting is enabled · open-group behavior explicitly defined + regression-tested · direct-API bypass denied · unknown/missing setting **fails to the restrictive default**.
+- **Outcome:** implement the group-level `public_all` permission with backend enforcement + FE eligibility gating + the test matrix.
+- **Acceptance:** the test matrix above is green; a direct API call by an ineligible author is denied; unknown/missing setting defaults restrictive. **This is approved policy — an OPEN before-production implementation item, not a remaining Phillip decision.**
+- **Deps:** CL-7C (policy) · **Risk:** medium (authorization) · **Size:** medium · **Tracker:** this item · **Evidence:** Phillip's 2026-07-22 authorization decision + 2026-07-22 trace (current = any member may set `public_all`). **Do not implement here.**
 
 ---
 
@@ -626,7 +690,7 @@ search hygiene → CL-49/CL-4F.
 - **Verdicts:** CONFIRMED 241 · ADJUSTED 47 · REFUTED 2 = 290; **+1 no-verdict** (F178, excluded non-finding).
 - **Unique substantiated findings:** **288** (291 − 2 refuted − 1 excluded).
 - **Refuted:** 2 → F012, F216 (CL-REF). **Excluded non-finding:** 1 → F178 (CL-EXC).
-- **Additional post-audit findings:** 1 → **FN-01** (CL-FN01), its own ID; originals not renumbered.
+- **Additional post-audit findings:** 6 → **FN-01** (CL-FN01, explicit-string module coercion) + **FN-02..FN-06** from the 2026-07-22 Option-B trace/decision: **FN-02** = public-cache-invalidation evidence, **consolidated into CL-73** (F234) so it is not a competing primary; **FN-03** (CL-FN03, downgrade purge); **FN-04** (CL-FN04, group-discovery/secret-preview); **FN-05** (CL-FN05, composer disclosure); **FN-06** (CL-FN06, `public_all` authorization). Each has its own stable `FN-##` ID; the original F001–F291 are not renumbered.
 
 **Counts by priority — source (dataset) vs operational:**
 
@@ -639,15 +703,15 @@ search hygiene → CL-49/CL-4F.
 
 **Counts by timing (288):** before-staging 14 · before-production 88 · after-launch 84 · n/a 102.
 
-**Counts by status (65 primary items):** OPEN 31 · BLOCKED 9 · DECISION 12 · DEFERRED 10 · DONE 1 · REFUTED 1 · EXCLUDED 1. → **Active 52 · Deferred 10 · Done/Refuted/Excluded 3.**
+**Counts by status (70 primary items):** OPEN 35 · BLOCKED 9 · DECISION 11 · DEFERRED 11 · DONE 1 · RESOLVED 1 · REFUTED 1 · EXCLUDED 1. → **Active 55 · Deferred 11 · Done/Resolved/Refuted/Excluded 4.** *(vs the 65-item merge: +CL-7C RESOLVED decision + CL-FN03/04/05/06 (FN-02 consolidated into CL-73); CL-73 & CL-FN04 moved decision→OPEN before-prod; validated by the checklist validator, PASS.)*
 
-**Counts by type (primary items, approximate — mixed-type items counted by lead type):** code 12 · docs 20 · operator 6 · external 4 · test 3 · decision 12 · deferral 8.
+**Counts by type (primary items, approximate — mixed-type items counted by lead type):** code 16 · docs 20 · operator 6 · external 4 · test 4 · decision 12 · deferral 8. *(= 70; decision = 11 OPEN-status decisions CL-70…CL-7B-minus-CL-73 + CL-7C RESOLVED-decision; CL-73/CL-FN04/CL-FN06 count as code.)*
 
-**Counts by execution batch (CL items):** A 1 · B 1 · C 1 · D 1 · E 1 · F 4 · G 9 · H 7 · I 1 · J 15 (6 debt + 9 deferral) · K 10.
+**Counts by execution batch (CL items):** A 1 · B 2 (adds CL-7C — Gate-12 decision recorded in the PR-#77 docs) · C 1 · D 1 · E 1 · F 4 · G 9 · H 7 · I 1 · J 16 (6 debt + 9 deferral + FN-03) · K 10; plus the **before-production Option-B implementation** items **CL-FN04** (group-discovery/secret-preview), **CL-FN06** (`public_all` authz), **CL-73** (public-cache invalidation), and **CL-FN05** (composer-disclosure verify) — behavioral work that sits alongside Batches D/E, tracked but **not** implemented in this PR.
 
 **Machine-checkable mapping:** every F-ID F001–F291 appears **exactly once** as a primary or
 attached/related ID across CL-01…CL-EXC (validated: 291/291 covered, 0 duplicates, 0 missing,
-0 unknown; +FN-01). The per-CL F-ID lists above are the authoritative assignment.
+0 unknown; +FN-01..FN-05). The per-CL F-ID lists above are the authoritative assignment.
 
 **Discrepancies found:** one, fully explained — the **29/74 (dataset) vs 30/73 (operational)** P1/P2
 split is entirely F058's source→operational reclassification (P2→P1). The dataset is preserved

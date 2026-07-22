@@ -271,6 +271,8 @@ From `.env.local.example` — all must be set in the Vercel project:
 | `NEXTAUTH_SECRET` | `openssl rand -base64 32`. NOT the BCC JWT secret. |
 | `BCC_INTERNAL_VERIFY_SECRET` | Must equal the wp-config value (§1.1). |
 | `BCC_OAUTH_BRIDGE_SECRET` | Must equal the wp-config value. **MANUAL, still open** (SSO-hardening leftover, 2026-06-11). |
+| `BCC_INTERNAL_CRON_SECRET` | Sent on the internal header from the Vercel cron relay to WP `/internal/indexer/tick`; must equal the wp-config value (§1.1). **Hard-required by `src/lib/env.ts` — a deploy without it throws in the cron relay route.** |
+| `CRON_SECRET` | Vercel-issued; authenticates Vercel Cron's own invocation of `/api/internal/cron/indexer-tick` (Vercel injects it as `Authorization: Bearer`). Set in the Vercel project. **Hard-required by `src/lib/env.ts`.** |
 | `NEXT_PUBLIC_SENTRY_DSN` | Public by Sentry's threat model; set for testnet error reporting. |
 
 Also:
