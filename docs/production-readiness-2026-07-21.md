@@ -12,6 +12,20 @@ touched; no load tests.
 Verdict fields per gate: **Required · Current · Evidence · PASS/FAIL/UNKNOWN ·
 Remediation · Touches**.
 
+> **⚠ Amendment (2026-07-22) — this is a point-in-time snapshot, not a live checklist.**
+> This walk recorded GitHub/branch state as of **2026-07-21**. Several facts have
+> since changed; they are **corrected inline below, each prefixed
+> `↻ Corrected 2026-07-22`**. The **ongoing execution tracker** is
+> [`docs/audit-remediation-checklist-2026-07-21.md`](audit-remediation-checklist-2026-07-21.md) —
+> this document remains a historical readiness snapshot, not a competing checklist.
+>
+> **Read every gate through three distinct states that the word "fixed" conflates:**
+> **(a) code merged to `main`** · **(b) staging deployed & verified** ·
+> **(c) production provisioned / deployed / verified**. A merged fix is **not** on
+> production until (c) is done and evidenced. This snapshot establishes only
+> (a)/(b) plus repo/GitHub facts — it never establishes (c), and "code merged"
+> must never be read as "production updated."
+
 ---
 
 ## Gate 1 — Production `ttl_rest = 60`
@@ -44,9 +58,9 @@ Remediation · Touches**.
 - **Current:** STAGING — `.htaccess` AUTH CACHE BYPASS installed + probe green. PRODUCTION — `.htaccess` block documented-installed (2026-07-13) but **no prod probe** (script refuses prod hostname) and **prod has NO persistent object cache** (`lib/object-cache.php` missing). Weekly staging probe workflow is **committed and ACTIVE** on GitHub (verified 2026-07-21 via `gh workflow list` → `staging-cache-probe active`; committed in `e5d25b6`, 2026-07-19) — its own header comment still says "intentionally uncommitted" and is **stale**.
 - **Evidence:** `docs/TODO.md:62-69` (.htaccess both envs), `:58` (prod object-cache MISSING); `scripts/auth-cache-isolation-probe.sh:22-48` (staging-only guard); `.github/workflows/staging-cache-probe.yml:9-17` (prepared, not active); spec `docs/testnet-deploy-checklist.md:165-175`.
 - **Verdict:** STAGING isolation **PASS** · weekly CI automation **PASS** (armed/active on GitHub; only the workflow header comment is stale) · PRODUCTION isolation **UNKNOWN** · prod object cache **FAIL**.
-- **Remediation:** commit the weekly workflow to arm staging verification; provision prod persistent object cache (restore `lib/object-cache.php`, gate `BCC_REDIS_ENABLED`, avoid the `WP_REDIS_TIMEOUT=1` P0 trap); after prod authorized, verify the bypass block is live and run the isolation sequence against prod.
-- **Touches:** DOCUMENTATION/repo (commit workflow) + STAGING + PRODUCTION + EXTERNAL SERVICES (GitHub Actions).
-- **Note (functional):** with no object cache, `Throttle` **fails closed** (`bcc-core/src/Security/Throttle.php:176`) → rate-limited actions are denied on prod. This makes prod object cache a functional launch prerequisite, not just perf.
+- **Remediation:** *↻ Corrected 2026-07-22: the weekly staging cache-probe workflow is already committed + armed (`e5d25b6`); there is **no "commit to arm" action left** — only its stale in-file "intentionally uncommitted" header comment needs a trivial fix (tracked in the master checklist).* Provision prod persistent object cache (restore `lib/object-cache.php`, gate `BCC_REDIS_ENABLED`, avoid the `WP_REDIS_TIMEOUT=1` P0 trap); after prod authorized, verify the bypass block is live and run the isolation sequence against prod.
+- **Touches:** STAGING + PRODUCTION + EXTERNAL SERVICES (GitHub Actions).
+- **Note (functional) — *↻ Corrected 2026-07-22*:** without a persistent object cache, throttling does **not** simply "fail closed." `Throttle::isReady()` (`bcc-core/src/Security/Throttle.php:176`) is an **OR-gate** — `class_exists('\BCC\Trust\Core\Security\RateLimiter') || wp_using_ext_object_cache()` — so with bcc-trust active (the shipped topology) it falls back to bcc-trust's **`wp_options`-backed `RateLimiter`**: slower but **functional**. Deny-all applies **only** if that fallback is unavailable (bcc-trust deactivated/absent) **or** its DB write fails. So the prod object cache is a **performance/scale + cache-consistency** prerequisite, **not** a rate-limiting-functionality one.
 
 ## Gate 5 — Production env vars & endpoint origins
 - **Required:** prod frontend `NEXT_PUBLIC_BCC_API_URL` → prod WP origin; `NEXTAUTH_URL` → real prod frontend domain; never staging/local.
@@ -58,7 +72,7 @@ Remediation · Touches**.
 
 ## Gate 6 — Database migration / backfill readiness
 - **Required:** all schema installs idempotent on activation/init (no manual DB step); no launch-blocking backfill.
-- **Current:** **PASS.** Every path is option-guarded + advisory-locked + verify-after-write: bcc-trust schema-version gate (`bcc-trust.php:362-403`, `tables.php:65,323`), FT-index self-heal (`SearchRepository.php:148,204-220`), search-terms table (`SearchTermsRepository.php:75,118-128`), rate limiter has no table (object-cache backed). Deferred backfills (NFT 1155 depth, dispute-signing writer) are post-launch and moot on an empty prod DB.
+- **Current:** **PASS.** Every path is option-guarded + advisory-locked + verify-after-write: bcc-trust schema-version gate (`bcc-trust.php:362-403`, `tables.php:65,323`), FT-index self-heal (`SearchRepository.php:148,204-220`), search-terms table (`SearchTermsRepository.php:75,118-128`), rate limiter needs no dedicated table (*↻ Corrected 2026-07-22:* bcc-trust's `RateLimiter` is **`wp_options`-backed**, not object-cache-backed — see Gate 4). Deferred backfills (NFT 1155 depth, dispute-signing writer) are post-launch and moot on an empty prod DB.
 - **Evidence:** cited files above; `docs/TODO.md:34` (NFT backfill), `docs/admin-audit-2026-07-21.md:143-146` (dispute writer read-only); `scripts/schema-drift-guard.php:1-49` (informational, not CI-armed).
 - **Verdict:** **PASS** (with the object-cache prerequisite from Gate 4).
 - **Remediation:** none for idempotency; ensure prod object cache live before launch.
@@ -75,16 +89,16 @@ Remediation · Touches**.
 
 ## Gate 8 — CI & branch protection across all repos
 - **Required:** CI on each repo; `main` protected requiring those checks.
-- **Current:** CI green everywhere, **zero open PRs** — but **bcc-search `main` is NOT protected**, and no repo requires PR review.
-- **Evidence (`gh api …/branches/main/protection`, 2026-07-21, auth scopes `repo`):**
+- **Current — *↻ Corrected 2026-07-22*:** CI green everywhere, **zero open code PRs**; **all five repos' `main` branches are now protected** (bcc-search protection was armed after the 2026-07-21 snapshot). No repo requires PR review (deliberate policy).
+- **Evidence (`gh api …/branches/main/protection`, re-verified 2026-07-22, auth scopes `repo`):**
   - Blue-collar-crypto (umbrella): protected, "Cross-repo guards", enforce_admins ✓
   - bcc-core: protected, "PHP — PHPStan L8 · PHPUnit", enforce_admins ✓
-  - **bcc-search: 404 "Branch not protected"** ✗
+  - **bcc-search: protected, "PHP — syntax · PHPStan L8 · PHPUnit", enforce_admins ✓** *(was "404 Branch not protected" on 2026-07-21; armed since)*
   - bcc-trust: protected, "PHPStan L8 · PHPUnit · guardrails" + "PHP integration (MySQL)", enforce_admins ✓
   - bcc-frontend: protected, "tsc · lint · vitest", enforce_admins ✓
-- **Verdict:** umbrella/core/trust/frontend **PASS** · bcc-search **FAIL** · PR-review requirement **FAIL (policy, all repos)**.
-- **Remediation:** enable protection on bcc-search `main` requiring its "PHP — syntax · PHPStan L8 · PHPUnit" check + enforce_admins (its CI is green; only the rule is missing → un-gated pushes to bcc-search main auto-deploy to staging). Confirm whether "no PR review" is intentional for a 2-engineer shop.
-- **Touches:** GitHub settings only. No code/staging/prod. **(Can be done now — independent of the prod freeze.)**
+- **Verdict:** all five repos **PASS** · PR-review requirement **FAIL (policy, all repos — intentional for a 2-engineer shop unless changed)**.
+- **Remediation:** none for branch protection (**bcc-search resolved 2026-07-22**). Optionally confirm whether "no required PR review" stays intentional.
+- **Touches:** GitHub settings only. No code/staging/prod. **(bcc-search protection: DONE 2026-07-22.)**
 
 ## Gate 9 — Health metrics & logs immediately post-deploy
 - **Required:** on deploy, operators can immediately watch health + errors.
@@ -104,12 +118,13 @@ Remediation · Touches**.
 
 ## Gate 11 — Remaining launch blockers from earlier audits
 - **Required:** no open audit item that is a genuine prod blocker remains unaddressed; anything anon/first-user-facing must be fixed.
-- **Current:** the admin-audit **P1/P1/P2 fixes are NOT on `main`** — they exist in **four open, unmerged PRs** (parallel session, CI-green, awaiting Phillip's merge). A readiness-walk agent earlier misreported them as "already committed"; that was **wrong** — verified 2026-07-21 that `bcc-trust` `origin/main` still carries the buggy `if (!is_int($gen))` at `HiddenActivityRepository.php`. So the anon-facing gen-counter bug is **still on `main`/staging** until those PRs merge.
-- **Evidence:** open PRs `gh pr list` — **trust#98** (`fix/admin-queue-audit-batch-2026-07-21`, gen-counter tolerance + semantic queue kinds), **core#32** (`fix/nonopen-gen-counter-string-cache`), **fe#51** (`fix/admin-moderation-nav-and-ux` — nav + target links + honest errors + `/admin` middleware + undo timing), **umbrella#76** (`docs/admin-audit-2026-07-21` — audit report + sponsorship deferral). Fixed lines live on those branches, NOT main (e.g. `HiddenActivityRepository.php` `is_int`→`is_numeric` is only on trust#98). Separately, remaining prod §A items `docs/performance-review-2026-07-19.md:215-224` (A1 ttl_rest, A2 prod plugin deploy — prod runs bcc-trust **1.1.0** vs staging **1.2.26**, A3 monitor, A4 auth-cache guard, A5 CDN decision, A6 security manual items).
-- **Verdict:** admin P1 fixes **PENDING MERGE** (not on staging) · prod §A items **OPEN/UNKNOWN**.
-- **Anon-facing note:** the gen-counter bug (admin Hide not propagating to the anon hot feed / permalinks under a string-returning object cache) is the one that touches anonymous first-users. Whether it manifests on staging depends on LSMCD int-type round-trip (unverified). Getting trust#98 + core#32 merged puts the fix on staging — this is the **single highest-leverage staging-quality action available right now**.
-- **Remediation:** review + merge the four admin PRs (parallel session / Phillip) to land the fixes on `main`→staging; execute prod §A during the (frozen) prod phase; the only admin follow-up NOT yet started is dead-endpoint cleanup + `ViewerMenu` deletion.
-- **Touches:** the four PRs → STAGING (on merge); prod §A → PRODUCTION + EXTERNAL SERVICES; DOCUMENTATION (umbrella#76).
+- **Current — *↻ Corrected 2026-07-22* (this gate's 2026-07-21 text was stale-on-arrival):** the admin-audit fixes **are now on `main`**. Every PR the snapshot listed as "open/unmerged" **merged 2026-07-21**, plus follow-ups. **Code portion: RESOLVED** (verified on the default branches). What remains is the **production deploy** of that merged code — an operator step, distinct from the merge.
+- **Evidence (merged, verified 2026-07-22 via `gh pr view` + `git grep` on `origin/main`):** **trust#98** MERGED (gen-counter tolerance — `HiddenActivityRepository.php:202` now reads `if (is_numeric($gen))`, not `is_int`), **core#32** MERGED (non-open-groups gen-counter string-cache), **fe#51** MERGED (moderation nav + target links + honest errors + `/admin` middleware + undo timing), **umbrella#76** MERGED (admin-audit report + sponsorship deferral). Follow-ups also MERGED: **trust#99** (dead fraud/stats endpoint cleanup) and **fe#53** (`ViewerMenu` deletion) — so the snapshot's "only follow-up NOT yet started is dead-endpoint cleanup + ViewerMenu deletion" is **also done**.
+- **Deploy portion (still open — corrected):** the snapshot's "prod runs bcc-trust **1.1.0** vs staging **1.2.26**; months of fixes missing" is **stale/incorrect**. A manual prod deploy (`workflow_dispatch`) ran **2026-07-21**, and `bcc-trust` `main` is now **1.2.30**. The **live prod version and its SHA-parity with current `main` are operator-verifiable, not repo-observable → UNKNOWN here.** Deploying the current plugin set to prod at SHA-parity remains a deliberate operator step (§A2) behind the prod freeze. Remaining prod §A items (`performance-review-2026-07-19.md:215-224`): A1 `ttl_rest`, A2 prod plugin deploy, A3 monitor, A4 auth-cache guard, A5 CDN decision, A6 security manual items.
+- **Verdict:** admin P1/P2 fixes **MERGED / on `main`** (code **RESOLVED**) · **staging** carries them (auto-deployed on merge) · **production** deploy-to-SHA-parity **OPEN/UNKNOWN** (operator) · prod §A items **OPEN/UNKNOWN**.
+- **Anon-facing note:** the gen-counter bug (admin Hide not propagating to the anon hot feed under a string-returning object cache) is **fixed on `main`/staging** via trust#98 + core#32. Whether it ever manifested on staging depended on the LSMCD int-type round-trip (unverified), but the tolerant `is_numeric` read now covers it regardless.
+- **Remediation:** code — none (merged). Production — deploy the current merged plugin set to prod at SHA-parity + execute prod §A, during the authorized (frozen) prod phase.
+- **Touches:** code → already on STAGING (auto-deployed on merge); prod deploy + §A → PRODUCTION + EXTERNAL SERVICES.
 
 ## Gate 12 (added) — Content-search product policy: `public_all` in a secret group
 - **Required:** platform intent for whether a `public_all` post inside a **secret** group syndicates globally must be a *decision*, not an accident — it is **live feed behavior today**, and it blocks F3.
@@ -117,6 +132,7 @@ Remediation · Touches**.
 - **Verdict:** **DECISION REQUIRED** (recorded as a build-blocking decision in `docs/content-search-privacy-design.md` Note B; option A "mirror feed" vs B "search is stricter").
 - **Remediation:** product decides A or B and records it; separately correct the stale `api-contract-v1.md:2082-2084` text (doc-drift bug).
 - **Touches:** DOCUMENTATION (+ CODE only if option B is chosen, later, inside F3). No prod action.
+- ***↻ Note 2026-07-22 — this gate is CORRECT as written; do not mark it resolved.*** The A/B intent is **genuinely unresolved**: `content-search-privacy-design.md` Note B (verified 2026-07-22) explicitly calls `secret × public_all` an "**explicit BUILD-BLOCKING DECISION (do not choose it silently)**" with intent "**unresolved**" — no Option-B (or A) decision is recorded anywhere in this PR. F3 content search is **design-only / not built** on `main`, so this decision blocks the **future F3 build**, not the V1 launch. *(The separately-tracked stale `api-contract-v1.md:2082-2084` text is corrected by this same PR.)*
 
 ---
 
@@ -133,22 +149,22 @@ all of which are deliberately gated behind your production authorization.
 
 1. **No automated offsite DB backup** (Gate 7) — highest operational risk; only restore point is a manual pre-deploy dump. *Fix before real users.*
 2. **Prod secrets unconfirmed / fail-closed** (Gate 3) — `BCC_ENCRYPTION_KEY` missing ⇒ whole trust plugin 403s; `BCC_OAUTH_BRIDGE_SECRET` both-ends + X callback ⇒ SSO fail-closed; rotate burned secrets.
-3. **Prod has no persistent object cache** (Gate 4) — `Throttle` fails closed ⇒ rate-limited actions denied; plus no caching. Functional prerequisite (avoid the `WP_REDIS_TIMEOUT=1` P0 trap).
-4. **Prod plugin deploy** (Gate 11/A2) — prod runs bcc-trust **1.1.0** vs staging **1.2.26**; months of fixes missing.
+3. **Prod has no persistent object cache** (Gate 4) — *↻ Corrected 2026-07-22:* throttling stays **functional** via bcc-trust's `wp_options`-backed `RateLimiter` (see Gate 4); this is a **performance/scale + cache-consistency** prerequisite, **not** a rate-limiting-functionality one (still avoid the `WP_REDIS_TIMEOUT=1` P0 trap).
+4. **Prod plugin deploy** (Gate 11/A2) — *↻ Corrected 2026-07-22:* deploy the current merged plugin set to prod at SHA-parity. *(The old "1.1.0 vs 1.2.26 / months missing" figures are stale — a manual prod deploy ran 2026-07-21; `main` is now 1.2.30; the live prod SHA is operator-verifiable/UNKNOWN.)*
 5. **Prod `cache-ttl_rest=60`** (Gate 1) — else anon REST stale up to a week.
 6. **Prod auth-cache isolation confidence** (Gate 4) — verify bypass block live + run the probe against prod.
 7. **External uptime monitor + alerts** (Gate 2) — nothing watches prod health today.
-8. **bcc-search `main` unprotected** (Gate 8) — un-gated pushes auto-deploy to staging. *(Fixable now, independent of prod.)*
+8. ~~**bcc-search `main` unprotected** (Gate 8)~~ — *↻ RESOLVED 2026-07-22:* bcc-search `main` branch protection is armed (enforce_admins + "PHP — syntax · PHPStan L8 · PHPUnit").
 9. **Content-search `public_all`-in-secret-group policy** (Gate 12) — decide A/B; it's live feed behavior. *(Decision now; no prod action.)*
 10. **Full anon+authed smoke against staging** (Gate 10) — no recorded green run vs current `main`.
-11. **Doc fixes** — cron vars into example/checklist (Gate 3); correct stale `api-contract-v1.md:2082-2084` (Gate 12); commit admin-audit report (Gate 11).
+11. **Doc fixes** — cron vars into checklist §4 (this PR) + `.env.local.example` (fe#52); correct stale `api-contract-v1.md:2082-2084` (this PR). *↻ 2026-07-22: "commit admin-audit report" is **done** — merged via umbrella#76.*
 
 ## Minimal clearing sequence
 
 **Phase 0 — safe NOW (staging / repo / GitHub; no prod authorization needed):**
-- Enable bcc-search `main` branch protection (GitHub settings; ~2 min).
-- Decide the `public_all`-in-secret-group policy (A/B) and record it.
-- Doc fixes: add `BCC_INTERNAL_CRON_SECRET` + `CRON_SECRET` to `.env.local.example` and checklist §4; correct `api-contract-v1.md:2082-2084`; commit the admin-audit report.
+- ~~Enable bcc-search `main` branch protection~~ — *DONE 2026-07-22* (armed: enforce_admins + "PHP — syntax · PHPStan L8 · PHPUnit").
+- Decide the `public_all`-in-secret-group policy (A/B) and record it (still open — blocks the future F3 build, not V1).
+- Doc fixes: add `BCC_INTERNAL_CRON_SECRET` + `CRON_SECRET` to `.env.local.example` (fe#52) and checklist §4 (this PR); correct `api-contract-v1.md:2082-2084` (this PR). *(The admin-audit report is already committed — umbrella#76.)*
 - Run the full v1 smoke checklist against **staging** over HTTP (anon + authed, incl. §8/§11 notifications); record results.
 - (Weekly staging auth-cache probe is already armed/active — only its stale "intentionally uncommitted" header comment needs a trivial fix.)
 - Stand up an automated offsite DB backup for the prod DB (provisioning; no app change).
