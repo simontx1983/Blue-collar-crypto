@@ -332,13 +332,16 @@ convention is correct V1 debt, not silently wrong. A future agent
 reading this section who is considering a `bcc_locals` table or an
 `is_local` flag should re-read the trigger conditions first.
 
-## Follow terminology overrides ("Keep Tabs" rebrand)
+## Follow terminology ("Watch" vocabulary)
 
 The Floor uses a three-axis vocabulary for what PeepSo calls follow:
-**Keep Tabs** (verb / CTA), **Watching** (state), **Watcher / Watchers**
-(noun). The two surfaces below are co-maintained — when you change one,
-update the other in the same commit, or the legacy WP screens drift away
-from the Next.js app.
+**Watch** (verb / CTA), **Watching** (state), **Watcher / Watchers**
+(noun). One word family, no seams. The verb / CTA axis was "Keep Tabs"
+from the original rebrand until 2026-07-23, when it was unified onto
+"Watch" so every axis inflects from a single word (watch / watching /
+watchers / "most watched"). The vocabulary is rendered from a single
+live surface (the frontend constant below); the former PHP twin is
+retired but documented so it isn't accidentally rebuilt off-pattern.
 
 - **PHP — gettext / ngettext overrides** — **RETIRED with the
   `blue-collar-crypto-peepso-integration` plugin** (headless pivot; the
@@ -351,10 +354,13 @@ from the Next.js app.
   `gettext_with_context`, `ngettext`, `ngettext_with_context`.
 - **Frontend — display constants** →
   `FOLLOW_COPY` in
-  [bcc-frontend/src/lib/copy.ts](../bcc-frontend/src/lib/copy.ts).
-  Exposes the desktop / mobile pair for the active CTA
-  (`Keeping Tabs ✓` desktop, `Watching ✓` <sm) because the verb form
-  overflows the CardFactory `grid-cols-3` button at 320–375px viewports.
+  [bcc-frontend/src/lib/copy.ts](../bcc-frontend/src/lib/copy.ts) —
+  the **single live surface** for this vocabulary. Components read the
+  constant; hardcoding follow strings in components is drift. It still
+  exposes a desktop / mobile pair for the active CTA (both `Watching ✓`
+  since the Watch unification; the split predates it, from when
+  `Keeping Tabs ✓` overflowed the CardFactory `grid-cols-3` button at
+  320–375px viewports).
 - **API contract** (as of 2026-05-13): `follow_id`, `followers`,
   `following`, `can_follow`, `followed_by_in_network`,
   `follower_count_hidden`, and the `following` feed scope value are

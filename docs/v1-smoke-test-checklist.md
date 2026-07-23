@@ -113,7 +113,7 @@ Brand-new account through the §B6 + §O1 onboarding wizard.
 - [ ] **2.3.1** Enter the code → auto-login fires, then redirect to
   `/onboarding` wizard, step 1: home-chain picker. Skippable.
 - [ ] **2.4** Step 2: first-watch suggestions render 3-5 cards. Click
-  **KEEP TABS** (the Keep-Tabs rebrand of Watch) on each → button
+  **WATCH** on each → button
   flips to its watching state / disabled.
 - [ ] **2.5** Click Done → **§O1 dopamine animation** fires:
   - [ ] Cards fly into a watchlist icon (the visual still uses the
@@ -180,7 +180,7 @@ Logged in as User A.
   (The Solid/Vouch/Stand-behind trio applies to trust-grammar
   surfaces, not social status posts — those casts live in the
   profile attestation cluster, §J.)
-- [ ] **3.7** **Watch batching (§C3):** watch (Keep Tabs) 3 cards within
+- [ ] **3.7** **Watch batching (§C3):** watch 3 cards within
   30 seconds on different surfaces. Wait 11+ minutes. **Exactly one**
   "@you watched 3 cards" feed item renders, frozen — un-watching one of
   the cards doesn't change the post. (Backed by `bcc_watch_batch_sweep`;
@@ -402,7 +402,7 @@ Settings, Sign Out.
 
 - [ ] **10.1** On any feed card or directory grid card, hover →
   tilt animation; click body → flips to back face with stats.
-- [ ] **10.2** **Watch (Keep Tabs) button always visible on the front
+- [ ] **10.2** **Watch button always visible on the front
   face** (per §N7), disabled with sign-in tooltip when anon.
 - [ ] **10.3** Foil effect renders on Legendary cards (look at a
   validator with `card_tier: legendary`).
@@ -427,7 +427,7 @@ Need two browser sessions or two accounts.
   legacy `bell_bcc_endorse` toggle rides the same write during cutover.)
 - [ ] **11.2** User A reviews User C's page → User C's bell badge
   increments. Click row → lands on the page with the new review.
-- [ ] **11.3** User A watches (Keep Tabs) User B's member card → User B's
+- [ ] **11.3** User A watches User B's member card → User B's
   bell badge increments.
 - [ ] **11.4** **Block round-trip:** User A blocks User B → User B's
   posts vanish from User A's feed. User B can still see User A's
