@@ -6081,9 +6081,21 @@ sort/stat keys all keep their names.
   Frontend removes the two dead pref rows (coordinated FE sweep).
 - **Push subscriber catalogue** — the `endorse` row removed (`PushPayload::forEndorse`
   deleted; verified zero call sites).
-- Compatibility: display-only + removal of never-emitted keys/types. Clients that
-  branched on `bcc_endorse` bell rows will simply never see one (unchanged in practice —
-  none have been written since Slice E).
+- **Unread badge + digest scoped to renderable types** (audit hardening): `GET
+  /me/notifications/unread-count` and the weekly digest read now count/select only
+  `not_type` values in the live catalogue. A historical row of a retired type
+  (`bcc_endorse`, legacy `bcc_card_pulled`) can no longer inflate the badge while the
+  list — which validates types read-side — hides it (phantom-unread fix).
+- **`PATCH /me/notification-prefs` rollout compatibility** (audit hardening): a body
+  that addresses prefs but carries only retired/unknown keys (e.g. an older frontend
+  toggling `bcc_endorse`) is a **no-op 200** returning current prefs — nothing is
+  persisted or echoed. `bcc_invalid_request` 422 is reserved for bodies with no pref
+  fields at all. FE/BE deploy order is therefore unconstrained.
+- Compatibility: two distinct buckets — (A) **display convergence** (labels/hints/error
+  text; wire names stable), and (B) **dead notification-contract retirement**
+  (`bcc_endorse` type + pref keys removed — behavioral cleanup of plumbing that never
+  fired post-Slice-E, made rollout-safe by the two hardening bullets above). Clients
+  that branched on `bcc_endorse` bell rows will simply never see one.
 
 Finishes the member-review slice. Additive on the wire.
 
