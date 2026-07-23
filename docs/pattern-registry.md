@@ -478,6 +478,26 @@ The platform is intentionally resilient — fail-closed throttles, fail-open cac
   - **`nft_indexer` / 1 event** (2026-06-11) — `NftEthIndexerWorker` forward-progress stalls. The worker walks confirmed Transfer events over a clamped block range and advances `wp_bcc_chain_checkpoints` only over fully-read blocks. On a partial drain (the per-tick page budget is hit before the range empties) it **safe-advances** the checkpoint to `maxBlockSeen - 1`: Alchemy returns transfers in ascending `(blockNum, logIndex)` order, so every block strictly below the page-boundary block is fully covered. The next tick resumes at the boundary block; the re-read is loss-free because `NftHoldingsRepository::upsertMany` is `INSERT ... ON DUPLICATE KEY UPDATE` with `GREATEST()` on `last_seen_block` / `confirmed_at`. This guarantees monotonic progress whenever the read pages span ≥2 distinct blocks (the common case).
     - `dense_block_stall` — the PATHOLOGICAL edge at [NftEthIndexerWorker](../app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Workers/NftEthIndexerWorker.php): even the FIRST block of the range carried more transfers than the per-tick page budget (`MAX_PAGES_PER_TICK × ALCHEMY_MAX_COUNT`) can read, so `maxBlockSeen == rangeFrom` and `safeBlock < rangeFrom`. Safe-advance would skip an unread tail of that same block, so the worker holds the checkpoint (no data loss) and bumps this counter. Sustained activation = a chain is wedged on a dense block; an operator must raise the page budget / narrow `BLOCKS_PER_TICK` for that chain or investigate the contract. A single block with >5000 transfers of one tracked contract is near-impossible under block gas limits — a nonzero value is a real incident, not noise.
 
+  - **`validator_messaging` / 4 events** (2026-07-23) — the validator-messaging
+    surface in bcc-trust: deterministic operator resolution (UNCLAIMED /
+    RESOLVED / AMBIGUOUS), the pre-claim message queue, and the
+    first-activation backlog delivery worker.
+    - `ambiguous_operator` — the claim resolver found MORE THAN ONE verified
+      operator claim on a single validator page. The surface fails closed (no
+      routing, no queue accept, generic "unavailable" to clients); this counter
+      is how operators find out. Any occurrence is an incident: DB state the
+      app-level claim exclusivity should make impossible.
+    - `schedule_failed` — AsyncDispatcher enqueue of the backlog delivery job
+      soft-failed at first activation. The recurring vmq sweep re-enqueues, so
+      loss is recoverable; sustained activation = wp_options / Action Scheduler
+      unhealthy on the claim path.
+    - `delivery_failed_terminal` — a queued message exhausted MAX_ATTEMPTS and
+      parked as `failed_terminal`. The message is durably held, not lost; needs
+      manual `wp bcc-trust vmq` recovery. Any occurrence warrants investigation.
+    - `lease_reaped` — the sweep returned an expired `processing` lease to
+      `retryable` (a delivery worker died mid-row). Self-recovering; sustained
+      activation = delivery workers being killed (timeout / OOM) mid-batch.
+
   **Pending wirings** (subsequent batches): none currently outstanding.
   All previously-pending subsystems shipped 2026-05-26
   (`cron_dispatch` / `helius_dedup` / `gated_group_provision`).
