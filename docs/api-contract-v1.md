@@ -3065,6 +3065,24 @@ Cross-kind discovery list. Sort key: `verified DESC, heat_score DESC, member_cou
 - **Sort approximation note:** the candidate pool is fetched + sorted in PHP before pagination (limit 500). The cross-page sort is exact within the candidate pool; deep pagination beyond ~500 groups would require SQL-side sort. v1 scale is well under this.
 - **Mapping:** `PeepSoGroupRepository::listBrowsableGroupIds` (excludes secret) → `GroupContextResolver::forManyGroups` → `GroupActivityHeatService::forGroups` for heat → `GatedGroupRepository::listAllGatedGroupConfigs` + `CollectionRepository::findManyByIds` for image_url + collection_stats enrichment (NFT-type only) → in-memory sort by (`is_verified`, `posts_last_7d`, `member_count`) all DESC.
 
+### 4.7.9 Tour Seen Store
+
+Server half of the site-wide product-tour "seen" store (bcc-trust `MeToursSeenEndpoint`). The frontend's `useToursSeen` unions this with `localStorage` so "seen" survives a device switch. Tour ids are frontend-registry data (`src/lib/tour/registry.ts`) — deliberately **not** enum-validated server-side, so adding a tour stays a frontend-only change; only the slug shape is checked.
+
+#### `GET /bcc/v1/me/tours-seen`
+
+- **Auth:** Bearer (401 anonymous).
+- **Response 200:** `{ "seen": string[] }` — the tour ids this viewer has dismissed.
+- **Cache:** `private, no-store`.
+
+#### `POST /bcc/v1/me/tours-seen`
+
+- **Auth:** Bearer (401 anonymous).
+- **Body:** `tour_id` (string, required) — slug shape `^[a-z0-9][a-z0-9_-]{0,63}$`.
+- **Response 200:** `{ "seen": string[] }` — the updated set (idempotent add; capped at 100 stored ids as a runaway-client guard).
+- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (malformed `tour_id`).
+- **Mapping:** `MeToursSeenEndpoint::markSeen` → `bcc_tours_seen` wp_usermeta (JSON array).
+
 ### 4.8 Ranks
 
 #### `GET /bcc/v1/ranks`
