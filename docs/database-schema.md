@@ -49,6 +49,7 @@ Repository/Service that reads it.
 | wp_bcc_trust_user_info | 119 | Denormalized per-user trust/fraud summary (source of truth) | TableRegistry::userInfo / schema-user-info.php | Active |
 | wp_bcc_trust_user_verifications | 2 | Per-user external verifications (GitHub/X/domain/wallet) | TableRegistry::userVerifications | Active |
 | wp_bcc_trust_quest_log | 9 | Onboarding quest completions per user | TableRegistry::questLog | Active |
+| wp_bcc_post_shortcodes | 133 | Sidecar act_id → 8-letter public shortcode for post permalinks (`/u/{handle}/post/{code}`) | PostShortcodeRepository / schema-post-shortcodes.php | Active |
 | wp_bcc_user_ranks | 0 | Awarded ranks per user — backed the never-built conferred-Foreman role | none (repo + schema deleted 2026-07-09) | **RETIRED** — dropped by `includes/database/drop-user-ranks-table.php` |
 | wp_bcc_page_read_model | 2777 | Denormalized page read model for discovery/search | TableRegistry::pageReadModel / schema-project.php | Active |
 | wp_bcc_rm_dirty_queue | 0 | Dirty-page queue driving read-model recompute | TableRegistry::dirtyQueue | Active |
@@ -79,6 +80,7 @@ Repository/Service that reads it.
 | wp_bcc_nft_spam_contracts | 0 | NFT spam contract allow/deny rules | schema-nft-spam-contracts.php | Active |
 | wp_bcc_user_nft_selections | 2 | User-curated NFT showcase selections | schema-nft-selections.php | Active |
 | wp_bcc_helius_seen_signatures | 0 | Solana Helius webhook dedup (seen signatures) | schema-helius-seen-signatures.php | Active |
+| wp_bcc_search_terms | 5 | Search-analytics aggregate per (norm_term, vertical, day); self-heal installed, daily-pruned (bcc-search) | SearchTermsRepository (bcc-search) | Active |
 
 > The 17 legacy orphan tables previously listed here (`onchain_dao_stats`,
 > `onchain_treasury`, `user_locals`, `page_claims`, `wallet_signals`,
@@ -115,7 +117,7 @@ Per-(voter,page,category) trust vote with weight + vesting lifecycle.
 - ip_address · varbinary(16) · YES · K
 - created_at · datetime · NO · K
 - updated_at · datetime · NO
-- Indexes: PRIMARY (id) [uq]; uq_voter_page_cat (voter_user_id,page_id,category_id) [uq]; idx_page_recent (page_id,status,created_at); idx_page_score (page_id,status,weight); idx_page_voter (page_id,voter_user_id,status); idx_page_votes (page_id,vote_type,status); idx_votes_page_cat_status (page_id,category_id,status); idx_vote_lookup (voter_user_id,page_id,category_id,status); idx_voter_created / idx_voter_history (voter_user_id,created_at); idx_voter_status_date (voter_user_id,status,created_at); idx_vesting (vesting_stage,fully_vested_at); idx_correction (weight_corrected_at,fraud_score_at_vote); idx_created (created_at); idx_ip_lookup (ip_address,created_at)
+- Indexes: PRIMARY (id) [uq]; uq_voter_page_cat (voter_user_id,page_id,category_id) [uq]; idx_page_recent (page_id,status,created_at); idx_page_score (page_id,status,weight); idx_page_voter (page_id,voter_user_id,status); idx_page_votes (page_id,vote_type,status); idx_votes_page_cat_status (page_id,category_id,status); idx_vote_lookup (voter_user_id,page_id,category_id,status); idx_voter_history (voter_user_id,created_at); idx_voter_status_date (voter_user_id,status,created_at); idx_vesting (vesting_stage,fully_vested_at); idx_correction (weight_corrected_at,fraud_score_at_vote); idx_created (created_at); idx_ip_lookup (ip_address,created_at) — dup `idx_voter_created` dropped by drop-legacy-indexes v2 (2026-07-23)
 
 #### wp_bcc_trust_page_scores
 Per-(page,category) aggregate score row. Self-page tier is the page row here.
@@ -184,7 +186,7 @@ Recent trust-action log (rate-limit + fraud signal); archive holds aged-out rows
 - target_id · bigint unsigned · NO
 - ip_address · varbinary(16) · YES · K
 - created_at · datetime · NO · K
-- Indexes (activity): PRIMARY (id) [uq]; idx_user (user_id); idx_action (action); idx_action_created (action,created_at); idx_user_action_date (user_id,action,created_at); idx_target (target_type,target_id); idx_ip_created / idx_ip_lookup (ip_address,created_at); idx_created (created_at).
+- Indexes (activity): PRIMARY (id) [uq]; idx_user (user_id); idx_action (action); idx_action_created (action,created_at); idx_user_action_date (user_id,action,created_at); idx_target (target_type,target_id); idx_ip_lookup (ip_address,created_at); idx_created (created_at). Dup `idx_ip_created` dropped by drop-legacy-indexes v2 (2026-07-23).
 - Indexes (archive): PRIMARY (id); idx_user; idx_action; idx_target; idx_ip_lookup (ip_address,created_at); idx_created (created_at); idx_archive_created (created_at).
 
 #### wp_bcc_trust_flags — RETIRED (2026-07-08)
@@ -281,7 +283,7 @@ Denormalized per-user trust/fraud summary (source of truth; ~40 cols). Key colum
 - created_at · datetime · YES; updated_at · datetime · YES · K
 - peak_fraud_score · int · YES; fraud_triggers · text · YES; page_ids_owned · text · YES
 - risk_label · varchar(20) · NO; risk_color · varchar(10) · NO; reputation_tier · varchar(20) · NO · K
-- Indexes: PRIMARY (id) [uq]; user_id [uq]; fraud_score; idx_fraud_risk (fraud_score,risk_level); risk_level; idx_reputation_tier; idx_suspended; idx_verification (is_verified,fraud_score); idx_trust_rank; idx_behavior_score; usr_last_activity; idx_updated_at
+- Indexes: PRIMARY (id) [uq]; user_id [uq]; idx_fraud_risk (fraud_score,risk_level); risk_level; idx_reputation_tier; idx_suspended; idx_verification (is_verified,fraud_score); idx_trust_rank; idx_behavior_score; usr_last_activity; idx_updated_at. The single-col `fraud_score` index (covered by idx_fraud_risk's left prefix) was dropped by drop-legacy-indexes v2 (2026-07-23).
 
 #### wp_bcc_trust_user_verifications
 Per-user external verifications (GitHub/X/domain/wallet).
@@ -303,6 +305,30 @@ Onboarding quest completions per user.
 - quest_slug · varchar(50) · NO
 - completed_at · datetime · NO
 - Indexes: PRIMARY (id) [uq]; uq_user_quest (user_id,quest_slug) [uq]; idx_user (user_id)
+
+#### wp_bcc_post_shortcodes
+Sidecar mapping `peepso_activities.act_id` → the 8-letter public shortcode used in post
+permalinks (`/u/{handle}/post/{code}`). Codes mint lazily on first feed emission
+(`PostShortcodeRepository::ensureForActIds`); append-only, one code per activity forever.
+Sidecar (not a column) because PeepSo owns `peepso_activities`.
+- act_id · bigint(20) unsigned · NO · PK (peepso_activities.act_id)
+- short_id · char(8) · NO · UQ (letters-only — disjoint from the numeric /feed/{id} route)
+- created_at · datetime · NO (UTC via gmdate(); never a DB default — clock-split norm)
+- Indexes: PRIMARY (act_id) [uq]; short_id (short_id) [uq]
+
+#### wp_bcc_search_terms (bcc-search)
+Search-analytics aggregate: one row per (norm_term, vertical, day), UPSERT-collided on the
+unique key by `SearchTermsRepository::record()`. Self-heal installed (option-guarded,
+advisory-locked); rows past the 120-day retention window pruned daily
+(`bcc_search_terms_prune` cron). The only bcc-search-owned table.
+- id · bigint unsigned · NO · PK auto
+- norm_term · varchar(100) · NO
+- vertical · varchar(16) · NO
+- day · date · NO
+- result_count · int · NO · default 0
+- hits · int · NO · default 0
+- updated_at · datetime · NO
+- Indexes: PRIMARY (id) [uq]; uq_term_vertical_day (norm_term,vertical,day) [uq]; day_idx (day); vertical_day_hits (vertical,day,hits)
 
 #### wp_bcc_user_ranks — RETIRED (2026-07-09)
 Awarded ranks per user (e.g. Foreman role). **Retired with the never-built conferred-Foreman
@@ -416,7 +442,7 @@ Member-on-member reports.
 - status · varchar(20) · NO · K
 - created_at · datetime · NO
 - reviewed_at / notified_at / admin_notified_at · datetime · YES
-- Indexes: PRIMARY (id) [uq]; uq_reporter_reported (reporter_id,reported_id) [uq]; uq_reporter_reported_reason (reporter_id,reported_id,reason_key) [uq]; idx_reported; idx_reporter; idx_reporter_reported; idx_status
+- Indexes: PRIMARY (id) [uq]; idx_reported; idx_reporter; idx_reporter_reported (reporter_id,reported_id); idx_status. The pre-M1 status-blind UNIQUEs `uq_reporter_reported` / `uq_reporter_reported_reason` were dropped by drop-legacy-indexes v2 (2026-07-23) — they blocked legitimate re-reports after resolution (createReport's dupe check is deliberately `status IN ('open','reviewing')`-filtered).
 
 #### wp_bcc_hidden_activities
 Moderator-hidden activity ids.
@@ -479,7 +505,7 @@ Per-(user,dispute) participation + credit outcome.
 - credit_skipped_reason · varchar(32) · YES
 - outcome_match · tinyint(1) · YES
 - created_at · datetime · NO
-- Indexes: PRIMARY (id) [uq]; uq_user_dispute (user_id,dispute_id) [uq]; idx_dispute; idx_user_created; idx_user_credited_created; idx_user_credited_outcome; idx_user_outcome
+- Indexes: PRIMARY (id) [uq]; uq_user_dispute (user_id,dispute_id) [uq]; idx_dispute; idx_user_created (user_id,created_at); idx_user_outcome (user_id,outcome_match). The retired was_credited composites `idx_user_credited_created` / `idx_user_credited_outcome` (deliberately replaced per the schema docblock) were dropped by drop-legacy-indexes v2 (2026-07-23).
 
 ### Onchain
 
@@ -580,7 +606,7 @@ NFT collection metadata cache (TTL via expires_at). Distinct from the dropped le
 - image_url · varchar(500) · YES
 - is_verified · tinyint(1) · NO · K
 - source · varchar(20) · NO
-- Indexes: PRIMARY (id) [uq]; uq_chain_contract (chain_id,contract_address) [uq]; wallet_chain_contract (wallet_link_id,chain_id,contract_address) [uq]; chain_id; contract_address; wallet_link_id; expires_at; idx_floor; idx_volume; idx_verified
+- Indexes: PRIMARY (id) [uq]; uq_chain_contract (chain_id,contract_address) [uq]; chain_id; contract_address; wallet_link_id; expires_at; idx_floor; idx_volume; idx_verified. The redundant pre-"collections are global" UNIQUE `wallet_chain_contract` was dropped by drop-legacy-indexes v2 (2026-07-23) — uq_chain_contract is strictly tighter, so it could never be the deciding upsert collision.
 
 #### wp_bcc_onchain_collection_pieces
 Individual NFT pieces within a collection (TTL).

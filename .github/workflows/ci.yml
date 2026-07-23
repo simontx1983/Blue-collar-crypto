@@ -70,6 +70,13 @@ jobs:
       - name: Dead-file scan
         run: php scripts/dead-file-scan.php
 
+      # Static mode only (no DB env vars → the live-table/live-index checks
+      # self-skip). Armed 2026-07-23 after the Tier-3 schema reconcile drove
+      # the guard to zero findings (declared == documented == live). The live
+      # check remains a manual/staging step — see the script header.
+      - name: Schema-drift parity (static)
+        run: php scripts/schema-drift-guard.php
+
       # wallet-case-preservation-check.php is intentionally NOT run here — it
       # boots WordPress (needs mysqli + a DB), so it's a live-site check, not a
       # static gate. Run it against a running site, not in CI.
