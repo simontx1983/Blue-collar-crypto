@@ -6081,16 +6081,21 @@ sort/stat keys all keep their names.
   Frontend removes the two dead pref rows (coordinated FE sweep).
 - **Push subscriber catalogue** — the `endorse` row removed (`PushPayload::forEndorse`
   deleted; verified zero call sites).
-- **Unread badge + digest scoped to renderable types** (audit hardening): `GET
-  /me/notifications/unread-count` and the weekly digest read now count/select only
-  `not_type` values in the live catalogue. A historical row of a retired type
-  (`bcc_endorse`, legacy `bcc_card_pulled`) can no longer inflate the badge while the
-  list — which validates types read-side — hides it (phantom-unread fix).
+- **Bell reads scoped to renderable types at the SQL boundary** (audit hardening):
+  `GET /me/notifications` (list), `GET /me/notifications/unread-count`, and the weekly
+  digest read now select/count only `not_type` values in the live catalogue. A
+  historical row of a retired type (`bcc_endorse`, legacy `bcc_card_pulled`) can no
+  longer inflate the badge (phantom-unread), consume list page slots (short pages), or
+  — when a whole raw page was retired — dead-end pagination with `items: []`,
+  `has_more: true`, `next_cursor: null`. Read-side type validation stays as
+  defense-in-depth for corrupt rows.
 - **`PATCH /me/notification-prefs` rollout compatibility** (audit hardening): a body
-  that addresses prefs but carries only retired/unknown keys (e.g. an older frontend
-  toggling `bcc_endorse`) is a **no-op 200** returning current prefs — nothing is
-  persisted or echoed. `bcc_invalid_request` 422 is reserved for bodies with no pref
-  fields at all. FE/BE deploy order is therefore unconstrained.
+  whose pref keys are ALL on the explicit retired-key allowlist (`bell.bcc_endorse`,
+  `push.events.endorse` — e.g. an older frontend toggling the retired row) is a
+  **no-op 200** returning current prefs — nothing is persisted or echoed. Misspelled
+  or arbitrary unknown keys, and bodies with no pref fields, remain
+  `bcc_invalid_request` 422 so client bugs stay visible. FE/BE deploy order is
+  therefore unconstrained.
 - Compatibility: two distinct buckets — (A) **display convergence** (labels/hints/error
   text; wire names stable), and (B) **dead notification-contract retirement**
   (`bcc_endorse` type + pref keys removed — behavioral cleanup of plumbing that never
