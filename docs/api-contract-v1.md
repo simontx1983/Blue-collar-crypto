@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.44 · 2026-07-17 · Phase 1 deliverable
+**Status:** Draft v1.48 · 2026-07-22 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1114,18 +1114,24 @@ V1.5 transition rules: clients tolerant of unknown fields ride forward without c
 
 `mentions` is the §3.3.12 `Mention[]` overlay — array of `{user_id, handle, display_name, avatar_url, range: [start, end]}` extracted from the raw `text` at write-time. Always present (`[]` when no mentions).
 
-**3.3.2 `review`** — D2 review of an attached entity:
+**3.3.2 `review`** — D2 review of an attached target (entity card or member):
 
 ```json
 "body": {
-  "grade": "A",
-  "grade_label": "Strong",
-  "summary": "Reliable through the last upgrade. Governance participation has been consistent.",
-  "long_form": null
+  "grade": "trust",
+  "text": "Reliable through the last upgrade. Governance participation has been consistent.",
+  "page_id": 412,
+  "page_handle": "acme-validator",
+  "page_name": "Acme Validator",
+  "page_kind": "validator"
 }
 ```
 
-`grade` ∈ {`A`, `B`, `C`, `D`, `F`}. `long_form` is a long-form review body (≤ 2000 chars), null for short reviews.
+`grade` ∈ {`trust`, `neutral`, `caution`} (from `vote_type` 1/0/-1). `text` is the review body (≤ 4000 chars; falls back to the short `reason` slug for bare-vote rows). `page_kind` ∈ {`validator`, `project`, `creator`, `member`, `""`} and drives the target link prefix (`/v`|`/p`|`/c`|`/u`; `""` → no link).
+
+Member-target rows (v1.48): `page_id` is the member's **self-page id** (`MemberSelfPageService::selfPageId(user_id)`), `page_name` is the member's display name, and `page_handle` is their `bcc_handle` — `""` when unset (the frontend suppresses the link; `user_login`/nicename are never projected).
+
+> Contract-drift note (fixed in v1.48): earlier revisions documented `{grade: A–F, grade_label, summary, long_form}` — that shape never shipped. The block above is what `ReviewBodyHydrator` has emitted since the feed brain landed.
 
 **3.3.3 `watch_batch`** — C3 batched watches (legacy kind name `watch_batch` accepted during the §1.1.1 deprecation window):
 
@@ -2311,10 +2317,12 @@ Reviews this member has written (§V1.5 reviews-on-file tab), offset-paginated.
   }
   ```
   `grade` ∈ `A|B|C` (from `vote_type` 1/0/-1). When the target hides reviews and the viewer isn't the owner: `items: []`, totals `0`, `hidden: true`.
+
+  `scope_label` ∈ `PAGE|MEMBER` (v1.48). Member-target rows (reviews this user wrote **about another member**): `subject` = the member's display name, `subject_handle` = their `bcc_handle` (`""` when unset — the frontend suppresses the `ON @…` link; `user_login` is never projected), `scope_label` = `MEMBER`.
 - **Errors:** `bcc_not_found` (handle missing)
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - **Pagination envelope:** offset (§1.5); `total_pages` is `0` (not 1) on empty/hidden.
-- **Mapping:** `UserReviewsService::getReviews` → `VoteRepository::countByVoter` + `findByVoterPaginated`; `posted_at_label` server-rendered (§A2). Handler `UsersEndpoint::reviews` (route `UsersEndpoint.php:203`).
+- **Mapping:** `UserReviewsService::getReviews` → `VoteRepository::countByVoter` + `findByVoterPaginated` (+ `UserMiniRepository::getRowsByIds` for member-target subjects, v1.48); `posted_at_label` server-rendered (§A2). Handler `UsersEndpoint::reviews` (route `UsersEndpoint.php:203`).
 
 #### `GET /bcc/v1/users/:handle/disputes`
 
@@ -5501,10 +5509,10 @@ Single Local detail (auth-optional). Same item shape as the `/locals` directory 
 
 #### `GET /bcc/v1/entities/:target_kind/:target_id/reviews`
 
-Reviews-tab data plane for entity profiles — reviews filed **against** this entity (by `votes.page_id`). Page-paginated. Auth-optional (public trust signal).
+Reviews-tab data plane for entity profiles AND member profiles (v1.48) — reviews filed **against** this target (by `votes.page_id`). Page-paginated. Auth-optional (public trust signal).
 
 - **Auth:** Anonymous OR Bearer (identical row set).
-- **Path:** `target_kind` ∈ `validator_card|project_card|creator_card` (`user_profile` excluded — `/users/:handle/reviews` serves that) · `target_id` (int > 0, the page's `wp_post.ID`).
+- **Path:** `target_kind` ∈ `validator_card|project_card|creator_card|user_profile` · `target_id` (int > 0). For entity kinds, `target_id` is the page's `wp_post.ID`. For `user_profile` (v1.48), `target_id` is the **raw user id**, translated server-side to the member's self-page (`MemberSelfPageService::selfPageId`) — the same bridge the write path (`POST /posts kind=review target_kind=user_profile`) uses. Received member reviews are **public** and deliberately NOT governed by the subject's `reviews_hidden` privacy flag (that flag governs only the written list on `/users/:handle/reviews`) — locked 2026-07-22.
 - **Query:** `page` (default 1) · `per_page` (default 20, max 50)
 - **Response 200:**
   ```json
@@ -6010,6 +6018,16 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.48 — 2026-07-22 — Member-target review rendering + received-reviews surface
+
+Finishes the "review a member" slice: reviews of a member (self-page votes) now render with their target everywhere and gain a public received-reviews read surface. Additive on the wire.
+
+- **§3.3.2 `review` feed body** — rewritten to the implemented shape `{grade: trust|neutral|caution, text, page_id, page_handle, page_name, page_kind}` (the documented `A–F`/`grade_label`/`summary`/`long_form` shape never shipped — pre-existing drift, retired). New `page_kind` value `member` (link prefix `/u`); member rows carry the self-page `page_id`, display name, and `bcc_handle` (`""` when unset → link suppressed, login never projected).
+- **`GET /entities/:target_kind/:target_id/reviews`** — `target_kind` gains `user_profile`; its `target_id` is the raw user id, translated server-side via `MemberSelfPageService::selfPageId`. Received member reviews are public and NOT governed by `reviews_hidden` (which governs only the written list) — decision locked 2026-07-22.
+- **`GET /users/:handle/reviews`** — `scope_label` gains `MEMBER`; member-target rows resolve `subject`/`subject_handle` from the reviewed member (display name / `bcc_handle`) instead of the previous blank-from-NULL-join projection.
+- **Notification copy** (no wire change): a review on a member self-page notifies "@actor reviewed your profile." instead of the degraded "reviewed your page."
+- Compatibility: additive enums only. The FE review body is typed `Record<string, unknown>`, so pre-v1.48 clients render member reviews as unlinked text rather than breaking.
 
 ### v1.47 — 2026-07-20 — Search query-length guard (oversized `q` → 400)
 
