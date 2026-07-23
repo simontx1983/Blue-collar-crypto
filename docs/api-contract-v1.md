@@ -924,7 +924,7 @@ V1 emits a single shared stat shape for all entity card kinds. On-chain–derive
   { "key": "trust",        "label": "Trust",        "value": "98",  "format": "score", "raw": 98 },
   { "key": "followers",    "label": "Followers",    "value": "142", "format": "count", "raw": 142 },
   { "key": "reviews",      "label": "Reviews",      "value": "8",   "format": "count", "raw": 8 },
-  { "key": "endorsements", "label": "Endorsements", "value": "12",  "format": "count", "raw": 12 }
+  { "key": "endorsements", "label": "Vouches", "value": "12",  "format": "count", "raw": 12 }
 ]
 ```
 
@@ -3367,7 +3367,7 @@ PeepSo's `peepso_notifications` table is the storage layer (§I1 "extend, don't 
 }
 ```
 
-- `type` ∈ {`bcc_reaction`, `bcc_review`, `bcc_card_watched`, `bcc_rank_up`, `bcc_endorse`, `bcc_welcome`, `bcc_mention`, `bcc_local_post`, `bcc_comment_received`}. V1 catalogue per §I2; follow-posts deferred. **Legacy alias:** `bcc_card_watched` is emitted in parallel with `bcc_card_watched` during the §1.1.1 deprecation window; clients SHOULD branch on the new name and accept either. Removed in release N+1.
+- `type` ∈ {`bcc_reaction`, `bcc_review`, `bcc_card_watched`, `bcc_rank_up`, `bcc_welcome`, `bcc_mention`, `bcc_local_post`, `bcc_comment_received`}. V1 catalogue per §I2; follow-posts deferred. *(v1.50: `bcc_endorse` retired — its subscriber never fired after the Slice-E endorse-write cutover; entity-page vouch casts dispatch `bcc_attestation_vouch_received` instead. Historical `bcc_endorse` rows are rejected by read-side validation, not rendered.)* **Legacy alias:** `bcc_card_watched` is emitted in parallel with `bcc_card_watched` during the §1.1.1 deprecation window; clients SHOULD branch on the new name and accept either. Removed in release N+1.
 - `message` is server-rendered per §A2 — frontend renders verbatim. Plain English, capped at 200 chars (PeepSo's column width).
 - `actor.handle` may be empty when the originating user has been deleted; the frontend renders the message verbatim regardless.
 - `link` is a server-built relative path. Per type:
@@ -3375,7 +3375,6 @@ PeepSo's `peepso_notifications` table is the storage layer (§I1 "extend, don't 
   - `bcc_review` → `/v/<page-handle>` etc. (the reviewed page, route prefix per kind)
   - `bcc_card_watched` → `/u/<actor-handle>` (the watcher's profile) — legacy `bcc_card_watched` resolves identically during deprecation
   - `bcc_rank_up` → `/u/<recipient-handle>` (your own profile — progression strip lives there)
-  - `bcc_endorse` → `/v/<page-handle>` etc. (the endorsed page)
   - `bcc_welcome` → `/` (the floor — the user is probably already there when they see it)
   - `bcc_mention` → `/?focus=<act_id>` (jump to the floor focused on the post containing the @-tag; for comment mentions `act_id` is the **parent post's** act_id — the FE has no comment-anchor consumer in V1)
   - `bcc_local_post` → `/locals/<slug>` resolved from `external_id` (the Local's group_id). Falls back to `/locals` when the group is no longer a Local (deleted, renamed off-prefix).
@@ -3439,7 +3438,6 @@ Notifications are dispatched by `NotificationDispatcher` (sync subscribers, try/
 | `bcc_review_published` | page owner via `PageOwnerResolver` | author === page owner |
 | `bcc_card_watched` (legacy `bcc_card_watched`) | the followee user | viewer === followee (impossible from the watchlist UI, defensive) |
 | `bcc_rank_awarded` | the recipient (self-notification) | rank label not in catalog |
-| `bcc_trust_endorsement_added` | endorsed page owner | endorser === page owner |
 | `user_register` (WordPress core) | the new user (self-notification, type `bcc_welcome`) | `bcc_welcomed` user_meta already set (idempotency guard — once welcomed, never re-welcome) |
 | `bcc_post_created` | every user @-tagged in the post body (after `MentionPolicy::filterMentionable`) | author === mentionee (self-mention skip); banned / blocked / private mentionees stripped at validation time |
 | `bcc_comment_created` | every user @-tagged in the comment body | same skip rules as post mention; `act_id` passed is the **parent post's** act_id so the bell deep-links to the post on the floor |
@@ -3496,7 +3494,6 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
     "bcc_review":           true,
     "bcc_card_watched":     true,
     "bcc_rank_up":          true,
-    "bcc_endorse":          true,
     "bcc_welcome":          true,
     "bcc_mention":          true,
     "bcc_local_post":       true,
@@ -3506,7 +3503,6 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
     "enabled": false,
     "events": {
       "review":            true,
-      "endorse":           true,
       "dispute_outcome":   true,
       "panelist_selected": true,
       "mention":           true,
@@ -3615,11 +3611,10 @@ Push deliveries fan out via `PushDispatcher::enqueue` (5-minute debounce + count
 | Push event       | Source hook                              | Wired in                                                                                                  |
 |---|---|---|
 | `review`         | `bcc_review_published`                   | [`NotificationDispatcher::dispatch`](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/NotificationDispatcher.php) — alongside the bell write |
-| `endorse`        | `bcc_trust_endorsement_added`            | [`NotificationDispatcher::dispatch`](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/NotificationDispatcher.php) — alongside the bell write |
 | `dispute_outcome`| `bcc_disputes_email_reporter_result`     | [`bcc-trust.php`](../app/public/wp-content/plugins/bcc-trust/bcc-trust.php) — additive subscriber alongside the existing email handler |
 | `panelist_selected` | `bcc_disputes_notify_panelist`        | [`bcc-trust.php`](../app/public/wp-content/plugins/bcc-trust/bcc-trust.php) — additive subscriber alongside the existing email handler |
 
-**Self-suppression:** push inherits `NotificationDispatcher::dispatch`'s actor-vs-recipient guard for free (review + endorse). Disputes pushes always fire to a different recipient than the actor by construction.
+**Self-suppression:** push inherits `NotificationDispatcher::dispatch`'s actor-vs-recipient guard for free (review). Disputes pushes always fire to a different recipient than the actor by construction.
 
 **Anti-noise rules (P1.E):** debounce + count aggregation at the queue boundary mean rapid-fire events on the same (recipient, event_type) become exactly one push ("3 new reviews on Blacksmith Node") rather than three buzzes. Tombstoned subscriptions (404/410 from the push service) are deleted on the next flush — no retry storms.
 
@@ -6062,7 +6057,33 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.49 — 2026-07-23 — Member-review completion: honest gating, remove path, tab split
+### v1.50 — 2026-07-23 — Endorse display labels converge to Vouch; dead endorse notification plumbing retired
+
+Completes the §J.7 "Endorse replaces by Vouch" convergence at the display layer, and
+retires notification plumbing that has been unreachable since the Slice-E endorse-write
+cutover. **Wire names are unchanged**: `/endorse` + `/revoke-endorsement` routes,
+`endorsement_count`, `endorsements_received`, `viewer_has_endorsed`,
+`endorse_unlock_hint`, `action: "endorse"`, `bcc_endorse_self`, and the `endorsements`
+sort/stat keys all keep their names.
+
+- **§3.2 stats array** — the `endorsements` entry's display `label` is now `"Vouches"`
+  (`CardViewService::buildPageStats`). `key`/`raw` unchanged.
+- **Unlock hints + error text** (display strings only): `Sign in to vouch.` /
+  `You can't vouch for your own page.` / `Reach Neutral standing to vouch.` /
+  `Invalid vouch context.` / `This page cannot be vouched for.`
+- **`bcc_endorse` bell type RETIRED** (§4.10 type enum, §I2 catalogue, deep-link map,
+  subscriber catalogue): its `bcc_trust_endorsement_added` source event has not fired
+  since Slice E — entity-page vouch casts dispatch `bcc_attestation_vouch_received`.
+  Historical rows are rejected by read-side validation (`NotificationType::isValid`).
+- **`bcc_endorse` / `endorse` notification-pref keys RETIRED** (bell + push prefs,
+  §4.7-area samples): the keys gated nothing. `GET/PATCH /me/notification-prefs` no
+  longer emits or accepts them; unknown keys in a PATCH are ignored as before.
+  Frontend removes the two dead pref rows (coordinated FE sweep).
+- **Push subscriber catalogue** — the `endorse` row removed (`PushPayload::forEndorse`
+  deleted; verified zero call sites).
+- Compatibility: display-only + removal of never-emitted keys/types. Clients that
+  branched on `bcc_endorse` bell rows will simply never see one (unchanged in practice —
+  none have been written since Slice E).
 
 Finishes the member-review slice. Additive on the wire.
 
