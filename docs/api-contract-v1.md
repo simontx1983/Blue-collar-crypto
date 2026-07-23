@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.48 · 2026-07-22 · Phase 1 deliverable
+**Status:** Draft v1.49 · 2026-07-23 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -778,6 +778,7 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
     "following": 38,
     "watching_size": 38,
     "reviews_written": 8,
+    "reviews_received": 5,
     "disputes_signed": 1,
     "solids_given": 240,
     "solids_received": 117
@@ -903,7 +904,8 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
   `primary_local` is `null` when the member has no primary Local; `primary_local.number` is `null` when the Local name has no parseable number.
 - `card_tier` may be `null` only when the entity is risky-tier (per §C1) — and in that case the entity should not appear in card UIs at all. If a card response returns `card_tier: null`, the frontend renders nothing visible (treat as a 404 from the UI perspective).
 - `permissions.can_watch.allowed` is `false` when (a) viewer is anonymous, (b) viewer is the card subject (you can't follow yourself), or (c) the card is hidden (risky tier). In cases (a) and (c), `unlock_hint` is `null` — these aren't hints the user can resolve. (Legacy permission key `permissions.can_watch` is emitted alongside `can_watch` during the §1.1.1 deprecation window.)
-- `viewer_has_reviewed` / `viewer_has_endorsed` (per §D2 / §V1.5) — drives "WRITE A REVIEW" → "REMOVE YOUR REVIEW" CTA swaps. Always `false` for anonymous viewers and on member cards.
+- `viewer_has_reviewed` / `viewer_has_endorsed` (per §D2 / §V1.5) — drives "WRITE A REVIEW" → "REMOVE YOUR REVIEW" CTA swaps. Always `false` for anonymous viewers. **v1.49:** `viewer_has_reviewed` is REAL on `member` cards too (has the viewer reviewed this member — a vote on their self-page); the old "always false on member cards" rule is retired. `viewer_has_endorsed` stays `false` on member cards (endorsements target page cards only).
+- `review_target_id` (v1.49, **member cards only** — absent on other kinds) — the member's deterministic self-page id (`MemberSelfPageService::selfPageId(user_id)`), i.e. the page member reviews live on. This is the `:id` the frontend passes to `DELETE /me/reviews/:id` to remove its review of the member; the frontend must never derive `ID_BASE` itself (§L5). The WRITE path is unchanged (`POST /posts kind=review target_kind=user_profile target_user_id`).
 - `endorse_unlock_hint` mirrors `permissions.can_endorse.unlock_hint` so the EndorseButton can render the hover hint without reaching into the permission object.
 - `watching_size` (on member cards' stats and on `User.counts.watching_size`) **counts member follows alongside entity follows.** Watching another member is a first-class watchlist action, no separate `following_count` field exists.
 
@@ -2192,6 +2194,14 @@ Full User view-model.
   `live_shift` (recent-activity events for the hero panel), `tabs`
   (counts strip). `reviews` and `disputes` ship as empty arrays in
   V1; lazy-load list endpoints for those tabs land in V1.5.
+
+  `tabs` entries are `{key, label, count, hidden}`. **v1.49 split:**
+  key `reviews` counts reviews RECEIVED (`counts.reviews_received` —
+  matches the tab's content since v1.48; public, so `hidden` is always
+  `false`), and the new key `written` counts reviews AUTHORED
+  (`counts.reviews_written`; `hidden` honors `reviews_hidden` for
+  non-self viewers). Key union: `watching | reviews | written |
+  activity | disputes | network`.
 
 #### `GET /bcc/v1/users/:handle/shift-log`
 
@@ -5320,7 +5330,7 @@ Change the viewer's public handle (§B6). 7-day cooldown. Registered as `WP_REST
 Remove the viewer's own review on a page.
 
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
-- **Path:** `id` — the target **page id** (`\d+`, `absint`); this is the page whose review by the viewer is removed, not a review-row id.
+- **Path:** `id` — the target **page id** (`\d+`, `absint`); this is the page whose review by the viewer is removed, not a review-row id. **v1.49:** member self-page ids are valid here — this is the member-review removal path. The frontend sources the id from the member card's `review_target_id` field (it never derives `ID_BASE` itself).
 - **Response 200:** `{ "data": { "ok": true, "page_id": 4471 } }`
 - **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (`page_id` ≤ 0) · `bcc_unavailable` 503 (vote-removal failure)
 - **Cache:** `Cache-Control: no-store`
@@ -6051,6 +6061,16 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.49 — 2026-07-23 — Member-review completion: honest gating, remove path, tab split
+
+Finishes the member-review slice. Additive on the wire.
+
+- **Member card** — `viewer_has_reviewed` is now REAL (vote on the member's self-page; anon → false); the "always false on member cards" rule is retired. New member-only field `review_target_id` = `selfPageId(user_id)` — the handle for `DELETE /me/reviews/:id`. (`permissions.can_review` was already real server-side via `resolveMemberPermissions` — the old constant claim described only the degraded placeholder card.)
+- **`User.counts`** gains `reviews_received` (votes on the self-page; public by the 2026-07-22 decision — NOT zeroed by `reviews_hidden`).
+- **Profile `tabs`** — received/written split: key `reviews` now counts received (never hidden), new key `written` counts authored (honors `reviews_hidden`).
+- **`DELETE /me/reviews/:id`** — documents that member self-page ids are valid (`review_target_id` is the source).
+- Compatibility: purely additive; pre-v1.49 clients ignore the new fields and keep the write-only member control.
 
 ### v1.48 — 2026-07-22 — Member-target review rendering + received-reviews surface
 
