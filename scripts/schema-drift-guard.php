@@ -1,6 +1,7 @@
 <?php
 /**
- * Schema-drift guard  (Phase-2 remediation — NOT YET ARMED in CI).
+ * Schema-drift guard  (ARMED in CI 2026-07-23 — static mode; live checks
+ * need DB env vars and remain a manual/staging step).
  *
  * Detects schema drift between three sources of truth:
  *
@@ -197,6 +198,13 @@ function build_symbol_table(array $files): array {
 function file_methods(string $file): array {
     $src = (string) file_get_contents($file);
     $out = [];
+    // Same-file string consts (`private const TABLE_SUFFIX = 'bcc_x';`) so
+    // `return $wpdb->prefix . self::TABLE_SUFFIX;` accessors resolve. Without
+    // this, such a table() falls through to the AMBIGUOUS global map and can
+    // be attributed to a different repository's table entirely (the exact
+    // failure that credited bcc_search_terms' CREATE TABLE — and its
+    // indexes — to wp_bcc_trust_votes).
+    $consts = file_string_consts($src);
     if (preg_match_all(
         '/(?:public|protected|private)\s+static\s+function\s+([a-z0-9_]+)\s*\([^)]*\)\s*:\s*\??\s*string\s*\{(.*?)\}/is',
         $src,
@@ -204,10 +212,29 @@ function file_methods(string $file): array {
         PREG_SET_ORDER
     )) {
         foreach ($mm as $m) {
-            $bare = resolve_return_to_bare($m[2]);
+            $bare = resolve_return_to_bare($m[2], $consts);
             if ($bare !== null) {
                 $out[strtolower($m[1])] = $bare;
             }
+        }
+    }
+    return $out;
+}
+
+/**
+ * `const NAME = 'string';` declarations in a source string.
+ * @return array<string,string>  const name => literal value
+ */
+function file_string_consts(string $src): array {
+    $out = [];
+    if (preg_match_all(
+        '/const\s+([A-Z0-9_]+)\s*=\s*[\'"]([a-z0-9_]+)[\'"]\s*;/',
+        $src,
+        $cm,
+        PREG_SET_ORDER
+    )) {
+        foreach ($cm as $c) {
+            $out[$c[1]] = $c[2];
         }
     }
     return $out;
@@ -239,8 +266,11 @@ function file_functions(string $file): array {
 /**
  * Resolve a function/method body (its `return ...;`) to a bare table name,
  * or null if it isn't a simple table-name accessor.
+ *
+ * @param array<string,string> $consts same-file `const NAME = 'literal'` map,
+ *                                     so `prefix . self::TABLE_SUFFIX` resolves.
  */
-function resolve_return_to_bare(string $body): ?string {
+function resolve_return_to_bare(string $body, array $consts = []): ?string {
     if (!preg_match('/return\s+(.+?);/is', $body, $r)) {
         return null;
     }
@@ -254,7 +284,11 @@ function resolve_return_to_bare(string $body): ?string {
     if (preg_match('/prefix\s*\.\s*[\'"]([a-z0-9_]+)[\'"]/i', $expr, $m)) {
         return bare_name($m[1]);
     }
-    // return self::TABLE_SUFFIX-style — unresolved here (not a CREATE source); skip.
+    // return $wpdb->prefix . self::TABLE_SUFFIX;  (const declared in-file)
+    if (preg_match('/prefix\s*\.\s*(?:self|static)::([A-Z0-9_]+)/', $expr, $m)
+        && isset($consts[$m[1]])) {
+        return bare_name($consts[$m[1]]);
+    }
     return null;
 }
 
@@ -393,7 +427,75 @@ function scan_declared_in_file(string $file, array $symbols): array {
             $expr = ltrim($l[1], '$');
             $bare = isset($varMap[$expr]) ? $varMap[$expr] : resolve_expr_to_bare($l[1], $symbols, $varMap, $localMethods);
             if ($bare !== null && !isset($out[$bare])) {
-                $out[$bare] = ['file' => $file, 'indexes' => []]; // indexes mirror source; not compared
+                // indexes mirror source; not compared. `like` marks the
+                // entry so the ALTER scan below can't accidentally give it
+                // a partial index set and ENABLE the comparison against a
+                // full inherited live set.
+                $out[$bare] = ['file' => $file, 'indexes' => [], 'like' => true];
+            }
+        }
+    }
+
+    // `ALTER TABLE <expr> ... ADD [UNIQUE] KEY|INDEX name (cols)` — self-heal
+    // migrations declare indexes OUTSIDE the CREATE (e.g. bcc_disputes'
+    // uq_active_vote rides a STORED generated column that dbDelta can't
+    // express, so it is added by an option-guarded ALTER). Those are
+    // declarations too; without this scan the guard reports them as
+    // live-only drift forever. One ALTER can carry multiple ADDs.
+    //
+    // Variable table expressions (`{$table}`) resolve against the NEAREST
+    // PRECEDING assignment of that variable — a file-global var map would
+    // pick the LAST `$table = …` in the file, which in a repository with
+    // several migrations (DisputeRepository assigns `$table` per method)
+    // attributes the ALTER to the wrong table.
+    if (preg_match_all(
+        '/ALTER\s+TABLE\s+(\{?\$?[a-z0-9_\\\\>{}\'"\(\): .-]+?)\s+((?:(?!ALTER\s+TABLE)[^;"])*)/is',
+        $src,
+        $tm,
+        PREG_SET_ORDER | PREG_OFFSET_CAPTURE
+    )) {
+        foreach ($tm as $t) {
+            $tableExpr = preg_replace('/[{}]/', '', $t[1][0]) ?? $t[1][0];
+            $tableExpr = ltrim($tableExpr);
+            $offset    = (int) $t[0][1];
+
+            $bare = null;
+            if (preg_match('/^\$([a-z0-9_]+)$/i', $tableExpr, $vm)) {
+                // Nearest-preceding assignment of this variable.
+                if (preg_match_all(
+                    '/\$' . preg_quote($vm[1], '/') . '\s*=\s*([^;]+);/i',
+                    substr($src, 0, $offset),
+                    $pm,
+                    PREG_SET_ORDER
+                ) && $pm !== []) {
+                    $last = $pm[count($pm) - 1][1];
+                    $bare = resolve_expr_to_bare($last, $symbols, $varMap, $localMethods);
+                }
+            } else {
+                $bare = resolve_expr_to_bare($tableExpr, $symbols, $varMap, $localMethods);
+            }
+            if ($bare === null) {
+                continue;
+            }
+
+            if (preg_match_all(
+                '/ADD\s+(UNIQUE\s+)?(?:KEY|INDEX)\s+`?([a-z0-9_]+)`?\s*\(([^)]*)\)/i',
+                $t[2][0],
+                $im,
+                PREG_SET_ORDER
+            )) {
+                if (isset($out[$bare]['like'])) {
+                    // LIKE-derived table (archives): its live index set is
+                    // inherited wholesale from the source, so a partial
+                    // ALTER-declared set must not enable the comparison.
+                    continue;
+                }
+                if (!isset($out[$bare])) {
+                    $out[$bare] = ['file' => $file, 'indexes' => []];
+                }
+                foreach ($im as $i) {
+                    $out[$bare]['indexes'][strtolower($i[2])] = canon_cols($i[3]);
+                }
             }
         }
     }
@@ -442,7 +544,11 @@ function parse_documented(string $doc): array {
         if (strpos($line, '|') !== 0 && strpos(ltrim($line), '|') !== 0) {
             continue;
         }
-        $cells = array_map('trim', explode('|', trim($line, " |")));
+        // \r in the charlist: the doc is CRLF, and without it the trailing
+        // pipe survives (`|\r`), every row grows an empty last cell, and the
+        // status column reads as '' → Active for ALL rows (RETIRED/ORPHAN
+        // classification silently never fired).
+        $cells = array_map('trim', explode('|', trim($line, " \t\r|")));
         if (count($cells) < 5) {
             continue;
         }
@@ -451,7 +557,16 @@ function parse_documented(string $doc): array {
             continue; // header / separator / non-table row
         }
         $statusCell = $cells[count($cells) - 1];
-        $status = (stripos($statusCell, 'orphan') !== false) ? 'ORPHAN' : 'Active';
+        // RETIRED rows (actively dropped by a migration, e.g. user_ranks)
+        // behave like ORPHAN for parity purposes: NOT expected in code or
+        // live. Only a literal Active status counts as Active — the old
+        // "anything not orphan is Active" default silently promoted
+        // RETIRED rows and produced a permanent false parity finding.
+        if (stripos($statusCell, 'orphan') !== false || stripos($statusCell, 'retired') !== false) {
+            $status = 'ORPHAN';
+        } else {
+            $status = 'Active';
+        }
         $out[bare_name($tableCell)] = ['status' => $status, 'raw' => $tableCell];
     }
     return $out;
@@ -576,7 +691,7 @@ $failFindings = []; // drift -> exit 1
 $infoFindings = []; // expected pre-Phase-5 -> informational only
 
 echo "========================================================\n";
-echo " SCHEMA-DRIFT GUARD  (Phase 2 — NOT YET ARMED in CI)\n";
+echo " SCHEMA-DRIFT GUARD  (armed in CI: static mode)\n";
 echo "========================================================\n";
 echo "Repo root : {$REPO_ROOT}\n";
 echo "Declared  : " . count($declaredTables) . " tables (CREATE TABLE + TableRegistry)\n";
@@ -763,7 +878,6 @@ if ($failFindings === []) {
     echo "\nPASS: no schema drift detected"
        . ($liveConn instanceof mysqli ? " (declared == documented == live)." : " (static-only: declared == documented).")
        . "\n";
-    echo "NOTE: this guard is not yet armed in CI — arm it in Phase 5.\n";
     exit(0);
 }
 
@@ -771,7 +885,8 @@ echo "\nFAIL: " . count($failFindings) . " schema-drift finding(s):\n";
 foreach ($failFindings as $f) {
     echo "  - {$f}\n";
 }
-echo "\nThis is EXPECTED pre-Phase-5 (known dbDelta duplicate indexes + the\n";
-echo "14 orphan tables). Phase 5 reconciles live to declared==documented,\n";
-echo "then this guard is armed as a blocking CI check.\n";
+echo "\nDrift was reconciled to zero on 2026-07-23 (Tier-3 sweep: parser\n";
+echo "fixes + drop-legacy-indexes v2 + database-schema.md regen), so any\n";
+echo "finding above is NEW drift — fix the declaration, the doc, or the\n";
+echo "DB (see drop-legacy-indexes.php for the drop idiom), don't allowlist.\n";
 exit(1);
