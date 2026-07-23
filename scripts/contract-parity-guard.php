@@ -210,6 +210,13 @@ function iterate_plugin_php_files(array $pluginRoots): iterable {
                     if (strpos($path, DIRECTORY_SEPARATOR . 'node_modules' . DIRECTORY_SEPARATOR) !== false) {
                         return false;
                     }
+                    // Test code is never a production route surface. Test
+                    // stubs may even *define* a fake register_rest_route()
+                    // (fake-at-FQN), which would otherwise register as an
+                    // unresolvable "site." Only real endpoints ship routes.
+                    if (strpos($path, DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR) !== false) {
+                        return false;
+                    }
                     return true;
                 }
             )
