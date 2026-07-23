@@ -2389,7 +2389,7 @@ Per-member activity wall — a single-author slice of the same activity stream t
 
 #### `GET /bcc/v1/users/:slug/following`
 
-"Keeping Tabs" — the members this member follows (§3.1 Watching tab). Offset-paginated.
+"Watching" — the members this member follows (§3.1 Watching tab). Offset-paginated.
 
 - **Auth:** Anonymous OR Bearer (privacy-filtered — same `watching_hidden` gate as `/followers`)
 - **Path:** `slug` (sanitized via `sanitize_user`)

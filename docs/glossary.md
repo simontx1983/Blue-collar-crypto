@@ -104,8 +104,8 @@ lives in `bcc-frontend/`.
 | **Follow (storage)** | The underlying relationship lives in PeepSo's follow graph; a watch is an active follow row. | `peepso_user_followers` (`uf_follow = 1`), via `WatchingRepository`. |
 | **Watch sidecar tables** | BCC metadata attached to watches. | `bcc_watch_meta`, `bcc_watch_batches` — renamed from `bcc_pull_meta` / `bcc_pull_batches` on 2026-06-26 by `bcc-trust/includes/database/rename-pull-to-watch.php`. |
 
-**Rendered UI copy** (`bcc-frontend/src/lib/copy.ts`, `FOLLOW_COPY`): CTA **"Keep Tabs"**,
-active state **"Watching"** (mobile **"Watching ✓"**), group noun **"Watchers"**. The
+**Rendered UI copy** (`bcc-frontend/src/lib/copy.ts`, `FOLLOW_COPY`): CTA **"Watch"**,
+active state **"Watching"** (active CTA **"Watching ✓"**), group noun **"Watchers"**. The
 collection surface is labelled **"Watchlist"** (`bcc-frontend/src/components/onboarding/DopamineStep.tsx`).
 
 > The legacy "Pull"/"Binder" vocabulary and the `/me/binder/*` routes were removed (routes

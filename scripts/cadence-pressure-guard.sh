@@ -36,7 +36,9 @@ cd "$REPO_ROOT"
 SCOPE_PATHS=(
   "bcc-frontend/src/app"
   "bcc-frontend/src/components"
-  "bcc-frontend/src/lib/copy"
+  # Lifted copy module — the file, not a directory; a bare "copy" path
+  # here resolved to nothing and was silently skipped (fixed 2026-07-23).
+  "bcc-frontend/src/lib/copy.ts"
   "app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/ContestedStateExplainer.php"
   "app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/NotificationDispatcher.php"
   "app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/AttestationService.php"
