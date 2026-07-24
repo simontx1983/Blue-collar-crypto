@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.49 · 2026-07-23 · Phase 1 deliverable
+**Status:** Draft v1.52 · 2026-07-23 · Phase 1 deliverable · **⚠️ BREAKING (v1.51)**
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -304,6 +304,7 @@ Every response carries a `Cache-Control` header. The Next.js app uses React Quer
 - **Asset / media URLs (avatars, NFT images, drop images, blog images):** **absolute** (`https://bluecollar.crypto/wp-content/uploads/...`). CDN-ready: the server controls the host so we can swap to a CDN origin without a contract change. The frontend never rewrites these. **No relative paths for media.**
 - **External URLs (`release_url`, cross-origin `mint_link`, etc.):** absolute.
 - **Wallet `address_short`:** truncated as `<first-6>…<last-4>` for all chains, taken from the full chain-prefixed address string (e.g., `cosmos1abcdef0123…wxyzq3kf` → `cosmos…q3kf`; `0xab5801a7d398351b8be11c439e05c5b3259aec9b` → `0xab58…ec9b`). The server is the only writer; the frontend never re-truncates.
+  **This form appears ONLY on own-account surfaces.** A shortened address is a wallet identifier, not an anonymisation: it is the standard way wallets are visually matched and it is directly searchable on a block explorer. It must never cross a member boundary. See [docs/wallet-privacy-policy.md](wallet-privacy-policy.md).
 
 ### 1.8 Locale
 
@@ -753,6 +754,10 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
     { "id": 12, "slug": "cosmos-base-fan", "name": "Local 342 Cosmos Base Fan", "number": 342, "is_primary": true },
     { "id": 18, "slug": "delegators-united", "name": "Local 519 Delegators United", "number": 519, "is_primary": false }
   ],
+  // OWN-ACCOUNT ONLY. This array is populated exactly as shown when
+  // `is_self` is true, and is `[]` for every other viewer (see §3.1
+  // "Viewing someone else's profile"). Never render it on a surface a
+  // different user can see. docs/wallet-privacy-policy.md
   "wallets": [
     {
       "id": 17,
@@ -820,7 +825,7 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
 - `progression`, `feature_access`, `ux_helpers` are **omitted entirely** (not even `null`). They are own-only.
 - `privacy` block reduced to `{ watching_hidden, reviews_hidden, ... }` reflecting what the viewer can see, not what's set.
 - `permissions.can_follow` becomes meaningful (`allowed: true` if the viewer can watch this user as a member card).
-- `wallets` returns `address_short` only (never full addresses for others — the privacy floor).
+- `wallets` is **`[]`** — always, for every viewer who is not the profile owner (authenticated stranger *and* anonymous alike). Not a masked address, not a wallet-link id, no entries at all. Wallet connections are private account data; the only wallet signal that crosses a member boundary is the derived `verifications.wallets_verified` count, which remains accurate because the server sources it from the repository rather than counting this array. See [docs/wallet-privacy-policy.md](wallet-privacy-policy.md).
 
 **Field rules:**
 
@@ -959,7 +964,9 @@ Communities (PeepSo groups: `nft` / `local` / `system` / `user`) converge onto t
 Locked field rules:
 
 - **Trust placeholders (shape-stable, never rendered as trust):** communities have no trust system. `trust_score: 0`, `reputation_tier: "neutral"`, `card_tier: "common"`, `rank_label: null`, `is_in_good_standing: true`, `flags: []`. The community face does not render a trust dial; the values exist only to keep the envelope shape-stable.
-- **`tier_label` = server-owned group-type kicker** (§L5 — supersedes the frontend `KICKER_BY_TYPE` map): `nft` → `"HOLDERS GROUP"`, `local` → `"LOCAL CHAPTER"`, `system` → `"SYSTEM GROUP"`, `user` → `"COMMUNITY"`.
+- **`tier_label` = server-owned group-type kicker** (§L5 — supersedes the frontend `KICKER_BY_TYPE` map): `nft` → `"HOLDER COMMUNITY"`, `validator` → `"DELEGATOR COMMUNITY"`, `local` → `"LOCAL CHAPTER"`, `system` → `"SYSTEM COMMUNITY"`, `user` → `"COMMUNITY"`. Unknown kinds fall back to `"COMMUNITY"`.
+  *(v1.52: `HOLDERS GROUP` → `HOLDER COMMUNITY` and `SYSTEM GROUP` → `SYSTEM COMMUNITY` as part of the Communities vocabulary convergence — display-only, `type` values unchanged; `validator` added the same release.)*
+- **Crest band:** the chain-keyed background applies to on-chain-gated kinds with a resolved `chain_tag` — `nft` and, since v1.52, `validator`; every other kind gets the tier band at the fixed `common` tier.
 - **Identity:** `id` = group id, `handle` = group slug, `bio` = group description (plain-text, ~200-char truncation — same bound as page/member bios; `""` when unset).
 - **Crest (§2.9 grammar):** `initials` from the group name (same server derivation as the other kinds), `image_url` = the group's cover (NFT collection art; `null` → FE monogram fallback). Background: NFT groups WITH a `chain_tag` → `background_kind: "chain"`, `background_value: <chain_tag>`; otherwise `background_kind: "tier"`, `background_value: "common"`.
 - **Stats (same CardStat shape as the other kinds, ≤3):**
@@ -1575,16 +1582,7 @@ Per-piece detail view-model used by §4.17. One row per uniquely-identified NFT,
     { "trait_type": "Tool",       "value": "MIG Welder", "rarity_pct": 4.2  }
   ],
   "owner": {
-    "wallet_address": "0xabcdef0123456789abcdef0123456789abcdef01",
-    "address_short":  "0xabcd…ef01",
-    "balance":        1,
-    "is_linked":      true,
-    "user": {
-      "id":           42,
-      "handle":       "simontx",
-      "display_name": "Simon TX",
-      "avatar_url":   "https://bluecollar.crypto/wp-content/uploads/2026/05/simontx-avatar.jpg"
-    }
+    "is_linked": true
   },
   "owners_count":      1,
   "owners":            [],
@@ -1611,14 +1609,12 @@ Per-piece detail view-model used by §4.17. One row per uniquely-identified NFT,
 - `token_id` is a STRING, not a number. CW-721 token IDs are arbitrary strings; ERC-1155 token IDs are uint256 and exceed JS `Number.MAX_SAFE_INTEGER`. Always render verbatim; never coerce to Number.
 - `image_url` is the full asset URL; `image_url_thumb` is a CDN-resized thumbnail (≤ 512 px on the long edge). Both are absolute URLs per §1.7. `image_url_thumb` falls back to `image_url` when no resize is available.
 - `attributes[]` is the standard NFT trait array (OpenSea convention). `rarity_pct` is OPTIONAL — present only when the indexer has computed the trait's frequency across the collection. Empty array `[]` when the piece has no metadata; never `null`.
-- `owner` is the single dominant holder:
-  - **ERC-721 / CW-721** — the unique holder. `null` when no on-chain holder is known (cold-cache, freshly minted, indexer behind).
-  - **ERC-1155** — the top-balance holder, ties broken by lowest `wallet_address` lexicographic. Always non-null when at least one holder exists.
-  - `owner.balance` is `1` for ERC-721 / CW-721, the actual SUM(balance) for ERC-1155.
-  - `owner.is_linked` is `true` when the wallet is connected to a BCC user; `owner.user` is non-null IFF `is_linked` is true.
-  - `owner.address_short` follows the §1.7 wallet pattern (`<first-6>…<last-4>`).
+- `owner` is the single dominant holder, reduced to **one field: `is_linked`**.
+  - `null` when no on-chain holder is known (cold-cache, freshly minted, indexer behind).
+  - `owner.is_linked` is `true` when *some* BCC member holds the piece. It names nobody and cannot be resolved back to a member.
+  - **Removed in v1.51 (BREAKING):** `wallet_address`, `address_short`, `balance`, and the `user` block. This route is anonymous, so all four were world-readable. The `user` block was the severe one — it resolved the holder's BCC identity from a **private wallet link**, publishing a member↔holding join the member never consented to, and iterating token IDs turned it into a wallet→member table. Verifying a wallet is not consent to broadcast what it holds; holdings are disclosed only through the explicit opt-in NFT showcase. See [docs/wallet-privacy-policy.md](wallet-privacy-policy.md).
 - `owners_count` is the total distinct holder count. Always `1` for ERC-721 / CW-721 with a known holder; `0` when no holder is known. For ERC-1155 it is the count of wallets with `balance > 0`.
-- `owners[]` is empty (`[]`) for ERC-721 / CW-721 (the single holder lives on `owner` only). For ERC-1155 it is the top-N holders by balance, capped server-side at **N = 10**. Each item has the same shape as `owner` minus `is_linked` / `user` enrichment (privacy: only the dominant `owner` gets handle resolution; the rest stay wallet-only). Future expansion to a paginated full-holder list is a separate endpoint.
+- `owners[]` is **always empty (`[]`)**, for every token standard. **Changed in v1.51 (BREAKING).** It previously fanned out the top-10 ERC-1155 holders as `{wallet_address, address_short, balance}` — every field a wallet identifier or a holding bound to one, on an anonymous route. The aggregate holder count survives as `owners_count`, which identifies nobody. The field is retained as an empty array so the shape stays stable for clients. A future paginated holder list is not planned; it would need to solve the same disclosure problem.
 - `marketplace_links[]` is per-chain. Empty array when no marketplace is configured for the chain. The list is server-curated from a new `bcc_onchain_chains.marketplace_template` column (added in V2 Phase 6 — see §4.17 mapping notes) and is stable across requests.
 - `mint_link` mirrors the §3.2 Card pattern; relative path within the BCC site, points to the creator's mint surface with the token pre-selected.
 - `permissions` is reserved for future viewer-aware actions (favorite, hide-from-watchlist, etc.) — V2 Phase 6 ships with `{}`. Frontend renders no per-piece actions.
@@ -2956,17 +2952,18 @@ Cross-kind list of all PeepSo groups a target user is an active member of: holde
   ```
 - **Cache:** `private, max-age=30` (per-viewer privacy + permissions; short TTL is enough for tab navigation).
 - **Field shapes:**
-  - `type` ∈ `nft` | `local` | `user` | `system`. The frontend uses this to pick the action URL and to dispatch the right mutation hook (holder / local / plain).
-  - `type_label` is the server-authoritative display string for the kind (defaults: `On-Chain Holders` / `Local` / `System` / `Group`). Frontend renders verbatim per §A2 — no client-side enum→label mapping. Filterable via `bcc_group_type_label`.
+  - `type` ∈ `nft` | `validator` | `local` | `user` | `system`. The frontend uses this to pick the action URL and to dispatch the right mutation hook (holder / delegator / local / plain). **`validator` added in v1.52** — treat unknown kinds gracefully.
+  - `type_label` is the server-authoritative display string for the kind (defaults: `On-Chain Holders` / `Validator Delegators` / `Local` / `System` / `Community`). Frontend renders verbatim per §A2 — no client-side enum→label mapping. Filterable via `bcc_group_type_label`. *(v1.52: the `user`-kind default and the unknown-kind fallback changed `Group` → `Community`; display-only, wire unchanged.)*
   - `privacy` ∈ `open` | `closed` | `secret`. Mirrors PeepSo's privacy flag.
-  - `verification` is `null` for non-NFT types. Future verification kinds (e.g. `creator_verified`) will appear here without API shape changes.
-  - `actions.join.url` / `actions.leave.url` vary by `type`: `/me/holder-groups/{id}/{action}` for `nft`, `/me/locals/{id}/{action}` for `local`, `/me/groups/{id}/{action}` for `user`/`system`. Frontend follows whatever URL the server returns.
+  - `verification` is present for the on-chain-gated kinds (`nft` **and, since v1.52, `validator`**) and `null` elsewhere. Both carry `kind: "on_chain"` — one badge vocabulary, not one per gate. Future verification kinds (e.g. `creator_verified`) will appear here without API shape changes.
+  - `actions.join.url` / `actions.leave.url` vary by `type`: `/me/holder-groups/{id}/{action}` for `nft`, **`/me/validator-groups/{id}/{action}` for `validator`**, `/me/locals/{id}/{action}` for `local`, `/me/groups/{id}/{action}` for `user`/`system`. Frontend follows whatever URL the server returns.
 - **Permission shape (per §A4 / §N7 — gated actions always visible):**
   - **Self profile** (viewer is the target): `can_leave.allowed = true` for every group; `can_join.allowed = false` with `reason_code: "already_member"`.
   - **Other profile**:
     - `can_leave.allowed = false` always (`reason_code: "not_self"`).
     - `can_join.allowed` reflects **the viewer's** eligibility for that group:
       - `nft` group: `true` if the viewer holds the gated NFT, otherwise `false` with `unlock_hint: "Hold an NFT from this collection to join."`
+      - `validator` group (v1.52): always `false` with `unlock_hint: "Delegate to this validator to join its community."`, `reason_code: "not_eligible"`. Live delegation is deliberately **not** checked on this render path (it would cost an upstream call per profile card); the join button does the canonical round-trip via §4.7.8, exactly as the holder tab does. Note this branch precedes the `closed` branch — a delegator community is stored `closed` but has **no approval queue**, so the "request to join" copy would be wrong.
       - `closed` group: `false` with `unlock_hint: "Visit the group page to request to join."`, `reason_code: "requires_approval"`
       - `secret` group: `false` with `reason_code: "invite_only"`
       - `open` group: `true`
@@ -3075,13 +3072,82 @@ Cross-kind discovery list. Sort key: `verified DESC, heat_score DESC, member_cou
 - **`card` (v1.27, additive):** the full §3.2.4 community Card, composed from the same row data as the flat fields (zero per-item queries; viewer membership for `community_dossier.viewer_is_member` is one batched lookup over the page of items). New consumers render `item.card` via the CardFactory; the flat fields remain during the migration window.
 - **Cache:** anon → `Cache-Control: public, max-age=60` (60s window keeps newly-warming groups discoverable quickly); authed → `private, no-store` (v1.27 — each item's `card.community_dossier.viewer_is_member` is viewer-scoped, so authed responses must never sit in a shared cache; this matches the §4.7.5 detail posture).
 - **Privacy:** `secret` groups never appear here regardless of viewer. `closed` groups appear with name + member_count visible; content stays private at PeepSo's layer.
-- **Filter `verified=1`:** restricts to groups with `_bcc_group_kind = 'holders'`. Use this to render an "On-Chain Verified only" filter chip on the discovery page.
+- **Filter `verified=1`:** restricts to groups with `_bcc_group_kind IN ('holders','delegators')`. Use this to render an "On-Chain Verified only" filter chip on the discovery page. **Widened in v1.52** — it previously meant `'holders'` alone. Both kinds emit `verification.kind = "on_chain"`, so an existing chip keeps working and simply returns delegator communities too; the same widening applies to the `verified` component of the sort key.
+- **`validator_stats` (v1.52):** stats block for `validator`-type cards only — `{ moniker, status, commission, total_stake, delegator_count, min_stake_display, validator_page }`. `null` for every other kind, and `null` when the underlying validator is not yet indexed. Each inner field is independently nullable (enrichment can leave any column unpopulated). `commission` and `total_stake` are numbers; `delegator_count` an integer; `min_stake_display` a server-pre-formatted string (`"1 ATOM"`, or a bare amount when the chain's native token is unknown) rendered verbatim per §A2/§S; `validator_page` is the frontend path to the backing validator page (`/v/{slug}`, composed server-side via the locked `CardUrlMap`) or `null` when no page backs the validator. This is the delegator-community analogue of `collection_stats` — the two are mutually exclusive by kind and never both non-null.
 - **`image_url`:** cover-art URL. NFT-type cards return the underlying collection's `image_url` (joined through `wp_bcc_onchain_collections`). Non-NFT cards (`local`/`system`/`user`) return `null` in V1 — the frontend falls back to a generated initials block. PeepSo group avatars for non-NFT kinds is V1.5.
 - **`description`:** group post body, plain-text + tag-stripped + truncated to ~200 chars (em-dash ellipsis when truncated). `null` when the group has no description on file. Applies to all kinds — `local`/`system`/`user` cards can use the same field on a future detail surface.
 - **`collection_stats`:** market-data block for NFT-type cards only — drives the discovery card's flip-to-back UX (floor price, holder distribution, lifetime volume, listed %, royalty %). Each inner field is independently nullable since the upstream fetch can leave any column unpopulated. Currency-bearing fields (`floor_price`, `total_volume`) are returned as raw strings (full decimal precision) PLUS server-pre-formatted `*_display` strings (`floor_display`, `volume_display`, `holders_display`, `supply_display`, `listed_display`, `royalty_display`, `min_balance_display`). Frontend renders `*_display` verbatim per §A2 / §S — no client-side number-formatting decisions. `distribution_pct` is the server-computed `holders / supply * 100` (rounded), exposed as a number alongside `holders_display` for charting use. `min_balance` mirrors the gate threshold (`_bcc_gate_min_balance` post-meta). Em-dash (`"—"`) appears in `*_display` when the underlying value is missing/zero so the wire never surfaces "0.00 STARS" as a fake-low signal. Non-NFT cards return `null` for the entire block — there is no equivalent for `local`/`system`/`user` kinds.
 - **`collection_stats.marketplace`:** server-resolved canonical marketplace link for the underlying NFT collection — `{ url, label }` when the chain is mapped, `null` otherwise. V1 covers the Cosmos Hub (`cosmos` — stargaze.zone, the marketplace app that survived the 2026 Stargaze→Hub chain migration) and the major EVM chains via OpenSea (`ethereum`/`polygon`/`arbitrum`/`optimism`/`base`/`avalanche`/`bsc`); Solana, NEAR, and the other cosmos chains return `null` until canonical marketplace surfaces are picked. Filterable via `bcc_marketplace_link_map` so a deployment can extend or override without a code release. Frontend renders the URL verbatim with `target="_blank" rel="noopener noreferrer"` and `e.stopPropagation()` on click so the marketplace tab opens without flipping the discovery card back to the front.
 - **Sort approximation note:** the candidate pool is fetched + sorted in PHP before pagination (limit 500). The cross-page sort is exact within the candidate pool; deep pagination beyond ~500 groups would require SQL-side sort. v1 scale is well under this.
 - **Mapping:** `PeepSoGroupRepository::listBrowsableGroupIds` (excludes secret) → `GroupContextResolver::forManyGroups` → `GroupActivityHeatService::forGroups` for heat → `GatedGroupRepository::listAllGatedGroupConfigs` + `CollectionRepository::findManyByIds` for image_url + collection_stats enrichment (NFT-type only) → in-memory sort by (`is_verified`, `posts_last_7d`, `member_count`) all DESC.
+
+### 4.7.8 Validator/Delegator Communities (delegation-gated)
+
+*(New in v1.52.)* Delegation-gated PeepSo groups: one closed community per **claimed validator**, auto-provisioned when a verified operator claim lands and **owned by that operator**. Delegators see suggestions and join explicitly — the same suggest-don't-auto-join model as §4.7.1, minus the auto-join preference (a deliberate V1 cut, so there are **no** `preferences` routes here). Privacy is `closed` (defense in depth): non-members see the community exists, but content is gated by both PeepSo and our server-side delegation check.
+
+Shape mirrors §4.7.1 exactly, with a `validator_stats` block replacing `collection`. `verification` and `activity` are the §4.7.1 shared blocks verbatim.
+
+#### `GET /bcc/v1/me/validator-groups`
+
+- **Auth:** Bearer required (self-only). Anonymous → `bcc_unauthorized` 401.
+- **Throttle:** 20/60s per viewer, evaluated **before** any other gate.
+- **Response 200:** three buckets so the frontend renders "Your communities" / "You qualify for these" / "Left previously" without client-side filtering.
+  ```json
+  {
+    "joined": [
+      {
+        "group_id": 5310,
+        "slug": "delegators-coinbase01",
+        "name": "Delegators: Coinbase01",
+        "member_count": 42,
+        "validator_stats": {
+          "moniker": "Coinbase01",
+          "status": "active",
+          "commission": 5.0,
+          "total_stake": 1250000.5,
+          "delegator_count": 8123,
+          "min_stake_display": "1 ATOM",
+          "validator_page": "/v/coinbase01"
+        },
+        "verification": { "kind": "on_chain", "label": "On-Chain Verified" },
+        "activity": { "posts_last_7d": 3, "last_activity_at": "2026-07-20T10:00:00Z", "heat": "warm", "heat_label": "Warm" }
+      }
+    ],
+    "eligible_to_join": [],
+    "opted_out": []
+  }
+  ```
+- **Cache:** `private, no-store` (every bucket is viewer-scoped).
+- **Fail-closed omission (important):** a community whose delegation check could not be completed (upstream LCD outage) is **omitted from `eligible_to_join`** rather than surfaced. A suggestion that 503s on click is worse than a suggestion that reappears one poll later. Clients must not infer ineligibility from absence.
+
+#### `POST /bcc/v1/me/validator-groups/:id/join`
+
+- **Auth:** Bearer required. **Throttle:** 10/60s per viewer, evaluated **before** the suspension gate (throttle-before-credentials).
+- **Gate order (server-authoritative):** gate config exists → opt-out inactive → not already a member → chain is Cosmos → **live delegation verdict** → membership write.
+- **200:** `{ "joined": true, "group_id": 5310, "code": "ok" | "already_member" }` — `already_member` is an idempotent no-op (no write, no audit row).
+- **Errors:**
+  - `bcc_unauthorized` **401** — not signed in.
+  - `bcc_rate_limited` **429** — throttled.
+  - `bcc_forbidden` **403** — account suspended (holding stake is not an override of moderation).
+  - `bcc_invalid_request` **400** — not a delegator community.
+  - `bcc_permission_denied` **403** — opted out recently, **or** not eligible (`error.message` is the server-pinned hint, e.g. `"Delegate at least 10 ATOM to Coinbase01 to join this community."` — render verbatim per §A2/§N7).
+  - `bcc_upstream_unavailable` **503** — **could not verify** the delegation. This is NOT "you don't qualify": the join failed **closed** during an upstream outage. Clients MUST present it as retryable and MUST NOT render it as an eligibility failure.
+  - `bcc_internal_error` **503** — community sits on an unsupported (non-Cosmos) chain.
+
+#### `POST /bcc/v1/me/validator-groups/:id/leave`
+
+#### `DELETE /bcc/v1/me/validator-groups/:id/leave`
+
+Both methods are registered and behave identically (`DELETE` is the REST-idiomatic alias; `POST` exists for clients that cannot emit a body-less `DELETE`).
+
+- **Auth:** Bearer required. **Throttle:** 10/60s per viewer.
+- **200:** `{ "left": true, "group_id": 5310 }`. Idempotent — leaving when not a member still returns 200 (and writes neither an opt-out nor an audit row).
+- Records a TTL'd **opt-out** so the community moves to the `opted_out` bucket; the opt-out store is shared with §4.7.1 (keyed by group id), so the semantics — including the permanent opt-out a moderator eviction writes — are identical across both gated kinds.
+- **`bcc_permission_denied` 403** when the caller is the **operator-owner** (a community may not be orphaned).
+
+#### Revocation (no endpoint — behaviour note)
+
+Membership is re-verified periodically. A member proven to no longer meet the stake threshold is removed silently (audit row only, no notification) and **no opt-out is written** — re-delegating re-qualifies them immediately. A member whose delegation cannot be verified is **skipped, never removed**: an upstream outage must not evict a community. Operator-owners are never revoked. Clients should therefore treat membership as server-authoritative and re-read rather than caching it indefinitely.
 
 ### 4.7.9 Tour Seen Store
 
@@ -4901,15 +4967,33 @@ Unlinks a wallet owned by the current user. Idempotent — a double-tap unlink a
 - **Lockout guard (`bcc_last_recovery_method` 409):** the request is refused — and the wallet is NOT removed — when it would delete the caller's **last verified wallet** on an account with no real recovery email (i.e. only the synthetic `@noreply.bcc.local` placeholder). Such an account's wallet is its sole credential, so removing it would be a permanent self-lockout. Clients should prompt the user to add a recovery email or link a second wallet first. Accounts with a real recovery email, or with a second verified wallet, are never blocked.
 - **Side effects on a true state transition (`removed: true` for an own-wallet):** removes the wallet's per-wallet on-chain data (NFT holdings + profile selections keyed on the `wallet_link_id`); writes a `wallet_unlinked` audit row (`AuditLogger::log`); fires `AccountSecurityMailer::walletUnlinked` (§4.23 side-channel); and dispatches the trust-engine domain event `bcc_wallet_disconnected` **directly from this endpoint** (this REST path deletes the row itself rather than routing through `WalletIdentityService::unlinkWallet`). Listeners on that event perform claim revocation + trust-score recalc (`BonusService::handleWalletDisconnect`), trust-signal teardown for the wallet's chain (`WalletSignalRepository::disconnect`), and Helius unsubscribe (Solana only).
 
-#### `GET /bcc/v1/wallets/project/{post_id}`
+#### Removed in v1.51 (BREAKING) — project-scoped wallet listing
 
-Returns wallets linked to a project / validator / creator page, used by §N8 claim panels and on-page provenance strips.
+<!--
+  Deliberately NOT headed with a backticked `METHOD /path`:
+  contract-parity-guard.php parses `#### \`GET /x\`` headings as DECLARED
+  endpoints, and its regex ignores any trailing text — so a heading that
+  says "REMOVED" still registers the endpoint as declared, and the guard
+  then fails because no plugin registers it. Retired endpoints therefore
+  name the route in body text only.
+-->
 
-- **Auth:** required.
-- **Path:** `post_id` (integer, peepso-page CPT id).
-- **Response 200:** standard `{ data, _meta }` envelope where `data` is an array of wallet records, shape matching `/wallets` items above **with one privacy gate** — non-owners and non-admins see the full record minus `wallet_address`. The post author and admins see the full record.
-- **Errors:** `bcc_rate_limited` 429.
-- **Rate limit:** 30/min/user.
+`GET /bcc/v1/wallets/project/{post_id}` — **removed in v1.51.**
+This route no longer exists. It read `WHERE post_id = %d LIMIT 200` with **no user
+scoping**, `\d+` matched `0`, and no write path in the codebase ever set a
+non-zero `post_id` — so every row in `bcc_wallet_links` had `post_id = 0` and
+`/wallets/project/0` returned 200 arbitrary members' wallet links to any
+logged-in caller, and full `wallet_address` values to any admin. The "privacy
+gate" described here only stripped the address for non-owners; the surrounding
+record (link id, chain, label, `is_primary`) still crossed the member boundary
+and served as an enumeration key.
+
+It had no frontend consumer and was already listed for deletion by the
+2026-06-18 hardening audit under the no-unused-code policy.
+
+Wallet connections are private account data: the surviving surface is the
+session-scoped `GET /bcc/v1/wallets`. See
+[docs/wallet-privacy-policy.md](wallet-privacy-policy.md).
 
 #### `GET /bcc/v1/chains`
 
@@ -5486,7 +5570,7 @@ Cross-kind single-group detail view-model (`nft`/`local`/`system`/`user`). Power
   { "id": 4231, "slug": "holders-bored-apes", "name": "Holders: Bored Apes", "type": "nft", "privacy": "closed", "description": "…", "image_url": "https://…", "member_count": 87, "verification": { "kind": "on_chain", "label": "On-Chain Verified" }, "activity": { "posts_last_7d": 14, "last_activity_at": "2026-05-04T14:22:00Z", "heat": "warm", "heat_label": "Warm" }, "collection_stats": { "...": "§4.7.4 block, NFT-type only else null" }, "viewer_membership": { "is_member": true, "joined_at": "2026-01-12T00:00:00Z" }, "permissions": { "can_join": { "allowed": false, "unlock_hint": null, "reason_code": "already_member" }, "can_leave": { "allowed": true, "unlock_hint": null, "reason_code": null }, "can_read_feed": { "allowed": true, "unlock_hint": null, "reason_code": null } }, "feed_visible": true, "members_visible": true, "can_use_public_all": true, "can_manage_public_all_policy": false, "public_all_members_enabled": false, "chain_tag": "ethereum", "trust_min": null, "links": { "self": "/groups/holders-bored-apes" }, "card": { "...": "community Card view-model per §3.2.4 — card_kind: \"community\", community_dossier populated" } }
   ```
   - `card` (v1.27, additive): the full §3.2.4 community Card, composed from the same data already resolved for the flat fields (zero extra queries). New consumers render `group.card` via the CardFactory; the flat fields remain during the migration window.
-  - `type` ∈ `nft|local|system|user`; `privacy` ∈ `open|closed|secret`. `verification`/`image_url`/`collection_stats` are NFT-type only (else `null`). `activity` is the §4.7.1 heat tile (defaults `posts_last_7d: 0, heat: "cold", heat_label: "Quiet"`). `viewer_membership`: `null` (anon), `{is_member: false, joined_at: null}` (authed non-member), `{is_member: true, joined_at}` (member). `permissions.*` each `{allowed, unlock_hint, reason_code}` (render `unlock_hint` verbatim per §A2/§N7); `can_join.reason_code` ∈ `auth_required|already_member|not_eligible|trust_threshold|requires_approval|invite_only`; `can_leave.reason_code` ∈ `auth_required|not_member|owner_cannot_leave`; `can_read_feed.allowed` always `true` for a built view-model (per-post visibility teaser, v1.24 — secret-non-member never gets a view-model). `feed_visible` mirrors `can_read_feed.allowed`. `members_visible` true for open groups, else only for active members. `can_use_public_all` (bool) — whether **this viewer** may set `visibility=public_all` when posting here (drives the composer's "PUBLIC" option; `false` for anon/non-members and members not authorized to syndicate — see §4.14). `can_manage_public_all_policy` (bool) — whether **this viewer** may change the group-wide ordinary-member opt-in (drives the owner control; `true` for the group **owner / manager** or a **site admin (`manage_options`)**, `false` for moderators, ordinary members, and anon). Distinct from `can_use_public_all`: a moderator may *use* `public_all` on their own post but may **not** manage the group policy. `public_all_members_enabled` (bool) — the group's ordinary-member opt-in state. **Minimum exposure:** it reflects the real value only for viewers who can manage the policy (`can_manage_public_all_policy = true`); every other viewer sees `false` (the raw config is not disclosed to ordinary/anon viewers — they rely on `can_use_public_all`). Toggled via `POST /me/groups/:id/post-policy` (§4.7.3). `chain_tag` slug or `null`. `trust_min` ∈ `25|50|75|null`.
+  - `type` ∈ `nft|validator|local|system|user`; `privacy` ∈ `open|closed|secret`. `image_url`/`collection_stats` are NFT-type only (else `null`); `validator_stats` (v1.52, §4.7.4 block) is `validator`-type only (else `null`); `verification` is present for both on-chain-gated kinds (`nft`, `validator`) and `null` elsewhere. `can_join` for a `validator` group is always `{allowed: false, reason_code: "not_eligible", unlock_hint: "Delegate to this validator to join its community."}` — the join round-trip happens via §4.7.8. `activity` is the §4.7.1 heat tile (defaults `posts_last_7d: 0, heat: "cold", heat_label: "Quiet"`). `viewer_membership`: `null` (anon), `{is_member: false, joined_at: null}` (authed non-member), `{is_member: true, joined_at}` (member). `permissions.*` each `{allowed, unlock_hint, reason_code}` (render `unlock_hint` verbatim per §A2/§N7); `can_join.reason_code` ∈ `auth_required|already_member|not_eligible|trust_threshold|requires_approval|invite_only`; `can_leave.reason_code` ∈ `auth_required|not_member|owner_cannot_leave`; `can_read_feed.allowed` always `true` for a built view-model (per-post visibility teaser, v1.24 — secret-non-member never gets a view-model). `feed_visible` mirrors `can_read_feed.allowed`. `members_visible` true for open groups, else only for active members. `can_use_public_all` (bool) — whether **this viewer** may set `visibility=public_all` when posting here (drives the composer's "PUBLIC" option; `false` for anon/non-members and members not authorized to syndicate — see §4.14). `can_manage_public_all_policy` (bool) — whether **this viewer** may change the group-wide ordinary-member opt-in (drives the owner control; `true` for the group **owner / manager** or a **site admin (`manage_options`)**, `false` for moderators, ordinary members, and anon). Distinct from `can_use_public_all`: a moderator may *use* `public_all` on their own post but may **not** manage the group policy. `public_all_members_enabled` (bool) — the group's ordinary-member opt-in state. **Minimum exposure:** it reflects the real value only for viewers who can manage the policy (`can_manage_public_all_policy = true`); every other viewer sees `false` (the raw config is not disclosed to ordinary/anon viewers — they rely on `can_use_public_all`). Toggled via `POST /me/groups/:id/post-policy` (§4.7.3). `chain_tag` slug or `null`. `trust_min` ∈ `25|50|75|null`.
 - **Errors:** `bcc_invalid_request` 400 (empty slug) · `bcc_not_found` 404 (unresolved, OR secret + viewer not a member — §S, indistinguishable from missing)
 - **Cache:** anon → `public, max-age=60`; authed → `private, no-store`.
 - **Mapping:** `GroupsDetailEndpoint::show` (route `GroupsDetailEndpoint.php:52`) → `GroupsService::getGroup` (→ `PeepSoGroupRepository::findGroupBySlug` → `GroupContextResolver` → secret-gate → `GroupActivityHeatService` → `findUserMemberships` → NFT enrichment → `buildPermissions` → `ChainRepository::resolveSlugsForGroups`).
@@ -6056,6 +6140,68 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.52 — 2026-07-23 — Communities vocabulary convergence + validator/delegator communities V1
+
+Two independent, **additive** changes shipping under the same "Communities" umbrella. No breaking changes; no existing wire value, route, or enum member was removed or renamed.
+
+**1. Display-label convergence (display-only).** The member-facing genus noun converges on **"Communities"** (Phillip-approved 2026-07-23), the same display-only discipline as the Watch and Vouch renames. **Wire names are untouched** — `/groups`, `/holder-groups`, the `type` enum values, and every response key stay exactly as they were.
+
+- §3.2.4 community-card kickers (`card.tier_label`): `HOLDERS GROUP` → **`HOLDER COMMUNITY`**, `SYSTEM GROUP` → **`SYSTEM COMMUNITY`**. `LOCAL CHAPTER` and `COMMUNITY` unchanged.
+- §4.7.2 `type_label` server default for the `user` kind: `Group` → **`Community`** (also the unknown-kind fallback). `On-Chain Holders`, `Local`, and `System` unchanged.
+- Both remain filterable (`bcc_group_type_label`) and are rendered verbatim by the frontend per §A2/§L5, so no frontend release is required to pick these up.
+
+**2. Validator/delegator communities V1 (additive).** One auto-provisioned, operator-owned closed community per **claimed validator**, joinable only by verified delegators.
+
+- **New group kind:** `type` gains **`validator`** across §4.7.2 / §4.7.4 / §4.7.5 (storage: `_bcc_group_kind = 'delegators'`). Existing consumers that switch on `type` must treat unknown kinds gracefully; the FE `GroupDiscoveryType` union gains `"validator"` (wire-additive — FE render work is a later slice).
+- **New routes:** §4.7.8 `GET /me/validator-groups`, `POST /me/validator-groups/:id/join`, `POST|DELETE /me/validator-groups/:id/leave` — mirroring §4.7.1's holder-groups shape, with a `validator_stats` block in place of `collection`. **No preferences routes**: auto-join is a deliberate V1 cut, so every join is explicit.
+- **New nullable block:** `validator_stats` `{ moniker, status, commission, total_stake, delegator_count, min_stake_display, validator_page }` on §4.7.4 discovery items, the §4.7.5 detail response, and §4.7.8 items. `null` for every non-validator kind and for a validator not yet indexed.
+- **`verified=1` widened:** the §4.7.4 filter (and the `verified` sort key) now means `_bcc_group_kind IN ('holders','delegators')`. Both kinds carry `verification.kind = "on_chain"` — the badge is **one vocabulary, not one per gate** — so an existing "On-Chain Verified only" filter chip now also returns delegator communities. This is the one behaviour change an existing client can observe.
+- **`type_label`** for the new kind: **`Validator Delegators`**; **kicker**: **`DELEGATOR COMMUNITY`**; action URLs route to `/me/validator-groups/{id}/{action}`.
+- **Fail-closed gate (contract-relevant):** eligibility is a **live** on-chain delegation check. When the upstream LCD cannot answer, the verdict is UNKNOWN and the join returns **`bcc_upstream_unavailable` 503** ("we could not check"), *never* a `403` "you don't qualify". Clients MUST treat 503 here as retryable and MUST NOT render it as an eligibility failure. For the same reason an unverifiable community is silently **omitted** from `eligible_to_join` rather than surfaced as a suggestion that would 503 on click.
+- **Not built in V1** (so clients should not expect them): auto-join preference + reconcile sweep, non-Cosmos chains, a minimum-delegator provisioning floor, claim-revocation consequences, and any delegation-refresh scheduler.
+
+### v1.51 — 2026-07-23 — **BREAKING** — wallet addresses are own-account-only
+
+Closes every cross-user wallet-disclosure path. A user's wallet address is now
+never disclosed to another user — full, shortened, hashed, ENS-named, or
+otherwise represented — and no member↔wallet or member↔holding join is
+reconstructable from a client-accessible surface. Policy:
+[docs/wallet-privacy-policy.md](wallet-privacy-policy.md).
+
+The root cause was not a slip but an inverted premise: the contract previously
+called "ship `address_short` to strangers" *the privacy floor*, the TypeScript
+type declared `address_short` non-optional (guaranteeing it to every viewer),
+and `api-contract-check.sh` asserted only the absence of `address` — so CI
+**certified the leak as passing**. A masked address is a wallet identifier: it
+is how wallets are visually matched and it is directly searchable on a block
+explorer.
+
+**Breaking shape changes:**
+
+| Surface | Before | After |
+|---|---|---|
+| `GET /users/{handle}` — non-self viewer (incl. anonymous) | `wallets[]` with `address_short`, `id`, chain, `is_primary`, `verified_at` | `wallets: []` |
+| `GET /users/{handle}` — own profile | unchanged | unchanged (full record) |
+| `GET /nft-pieces/…` `owner` | `{wallet_address, address_short, balance, is_linked, user{id,handle,display_name,avatar_url}}` | `{is_linked}` |
+| `GET /nft-pieces/…` `owners[]` | top-10 `{wallet_address, address_short, balance}` | `[]` (always) |
+| Card `chains[]` (validator) | `{slug, name, operator_address}` | `{slug, name, operator_verified}` |
+| `GET /wallets/project/{post_id}` | cross-user wallet-link listing | **route removed** |
+| `/suggestions/users` `co_validator.label` | `"Backs {moniker} too"` | `"Backs the same validator"` |
+
+**Non-breaking, preserved:** `verifications.wallets_verified` (the count) is
+unchanged and remains accurate for every viewer — the server now sources it from
+`WalletRepository::getVerifiedCountsForUsers()` instead of counting the (now
+empty) `wallets` array. It is the only wallet signal permitted to cross a member
+boundary. `GET /wallets` (session-scoped) is untouched: owners still manage their
+own wallets.
+
+**Also hardened (not contract shape):** the violation logger no longer truncates
+addresses to `first-6…last-4` next to a `user_id` — it emits a salt-keyed HMAC
+fingerprint, because reporting a privacy violation must not commit one. The
+`/members` edge-cache tag is now gated to anonymous requests: LiteSpeed's REST
+cache key varies on Cookie, not Authorization, so tagging an authenticated
+response published one viewer's personalised payload to everyone for the TTL.
 
 ### v1.50 — 2026-07-23 — Endorse display labels converge to Vouch; dead endorse notification plumbing retired
 

@@ -2,10 +2,10 @@
 /**
  * Contract-vs-code parity guard.
  *
- * Verifies that every endpoint declared in docs/api-contract-v1.md is
- * actually registered in PHP via register_rest_route(), and (as a
- * WARNING) flags PHP-registered endpoints that the contract does not
- * document.
+ * Verifies parity in BOTH directions: every endpoint declared in
+ * docs/api-contract-v1.md is actually registered in PHP via
+ * register_rest_route(), and every in-scope registered route is either
+ * documented in §4 or explicitly allowlisted in EXEMPT_INTERNAL.
  *
  * Catches the failure mode that surfaced 2026-05-26 in reverse: the
  * contract claimed `/wallets/project/{post_id}` had envelope drift,
@@ -17,8 +17,17 @@
  * Sibling to scripts/subsystem-count-guard.php (different surface,
  * same shape: PHP token-walks code + regex-scans docs, diffs).
  *
- * Exit 0 = contract and code agree (warnings allowed).
- * Exit 1 = drift detected; missing endpoints printed with file refs.
+ * Exit 0 = contract and code agree in both directions.
+ * Exit 1 = drift detected. Any of:
+ *            - a contract endpoint with no register_rest_route()  (clients 404)
+ *            - a registered in-scope route undocumented and not allowlisted
+ *            - a stale EXEMPT_INTERNAL entry (route gone / since documented)
+ *
+ * The latter two were WARN-only until 2026-07-24, while the 2026-05-26
+ * backlog was cleared. It reached zero, so they now block — an
+ * undocumented live route is a reachable surface no contract review has
+ * seen, and a stale exemption silently pre-authorises whatever reappears
+ * under its key.
  *
  * Run from repo root:
  *   php scripts/contract-parity-guard.php
@@ -816,7 +825,12 @@ if ($missing !== []) {
 echo "Exempt internal routes (allowlisted admin/machine — see EXEMPT_INTERNAL): " . count($exemptMatched) . "\n\n";
 
 if ($staleExempt !== []) {
-    echo "WARN: " . count($staleExempt) . " stale EXEMPT_INTERNAL allowlist entr(y/ies) — prune:\n";
+    // Blocking: a stale entry means the route was deleted or has since been
+    // documented, but its exemption lingers — and a lingering exemption
+    // silently pre-authorises any future route that reappears under the same
+    // key. Pruning is trivial; leaving it rots the allowlist.
+    $exit = 1;
+    echo "FAIL: " . count($staleExempt) . " stale EXEMPT_INTERNAL allowlist entr(y/ies) — prune:\n";
     foreach ($staleExempt as $k => $why) {
         echo "  - {$k}  ({$why})\n";
     }
@@ -824,7 +838,16 @@ if ($staleExempt !== []) {
 }
 
 if ($undocumented !== []) {
-    echo "WARN: " . count($undocumented) . " in-scope route(s) registered in PHP, undocumented in §4, and NOT allowlisted.\n";
+    // Blocking as of 2026-07-24. This was a WARN while the 2026-05-26 first
+    // run's backlog was being cleared (contract v1.22/v1.23 retractions); that
+    // backlog reached zero, so the ratchet now engages. An undocumented
+    // in-scope route is a LIVE, reachable surface that no contract review has
+    // seen — precisely how forgotten endpoints accumulate. §9 requires the
+    // contract be verified, not assumed, so the docs land in the same PR as
+    // the route. Genuinely internal routes have an escape hatch:
+    // EXEMPT_INTERNAL, with a stated reason.
+    $exit = 1;
+    echo "FAIL: " . count($undocumented) . " in-scope route(s) registered in PHP, undocumented in §4, and NOT allowlisted.\n";
     echo "Each is a real §γ gap: document it in docs/api-contract-v1.md §4, or — if genuinely\n";
     echo "internal — add it to the EXEMPT_INTERNAL allowlist with a reason.\n";
     foreach ($undocumented as $u) {
