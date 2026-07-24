@@ -4895,8 +4895,18 @@ Unlinks a wallet owned by the current user. Idempotent — a double-tap unlink a
 - **Lockout guard (`bcc_last_recovery_method` 409):** the request is refused — and the wallet is NOT removed — when it would delete the caller's **last verified wallet** on an account with no real recovery email (i.e. only the synthetic `@noreply.bcc.local` placeholder). Such an account's wallet is its sole credential, so removing it would be a permanent self-lockout. Clients should prompt the user to add a recovery email or link a second wallet first. Accounts with a real recovery email, or with a second verified wallet, are never blocked.
 - **Side effects on a true state transition (`removed: true` for an own-wallet):** removes the wallet's per-wallet on-chain data (NFT holdings + profile selections keyed on the `wallet_link_id`); writes a `wallet_unlinked` audit row (`AuditLogger::log`); fires `AccountSecurityMailer::walletUnlinked` (§4.23 side-channel); and dispatches the trust-engine domain event `bcc_wallet_disconnected` **directly from this endpoint** (this REST path deletes the row itself rather than routing through `WalletIdentityService::unlinkWallet`). Listeners on that event perform claim revocation + trust-score recalc (`BonusService::handleWalletDisconnect`), trust-signal teardown for the wallet's chain (`WalletSignalRepository::disconnect`), and Helius unsubscribe (Solana only).
 
-#### `GET /bcc/v1/wallets/project/{post_id}` — **REMOVED in v1.51 (BREAKING)**
+#### Removed in v1.51 (BREAKING) — project-scoped wallet listing
 
+<!--
+  Deliberately NOT headed with a backticked `METHOD /path`:
+  contract-parity-guard.php parses `#### \`GET /x\`` headings as DECLARED
+  endpoints, and its regex ignores any trailing text — so a heading that
+  says "REMOVED" still registers the endpoint as declared, and the guard
+  then fails because no plugin registers it. Retired endpoints therefore
+  name the route in body text only.
+-->
+
+`GET /bcc/v1/wallets/project/{post_id}` — **removed in v1.51.**
 This route no longer exists. It read `WHERE post_id = %d LIMIT 200` with **no user
 scoping**, `\d+` matched `0`, and no write path in the codebase ever set a
 non-zero `post_id` — so every row in `bcc_wallet_links` had `post_id = 0` and
