@@ -76,6 +76,8 @@ Repository/Service that reads it.
 | wp_bcc_onchain_collection_pieces | 0 | Individual NFT pieces within a collection (TTL) | schema-collection-pieces.php | Active |
 | wp_bcc_onchain_validators | 3060 | Validator registry + enrichment (Cosmos/etc.) | schema-validators.php | Active |
 | wp_bcc_onchain_delegations | 0 | Per-wallet validator delegations (TTL) | schema-delegations.php | Active |
+| wp_bcc_validator_msg_activation | 0 | Validator-messaging first-activation record (one row per validator page; the pre-claim backlog belongs to the first verified operator claim) | schema-validator-msg-activation.php | Active |
+| wp_bcc_validator_msg_queue | 0 | Validator-messaging pre-claim message queue (messages to a not-yet-claimed validator; delivered to the first verified operator on claim) | schema-validator-msg-queue.php | Active |
 | wp_bcc_nft_holdings | 0 | Confirmed NFT holdings per wallet link | schema-nft-holdings.php | Active |
 | wp_bcc_nft_spam_contracts | 0 | NFT spam contract allow/deny rules | schema-nft-spam-contracts.php | Active |
 | wp_bcc_user_nft_selections | 2 | User-curated NFT showcase selections | schema-nft-selections.php | Active |
