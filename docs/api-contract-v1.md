@@ -199,7 +199,11 @@ User-relationship errors (blocked, muted) use `bcc_blocked` (403). The frontend 
 | `bcc_nft_not_owned` | 403 | NFT showcase | Selected NFT isn't in the viewer's linked wallets |
 | `bcc_wallet_not_supported` | 400 | Wallet link | Chain isn't enabled on this site |
 | `bcc_endorse_self` | 403 | Endorse | User attempted to endorse their own page |
-| `bcc_fraud_locked` | 403 | Endorse, attest, vote | Account is restricted from this action due to flagged unusual activity. Distinct from `bcc_permission_denied` because it is NOT user-resolvable — no `unlock_hint` applies; the frontend surfaces a generic "temporarily restricted" copy. |
+| `bcc_fraud_locked` | 403 | Endorse, attest, vote, **DM send** | Account is restricted from this action due to flagged unusual activity. Distinct from `bcc_permission_denied` because it is NOT user-resolvable — no `unlock_hint` applies; the frontend surfaces a generic "temporarily restricted" copy. |
+| `bcc_messaging_unavailable` | 409 | Messages (validator pages) | The page cannot accept a message in its current claim state — previously claimed but currently unclaimed, OR more than one verified operator claim. Deliberately ONE code for both states: the wire must never reveal which, nor that competing claims exist. |
+| `bcc_queue_full` | 409 | Messages (validator pages) | The validator's pre-claim queue is at capacity. Truthful refusal — a rejected message is never promised delivery. |
+| `bcc_queue_limit` | 409 | Messages (validator pages) | Sender already holds the maximum pending queued messages for this validator. Slots free as messages deliver. |
+| `bcc_unavailable` | 503 | Messages | Downstream (PeepSo) write failure on a send path. Transient — retry is safe. |
 
 #### 1.4.7 Client-side typed errors
 
@@ -362,7 +366,8 @@ The single most important shared type. Encodes §N7 (always visible, disabled wi
     "can_post_as_entity":   { "allowed": false, "unlock_hint": null },
     "can_edit_bio":         { "allowed": false, "unlock_hint": null },
     "can_edit_image":       { "allowed": false, "unlock_hint": null, "reason_code": "not_claimer" },
-    "can_open_dispute":     { "allowed": false, "unlock_hint": null, "reason_code": "not_page_owner" }
+    "can_open_dispute":     { "allowed": false, "unlock_hint": null, "reason_code": "not_page_owner" },
+    "can_message":          { "allowed": false, "unlock_hint": "This member only accepts messages from friends.", "reason_code": "friends_only" }
   }
 }
 ```
@@ -373,6 +378,8 @@ The single most important shared type. Encodes §N7 (always visible, disabled wi
 - When `allowed: false`, `unlock_hint` is a **plain-English explanation** the frontend renders verbatim as a tooltip/disabled-button helper.
 - `can_open_dispute` is the **owner vote-dispute** entry (DisputeCallout → `POST /disputes`) and mirrors the write gate exactly: page ownership only, no feature ladder (shipped 2026-06-11). It is the **sole** dispute gate — the `can_dispute` §J attestation-cast gate (`sign_dispute` ladder) was a dead scaffold (no such attestation kind existed) and was retired 2026-07-08. Non-owners get `reason_code: "not_page_owner"` with no hint — the §N7 visible-gate rule applies to gates a viewer can eventually unlock, which ownership of someone else's page is not.
   - **Member self-pages (member-disputes slice, 2026-06-30):** a member is the owner of their own self-page, so on their OWN member card/profile `can_open_dispute` is `allowed: true` when they have a contestable active downvote on their self-page, else `reason_code: "no_contestable_downvote"`. Non-owners and anonymous viewers get `reason_code: "not_applicable"` (members can't dispute votes on each other — only the subject can contest a downvote on themselves, mirroring the entity owner-contests-downvote model). Ownership resolves via the zero-DB self-page identity (`page_id = ID_BASE + user_id`).
+- `can_message` (v1.52) mirrors the DM write gates exactly — it is produced by the SAME messaging-policy evaluator the send path runs, so a rendered Message button and the `POST /me/conversations` it triggers can never disagree on a permanent rule. Only the transient rate limit is POST-only. On **validator page cards** it targets the page's resolved verified operator (or the queue, when the validator has never been claimed); on member and community cards it is `not_applicable`. Reason codes: `not_applicable` (hide) · `auth_required` (visible-disabled, sign-in copy) · `self_action_blocked` (hide — viewer is the operator) · `sender_restricted` (hide — suspended/banned sender) · `sender_chat_disabled` (visible-disabled, resolvable hint) · `messaging_unavailable` (hide) · `friends_only` (visible-disabled + hint).
+  - **Info-leak shield:** a mutual block and a recipient with DMs turned off emit the **byte-identical** `{ allowed: false, unlock_hint: null, reason_code: "messaging_unavailable" }`. Clients must not attempt to distinguish them, and the server never does on the wire (this mirrors the §4.19 404 shield on the write path).
 - When `allowed: true`, `unlock_hint` is `null` (not omitted — explicit `null` so client typing is uniform).
 - When a gate is **structurally impossible** for this viewer (e.g., viewing your own card → `can_watch: false`, you can't follow yourself), `unlock_hint` is `null` and the frontend hides the action UI per §N7's "structurally impossible" carve-out (the always-visible rule applies to *gates a viewer could resolve*, not to nonsensical actions).
 
@@ -820,6 +827,7 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
 - `progression`, `feature_access`, `ux_helpers` are **omitted entirely** (not even `null`). They are own-only.
 - `privacy` block reduced to `{ watching_hidden, reviews_hidden, ... }` reflecting what the viewer can see, not what's set.
 - `permissions.can_follow` becomes meaningful (`allowed: true` if the viewer can watch this user as a member card).
+- `permissions.can_message` (v1.52) mirrors the DM write gates exactly — it runs the same messaging-policy evaluator as `POST /me/conversations` (mutual block, recipient `chat_enabled`, friends-only, sender suspension/ban). It was previously a bare chat-enabled probe, so a friends-only or mutually-blocked recipient rendered an enabled Message button that always failed on submit. The `{allowed, unlock_hint}` shape is unchanged, but `unlock_hint` may now be non-null on this surface (e.g. the friends-only copy) and `allowed` is stricter. The mutual-block and DMs-off cases remain indistinguishable to the client.
 - `wallets` returns `address_short` only (never full addresses for others — the privacy floor).
 
 **Field rules:**
@@ -858,6 +866,7 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
   "is_claimed": true,
   "is_claim_verified": true,
   "claim_target": null,
+  "messaging": { "destination": "operator", "operator": { "handle": "cosmosops", "name": "Cosmos Ops" } },
   "viewer_has_reviewed": false,
   "viewer_has_endorsed": false,
   "endorse_unlock_hint": null,
@@ -878,6 +887,12 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
 - `is_claimed` is meaningful for `validator` / `project` / `creator`. For `member`, `is_claimed: true` always (members are their own pages).
 - `is_claim_verified` (verified-wins slice, 2026-06-30) — `true` when the page has a **verified on-chain operator/creator claim** (`onchain_claims.status='verified' AND claim_role IN ('operator','creator')`), i.e. the real entity proved key control. Distinct from `is_claimed` (ANY claim exists) and from `is_verified`/the member email flag. Drives the "✓ Verified Operator" badge + the dominant search-ranking bonus + same-name look-alike demotion. `false` on `member`/`community` cards (not on-chain-claimed). Projected from the read model (`has_verified_claim`), refreshed whenever a claim verify/revoke re-syncs the page.
 - `claim_target` (per §N8) — non-null only when the page is unclaimed AND a claim target resolves. Drives the four-step claim modal.
+- `messaging` (v1.52) — **server-owned destination state** for entity-addressed messages. Always present. Shape: `{ destination: "queue" | "operator" | "unavailable" | "none", operator: { handle, name } | null }`.
+  - `operator` — exactly one verified operator; `POST /me/conversations {page_id}` opens an ordinary DM with them. `operator` is non-null ONLY in this state.
+  - `queue` — validator has **never** been claimed; a message is durably queued for its first verified operator (see §4.19 First-claim backlog release).
+  - `unavailable` — the page cannot accept a message right now. **Deliberately collapses two distinct server states** (previously claimed but currently unclaimed, and more-than-one-verified-operator/ambiguous) into one value: clients must not attempt to distinguish them, and no claimant identity is ever emitted for them.
+  - `none` — not a messageable kind (member/community/project/creator at V1), or the surface is operator-disarmed.
+  - **Clients MUST NOT infer messaging lifecycle from `is_claimed`** — that field cannot distinguish never-claimed from previously-claimed, which are different destinations. `messaging.destination` is the only sanctioned source. It is a rendering hint: the server re-resolves on every submit, so a stale card degrades to an honest error, never a misroute.
 - `chains` (per §K3) — list of `CardChain` objects when 2+ chains back the same page; `null` otherwise. V1.5 validator-only; creator gallery filter is V2.
 - `rank_label` — **populated on `member` cards** (the level-derived Rank label — Apprentice/Journeyman/Master — via `UserViewService::getSummary`); may be `""` when the member has no derived rank yet. `null` on page kinds (`validator`/`project`/`creator`) — Rank is member-only. The field is always present (the union is `string | null`). `current_rank_label` mirrors it (own/profile surfaces).
 - `reputation_tier_label` — **honest member trust-tier name** (Risky/Caution/Neutral/Trusted/Proven). Populated on `member` cards; `null` on page kinds (entity cards use `card_tier`/`tier_label` rarity instead). Always present (`string | null`).
@@ -4122,21 +4137,48 @@ Paginated list of the viewer's conversations, ordered by `mpart_last_activity DE
 
 Start a new 1-on-1 conversation OR append to an existing 1-on-1 with the same recipient. Idempotent — backend find-or-creates via `PeepSoMessagesModel`.
 
+Addresses EITHER a user (`recipient_id`) OR a validator page (`page_id`) — mutually exclusive, exactly one required.
+
 - **Auth:** required.
-- **Body:** `{ "recipient_id": 25, "body": "hey, what's up?" }`
-- **Response 200:**
+- **Body:** `{ "recipient_id": 25, "body": "hey, what's up?" }` **XOR** `{ "page_id": 8821, "body": "are you taking delegations?" }`
+- **Response 200 (user-addressed, or a validator claimed by a verified operator):**
   ```json
   { "conversation_id": 4031, "message_id": 4051, "is_new_conversation": false }
   ```
+- **Response 200 (validator page that has NEVER been claimed — queued):**
+  ```json
+  {
+    "queued": true,
+    "page_id": 8821,
+    "accepted_at": "2026-07-23T18:04:11Z",
+    "delivery_state": "awaiting_first_verified_operator"
+  }
+  ```
+  No `conversation_id` is returned and no conversation is created — the message is durably stored and delivered when the validator is first claimed (see **First-claim backlog release** below). Clients MUST branch on `queued` and must not navigate to a conversation.
 - **Errors:**
   - `bcc_unauthorized 401`.
-  - `bcc_invalid_request 400` — empty body, body > 5000 chars, missing/zero `recipient_id`, `recipient_id === sender`.
-  - `bcc_not_found 404` — recipient doesn't exist OR mutual block (info-leak shield).
+  - `bcc_fraud_locked 403` — sender is suspended or banned. Applies to every send path.
+  - `bcc_invalid_request 400` — empty body, body > 5000 chars, neither `recipient_id` nor `page_id`, BOTH supplied ("Provide recipient_id or page_id, not both."), `recipient_id === sender`, or `page_id` is not a validator page ("Messaging is not available for this page." — project/creator pages are out of scope at V1).
+  - `bcc_not_found 404` — recipient doesn't exist OR mutual block (info-leak shield); `page_id` missing / not a published `peepso-page`.
   - `bcc_forbidden 403` — sender's chat_enabled false, recipient's chat_enabled false, friends-only + not friends.
-  - `bcc_rate_limited 429` — 30/5min cap exceeded.
+  - `bcc_messaging_unavailable 409` — the validator cannot accept a message in its current claim state: previously claimed but currently unclaimed, OR more than one verified operator claim (ambiguous). **One code, one message for both** — the response never reveals which, and never exposes claimant identities.
+  - `bcc_queue_limit 409` — sender already holds the maximum pending queued messages for this validator (3).
+  - `bcc_queue_full 409` — the validator's pending queue is at capacity (500).
+  - `bcc_rate_limited 429` — 30/5min cap exceeded. Queue submissions and PeepSo sends share one budget.
   - `bcc_unavailable 503` — PeepSo write failure.
-- **Side effects:** PeepSo's `peepso_messages_new_conversation` action fires; email notification queued; `peepso_should_get_chats` SSE event triggered for every participant (powers PeepSo-native UIs that share the database).
+- **Server-authoritative resolution:** the destination is re-resolved on EVERY submission from the canonical claim source. A client may not infer it from the card; the card's `messaging.destination` is a rendering hint whose staleness is always resolved server-side.
+- **Side effects:** PeepSo's `peepso_messages_new_conversation` action fires; email notification queued; `peepso_should_get_chats` SSE event triggered for every participant (powers PeepSo-native UIs that share the database). The queued path has no PeepSo side effects until delivery.
 - **Cache:** `no-store`.
+
+##### First-claim backlog release (validator pages)
+
+Messages queued against a never-claimed validator are delivered when that validator receives its **first verified operator claim**, and only to that first operator. Semantics:
+
+- **One-time preference bypass.** For this release only, the recipient's `chat_enabled` and `chat_friends_only` preferences are bypassed — the messages were addressed to a public entity before any operator existed. After the release, all new messages and all replies follow ordinary DM rules; **no ongoing exemption is created**.
+- **Safety rules are never bypassed.** Mutual block, deleted/suspended/banned sender, self-message, and content validity are re-checked at delivery time; a failing row moves to a terminal `suppressed` state — never delivered, never retried forever, and never reported as delivered.
+- **No replay.** A later claim transfer never re-delivers the backlog; a validator that was previously claimed and is currently unclaimed does not reopen the queue (it reports `bcc_messaging_unavailable`).
+- **Durability.** Accepted messages do not expire and are never silently dropped. They leave the queue only by delivery, explicit suppression, or a visible operational failure requiring recovery.
+- **Delivery shape.** One ordinary conversation per sender/operator pair, preserving each sender's chronological order; the operator's existing unread badge reflects it. Per-message email notifications are suppressed for the backlog release so a claim does not produce a notification storm.
 
 #### `GET /bcc/v1/me/conversations/{id}/messages`
 
@@ -6056,6 +6098,53 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.52 — 2026-07-23 — Validator pages accept messages (live to operator, queued pre-claim)
+
+> **Numbering:** v1.51 is reserved for the in-flight wallet-privacy remediation. This entry is
+> additive and independent of it.
+
+Members can message a validator page. The server re-resolves the destination on **every**
+submission — clients never decide where a message goes.
+
+**`POST /bcc/v1/me/conversations` (§4.19)** now accepts `{page_id, body}` as a mutually
+exclusive alternative to `{recipient_id, body}`:
+
+- **Claimed by exactly one verified operator** → an ordinary DM with that operator; the
+  existing `{conversation_id, message_id, is_new_conversation}` response is unchanged.
+- **Never claimed** → the message is **durably queued** for the validator's first verified
+  operator. New truthful response `{queued: true, page_id, accepted_at, delivery_state}` —
+  no conversation id, no fabricated recipient. Clients branch on `queued`.
+- **Previously claimed but currently unclaimed, or ambiguous (>1 verified operator)** → fails
+  closed with a single generic `bcc_messaging_unavailable 409`. The two states are
+  **indistinguishable on the wire** and no claimant identity is exposed.
+
+**First-claim backlog release:** queued messages deliver once, to the first verified operator.
+For that release only, the recipient's `chat_enabled` and `friends_only` preferences are
+bypassed (the messages predate any operator). Every safety rule — mutual block, deleted /
+suspended / banned sender, self-message, content validity — is re-checked at delivery and a
+failing message moves to a terminal suppressed state: never delivered, never retried forever,
+never reported as delivered. **No ongoing exemption is created**; later messages and all
+replies follow ordinary DM rules, and a claim transfer never replays the backlog. Accepted
+messages do not expire and are never silently dropped.
+
+**Card view-model (§2.1, §3.2):**
+- New `messaging { destination, operator }` block — the ONLY sanctioned source for messaging
+  lifecycle. `is_claimed` cannot distinguish never-claimed from previously-claimed and must
+  not be used for this.
+- New `permissions.can_message`, produced by the same messaging-policy evaluator as the send
+  path. Mutual block and DMs-off deliberately emit byte-identical payloads
+  (`messaging_unavailable`) — the §4.19 info-leak shield now holds on reads too.
+
+**Corrected drift (behavior change):** the profile view-model's `can_message` was a bare
+chat-enabled probe, so friends-only and mutually-blocked recipients rendered an enabled
+Message button that always failed on submit. It now mirrors the write gates. Shape unchanged;
+`allowed` is stricter and `unlock_hint` may be non-null.
+
+**Also:** DM sends now enforce suspension/ban (`bcc_fraud_locked` 403) — the DM path was the
+only mutating surface without that gate. New codes: `bcc_messaging_unavailable`,
+`bcc_queue_full`, `bcc_queue_limit` (all 409); `bcc_unavailable` (503) was in use but
+undocumented and is now registered.
 
 ### v1.50 — 2026-07-23 — Endorse display labels converge to Vouch; dead endorse notification plumbing retired
 
