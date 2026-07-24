@@ -4309,6 +4309,31 @@ Slim header-badge endpoint — returns the total count of conversations with unr
 - **Response 200:** `{ "count": 3 }`
 - **Cache:** `private, no-store`. Polled by the frontend's `useUnreadMessageCount` hook with adaptive cadence (5s active / 30s idle, mirroring PeepSo's `peepsomessages.js`).
 
+#### `GET /bcc/v1/me/queued-messages` (v1.54)
+
+The viewer's own **pending pre-claim validator messages** — the "Queued" tab of `/messages`. A message addressed to a validator with no verified operator (§4.19 first-claim queue) is not a conversation, so it never appears in the inbox; this endpoint is the only sender-facing view of it. When the validator is first claimed, the backlog delivers and the message becomes an ordinary thread (in both inboxes), leaving this list.
+
+- **Auth:** required.
+- **Query:** `page` (1-indexed, default 1), `per_page` (default 20, max 50).
+- **Scope:** returns ONLY the viewer's own rows, and only **pending** ones (`queued` / `retryable` / `processing`). Delivered rows are excluded (they are in the inbox); suppressed / failed rows are excluded (a suppression reason must not leak to the sender). The `preview` is the viewer's own message text, so echoing it is safe.
+- **Response 200:**
+  ```json
+  {
+    "items": [
+      {
+        "id": 51,
+        "validator": { "page_id": 2106, "name": "Upbit Staking", "slug": "upbit-staking-cosmos-wdgw30", "avatar_url": "..." },
+        "preview": "are you taking delegations?",
+        "delivery_state": "awaiting_first_verified_operator",
+        "created_at": "2026-07-24T05:51:04Z"
+      }
+    ],
+    "pagination": { "page": 1, "per_page": 20, "total": 1, "total_pages": 1 }
+  }
+  ```
+- **Errors:** `bcc_unauthorized 401`.
+- **Cache:** `private, no-store`.
+
 **V1 deferred** (none of these block ship):
 - Group-conversation creation UI (read-only support: existing group convos surface in the inbox + thread renders all participants).
 - Mute / unmute conversation (PeepSo data model already supports it via `mpart_muted`).
@@ -6182,6 +6207,19 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.54 — 2026-07-24 — Sender-facing "Queued" messages tab
+
+Additive. A sender can now see the validator messages they've queued (to
+not-yet-claimed validators) — previously fire-and-forget with no sender-side view.
+
+- **New `GET /bcc/v1/me/queued-messages`** (§4.19) — the viewer's own PENDING queued
+  messages, newest first. Sender-scoped; returns only `queued`/`retryable`/`processing`
+  rows (delivered ones are in the inbox; suppressed/failed are not surfaced, so no
+  suppression reason leaks). Each item carries the target validator (name / slug / avatar),
+  a preview of the sender's own text, `delivery_state`, and `created_at`.
+- **Frontend:** `/messages` gains two tabs — **Messages** (the existing inbox) and
+  **Queued** (this endpoint). No change to existing endpoints or response shapes.
 
 ### v1.53 — 2026-07-23 — Validator pages accept messages (live to operator, queued pre-claim)
 
