@@ -6101,10 +6101,8 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ### v1.53 — 2026-07-23 — Validator pages accept messages (live to operator, queued pre-claim)
 
-> **Numbering:** v1.51 (wallet-privacy) is merged; v1.52 is claimed by the concurrent
-> Communities-vocabulary contract PR. This entry is additive and independent of both, so it
-> takes v1.53. If it merges before the v1.52 PR, main will briefly skip v1.52 — harmless, and
-> preferable to two entries sharing a number.
+> **Numbering:** v1.51 (wallet-privacy) and v1.52 (Communities vocabulary, §4.7.8) are both
+> merged. This entry is additive and independent of both, so it takes v1.53.
 
 Members can message a validator page. The server re-resolves the destination on **every**
 submission — clients never decide where a message goes.
