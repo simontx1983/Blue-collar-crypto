@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.49 · 2026-07-23 · Phase 1 deliverable
+**Status:** Draft v1.51 · 2026-07-23 · Phase 1 deliverable · **⚠️ BREAKING**
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -304,6 +304,7 @@ Every response carries a `Cache-Control` header. The Next.js app uses React Quer
 - **Asset / media URLs (avatars, NFT images, drop images, blog images):** **absolute** (`https://bluecollar.crypto/wp-content/uploads/...`). CDN-ready: the server controls the host so we can swap to a CDN origin without a contract change. The frontend never rewrites these. **No relative paths for media.**
 - **External URLs (`release_url`, cross-origin `mint_link`, etc.):** absolute.
 - **Wallet `address_short`:** truncated as `<first-6>…<last-4>` for all chains, taken from the full chain-prefixed address string (e.g., `cosmos1abcdef0123…wxyzq3kf` → `cosmos…q3kf`; `0xab5801a7d398351b8be11c439e05c5b3259aec9b` → `0xab58…ec9b`). The server is the only writer; the frontend never re-truncates.
+  **This form appears ONLY on own-account surfaces.** A shortened address is a wallet identifier, not an anonymisation: it is the standard way wallets are visually matched and it is directly searchable on a block explorer. It must never cross a member boundary. See [docs/wallet-privacy-policy.md](wallet-privacy-policy.md).
 
 ### 1.8 Locale
 
@@ -753,6 +754,10 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
     { "id": 12, "slug": "cosmos-base-fan", "name": "Local 342 Cosmos Base Fan", "number": 342, "is_primary": true },
     { "id": 18, "slug": "delegators-united", "name": "Local 519 Delegators United", "number": 519, "is_primary": false }
   ],
+  // OWN-ACCOUNT ONLY. This array is populated exactly as shown when
+  // `is_self` is true, and is `[]` for every other viewer (see §3.1
+  // "Viewing someone else's profile"). Never render it on a surface a
+  // different user can see. docs/wallet-privacy-policy.md
   "wallets": [
     {
       "id": 17,
@@ -820,7 +825,7 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
 - `progression`, `feature_access`, `ux_helpers` are **omitted entirely** (not even `null`). They are own-only.
 - `privacy` block reduced to `{ watching_hidden, reviews_hidden, ... }` reflecting what the viewer can see, not what's set.
 - `permissions.can_follow` becomes meaningful (`allowed: true` if the viewer can watch this user as a member card).
-- `wallets` returns `address_short` only (never full addresses for others — the privacy floor).
+- `wallets` is **`[]`** — always, for every viewer who is not the profile owner (authenticated stranger *and* anonymous alike). Not a masked address, not a wallet-link id, no entries at all. Wallet connections are private account data; the only wallet signal that crosses a member boundary is the derived `verifications.wallets_verified` count, which remains accurate because the server sources it from the repository rather than counting this array. See [docs/wallet-privacy-policy.md](wallet-privacy-policy.md).
 
 **Field rules:**
 
@@ -1575,16 +1580,7 @@ Per-piece detail view-model used by §4.17. One row per uniquely-identified NFT,
     { "trait_type": "Tool",       "value": "MIG Welder", "rarity_pct": 4.2  }
   ],
   "owner": {
-    "wallet_address": "0xabcdef0123456789abcdef0123456789abcdef01",
-    "address_short":  "0xabcd…ef01",
-    "balance":        1,
-    "is_linked":      true,
-    "user": {
-      "id":           42,
-      "handle":       "simontx",
-      "display_name": "Simon TX",
-      "avatar_url":   "https://bluecollar.crypto/wp-content/uploads/2026/05/simontx-avatar.jpg"
-    }
+    "is_linked": true
   },
   "owners_count":      1,
   "owners":            [],
@@ -1611,14 +1607,12 @@ Per-piece detail view-model used by §4.17. One row per uniquely-identified NFT,
 - `token_id` is a STRING, not a number. CW-721 token IDs are arbitrary strings; ERC-1155 token IDs are uint256 and exceed JS `Number.MAX_SAFE_INTEGER`. Always render verbatim; never coerce to Number.
 - `image_url` is the full asset URL; `image_url_thumb` is a CDN-resized thumbnail (≤ 512 px on the long edge). Both are absolute URLs per §1.7. `image_url_thumb` falls back to `image_url` when no resize is available.
 - `attributes[]` is the standard NFT trait array (OpenSea convention). `rarity_pct` is OPTIONAL — present only when the indexer has computed the trait's frequency across the collection. Empty array `[]` when the piece has no metadata; never `null`.
-- `owner` is the single dominant holder:
-  - **ERC-721 / CW-721** — the unique holder. `null` when no on-chain holder is known (cold-cache, freshly minted, indexer behind).
-  - **ERC-1155** — the top-balance holder, ties broken by lowest `wallet_address` lexicographic. Always non-null when at least one holder exists.
-  - `owner.balance` is `1` for ERC-721 / CW-721, the actual SUM(balance) for ERC-1155.
-  - `owner.is_linked` is `true` when the wallet is connected to a BCC user; `owner.user` is non-null IFF `is_linked` is true.
-  - `owner.address_short` follows the §1.7 wallet pattern (`<first-6>…<last-4>`).
+- `owner` is the single dominant holder, reduced to **one field: `is_linked`**.
+  - `null` when no on-chain holder is known (cold-cache, freshly minted, indexer behind).
+  - `owner.is_linked` is `true` when *some* BCC member holds the piece. It names nobody and cannot be resolved back to a member.
+  - **Removed in v1.51 (BREAKING):** `wallet_address`, `address_short`, `balance`, and the `user` block. This route is anonymous, so all four were world-readable. The `user` block was the severe one — it resolved the holder's BCC identity from a **private wallet link**, publishing a member↔holding join the member never consented to, and iterating token IDs turned it into a wallet→member table. Verifying a wallet is not consent to broadcast what it holds; holdings are disclosed only through the explicit opt-in NFT showcase. See [docs/wallet-privacy-policy.md](wallet-privacy-policy.md).
 - `owners_count` is the total distinct holder count. Always `1` for ERC-721 / CW-721 with a known holder; `0` when no holder is known. For ERC-1155 it is the count of wallets with `balance > 0`.
-- `owners[]` is empty (`[]`) for ERC-721 / CW-721 (the single holder lives on `owner` only). For ERC-1155 it is the top-N holders by balance, capped server-side at **N = 10**. Each item has the same shape as `owner` minus `is_linked` / `user` enrichment (privacy: only the dominant `owner` gets handle resolution; the rest stay wallet-only). Future expansion to a paginated full-holder list is a separate endpoint.
+- `owners[]` is **always empty (`[]`)**, for every token standard. **Changed in v1.51 (BREAKING).** It previously fanned out the top-10 ERC-1155 holders as `{wallet_address, address_short, balance}` — every field a wallet identifier or a holding bound to one, on an anonymous route. The aggregate holder count survives as `owners_count`, which identifies nobody. The field is retained as an empty array so the shape stays stable for clients. A future paginated holder list is not planned; it would need to solve the same disclosure problem.
 - `marketplace_links[]` is per-chain. Empty array when no marketplace is configured for the chain. The list is server-curated from a new `bcc_onchain_chains.marketplace_template` column (added in V2 Phase 6 — see §4.17 mapping notes) and is stable across requests.
 - `mint_link` mirrors the §3.2 Card pattern; relative path within the BCC site, points to the creator's mint surface with the token pre-selected.
 - `permissions` is reserved for future viewer-aware actions (favorite, hide-from-watchlist, etc.) — V2 Phase 6 ships with `{}`. Frontend renders no per-piece actions.
@@ -4901,15 +4895,23 @@ Unlinks a wallet owned by the current user. Idempotent — a double-tap unlink a
 - **Lockout guard (`bcc_last_recovery_method` 409):** the request is refused — and the wallet is NOT removed — when it would delete the caller's **last verified wallet** on an account with no real recovery email (i.e. only the synthetic `@noreply.bcc.local` placeholder). Such an account's wallet is its sole credential, so removing it would be a permanent self-lockout. Clients should prompt the user to add a recovery email or link a second wallet first. Accounts with a real recovery email, or with a second verified wallet, are never blocked.
 - **Side effects on a true state transition (`removed: true` for an own-wallet):** removes the wallet's per-wallet on-chain data (NFT holdings + profile selections keyed on the `wallet_link_id`); writes a `wallet_unlinked` audit row (`AuditLogger::log`); fires `AccountSecurityMailer::walletUnlinked` (§4.23 side-channel); and dispatches the trust-engine domain event `bcc_wallet_disconnected` **directly from this endpoint** (this REST path deletes the row itself rather than routing through `WalletIdentityService::unlinkWallet`). Listeners on that event perform claim revocation + trust-score recalc (`BonusService::handleWalletDisconnect`), trust-signal teardown for the wallet's chain (`WalletSignalRepository::disconnect`), and Helius unsubscribe (Solana only).
 
-#### `GET /bcc/v1/wallets/project/{post_id}`
+#### `GET /bcc/v1/wallets/project/{post_id}` — **REMOVED in v1.51 (BREAKING)**
 
-Returns wallets linked to a project / validator / creator page, used by §N8 claim panels and on-page provenance strips.
+This route no longer exists. It read `WHERE post_id = %d LIMIT 200` with **no user
+scoping**, `\d+` matched `0`, and no write path in the codebase ever set a
+non-zero `post_id` — so every row in `bcc_wallet_links` had `post_id = 0` and
+`/wallets/project/0` returned 200 arbitrary members' wallet links to any
+logged-in caller, and full `wallet_address` values to any admin. The "privacy
+gate" described here only stripped the address for non-owners; the surrounding
+record (link id, chain, label, `is_primary`) still crossed the member boundary
+and served as an enumeration key.
 
-- **Auth:** required.
-- **Path:** `post_id` (integer, peepso-page CPT id).
-- **Response 200:** standard `{ data, _meta }` envelope where `data` is an array of wallet records, shape matching `/wallets` items above **with one privacy gate** — non-owners and non-admins see the full record minus `wallet_address`. The post author and admins see the full record.
-- **Errors:** `bcc_rate_limited` 429.
-- **Rate limit:** 30/min/user.
+It had no frontend consumer and was already listed for deletion by the
+2026-06-18 hardening audit under the no-unused-code policy.
+
+Wallet connections are private account data: the surviving surface is the
+session-scoped `GET /bcc/v1/wallets`. See
+[docs/wallet-privacy-policy.md](wallet-privacy-policy.md).
 
 #### `GET /bcc/v1/chains`
 
@@ -6056,6 +6058,48 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.51 — 2026-07-23 — **BREAKING** — wallet addresses are own-account-only
+
+Closes every cross-user wallet-disclosure path. A user's wallet address is now
+never disclosed to another user — full, shortened, hashed, ENS-named, or
+otherwise represented — and no member↔wallet or member↔holding join is
+reconstructable from a client-accessible surface. Policy:
+[docs/wallet-privacy-policy.md](wallet-privacy-policy.md).
+
+The root cause was not a slip but an inverted premise: the contract previously
+called "ship `address_short` to strangers" *the privacy floor*, the TypeScript
+type declared `address_short` non-optional (guaranteeing it to every viewer),
+and `api-contract-check.sh` asserted only the absence of `address` — so CI
+**certified the leak as passing**. A masked address is a wallet identifier: it
+is how wallets are visually matched and it is directly searchable on a block
+explorer.
+
+**Breaking shape changes:**
+
+| Surface | Before | After |
+|---|---|---|
+| `GET /users/{handle}` — non-self viewer (incl. anonymous) | `wallets[]` with `address_short`, `id`, chain, `is_primary`, `verified_at` | `wallets: []` |
+| `GET /users/{handle}` — own profile | unchanged | unchanged (full record) |
+| `GET /nft-pieces/…` `owner` | `{wallet_address, address_short, balance, is_linked, user{id,handle,display_name,avatar_url}}` | `{is_linked}` |
+| `GET /nft-pieces/…` `owners[]` | top-10 `{wallet_address, address_short, balance}` | `[]` (always) |
+| Card `chains[]` (validator) | `{slug, name, operator_address}` | `{slug, name, operator_verified}` |
+| `GET /wallets/project/{post_id}` | cross-user wallet-link listing | **route removed** |
+| `/suggestions/users` `co_validator.label` | `"Backs {moniker} too"` | `"Backs the same validator"` |
+
+**Non-breaking, preserved:** `verifications.wallets_verified` (the count) is
+unchanged and remains accurate for every viewer — the server now sources it from
+`WalletRepository::getVerifiedCountsForUsers()` instead of counting the (now
+empty) `wallets` array. It is the only wallet signal permitted to cross a member
+boundary. `GET /wallets` (session-scoped) is untouched: owners still manage their
+own wallets.
+
+**Also hardened (not contract shape):** the violation logger no longer truncates
+addresses to `first-6…last-4` next to a `user_id` — it emits a salt-keyed HMAC
+fingerprint, because reporting a privacy violation must not commit one. The
+`/members` edge-cache tag is now gated to anonymous requests: LiteSpeed's REST
+cache key varies on Cookie, not Authorization, so tagging an authenticated
+response published one viewer's personalised payload to everyone for the TTL.
 
 ### v1.50 — 2026-07-23 — Endorse display labels converge to Vouch; dead endorse notification plumbing retired
 
