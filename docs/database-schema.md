@@ -27,6 +27,50 @@ Repository/Service that reads it.
 
 ---
 
+## Schema-install gate vs. data-migration runner
+
+bcc-trust has **two independent mechanisms** under `includes/database/`. They are
+easy to conflate; keeping them apart matters because conflating them is what left
+the wallet-privacy backfill dormant (see `docs/wallet-privacy-policy.md` ▸ finding
+14).
+
+**(a) Schema-install gate — DDL only.** `bcc_trust_create_tables()` runs table
+creation/`dbDelta` only when `BCC_TRUST_SCHEMA_VERSION` changes.
+`BCC_TRUST_SCHEMA_VERSION` is the md5 of the `schema-*.php` files (plus the
+`DisputeRepository` / `SignalRepository` schema contributors). A deploy that
+does not alter any `schema-*.php` leaves the hash unchanged, so the gate
+early-returns and `create_tables()` never fires. This is correct **for DDL** —
+you do not want `dbDelta` on every request — but it means the gate is the **wrong
+place to hang data migrations**: a data-only fix touches no schema file, so it
+would never run.
+
+**(b) Data-migration runner — schema-hash independent.**
+`bcc_trust_run_pending_migrations()` runs on `plugins_loaded` (registered in
+`bcc-trust.php`, `accepted_args=0`), regardless of `BCC_TRUST_SCHEMA_VERSION`. It
+walks an **ordered registry** (`bcc_trust_pending_migrations()`), and for each
+not-yet-complete migration:
+
+- acquires a per-migration `\BCC\Core\DB\AdvisoryLock` (MySQL `GET_LOCK`,
+  session-scoped so it self-releases if the request dies — crash-safe, no stuck
+  lock), re-checks completion under the lock, runs the migration callback, and
+  records completion **only** when the callback returns `BCC_TRUST_MIGRATION_COMPLETE`;
+- a callback that returns `INCOMPLETE` (e.g. a batch cap was hit with rows still
+  remaining, or the fail-closed empty-salt guard tripped) is retried on the next
+  `plugins_loaded` — completion is durable and idempotent, so a re-run after a
+  crash resumes rather than repeats;
+- an all-done fast-path signature lets the common "nothing pending" case skip the
+  registry cheaply.
+
+Current registry: `canonical_handles_v1`, `wallet_placeholder_emails_v1`. The
+schema-install path in `tables.php` is itself routed through the same runner.
+
+> **Rule.** New data backfills register in the runner (`bcc_trust_pending_migrations()`),
+> **never** inside `create_tables()` or behind the schema-version gate. A
+> files-only deploy is then sufficient to migrate any DB — no schema bump, no
+> reactivation, no manual `wp eval`. Added by trust#118 (2026-07-24).
+
+---
+
 ## Master inventory
 
 | Table | ~rows | Purpose | Owning code | Status |

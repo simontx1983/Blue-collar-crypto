@@ -858,6 +858,18 @@ wp cron event list --fields=hook,next_run_relative,recurrence
 
 **Failure means:** A cron didn't get scheduled on plugin activation. Per memory note `project_v2_nft_cron_drift_incident.md`, the activation hook only fires on plugin activate — sites upgraded in-place may never schedule new events. Re-activation (deactivate → activate) re-fires the activation block. Plugin code now also self-heals on `plugins_loaded` — DO NOT remove the apparent redundancy.
 
+**Data migrations follow the same `plugins_loaded` self-heal rule (trust#118).**
+One-shot data backfills run through the data-migration runner
+(`bcc_trust_run_pending_migrations()`) on `plugins_loaded`, **independent of the
+`BCC_TRUST_SCHEMA_VERSION` schema-install gate**. Do **not** fold a backfill back
+into `bcc_trust_create_tables()` or gate it on the schema hash — that dependency
+is exactly what left the wallet-privacy placeholder-email backfill dormant when
+v1.51 shipped (the fix changed no `schema-*.php`, so the gate never fired). The
+runner is idempotent, ordered, and crash-safe (per-migration `AdvisoryLock`);
+a files-only deploy migrates the DB on the next request with no reactivation or
+manual `wp eval`. Full mechanism: `docs/database-schema.md` ▸ *Schema-install gate
+vs. data-migration runner*.
+
 ### 13.2 NFT indexer health snapshot
 
 ```bash
