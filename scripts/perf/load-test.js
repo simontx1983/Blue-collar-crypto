@@ -104,7 +104,7 @@ const ENDPOINTS = {
   search:       () => `${API}/search?q=${pick(SEARCH_TERMS)}`,
   groups:       () => `${API}/groups`,
   user_profile: (data) => `${API}/users/${__ENV.USER_HANDLE || (data && data.handle) || 'phillipcosmos'}`,
-  locals:       () => `${API}/locals`,
+  halls:        () => `${API}/halls`,
   cards_search: () => `${API}/cards/search?q=${pick(SEARCH_TERMS)}`,
 };
 
@@ -306,7 +306,7 @@ export default smokePass;
 
 // Weighted mix approximating real traffic shares for the ramp scenario.
 const MIX = [['feed_hot', 35], ['cards', 20], ['members', 10], ['search', 10],
-             ['groups', 5], ['user_profile', 5], ['locals', 5], ['cards_search', 10]];
+             ['groups', 5], ['user_profile', 5], ['halls', 5], ['cards_search', 10]];
 const MIX_TOTAL = MIX.reduce((s, [, w]) => s + w, 0);
 function pickWeighted() {
   let r = Math.random() * MIX_TOTAL;

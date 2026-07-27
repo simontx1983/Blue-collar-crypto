@@ -729,7 +729,7 @@ of what each table was and why it was retired — dev row counts are pre-drop.
 
 | Table | rows (dev) | Why orphaned |
 |---|---|---|
-| wp_bcc_user_locals | 0 | Removed in code; Locals membership moved to PeepSo `peepso_group_members`, primary-Local pointer is `wp_usermeta.bcc_primary_local_group_id` (single-graph rule). Removal comments in tables.php / TableRegistry / LocalsService; no schema file, no accessor. |
+| wp_bcc_user_locals | 0 | Removed in code; Hall membership moved to PeepSo `peepso_group_members`, primary-Hall pointer is `wp_usermeta.bcc_primary_hall_group_id` (single-graph rule). Removal comments in tables.php / TableRegistry / HallsService; no schema file, no accessor. |
 | wp_bcc_page_claims | 0 | Merged into `wp_bcc_onchain_claims` (entity_type='page'; recovery_pending lives there). Removal comments in tables.php + TableRegistry; no accessor. |
 | wp_bcc_wallet_signals | 0 | Superseded by `wp_bcc_onchain_signals` (unified). WalletSignalRepository docblock: "former bcc_trust_wallet_signals table is no longer written to." No active write/read. |
 | wp_bcc_trust_eligibility | 0 | Replaced by the in-process cache in VoteEligibilityChecker (120s TTL); docblock: "Replaces the previous DB-backed bcc_trust_eligibility table — no INSERT/DELETE." No accessor. |

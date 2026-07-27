@@ -312,14 +312,14 @@ The legacy `/me/binder/*` alias routes are removed; the frontend talks to
 
 ---
 
-## Locals (geo communities)
+## Halls (per-chain communities)
 
 | Route | Method | Frontend wrapper | Status |
 |---|---|---|---|
-| `/bcc/v1/locals` | GET | `locals-endpoints.getLocals` | ✅ |
-| `/bcc/v1/locals/{slug}` | GET | `getLocal` | ✅ |
-| `/bcc/v1/me/locals/{id}/primary`, `/me/locals/primary` | POST, DELETE | `setPrimaryLocal`, `clearPrimaryLocal` | ✅ |
-| `/bcc/v1/me/locals/{id}/membership` | POST, DELETE | `joinLocal`, `leaveLocal` | ✅ |
+| `/bcc/v1/halls` | GET | `halls-endpoints.getHalls` | ✅ |
+| `/bcc/v1/halls/{slug}` | GET | `getHall` | ✅ |
+| `/bcc/v1/me/halls/{id}/primary`, `/me/halls/primary` | POST, DELETE | `setPrimaryHall`, `clearPrimaryHall` | ✅ |
+| `/bcc/v1/me/halls/{id}/membership` | POST, DELETE | `joinHall`, `leaveHall` | ✅ |
 
 ---
 
@@ -453,7 +453,7 @@ in wp-admin — rendered server-side via `AdminDashboardRepository`.
 | Watching (rename complete) | ✅ full | — |
 | Feed & reactions (+ stoke) | ✅ full | — |
 | Messaging | ✅ full | — |
-| Locals | ✅ full | — |
+| Halls | ✅ full | — |
 | Groups & holder groups | ✅ full | — |
 | Notifications / highlights / celebrations / prefs / push | ✅ full | — |
 | Onboarding | ✅ full | — |

@@ -51,7 +51,7 @@ lives in `bcc-frontend/`.
 | **NFT Creator** | An NFT-minting entity page. Canonical page type `nft`; rendered as `creator` card kind. | `PeepSoPageRepository.php` (`nft-creators → nft`); `CardKind` `creator`. |
 | **DAO** | A DAO entity page. Canonical page type `dao`. | `PeepSoPageRepository.php` (`daos → dao`). |
 | **Builder** | **Not a distinct entity.** Builders are aliased to the `project` page type; there is no separate builder card or block. | `PeepSoPageRepository.php` (`builders → project`). |
-| **Community / Local** | A PeepSo Group rendered as a `community` card. A member can join multiple and designate one as **primary** (`primary_local`), shown on their card. Browsable at `/locals`. | `CardKind` `community`; `primary_local` + `PrimaryLocalChip` (`bcc-frontend/src/components/cards/MemberDossier.tsx`); routes `bcc-frontend/src/app/(main)/locals/page.tsx`, `.../locals/[slug]/page.tsx`. |
+| **Community / Hall** | A PeepSo Group rendered as a `community` card. **Halls** are auto-provisioned one per active chain (system-created, open); a member can join multiple and designate one as **primary** (`primary_hall`), shown on their card. Browsable at `/halls`. | `CardKind` `community`; `primary_hall` + `PrimaryHallChip` (`bcc-frontend/src/components/cards/MemberDossier.tsx`); routes `bcc-frontend/src/app/(main)/(app)/halls/page.tsx`, `.../halls/[slug]/page.tsx`. |
 | **Piece** | A single NFT, served as a view-model. | `NftPieceViewModelBuilder` (`bcc-trust/app/Domain/Onchain/Services/`); `NftPieceEndpoint` (`bcc-trust/app/Domain/Onchain/REST/`). |
 | **Collection** | A group of NFTs by one creator. | `bcc_onchain_collections`; `CollectionRepository`, `CollectionService` (`bcc-trust/app/Domain/Onchain/`). |
 

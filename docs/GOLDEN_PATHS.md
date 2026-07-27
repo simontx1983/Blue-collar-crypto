@@ -333,7 +333,7 @@ For each result, read the file at the cited line and confirm an explicit gate pr
 
 - `NftGroupGateService::joinIfEligible()` — eligibility check, opt-out, balance, chain → then `::join` (verified 2026-05-13).
 - `MyGroupsEndpoint::postJoin` — privacy=open check + closed/secret rejection → then `::join`.
-- `LocalsService::setPrimary` — Locals are intentionally open-membership.
+- `HallsService::setPrimary` — Halls are intentionally open-membership.
 
 **Failure means:** A new code path is calling `PeepSoGroupWriter::join` without a gate. This is the most dangerous regression in the platform. Stop, revert, and run the `peepso-write-guard` skill (the durable gate check; it replaced the retired `holder-groups-reviewer` agent).
 
@@ -644,7 +644,7 @@ grep -rn "PeepSoGroupWriter::join\|member_join\|PeepSoGroupUser->member_join" \
 - `bcc-trust/app/Domain/Onchain/Services/NftGroupGateService.php:87` — gated by `joinIfEligible`
 - `bcc-trust/app/Domain/Onchain/Services/NftGroupGateService.php:184` — gated by `reconcileForUser` (which is gated by `findEligibleGroups` + opt-out)
 - `bcc-trust/app/Domain/Core/REST/MyGroupsEndpoint.php:133` — gated by privacy=open check + Throttle
-- `bcc-trust/app/Domain/Core/Services/LocalsService.php` — Locals are intentionally open-membership
+- `bcc-trust/app/Domain/Core/Services/HallsService.php` — Halls are intentionally open-membership
 
 Any other caller is a violation.
 
