@@ -284,7 +284,7 @@ Every response carries a `Cache-Control` header. The Next.js app uses React Quer
 | Feed pages | 30s | 15s |
 | User profile (others') | 60s | 30s |
 | User profile (self) | 0s (always fresh) | 0s |
-| Locals list | 5m | 2m |
+| Halls list | 5m | 2m |
 | Ranks list | 5m | 5m |
 | NFT gallery | 30m (stale-while-revalidate per §H1) | 5m |
 | Auth nonce | 0s, single-use | 0s |
@@ -302,7 +302,7 @@ Every response carries a `Cache-Control` header. The Next.js app uses React Quer
   - **unique** (case-insensitive)
   - reserved handles blocked (server-managed list: `admin`, `bcc`, `support`, `system`, `api`, `null`, etc.)
   - **required before any posting/reacting/pulling/vouching/dispute-signing.** Endpoints that gate on posting MUST return `bcc_permission_denied` with `unlock_hint: "Pick a handle to start posting."` if the authenticated user has no `bcc_handle`.
-- **Slugs:** strings, lowercase, kebab-case, no leading slash. **Immutable post-creation** — once assigned, a slug never changes. Admins rename via display name only (e.g., a Local's `name` updates, the slug does not). This guarantees `links.self` URLs stay stable forever.
+- **Slugs:** strings, lowercase, kebab-case, no leading slash. **Immutable post-creation** — once assigned, a slug never changes. Admins rename via display name only (e.g., a Hall's `name` updates, the slug does not). This guarantees `links.self` URLs stay stable forever.
   - **Feed-item nuance (v1.39):** a post's `links.self` is `/u/{handle}/post/{shortcode}`. The **shortcode** is the immutable, canonical resolver key (8 letters, `wp_bcc_post_shortcodes`); the **handle prefix is display context only** and follows the author's current handle — after a handle change the old URL's shortcode still resolves, and the frontend redirects to the canonical handle. Immutability attaches to the shortcode, not the full string.
 - **Navigation URLs:** root-relative (`/v/blacksmith-node`, not `https://bluecollar.crypto/v/blacksmith-node`). Used in `links.*` fields. The frontend prepends host as needed.
 - **Asset / media URLs (avatars, NFT images, drop images, blog images):** **absolute** (`https://bluecollar.crypto/wp-content/uploads/...`). CDN-ready: the server controls the host so we can swap to a CDN origin without a contract change. The frontend never rewrites these. **No relative paths for media.**
@@ -418,7 +418,7 @@ Or, if the viewer has zero network connection:
 - `named_handles` only ever contains **elite** or **trusted** tier users from the viewer's network (§O4.1).
 - `additional_count` includes neutral-tier users from the viewer's network. Caution/risky users are excluded entirely (§O4.1 + §K1 shadow-limit propagation).
 - **Hidden-watchlist rule (§O4):** users who have hidden their watchlist (per §K2) still contribute to `additional_count` but **never** appear in `named_handles`, even if they're elite/trusted.
-- `kind` is one of: `follow`, `vouch`, `stand_behind`, `dispute_signed`, `nft_held`, `local_member`. Determines which verb the headline uses.
+- `kind` is one of: `follow`, `vouch`, `stand_behind`, `dispute_signed`, `nft_held`, `hall_member`. Determines which verb the headline uses.
 - `weighted: true` means the headline applied trust weighting; `false` means raw count (used only on internal admin views, never on public surfaces — kept in the contract for symmetry).
 
 **Anti-rule:** the frontend MUST NOT show `additional_count` as a separate UI element. The server has already incorporated it into `headline`. Showing it twice is a rendering bug.
@@ -452,7 +452,7 @@ Or `null` if the action shouldn't celebrate.
 - `kind` is one of: `light` (e.g., a normal watch), `mid` (first-of-its-kind action — server tracks via `bcc_first_*` user_meta flags per §O1.2), `heavy` (tier upgrade, rank promotion, feature unlock, 30-day streak).
 - For Heavy moments delivered via §4.11, the inline shape is wrapped — `kind`/`label`/`icon` are nested under `celebration`, alongside an `id` for consume targeting. See §4.11 for the wrapper.
 - `label` is what the frontend renders in the toast. Plain English, ≤ 50 chars.
-- `icon` is a server-defined enum the frontend maps to a sprite (`watch`, `review-stamp`, `vouch-handshake`, `dispute-shield`, `rank-up`, `tier-upgrade`, `streak-flame`, `unlock`, `local-badge`). The legacy `pull` icon name is accepted by the frontend during the §1.1.1 deprecation window — see §4.5.1.
+- `icon` is a server-defined enum the frontend maps to a sprite (`watch`, `review-stamp`, `vouch-handshake`, `dispute-shield`, `rank-up`, `tier-upgrade`, `streak-flame`, `unlock`, `hall-badge`). The legacy `pull` icon name is accepted by the frontend during the §1.1.1 deprecation window — see §4.5.1.
 - `rarity_tint` is non-null only on `light` celebrations triggered by a watch — the value is the watched card's `card_tier`, used for the glow color (§O1).
 - Reduced-motion fallback (§O1.2): the frontend renders the static toast with `label`, ignoring all animation hints. Server contract is identical; the rendering decision is client-side only.
 
@@ -488,7 +488,7 @@ Encodes §O3 + §O3.1. Appears on User view-models.
 - `today` keys with value `0` are **omitted** from the rendered string per §O3 — but they ARE returned in the JSON for completeness. The frontend filters zeros before composing the display line.
 - `streak_at_risk_today: true` means the user has had no qualifying activity today (UTC) — surfaces a soft prompt in the UI.
 - `comparison.kind` is one of: `network_percentile`, `local_peer`. The "friend comparison" variant was cut (§O3.1, deferred list).
-- `comparison` rotates server-side every 24h between the available kinds. If the user has no primary Local, only `network_percentile` is returned.
+- `comparison` rotates server-side every 24h between the available kinds. If the user has no primary Hall, only `network_percentile` is returned.
 - `comparison` is `null` when the user is too new for a meaningful comparison (server threshold: < 7 days active OR < 5 actions logged).
 
 ### 2.5 `ProgressionBlock`
@@ -750,16 +750,15 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
   "rank_label": "Journeyman",
   "is_in_good_standing": true,
   "flags": [],
-  "bio": "Cosmos validator nerd. Iron Local 342.",
-  "primary_local": {
+  "bio": "Cosmos validator nerd. Regular in the Cosmos Hall.",
+  "primary_hall": {
     "id": 12,
-    "slug": "cosmos-base-fan",
-    "name": "Local 342 Cosmos Base Fan",
-    "number": 342
+    "slug": "cosmos-hall",
+    "name": "Cosmos Hall"
   },
-  "locals": [
-    { "id": 12, "slug": "cosmos-base-fan", "name": "Local 342 Cosmos Base Fan", "number": 342, "is_primary": true },
-    { "id": 18, "slug": "delegators-united", "name": "Local 519 Delegators United", "number": 519, "is_primary": false }
+  "halls": [
+    { "id": 12, "slug": "cosmos-hall", "name": "Cosmos Hall", "is_primary": true },
+    { "id": 18, "slug": "osmosis-hall", "name": "Osmosis Hall", "is_primary": false }
   ],
   // OWN-ACCOUNT ONLY. This array is populated exactly as shown when
   // `is_self` is true, and is `[]` for every other viewer (see §3.1
@@ -858,7 +857,7 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
   "card_kind": "validator",
   "name": "Blacksmith Node",
   "handle": "blacksmith-node",
-  "bio": "Cosmos validator. Iron Local 342.",
+  "bio": "Cosmos validator. Regular in the Cosmos Hall.",
   "trust_score": 98,
   "reputation_tier": "elite",
   "reputation_tier_label": null,
@@ -918,10 +917,10 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
       "disputes_signed": 1
     },
     "owned_pages_by_type": { "validator": 1, "project": 0, "nft": 0, "dao": 0 },
-    "primary_local": { "id": 342, "slug": "iron-local-342", "name": "Iron Local 342", "number": 342 }
+    "primary_hall": { "id": 342, "slug": "cosmos-hall", "name": "Cosmos Hall" }
   }
   ```
-  `primary_local` is `null` when the member has no primary Local; `primary_local.number` is `null` when the Local name has no parseable number.
+  `primary_hall` is `null` when the member has no primary Hall.
 - `card_tier` may be `null` only when the entity is risky-tier (per §C1) — and in that case the entity should not appear in card UIs at all. If a card response returns `card_tier: null`, the frontend renders nothing visible (treat as a 404 from the UI perspective).
 - `permissions.can_watch.allowed` is `false` when (a) viewer is anonymous, (b) viewer is the card subject (you can't follow yourself), or (c) the card is hidden (risky tier). In cases (a) and (c), `unlock_hint` is `null` — these aren't hints the user can resolve. (Legacy permission key `permissions.can_watch` is emitted alongside `can_watch` during the §1.1.1 deprecation window.)
 - `viewer_has_reviewed` / `viewer_has_endorsed` (per §D2 / §V1.5) — drives "WRITE A REVIEW" → "REMOVE YOUR REVIEW" CTA swaps. Always `false` for anonymous viewers. **v1.49:** `viewer_has_reviewed` is REAL on `member` cards too (has the viewer reviewed this member — a vote on their self-page); the old "always false on member cards" rule is retired. `viewer_has_endorsed` stays `false` on member cards (endorsements target page cards only).
@@ -967,19 +966,19 @@ When on-chain meta is wired (per §K3 chain support and §H1 indexer), entity ca
 - **Validator:** `trust`, `uptime` (percent), `fee` (percent), `self_bonded` (currency_native), `delegators` (count), `voting_power` (percent)
 - **Project:** `trust`, `stage` (text), `tvl` (currency_usd), `contributors` (count), `last_release` (text)
 - **Creator:** `trust`, `pieces` (count), `collections` (count), `collectors` (count), `last_drop_at` (duration)
-- **Member:** add `rank` (text), `watching_size` (count), `primary_local` (text)
+- **Member:** add `rank` (text), `watching_size` (count), `primary_hall` (text)
 
 V1 frontend types declare `stats: CardStat[]` (opaque array, no per-kind narrowing). Adding kind-specific stats in V1.5 is purely additive — no breaking change.
 ```
 
 **3.2.4 Community card (`card_kind: "community"`) — v1.27:**
 
-Communities (PeepSo groups: `nft` / `local` / `system` / `user`) converge onto the Card view-model — same convergence members went through. Community cards are composed server-side from already-loaded group data (`CardViewService::getCommunityCardFromGroupData`, zero extra queries) and ship **additively** as the `card` field on §4.7.4 discovery items and the §4.7.5 detail response. No new endpoints; `GET /cards/*` does not serve them.
+Communities (PeepSo groups: `nft` / `hall` / `system` / `user`) converge onto the Card view-model — same convergence members went through. Community cards are composed server-side from already-loaded group data (`CardViewService::getCommunityCardFromGroupData`, zero extra queries) and ship **additively** as the `card` field on §4.7.4 discovery items and the §4.7.5 detail response. No new endpoints; `GET /cards/*` does not serve them.
 
 Locked field rules:
 
 - **Trust placeholders (shape-stable, never rendered as trust):** communities have no trust system. `trust_score: 0`, `reputation_tier: "neutral"`, `card_tier: "common"`, `rank_label: null`, `is_in_good_standing: true`, `flags: []`. The community face does not render a trust dial; the values exist only to keep the envelope shape-stable.
-- **`tier_label` = server-owned group-type kicker** (§L5 — supersedes the frontend `KICKER_BY_TYPE` map): `nft` → `"HOLDER COMMUNITY"`, `validator` → `"DELEGATOR COMMUNITY"`, `local` → `"LOCAL CHAPTER"`, `system` → `"SYSTEM COMMUNITY"`, `user` → `"COMMUNITY"`. Unknown kinds fall back to `"COMMUNITY"`.
+- **`tier_label` = server-owned group-type kicker** (§L5 — supersedes the frontend `KICKER_BY_TYPE` map): `nft` → `"HOLDER COMMUNITY"`, `validator` → `"DELEGATOR COMMUNITY"`, `hall` → `"CHAIN HALL"`, `system` → `"SYSTEM COMMUNITY"`, `user` → `"COMMUNITY"`. Unknown kinds fall back to `"COMMUNITY"`.
   *(v1.52: `HOLDERS GROUP` → `HOLDER COMMUNITY` and `SYSTEM GROUP` → `SYSTEM COMMUNITY` as part of the Communities vocabulary convergence — display-only, `type` values unchanged; `validator` added the same release.)*
 - **Crest band:** the chain-keyed background applies to on-chain-gated kinds with a resolved `chain_tag` — `nft` and, since v1.52, `validator`; every other kind gets the tier band at the fixed `common` tier.
 - **Identity:** `id` = group id, `handle` = group slug, `bio` = group description (plain-text, ~200-char truncation — same bound as page/member bios; `""` when unset).
@@ -1095,7 +1094,7 @@ Feed items share an envelope and vary by `post_kind`.
 - `comment_count` is the number of visible (non-trashed) comments on the post at response-time. Server-computed via one batched COUNT(*) GROUP BY across the page. Clients MUST treat this as a count badge — the actual list is fetched separately via §4.13. Always present; `0` when there are no comments.
 - `group` is **omitted** (not `null`) when the post does NOT come from a PeepSo group. When present, the post is a wall post inside a group:
   - `id` — group_id (matches `group_id` in §4.7.x endpoints).
-  - `type` ∈ `nft` | `local` | `user` | `system` — matches §4.7.2 group `type`.
+  - `type` ∈ `nft` | `hall` | `user` | `system` — matches §4.7.2 group `type`.
   - `verification` is `null` for non-NFT groups; for NFT-gated groups it carries `{kind: 'on_chain', label: 'On-Chain Verified'}`. Frontend MUST render `label` verbatim — never abbreviate to "Verified" alone.
   - **No server-side ranking is applied based on this field in v1.** The Floor feed continues to order strictly by recency. The `group` block is metadata for badge rendering and (optional) client-side prioritization. A scored ranking layer is deferred until usage telemetry exists to tune it honestly.
   - **Mapping:** `peepso_group_id` post-meta on the activity's wp_post (PeepSo writes this when a status post is created inside a group) → `GroupContextResolver::forManyGroups`. Batched per page; no N+1.
@@ -2163,14 +2162,14 @@ Personalized "who to follow" recommender. **Relevance/affinity-based, NOT popula
   - Items are ordered **best-first** by the affinity score.
   - `card_tier` ∈ `legendary | rare | uncommon | common | null` (mirrors §C1; `null` for risky-tier — but risky users are excluded from this surface anyway).
   - `tier_label` is the pre-rendered §A2 display string (or `null`).
-  - `suggestion_reason` is the single highest-CONTRIBUTING affinity signal, or `null` for civic cold-start fallback rows. `code` ∈ `follows_you | mutual_follows | co_local | co_validator | co_nft_community`; `label` is a server-rendered §A2 string (e.g. `"Follows you"`, `"Followed by N you follow"`, `"In Local 34 — Brooklyn with you"`, `"Backs Stakecito too"`, `"In Bored Apes with you"`).
-- **Scoring (affinity only):** `W_RECIP·followsViewer + W_MUTUAL·min(mutualFollows, MUTUAL_CAP) + W_LOCAL·sharedLocals + W_VALIDATOR·sharedValidatorBacking + W_NFT·sharedHolderCommunities`. Weights are server constants (tunable). **No popularity/trust term participates in ranking.**
+  - `suggestion_reason` is the single highest-CONTRIBUTING affinity signal, or `null` for civic cold-start fallback rows. `code` ∈ `follows_you | mutual_follows | co_hall | co_validator | co_nft_community`; `label` is a server-rendered §A2 string (e.g. `"Follows you"`, `"Followed by N you follow"`, `"In the Cosmos Hall with you"`, `"Backs Stakecito too"`, `"In Bored Apes with you"`).
+- **Scoring (affinity only):** `W_RECIP·followsViewer + W_MUTUAL·min(mutualFollows, MUTUAL_CAP) + W_HALL·sharedHalls + W_VALIDATOR·sharedValidatorBacking + W_NFT·sharedHolderCommunities`. Weights are server constants (tunable). **No popularity/trust term participates in ranking.**
 - **Exclusions (security-sensitive):** self; already-following; caution/risky reputation tier; active suspensions; mutual blocks (either direction); and any candidate who hid their watching graph (`watching_hidden`).
 - **Cold-start fallback:** when fewer than `limit` candidates survive scoring + exclusions (the dominant empty-graph case), the response tops up from the same civic recent-operators source the cold-start feed uses (recency + stable daily shuffle, NOT ranked), with `suggestion_reason: null`.
 - **Errors:** `bcc_unauthorized` (anonymous)
 - **Rate limit:** 60/min/user
 - **Cache:** `Cache-Control: private, max-age=120`; `Vary: Authorization, Cookie` (per-viewer personalization — no shared cache)
-- **Mapping:** candidate union from `peepso_user_followers` (reciprocity + 2nd-degree mutual counts), `peepso_group_members` (shared Locals + holder communities), and `bcc_onchain_delegations` ⋈ `bcc_wallet_links` (shared validator backing, verified wallets only). Member view-model fields composed via `UserViewService::getSummary` with the shared `MemberSummaryPrefetcher` batch (no parallel hydration). Validator monikers resolved via `bcc_onchain_validators`.
+- **Mapping:** candidate union from `peepso_user_followers` (reciprocity + 2nd-degree mutual counts), `peepso_group_members` (shared Halls + holder communities), and `bcc_onchain_delegations` ⋈ `bcc_wallet_links` (shared validator backing, verified wallets only). Member view-model fields composed via `UserViewService::getSummary` with the shared `MemberSummaryPrefetcher` batch (no parallel hydration). Validator monikers resolved via `bcc_onchain_validators`.
 
 ### 4.4 Users
 
@@ -2191,7 +2190,7 @@ Full User view-model.
   - `progression` ← `bcc-trust` level + threshold service (rank auto-derived from feature-access level; §4.8)
   - `feature_access` ← `bcc-trust` feature-access service (§O5)
   - `wallets` ← `bcc_wallet_links`
-  - `primary_local`, `locals` ← `bcc_user_locals` (joined to `peepso_groups`)
+  - `primary_hall`, `halls` ← `peepso_group_members` (joined to `peepso_groups`; single graph rule) + `bcc_primary_hall_group_id` usermeta for the primary pointer
 - **Profile-page extension:** the response also carries the
   `MemberProfileComposer` extras shipped alongside §3.1: `user_id`
   (alias of `id`), `bio_block` (paragraph + signature shape, server-
@@ -2243,7 +2242,7 @@ Full User view-model.
 
 #### `GET /bcc/v1/members`
 
-Paginated directory of human members. Sibling to §4.9 `/cards` (entity-card directory). **Each item is a full member `Card` view-model (§3.2, `card_kind: "member"`)** so the frontend renders directory rows through the canonical `<CardFactory>` — the same component the entity-card directory uses. The per-member back-of-card signal blocks (verifications, engagement, owned-page typed counts, primary Local) ride along on the card's `member_dossier` block; nothing the older slim `MemberSummary` shape carried is lost. Click-through navigates to `/u/:handle` for the full profile.
+Paginated directory of human members. Sibling to §4.9 `/cards` (entity-card directory). **Each item is a full member `Card` view-model (§3.2, `card_kind: "member"`)** so the frontend renders directory rows through the canonical `<CardFactory>` — the same component the entity-card directory uses. The per-member back-of-card signal blocks (verifications, engagement, owned-page typed counts, primary Hall) ride along on the card's `member_dossier` block; nothing the older slim `MemberSummary` shape carried is lost. Click-through navigates to `/u/:handle` for the full profile.
 
 - **Auth:** Anonymous OR Bearer (privacy-filtered — `real_name_hidden` honored)
 - **Query:** `page` (1-indexed, default 1), `per_page` (default 20, max 50), `q` (optional — bounded to 64 chars, matched against `user_login` + `display_name` + `user_nicename`), `type` (optional — one of `validator | project | nft | dao`; restricts results to users with ≥1 owned page of that canonical type, intersecting with `q` when both are present)
@@ -2263,17 +2262,17 @@ Paginated directory of human members. Sibling to §4.9 `/cards` (entity-card dir
     "verifications":       { "x_verified": true, "x_username": "phillips_eth", "github_verified": true, "github_username": "phillips", "wallets_verified": 2 },
     "engagement":          { "endorsements_received": 17, "solids_received": 38, "reviews_written": 12, "disputes_signed": 3 },
     "owned_pages_by_type": { "validator": 1, "project": 1, "nft": 0, "dao": 0 },
-    "primary_local":       { "id": 1138, "slug": "local-34-brooklyn", "name": "Local 34 — Brooklyn", "number": 34 }
+    "primary_hall":        { "id": 1138, "slug": "cosmos-hall", "name": "Cosmos Hall" }
   }
   ```
 - **Errors:** `bcc_validation` (invalid `page` / `per_page`)
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - **Pagination envelope:** offset (`OffsetPagination` per §1.5) — `total_pages` is the canonical field; clients derive "has more" as `page < total_pages`.
-- **Mapping:** `WP_User_Query` ordered by `user_registered DESC`; each row composed via `CardViewService::getMemberCardForList` (one call per user). `UsersEndpoint::members` prefetches eleven batched maps — followers count, primary-Local resolution, owned-page count, owned-page typed counts, endorsements received, solids received, reviews written, disputes signed, verified-wallet count, X connections, GitHub connections — via `MemberSummaryPrefetcher::primeFor` before the per-row loop; the card builder delegates the dossier resolution to `UserViewService::getSummary($userId, $viewerId, $prefetched)` so the total query budget stays bounded regardless of `per_page` (no parallel dossier query — same resolution as before, now wrapped in the Card shape). `card_tier` mirrors the §C1 slug (`legendary|rare|uncommon|common|null`); null only for risky-tier users (entity hidden from card UI per §C1). `tier_label` is the pre-rendered §A2 display string. Frontends should encode the tier as a color/border treatment on the rank chip rather than rendering `tier_label` as a duplicate word next to `rank_label`.
+- **Mapping:** `WP_User_Query` ordered by `user_registered DESC`; each row composed via `CardViewService::getMemberCardForList` (one call per user). `UsersEndpoint::members` prefetches eleven batched maps — followers count, primary-Hall resolution, owned-page count, owned-page typed counts, endorsements received, solids received, reviews written, disputes signed, verified-wallet count, X connections, GitHub connections — via `MemberSummaryPrefetcher::primeFor` before the per-row loop; the card builder delegates the dossier resolution to `UserViewService::getSummary($userId, $viewerId, $prefetched)` so the total query budget stays bounded regardless of `per_page` (no parallel dossier query — same resolution as before, now wrapped in the Card shape). `card_tier` mirrors the §C1 slug (`legendary|rare|uncommon|common|null`); null only for risky-tier users (entity hidden from card UI per §C1). `tier_label` is the pre-rendered §A2 display string. Frontends should encode the tier as a color/border treatment on the rank chip rather than rendering `tier_label` as a duplicate word next to `rank_label`.
 - **Field rules** (the `member_dossier` sub-blocks; the rest follow the §3.2 Card rules):
     - `trust_score` ∈ [0, 100] per §D5. Augmented score = base reputation_score + clamped lifetime participation bonus (`DisputeParticipationRepository::getEarnedLifetimeTrust`). Clamped at the boundary; clients render as a stencil number, never derive. (Top-level card field per §3.2.)
     - `stats[].watchers` (the member-card third stat per §3.2.2) is the passive side of `peepso_user_followers` (people who follow this user), sourced from `UserViewService::getSummary`'s `followers_count`. The full `/users/:handle` response carries both `followers` and `following`; the directory ships the followers count only — `following` isn't a meaningful directory signal and the second SQL isn't worth the cost.
-    - `member_dossier.primary_local` shape matches `MemberProfile.primary_local`. `number` is parsed from `name` via the `^Local\s+(\d+)\b` convention; null when the title doesn't follow the pattern. Frontends render display strings client-side from `name`/`number`. `null` when the member has no primary Local.
+    - `member_dossier.primary_hall` shape matches `MemberProfile.primary_hall`. Frontends render display strings client-side from `name`. `null` when the member has no primary Hall.
     - `member_dossier.owned_pages_by_type` is a per-canonical-type count of `member_owner` pages, derived from the PeepSo page-categories taxonomy (`peepso_page_categories` joined to the `peepso-page-cat` CPT). The four type keys (`validator`, `project`, `nft`, `dao`) are stable wire identifiers — decoupled from the underlying PeepSo category slugs (which are admin-controlled and may include legacy typos like `vaildators`). PeepSo pages are tag-shaped, not type-shaped: a single page can carry multiple categories. Frontends should render one badge per non-zero bucket (`6 PROJECTS`, `5 NFT COLLECTIONS`, `1 VALIDATOR`). New canonical types require a contract amendment + a new key in the response shape; we don't fall back to an "OTHER" bucket for unrecognized categories.
     - `type_counts` is the **global** count of distinct users with ≥1 owned page per canonical type. Independent of the active `q` and `type` filters by design — the chip-strip's `VALIDATORS · 5` numbers shouldn't shift around as a viewer types in the search box. Same four keys as `member_dossier.owned_pages_by_type`. Always emitted (even on the type-empty short-circuit) so a filter-specific empty state can suggest alternative chips with non-zero counts.
     - `member_dossier.verifications` carries connection presence + provider username for the social-proof panel on the back of the directory card. `x_verified` / `github_verified` are `true` only when an active row exists in `bcc_trust_user_verifications` AND `verified_at` is non-null — token presence alone does not count. `x_username` / `github_username` are the public handles for click-through display (`@phillips` etc.); never decrypt tokens into this payload. `wallets_verified` is the count of `bcc_wallet_links` rows where `verified_at IS NOT NULL` — the per-wallet detail (chain, address) lives on `MemberProfile.wallets`.
@@ -2689,11 +2688,20 @@ page; `{allowed:false, reason_code:"not_claimer"}` for other authenticated
 viewers, `signin_required` when anonymous, and `not_applicable` on member cards
 (member self-avatars use `POST /me/profile/avatar`).
 
-### 4.7 Locals
+### 4.7 Halls
 
-#### `GET /bcc/v1/locals`
+Halls are **auto-provisioned, one per active chain** — system-created, `open`,
+first-admin-owned. They are **not** member-created and **not** numbered. A group
+is a Hall iff it carries `_bcc_group_kind = 'hall'` meta; its chain is read from a
+`_bcc_chain_tag` meta FK (there is no `Local NNN` title-prefix convention any
+more). A daily `bcc_hall_provision` cron reconciles exactly one Hall per active
+chain, and admins can force a pass via **Provision Halls now**. Membership lives
+in PeepSo's `peepso_group_members` (single graph rule, §E3); BCC stores only a
+`bcc_primary_hall_group_id` usermeta pointer for the viewer's primary Hall.
 
-List of available Locals (PeepSo Groups in BCC clothing).
+#### `GET /bcc/v1/halls`
+
+List of available Halls (PeepSo Groups in BCC clothing).
 
 - **Auth:** Anonymous OR Bearer
 - **Query:** `page` (default 1), `page_size` (default 20, max 50), `chain` (optional filter)
@@ -2703,9 +2711,8 @@ List of available Locals (PeepSo Groups in BCC clothing).
     "items": [
       {
         "id": 12,
-        "slug": "cosmos-base-fan",
-        "name": "Local 342 Cosmos Base Fan",
-        "number": 342,
+        "slug": "cosmos-hall",
+        "name": "Cosmos Hall",
         "chain": "cosmos",
         "member_count": 412,
         "viewer_membership": {
@@ -2713,25 +2720,25 @@ List of available Locals (PeepSo Groups in BCC clothing).
           "is_primary": true,
           "joined_at": "2026-01-12T00:00:00Z"
         },
-        "links": { "self": "/locals/cosmos-base-fan" }
+        "links": { "self": "/halls/cosmos-hall" }
       }
     ],
     "pagination": { "page": 1, "page_size": 20, "total": 142, "total_pages": 8 }
   }
   ```
 - **Cache:** `Cache-Control: public, max-age=300`
-- **Mapping:** `peepso-group` CPT posts filtered to BCC-tagged groups (V1 filter: `post_title LIKE 'Local %'` per §E3 convention), JOINed with `peepso_group_members` for `member_count` and with `bcc_user_locals` for viewer membership.
+- **Mapping:** `peepso-group` CPT posts filtered to Halls (`_bcc_group_kind = 'hall'` meta), JOINed with `peepso_group_members` for `member_count` and viewer membership; the viewer's primary pointer comes from `bcc_primary_hall_group_id` usermeta.
 
 **`viewer_membership` semantics:**
 - Anonymous viewer: `null` (no current user).
 - Authenticated non-member: `{ "is_member": false, "is_primary": false, "joined_at": null }`.
 - Authenticated member: `{ "is_member": true, "is_primary": <bool>, "joined_at": "<iso8601>" }`.
 
-**Pagination:** uses **offset** envelope per §1.5 (Locals is a directory, not a time-ordered feed). Cursor pagination is reserved for `/feed`, `/feed/hot`, and `/me/watching`.
+**Pagination:** uses **offset** envelope per §1.5 (Halls is a directory, not a time-ordered feed). Cursor pagination is reserved for `/feed`, `/feed/hot`, and `/me/watching`.
 
-#### `POST /bcc/v1/me/locals/:id/membership`
+#### `POST /bcc/v1/me/halls/:id/membership`
 
-Join a Local. The join/leave verb is `/membership` — same path, two methods.
+Join a Hall. The join/leave verb is `/membership` — same path, two methods.
 
 - **Auth:** Bearer
 - **Body:** `{ "set_as_primary": false }` (optional, default false)
@@ -2739,66 +2746,66 @@ Join a Local. The join/leave verb is `/membership` — same path, two methods.
   ```json
   {
     "joined": true,
-    "local": { "...": "Local view-model" },
+    "hall": { "...": "Hall view-model" },
     "celebration": {
       "kind": "mid",
-      "label": "Joined Local 342 Cosmos Base Fan.",
-      "icon": "local-badge",
+      "label": "Joined Cosmos Hall.",
+      "icon": "hall-badge",
       "rarity_tint": null
     }
   }
   ```
-- **Errors:** `bcc_unauthorized`, `bcc_forbidden` (403 — account suspended "Your account is suspended.", or the Local does not accept open membership), `bcc_conflict` (already a member), `bcc_rate_limited`
+- **Errors:** `bcc_unauthorized`, `bcc_forbidden` (403 — account suspended "Your account is suspended.", or the Hall does not accept open membership), `bcc_conflict` (already a member), `bcc_rate_limited`
 - **Rate limit:** 10/hour/user
-- **Mapping:** PeepSo group join + `bcc_user_locals` insert. Emits `bcc_local_joined` (§A3 async).
+- **Mapping:** PeepSo group join (`peepso_group_members` insert). Emits `bcc_hall_joined` (§A3 async).
 
-#### `DELETE /bcc/v1/me/locals/:id/membership`
+#### `DELETE /bcc/v1/me/halls/:id/membership`
 
-Leave a Local. Sibling of the join above.
+Leave a Hall. Sibling of the join above.
 
 - **Auth:** Bearer
 - **Response 200:** `{ "left": true }`
 - **Errors:** `bcc_unauthorized`, `bcc_not_found`
-- **Mapping:** PeepSo group leave + cascade `bcc_user_locals`. If the user was using this Local as primary, `primary_local` becomes `null` until they pick another (or until they explicitly clear via `DELETE /me/locals/primary`). Emits `bcc_local_left`.
+- **Mapping:** PeepSo group leave (`peepso_group_members` delete). If the user was using this Hall as primary, `primary_hall` becomes `null` until they pick another (or until they explicitly clear via `DELETE /me/halls/primary`). Emits `bcc_hall_left`.
 
-#### `POST /bcc/v1/me/locals/:id/primary`
+#### `POST /bcc/v1/me/halls/:id/primary`
 
-Mark a Local as the user's primary.
+Mark a Hall as the user's primary.
 
 - **Auth:** Bearer
 - **Response 200:**
   ```json
   {
-    "primary_local": { "...": "Local view-model" }
+    "primary_hall": { "...": "Hall view-model" }
   }
   ```
-- **Errors:** `bcc_unauthorized`, `bcc_forbidden` (not a member of this Local)
-- **Mapping:** Updates `bcc_user_locals.is_primary` (singleton — exactly one row per user has `is_primary: true`). Emits `bcc_local_primary_changed`.
+- **Errors:** `bcc_unauthorized`, `bcc_forbidden` (not a member of this Hall)
+- **Mapping:** Writes the `bcc_primary_hall_group_id` usermeta pointer (singleton — one Hall per user). Emits `bcc_hall_primary_changed`.
 
-#### `DELETE /bcc/v1/me/locals/primary`
+#### `DELETE /bcc/v1/me/halls/primary`
 
-Clear the user's primary-Local pointer. Note the path is bare `/primary`
-(no `:id`) — clearing is identity-only since exactly one row per user
-ever carries `is_primary: true`.
+Clear the user's primary-Hall pointer. Note the path is bare `/primary`
+(no `:id`) — clearing is identity-only since the pointer is a single
+`bcc_primary_hall_group_id` usermeta value.
 
 - **Auth:** Bearer
 - **Response 200:** `{ "cleared": true }`
 - **Errors:** `bcc_unauthorized`
-- **Mapping:** Sets `bcc_user_locals.is_primary = 0` for the row that
-  currently holds it (if any). Idempotent — calling when no primary is
-  set still returns 200 with `cleared: true`. Emits `bcc_local_primary_changed`.
+- **Mapping:** Deletes the `bcc_primary_hall_group_id` usermeta pointer (if any).
+  Idempotent — calling when no primary is set still returns 200 with
+  `cleared: true`. Emits `bcc_hall_primary_changed`.
 
-#### Local detail page — composition note (no new REST surface)
+#### Hall detail page — composition note (no new REST surface)
 
-A Local is a semantic wrapper around a PeepSo group; the slug is identical on both routes (`peepso-page.post_name`). The Next.js Local detail page (`/locals/[slug]`) therefore composes the existing view-models in parallel rather than introducing a Locals-specific feed endpoint:
+A Hall is a semantic wrapper around a PeepSo group; the slug is identical on both routes (`peepso-page.post_name`). The Next.js Hall detail page (`/halls/[slug]`) therefore composes the existing view-models in parallel rather than introducing a Halls-specific feed endpoint:
 
-- `GET /bcc/v1/locals/:slug` → header, membership pill, join/leave controls (this section).
+- `GET /bcc/v1/halls/:slug` → header, membership pill, join/leave controls (this section).
 - `GET /bcc/v1/groups/:slug` → `GroupDetailResponse` with the server-authoritative `feed_visible` + `permissions.can_read_feed.unlock_hint` gate consumed by `<GroupFeedSection>` (§4.7.5).
 - `GET /bcc/v1/groups/:id/feed` → cursor-paginated feed entries inside `<GroupFeedSection>` via `useGroupFeed` (§4.7.6).
 
 **Group-feed visibility filter (§4.7.6, v1.24):** `GET /bcc/v1/groups/:id/feed` now returns a feed for non-members of non-secret groups instead of refusing them. Members get the **full** feed (all visibilities). Non-members of an `nft` / `closed` / `open` (non-secret) group get a **public-only filtered feed** — only `public_group` + `public_all` posts (per the `_bcc_post_visibility` post-meta set at compose time; see §4.14 / §4.15); `members_only` posts, and any post with no visibility meta, are never returned to non-members. This is the read-only teaser surface. **Secret groups are unchanged**: non-members still get `bcc_not_found 404` (existence never leaks). Consequently the §4.7.5 `GroupDetailResponse` now reports `feed_visible: true` and `permissions.can_read_feed.allowed: true` for non-members of `nft` / `closed` groups, so `<GroupFeedSection>` renders the teaser feed rather than a locked notice. (Previously non-members of NFT/closed groups received `403 bcc_permission_denied` from the feed endpoint and `feed_visible: false` from the detail view-model.)
 
-No `/bcc/v1/locals/:slug/feed` endpoint exists or is planned. The two read calls are independent: a failed `/groups/:slug` read does not 500 the page — the header still renders and the feed slot shows a non-blocking notice. A 404 from `/locals/:slug` is still authoritative for page existence (Next `notFound()`).
+No `/bcc/v1/halls/:slug/feed` endpoint exists or is planned. The two read calls are independent: a failed `/groups/:slug` read does not 500 the page — the header still renders and the feed slot shows a non-blocking notice. A 404 from `/halls/:slug` is still authoritative for page existence (Next `notFound()`).
 
 ### 4.7.1 Holder Groups (NFT-gated)
 
@@ -2932,7 +2939,7 @@ Toggle `auto_join`. Default is `false` (suggest-don't-auto-join). Setting to `tr
 
 #### `GET /bcc/v1/users/:slug/groups`
 
-Cross-kind list of all PeepSo groups a target user is an active member of: holder groups, Locals, plain user groups, and system groups all flow through the same shape via `GroupContextResolver`.
+Cross-kind list of all PeepSo groups a target user is an active member of: holder groups, Halls, plain user groups, and system groups all flow through the same shape via `GroupContextResolver`.
 
 - **Auth:** Anonymous OR Bearer
 - **Path:** `slug` matches the canonical `[a-z0-9][a-z0-9-]{1,18}[a-z0-9]` handle pattern (lowercase alphanumeric + hyphens, 3–20 chars). 404 with `bcc_not_found` for invalid or unknown handles.
@@ -2967,11 +2974,11 @@ Cross-kind list of all PeepSo groups a target user is an active member of: holde
   ```
 - **Cache:** `private, max-age=30` (per-viewer privacy + permissions; short TTL is enough for tab navigation).
 - **Field shapes:**
-  - `type` ∈ `nft` | `validator` | `local` | `user` | `system`. The frontend uses this to pick the action URL and to dispatch the right mutation hook (holder / delegator / local / plain). **`validator` added in v1.52** — treat unknown kinds gracefully.
-  - `type_label` is the server-authoritative display string for the kind (defaults: `On-Chain Holders` / `Validator Delegators` / `Local` / `System` / `Community`). Frontend renders verbatim per §A2 — no client-side enum→label mapping. Filterable via `bcc_group_type_label`. *(v1.52: the `user`-kind default and the unknown-kind fallback changed `Group` → `Community`; display-only, wire unchanged.)*
+  - `type` ∈ `nft` | `validator` | `hall` | `user` | `system`. The frontend uses this to pick the action URL and to dispatch the right mutation hook (holder / delegator / hall / plain). **`validator` added in v1.52** — treat unknown kinds gracefully.
+  - `type_label` is the server-authoritative display string for the kind (defaults: `On-Chain Holders` / `Validator Delegators` / `Hall` / `System` / `Community`). Frontend renders verbatim per §A2 — no client-side enum→label mapping. Filterable via `bcc_group_type_label`. *(v1.52: the `user`-kind default and the unknown-kind fallback changed `Group` → `Community`; display-only, wire unchanged.)*
   - `privacy` ∈ `open` | `closed` | `secret`. Mirrors PeepSo's privacy flag.
   - `verification` is present for the on-chain-gated kinds (`nft` **and, since v1.52, `validator`**) and `null` elsewhere. Both carry `kind: "on_chain"` — one badge vocabulary, not one per gate. Future verification kinds (e.g. `creator_verified`) will appear here without API shape changes.
-  - `actions.join.url` / `actions.leave.url` vary by `type`: `/me/holder-groups/{id}/{action}` for `nft`, **`/me/validator-groups/{id}/{action}` for `validator`**, `/me/locals/{id}/{action}` for `local`, `/me/groups/{id}/{action}` for `user`/`system`. Frontend follows whatever URL the server returns.
+  - `actions.join.url` / `actions.leave.url` vary by `type`: `/me/holder-groups/{id}/{action}` for `nft`, **`/me/validator-groups/{id}/{action}` for `validator`**, `/me/halls/{id}/{action}` for `hall`, `/me/groups/{id}/{action}` for `user`/`system`. Frontend follows whatever URL the server returns.
 - **Permission shape (per §A4 / §N7 — gated actions always visible):**
   - **Self profile** (viewer is the target): `can_leave.allowed = true` for every group; `can_join.allowed = false` with `reason_code: "already_member"`.
   - **Other profile**:
@@ -2986,7 +2993,7 @@ Cross-kind list of all PeepSo groups a target user is an active member of: holde
 
 ### 4.7.3 Plain Group Membership
 
-For non-gated, non-Local PeepSo groups (the residual case: user/system groups created via PeepSo's UI). Holder groups use §4.7.1; Locals use §4.7.
+For non-gated, non-Hall PeepSo groups (the residual case: user/system groups created via PeepSo's UI). Holder groups use §4.7.1; Halls use §4.7.
 
 #### `POST /bcc/v1/me/groups/:id/join`
 
@@ -2995,12 +3002,12 @@ For non-gated, non-Local PeepSo groups (the residual case: user/system groups cr
 - **Errors:**
   - `bcc_forbidden` (403) — account suspended ("Your account is suspended."). Checked before everything else; admin bypass off — a suspended account is blocked regardless of role.
   - `bcc_invalid_request` (404) — group not found
-  - `bcc_invalid_request` (400) — group is a holder group or Local; use the dedicated endpoint
+  - `bcc_invalid_request` (400) — group is a holder group or Hall; use the dedicated endpoint
   - `bcc_permission_denied` (403):
     - `closed` group: "This community requires admin approval. Visit the group page to request access."
     - `secret` group: "This community is invite-only."
-  - `bcc_unavailable` (503) — the membership write failed or was refused (PeepSo unavailable, or the writer refused a banned membership row). Fail-closed; nothing was joined. Same surface as the Locals join.
-- **Mapping:** Resolves `GroupContext`; if `type` is `nft` or `local` rejects (use the dedicated endpoint); for `open` groups calls `PeepSoGroupWriter::join` and honors its verdict — a `false` return is surfaced as `bcc_unavailable`, never as `joined: true`. Closed/secret are not joined here — PeepSo's request-flow / invitation machinery is not replicated by this endpoint.
+  - `bcc_unavailable` (503) — the membership write failed or was refused (PeepSo unavailable, or the writer refused a banned membership row). Fail-closed; nothing was joined. Same surface as the Halls join.
+- **Mapping:** Resolves `GroupContext`; if `type` is `nft` or `hall` rejects (use the dedicated endpoint); for `open` groups calls `PeepSoGroupWriter::join` and honors its verdict — a `false` return is surfaced as `bcc_unavailable`, never as `joined: true`. Closed/secret are not joined here — PeepSo's request-flow / invitation machinery is not replicated by this endpoint.
 
 #### `POST /bcc/v1/me/groups/:id/leave`
 
@@ -3008,7 +3015,7 @@ For non-gated, non-Local PeepSo groups (the residual case: user/system groups cr
 - **Response 200:** `{ "left": true, "group_id": 4231 }`
 - **Errors:**
   - `bcc_invalid_request` (404) — group not found
-  - `bcc_invalid_request` (400) — group is a holder group or Local
+  - `bcc_invalid_request` (400) — group is a holder group or Hall
   - `bcc_permission_denied` (403) — caller is the group owner
 - **Mapping:** `PeepSoGroupWriter::leave` (refuses owners; PeepSo's `member_leave` recomputes `peepso_group_members_count` internally).
 
@@ -3089,9 +3096,9 @@ Cross-kind discovery list. Sort key: `verified DESC, heat_score DESC, member_cou
 - **Privacy:** `secret` groups never appear here regardless of viewer. `closed` groups appear with name + member_count visible; content stays private at PeepSo's layer.
 - **Filter `verified=1`:** restricts to groups with `_bcc_group_kind IN ('holders','delegators')`. Use this to render an "On-Chain Verified only" filter chip on the discovery page. **Widened in v1.52** — it previously meant `'holders'` alone. Both kinds emit `verification.kind = "on_chain"`, so an existing chip keeps working and simply returns delegator communities too; the same widening applies to the `verified` component of the sort key.
 - **`validator_stats` (v1.52):** stats block for `validator`-type cards only — `{ moniker, status, commission, total_stake, delegator_count, min_stake_display, validator_page }`. `null` for every other kind, and `null` when the underlying validator is not yet indexed. Each inner field is independently nullable (enrichment can leave any column unpopulated). `commission` and `total_stake` are numbers; `delegator_count` an integer; `min_stake_display` a server-pre-formatted string (`"1 ATOM"`, or a bare amount when the chain's native token is unknown) rendered verbatim per §A2/§S; `validator_page` is the frontend path to the backing validator page (`/v/{slug}`, composed server-side via the locked `CardUrlMap`) or `null` when no page backs the validator. This is the delegator-community analogue of `collection_stats` — the two are mutually exclusive by kind and never both non-null.
-- **`image_url`:** cover-art URL. NFT-type cards return the underlying collection's `image_url` (joined through `wp_bcc_onchain_collections`). Non-NFT cards (`local`/`system`/`user`) return `null` in V1 — the frontend falls back to a generated initials block. PeepSo group avatars for non-NFT kinds is V1.5.
-- **`description`:** group post body, plain-text + tag-stripped + truncated to ~200 chars (em-dash ellipsis when truncated). `null` when the group has no description on file. Applies to all kinds — `local`/`system`/`user` cards can use the same field on a future detail surface.
-- **`collection_stats`:** market-data block for NFT-type cards only — drives the discovery card's flip-to-back UX (floor price, holder distribution, lifetime volume, listed %, royalty %). Each inner field is independently nullable since the upstream fetch can leave any column unpopulated. Currency-bearing fields (`floor_price`, `total_volume`) are returned as raw strings (full decimal precision) PLUS server-pre-formatted `*_display` strings (`floor_display`, `volume_display`, `holders_display`, `supply_display`, `listed_display`, `royalty_display`, `min_balance_display`). Frontend renders `*_display` verbatim per §A2 / §S — no client-side number-formatting decisions. `distribution_pct` is the server-computed `holders / supply * 100` (rounded), exposed as a number alongside `holders_display` for charting use. `min_balance` mirrors the gate threshold (`_bcc_gate_min_balance` post-meta). Em-dash (`"—"`) appears in `*_display` when the underlying value is missing/zero so the wire never surfaces "0.00 STARS" as a fake-low signal. Non-NFT cards return `null` for the entire block — there is no equivalent for `local`/`system`/`user` kinds.
+- **`image_url`:** cover-art URL. NFT-type cards return the underlying collection's `image_url` (joined through `wp_bcc_onchain_collections`). Non-NFT cards (`hall`/`system`/`user`) return `null` in V1 — the frontend falls back to a generated initials block. PeepSo group avatars for non-NFT kinds is V1.5.
+- **`description`:** group post body, plain-text + tag-stripped + truncated to ~200 chars (em-dash ellipsis when truncated). `null` when the group has no description on file. Applies to all kinds — `hall`/`system`/`user` cards can use the same field on a future detail surface.
+- **`collection_stats`:** market-data block for NFT-type cards only — drives the discovery card's flip-to-back UX (floor price, holder distribution, lifetime volume, listed %, royalty %). Each inner field is independently nullable since the upstream fetch can leave any column unpopulated. Currency-bearing fields (`floor_price`, `total_volume`) are returned as raw strings (full decimal precision) PLUS server-pre-formatted `*_display` strings (`floor_display`, `volume_display`, `holders_display`, `supply_display`, `listed_display`, `royalty_display`, `min_balance_display`). Frontend renders `*_display` verbatim per §A2 / §S — no client-side number-formatting decisions. `distribution_pct` is the server-computed `holders / supply * 100` (rounded), exposed as a number alongside `holders_display` for charting use. `min_balance` mirrors the gate threshold (`_bcc_gate_min_balance` post-meta). Em-dash (`"—"`) appears in `*_display` when the underlying value is missing/zero so the wire never surfaces "0.00 STARS" as a fake-low signal. Non-NFT cards return `null` for the entire block — there is no equivalent for `hall`/`system`/`user` kinds.
 - **`collection_stats.marketplace`:** server-resolved canonical marketplace link for the underlying NFT collection — `{ url, label }` when the chain is mapped, `null` otherwise. V1 covers the Cosmos Hub (`cosmos` — stargaze.zone, the marketplace app that survived the 2026 Stargaze→Hub chain migration) and the major EVM chains via OpenSea (`ethereum`/`polygon`/`arbitrum`/`optimism`/`base`/`avalanche`/`bsc`); Solana, NEAR, and the other cosmos chains return `null` until canonical marketplace surfaces are picked. Filterable via `bcc_marketplace_link_map` so a deployment can extend or override without a code release. Frontend renders the URL verbatim with `target="_blank" rel="noopener noreferrer"` and `e.stopPropagation()` on click so the marketplace tab opens without flipping the discovery card back to the front.
 - **Sort approximation note:** the candidate pool is fetched + sorted in PHP before pagination (limit 500). The cross-page sort is exact within the candidate pool; deep pagination beyond ~500 groups would require SQL-side sort. v1 scale is well under this.
 - **Mapping:** `PeepSoGroupRepository::listBrowsableGroupIds` (excludes secret) → `GroupContextResolver::forManyGroups` → `GroupActivityHeatService::forGroups` for heat → `GatedGroupRepository::listAllGatedGroupConfigs` + `CollectionRepository::findManyByIds` for image_url + collection_stats enrichment (NFT-type only) → in-memory sort by (`is_verified`, `posts_last_7d`, `member_count`) all DESC.
@@ -3407,14 +3414,14 @@ Groups vertical — separate cache + rate-limit bucket. Returns PeepSo group row
     "results": [
       {
         "id": 17,
-        "name": "Blacksmiths Local 412",
-        "slug": "blacksmiths-local-412",
-        "description": "On-chain plumbers and welders.",
+        "name": "Cosmos Hall",
+        "slug": "cosmos-hall",
+        "description": "The Cosmos chain's home hall.",
         "avatar_url": "https://…",
-        "group_url": "/locals/blacksmiths-local-412"
+        "group_url": "/halls/cosmos-hall"
       }
     ],
-    "meta": { "count": 1, "query": "black" }
+    "meta": { "count": 1, "query": "cosmos" }
   }
   ```
 - **Errors (legacy WP shape):**
@@ -3448,7 +3455,7 @@ PeepSo's `peepso_notifications` table is the storage layer (§I1 "extend, don't 
 }
 ```
 
-- `type` ∈ {`bcc_reaction`, `bcc_review`, `bcc_card_watched`, `bcc_rank_up`, `bcc_welcome`, `bcc_mention`, `bcc_local_post`, `bcc_comment_received`}. V1 catalogue per §I2; follow-posts deferred. *(v1.50: `bcc_endorse` retired — its subscriber never fired after the Slice-E endorse-write cutover; entity-page vouch casts dispatch `bcc_attestation_vouch_received` instead. Historical `bcc_endorse` rows are rejected by read-side validation, not rendered.)* **Legacy alias:** `bcc_card_watched` is emitted in parallel with `bcc_card_watched` during the §1.1.1 deprecation window; clients SHOULD branch on the new name and accept either. Removed in release N+1.
+- `type` ∈ {`bcc_reaction`, `bcc_review`, `bcc_card_watched`, `bcc_rank_up`, `bcc_welcome`, `bcc_mention`, `bcc_hall_post`, `bcc_comment_received`}. V1 catalogue per §I2; follow-posts deferred. *(v1.50: `bcc_endorse` retired — its subscriber never fired after the Slice-E endorse-write cutover; entity-page vouch casts dispatch `bcc_attestation_vouch_received` instead. Historical `bcc_endorse` rows are rejected by read-side validation, not rendered.)* **Legacy alias:** `bcc_card_watched` is emitted in parallel with `bcc_card_watched` during the §1.1.1 deprecation window; clients SHOULD branch on the new name and accept either. Removed in release N+1.
 - `message` is server-rendered per §A2 — frontend renders verbatim. Plain English, capped at 200 chars (PeepSo's column width).
 - `actor.handle` may be empty when the originating user has been deleted; the frontend renders the message verbatim regardless.
 - `link` is a server-built relative path. Per type:
@@ -3458,7 +3465,7 @@ PeepSo's `peepso_notifications` table is the storage layer (§I1 "extend, don't 
   - `bcc_rank_up` → `/u/<recipient-handle>` (your own profile — progression strip lives there)
   - `bcc_welcome` → `/` (the floor — the user is probably already there when they see it)
   - `bcc_mention` → `/?focus=<act_id>` (jump to the floor focused on the post containing the @-tag; for comment mentions `act_id` is the **parent post's** act_id — the FE has no comment-anchor consumer in V1)
-  - `bcc_local_post` → `/locals/<slug>` resolved from `external_id` (the Local's group_id). Falls back to `/locals` when the group is no longer a Local (deleted, renamed off-prefix).
+  - `bcc_hall_post` → `/halls/<slug>` resolved from `external_id` (the Hall's group_id). Falls back to `/halls` when the group is no longer a Hall (deleted, `_bcc_group_kind` meta cleared).
   - `bcc_comment_received` → `/?focus=<act_id>` (jump to the floor focused on the parent post that received the comment; mirrors REACTION + MENTION shape — the FE has no comment-anchor consumer in V1). Covers both the "commented on your post" and the v1.45 "replied to your comment" messages — same type, same link shape.
 - Self-notifications are emitted only for `bcc_rank_up` + `bcc_welcome` (audit trail beyond the §O1.2 Heavy toast / first-touch retention). Other types skip the dispatch when actor === recipient.
 
@@ -3522,7 +3529,7 @@ Notifications are dispatched by `NotificationDispatcher` (sync subscribers, try/
 | `user_register` (WordPress core) | the new user (self-notification, type `bcc_welcome`) | `bcc_welcomed` user_meta already set (idempotency guard — once welcomed, never re-welcome) |
 | `bcc_post_created` | every user @-tagged in the post body (after `MentionPolicy::filterMentionable`) | author === mentionee (self-mention skip); banned / blocked / private mentionees stripped at validation time |
 | `bcc_comment_created` | every user @-tagged in the comment body | same skip rules as post mention; `act_id` passed is the **parent post's** act_id so the bell deep-links to the post on the floor |
-| `bcc_post_created` (async via `bcc_primary_local_post_fanout`) | every user whose `bcc_primary_local_group_id` user_meta matches the post's `peepso_group_id` | author === recipient (self-skip); same (recipient, group) already notified within the last 5 min (transient gate); post's group is NOT a Local (`post_title` doesn't match `Local %`); recipient cap of 1000 reached |
+| `bcc_post_created` (async via `bcc_primary_hall_post_fanout`) | every user whose `bcc_primary_hall_group_id` user_meta matches the post's `peepso_group_id` | author === recipient (self-skip); same (recipient, group) already notified within the last 5 min (transient gate); post's group is NOT a Hall (no `_bcc_group_kind = 'hall'` meta); recipient cap of 1000 reached |
 | `bcc_comment_created` (priority 31; sibling of mention dispatch) | the parent post's author | commenter === post author (self-skip); same (recipient, post) already notified within the last 5 min (transient gate); parent activity row or post no longer resolvable |
 
 ##### @-mention dispatch — policy locks (V2 retention slice, 2026-05-11)
@@ -3535,21 +3542,21 @@ Three behaviours are intentional and load-bearing — do not relitigate without 
 
 The `MentionPolicy::filterMentionable` gate is applied a SECOND time at dispatch (write-time validation already filtered) as defense in depth: a future write path that bypasses validation still cannot dispatch to banned / blocked / private mentionees.
 
-##### Primary-Local post dispatch — policy locks (V2 retention slice, 2026-05-11)
+##### Primary-Hall post dispatch — policy locks (V2 retention slice, 2026-05-11)
 
 Three behaviours are intentional and load-bearing — do not relitigate without explicit re-planning:
 
-1. **Primary-only recipient filter.** Only users whose `wp_usermeta.bcc_primary_local_group_id` matches the post's `peepso_group_id` are notified. Membership alone does NOT subscribe — the primary-Local pointer IS the "I want updates here" signal. Users who set a Local as primary today receive notifications starting with the next post; legacy posts stay silent (no backfill).
-2. **Dual coalescing.** Bell writes are gated by a 5-min per-`(recipient, group)` transient (`bcc_local_post_notified_{userId}_{groupId}`). Push uses the existing `PushDispatcher` 5-min `(recipient, eventType)` debounce + count aggregation. Both windows align so a recipient sees at most one bell row + one push (or push-aggregate) per Local per 5-min window — even if 10 different authors post in the Local during that window.
-3. **Always async via `AsyncDispatcher::enqueueAsync`.** A popular Local could fan out to thousands of recipients; sync dispatch would blow the §L1 300ms request budget. The originating `POST /posts/*` returns immediately; the async worker handles the per-recipient bell + push loop. Action Scheduler retries failed jobs per its standard semantics.
+1. **Primary-only recipient filter.** Only users whose `wp_usermeta.bcc_primary_hall_group_id` matches the post's `peepso_group_id` are notified. Membership alone does NOT subscribe — the primary-Hall pointer IS the "I want updates here" signal. Users who set a Hall as primary today receive notifications starting with the next post; legacy posts stay silent (no backfill).
+2. **Dual coalescing.** Bell writes are gated by a 5-min per-`(recipient, group)` transient (`bcc_hall_post_notified_{userId}_{groupId}`). Push uses the existing `PushDispatcher` 5-min `(recipient, eventType)` debounce + count aggregation. Both windows align so a recipient sees at most one bell row + one push (or push-aggregate) per Hall per 5-min window — even if 10 different authors post in the Hall during that window.
+3. **Always async via `AsyncDispatcher::enqueueAsync`.** A popular Hall could fan out to thousands of recipients; sync dispatch would blow the §L1 300ms request budget. The originating `POST /posts/*` returns immediately; the async worker handles the per-recipient bell + push loop. Action Scheduler retries failed jobs per its standard semantics.
 
 Defense in depth:
-- `Plugin.php` pre-gates `(group_id > 0)` AND `(PeepSoGroupRepository::findOneById !== null)` BEFORE paying the async-enqueue cost. Non-Local posts never enqueue.
-- The dispatcher orchestrator (`dispatchPrimaryLocalPostFor`) re-checks `findOneById` defensively (the Local could be deleted between enqueue and worker pickup).
+- `Plugin.php` pre-gates `(group_id > 0)` AND `(PeepSoGroupRepository::findOneById !== null)` BEFORE paying the async-enqueue cost. Non-Hall posts never enqueue.
+- The dispatcher orchestrator (`dispatchPrimaryHallPostFor`) re-checks `findOneById` defensively (the Hall could be deleted between enqueue and worker pickup).
 - The shared `dispatch()` helper honors the per-recipient bell pref; `PushDispatcher::enqueue` self-gates on push pref + master.
-- Recipient hard cap of 1000 per fan-out (revisit when a real Local crosses ~500 primary-members; switch to cursor-paginated async chain rather than raising the LIMIT).
+- Recipient hard cap of 1000 per fan-out (revisit when a real Hall crosses ~500 primary-members; switch to cursor-paginated async chain rather than raising the LIMIT).
 
-The `bcc_post_created` event fires **both** subscribers when a mention sits inside a post in your primary Local — by design. Mention and Local-post are semantically distinct events ("you were called out" vs. "activity in your Local") and each is independently toggleable in prefs.
+The `bcc_post_created` event fires **both** subscribers when a mention sits inside a post in your primary Hall — by design. Mention and Hall-post are semantically distinct events ("you were called out" vs. "activity in your Hall") and each is independently toggleable in prefs.
 
 ##### Comment-received dispatch — policy locks (V2 retention slice, 2026-05-13; reply routing v1.45, 2026-07-19)
 
@@ -3557,7 +3564,7 @@ Three behaviours are intentional and load-bearing — do not relitigate without 
 
 1. **Recipients (v1.45).** A **top-level comment** notifies the parent post's author ("@x commented on your post."). A **threaded reply** (v1.42 `parent_id`) notifies the replied-to comment's author ("@x replied to your comment.") AND the post author — except when they are the same user, who then receives ONLY the reply notification, never both. Post author resolved fresh at dispatch time by walking `parentActId → PeepSoActivityRepository::getById → act_external_id → wp_posts.post_author`; reply recipient via the reply's `_bcc_parent_comment` meta → `CommentRepository::getCommentMeta` (a parent comment that no longer resolves — deleted/unpublished — degrades to top-level routing). Self-activity is never notified (self-comment, self-reply). Both notifications ride the **same `bcc_comment_received` type** — same bell/push pref toggles, same payload shape and `link` — only the server-rendered `message` differs. At most two recipients per comment; dispatch is sync.
 2. **Bell coalesced via 5-min per-(recipient, post) transient** (`bcc_comment_received_notified_{userId}_{postId}`). A hot post with 50 comments in 10 min produces at most 2 bell rows for the author (one per 5-min window). Recipient-scoped, so reply recipient and post author never share a window. Push uses the existing `PushDispatcher` 5-min `(recipient, eventType)` debounce + count aggregation, coalescing rapid bursts into "N new comments on your post." / "N new replies."
-3. **Original-write only.** Comment edits do not re-dispatch — no `bcc_comment_edited` action emission exists in bcc-trust, so the edit-as-ping vector is structurally closed by absence (same posture as mention + local-post).
+3. **Original-write only.** Comment edits do not re-dispatch — no `bcc_comment_edited` action emission exists in bcc-trust, so the edit-as-ping vector is structurally closed by absence (same posture as mention + hall-post).
 
 The `bcc_comment_created` event fires **both** subscribers when a commenter @-tags the post author — by design. Mention and comment-received are semantically distinct events ("you were called out" vs. "your post has activity") and each is independently toggleable in prefs.
 
@@ -3577,7 +3584,7 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
     "bcc_rank_up":          true,
     "bcc_welcome":          true,
     "bcc_mention":          true,
-    "bcc_local_post":       true,
+    "bcc_hall_post":        true,
     "bcc_comment_received": true
   },
   "push": {
@@ -3587,7 +3594,7 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
       "dispute_outcome":   true,
       "panelist_selected": true,
       "mention":           true,
-      "local_post":        true,
+      "hall_post":         true,
       "comment_received":  true
     }
   }
@@ -5611,24 +5618,24 @@ Multipart blog cover-image upload (§D6 PR-B). Wraps `wp_handle_upload` + `wp_in
 
 #### `GET /bcc/v1/feed/cold-start`
 
-Public cold-start three-block bridge for the home-feed empty state — a civic map, not a recommendation engine. Composes Locals + recent operators + hot posts. Bounded (3 locals, 4 operators, 2 hot posts); no pagination.
+Public cold-start three-block bridge for the home-feed empty state — a civic map, not a recommendation engine. Composes Halls + recent operators + hot posts. Bounded (3 halls, 4 operators, 2 hot posts); no pagination.
 
-- **Auth:** auth-permissive. Authed viewers get chain-aligned Locals (`bcc_home_chain`) + a per-(viewer, UTC-day) stable-random operator shuffle; anon viewers share the per-day seed.
+- **Auth:** auth-permissive. Authed viewers get chain-aligned Halls (`bcc_home_chain`) + a per-(viewer, UTC-day) stable-random operator shuffle; anon viewers share the per-day seed.
 - **Response 200:**
   ```json
-  { "locals": [ { "slug": "iron-local-342", "name": "Iron Local 342", "chain_slug": "cosmos", "member_count": 88 } ], "recent_operators": [ { "handle": "ramona", "display_name": "Ramona V.", "avatar_url": "https://…", "card_tier": "rare", "tier_label": "Rare", "rank_label": "Journeyman", "recent_action": "REVIEWED a card", "link": "/u/ramona" } ], "hot_posts": [ /* §3.3 FeedItem[] */ ] }
+  { "halls": [ { "slug": "cosmos-hall", "name": "Cosmos Hall", "chain_slug": "cosmos", "member_count": 88 } ], "recent_operators": [ { "handle": "ramona", "display_name": "Ramona V.", "avatar_url": "https://…", "card_tier": "rare", "tier_label": "Rare", "rank_label": "Journeyman", "recent_action": "REVIEWED a card", "link": "/u/ramona" } ], "hot_posts": [ /* §3.3 FeedItem[] */ ] }
   ```
   `recent_operators` are ordered by a stable daily shuffle (NOT ranked); `recent_action` uses a locked past-tense verb allowlist with a `Recently on the floor.` fallback. `card_tier`/`tier_label` may be `null`. `hot_posts` are `FeedRankingService::getHotFeed` items verbatim.
 - **Cache:** `Cache-Control: private, no-store` (per-viewer per-day stable-randomization).
 - **Mapping:** `FeedColdStartEndpoint::handle` (route `FeedColdStartEndpoint.php:45`) → `FeedColdStartService::getColdStart`; operator hydration reuses the `MemberSummaryPrefetcher` bundle. FE `cold-start-endpoints.ts:getColdStart`.
 
-### 4.29 Group & local detail, entity tabs, creator gallery
+### 4.29 Group & hall detail, entity tabs, creator gallery
 
 Backfills the `####` endpoint headers the contract already cross-references (§4.7.5 group detail, §4.7.6 group feed, §4.7.7 group members) plus the entity-profile tab data planes and the now-shipped creator NFT gallery list. All in namespace `bcc/v1`, standard §1.4 envelope. Reads are auth-optional unless noted; the per-viewer fields they carry drive the cache posture.
 
 #### `GET /bcc/v1/groups/:slug` (§4.7.5)
 
-Cross-kind single-group detail view-model (`nft`/`local`/`system`/`user`). Powers `/communities/[slug]` header, membership pill, join/leave controls, and the `feed_visible` + `permissions.can_read_feed` gate consumed by `<GroupFeedSection>`.
+Cross-kind single-group detail view-model (`nft`/`hall`/`system`/`user`). Powers `/communities/[slug]` header, membership pill, join/leave controls, and the `feed_visible` + `permissions.can_read_feed` gate consumed by `<GroupFeedSection>`.
 
 - **Auth:** Anonymous OR Bearer. Anonymous → public slice (`viewer_membership: null`); authed → `viewer_membership` + viewer-resolved `permissions`.
 - **Path:** `slug` — `[a-z0-9][a-z0-9-]{0,99}`, required.
@@ -5637,7 +5644,7 @@ Cross-kind single-group detail view-model (`nft`/`local`/`system`/`user`). Power
   { "id": 4231, "slug": "holders-bored-apes", "name": "Holders: Bored Apes", "type": "nft", "privacy": "closed", "description": "…", "image_url": "https://…", "member_count": 87, "verification": { "kind": "on_chain", "label": "On-Chain Verified" }, "activity": { "posts_last_7d": 14, "last_activity_at": "2026-05-04T14:22:00Z", "heat": "warm", "heat_label": "Warm" }, "collection_stats": { "...": "§4.7.4 block, NFT-type only else null" }, "viewer_membership": { "is_member": true, "joined_at": "2026-01-12T00:00:00Z" }, "permissions": { "can_join": { "allowed": false, "unlock_hint": null, "reason_code": "already_member" }, "can_leave": { "allowed": true, "unlock_hint": null, "reason_code": null }, "can_read_feed": { "allowed": true, "unlock_hint": null, "reason_code": null } }, "feed_visible": true, "members_visible": true, "can_use_public_all": true, "can_manage_public_all_policy": false, "public_all_members_enabled": false, "chain_tag": "ethereum", "trust_min": null, "links": { "self": "/groups/holders-bored-apes" }, "card": { "...": "community Card view-model per §3.2.4 — card_kind: \"community\", community_dossier populated" } }
   ```
   - `card` (v1.27, additive): the full §3.2.4 community Card, composed from the same data already resolved for the flat fields (zero extra queries). New consumers render `group.card` via the CardFactory; the flat fields remain during the migration window.
-  - `type` ∈ `nft|validator|local|system|user`; `privacy` ∈ `open|closed|secret`. `image_url`/`collection_stats` are NFT-type only (else `null`); `validator_stats` (v1.52, §4.7.4 block) is `validator`-type only (else `null`); `verification` is present for both on-chain-gated kinds (`nft`, `validator`) and `null` elsewhere. `can_join` for a `validator` group is always `{allowed: false, reason_code: "not_eligible", unlock_hint: "Delegate to this validator to join its community."}` — the join round-trip happens via §4.7.8. `activity` is the §4.7.1 heat tile (defaults `posts_last_7d: 0, heat: "cold", heat_label: "Quiet"`). `viewer_membership`: `null` (anon), `{is_member: false, joined_at: null}` (authed non-member), `{is_member: true, joined_at}` (member). `permissions.*` each `{allowed, unlock_hint, reason_code}` (render `unlock_hint` verbatim per §A2/§N7); `can_join.reason_code` ∈ `auth_required|already_member|not_eligible|trust_threshold|requires_approval|invite_only`; `can_leave.reason_code` ∈ `auth_required|not_member|owner_cannot_leave`; `can_read_feed.allowed` always `true` for a built view-model (per-post visibility teaser, v1.24 — secret-non-member never gets a view-model). `feed_visible` mirrors `can_read_feed.allowed`. `members_visible` true for open groups, else only for active members. `can_use_public_all` (bool) — whether **this viewer** may set `visibility=public_all` when posting here (drives the composer's "PUBLIC" option; `false` for anon/non-members and members not authorized to syndicate — see §4.14). `can_manage_public_all_policy` (bool) — whether **this viewer** may change the group-wide ordinary-member opt-in (drives the owner control; `true` for the group **owner / manager** or a **site admin (`manage_options`)**, `false` for moderators, ordinary members, and anon). Distinct from `can_use_public_all`: a moderator may *use* `public_all` on their own post but may **not** manage the group policy. `public_all_members_enabled` (bool) — the group's ordinary-member opt-in state. **Minimum exposure:** it reflects the real value only for viewers who can manage the policy (`can_manage_public_all_policy = true`); every other viewer sees `false` (the raw config is not disclosed to ordinary/anon viewers — they rely on `can_use_public_all`). Toggled via `POST /me/groups/:id/post-policy` (§4.7.3). `chain_tag` slug or `null`. `trust_min` ∈ `25|50|75|null`.
+  - `type` ∈ `nft|validator|hall|system|user`; `privacy` ∈ `open|closed|secret`. `image_url`/`collection_stats` are NFT-type only (else `null`); `validator_stats` (v1.52, §4.7.4 block) is `validator`-type only (else `null`); `verification` is present for both on-chain-gated kinds (`nft`, `validator`) and `null` elsewhere. `can_join` for a `validator` group is always `{allowed: false, reason_code: "not_eligible", unlock_hint: "Delegate to this validator to join its community."}` — the join round-trip happens via §4.7.8. `activity` is the §4.7.1 heat tile (defaults `posts_last_7d: 0, heat: "cold", heat_label: "Quiet"`). `viewer_membership`: `null` (anon), `{is_member: false, joined_at: null}` (authed non-member), `{is_member: true, joined_at}` (member). `permissions.*` each `{allowed, unlock_hint, reason_code}` (render `unlock_hint` verbatim per §A2/§N7); `can_join.reason_code` ∈ `auth_required|already_member|not_eligible|trust_threshold|requires_approval|invite_only`; `can_leave.reason_code` ∈ `auth_required|not_member|owner_cannot_leave`; `can_read_feed.allowed` always `true` for a built view-model (per-post visibility teaser, v1.24 — secret-non-member never gets a view-model). `feed_visible` mirrors `can_read_feed.allowed`. `members_visible` true for open groups, else only for active members. `can_use_public_all` (bool) — whether **this viewer** may set `visibility=public_all` when posting here (drives the composer's "PUBLIC" option; `false` for anon/non-members and members not authorized to syndicate — see §4.14). `can_manage_public_all_policy` (bool) — whether **this viewer** may change the group-wide ordinary-member opt-in (drives the owner control; `true` for the group **owner / manager** or a **site admin (`manage_options`)**, `false` for moderators, ordinary members, and anon). Distinct from `can_use_public_all`: a moderator may *use* `public_all` on their own post but may **not** manage the group policy. `public_all_members_enabled` (bool) — the group's ordinary-member opt-in state. **Minimum exposure:** it reflects the real value only for viewers who can manage the policy (`can_manage_public_all_policy = true`); every other viewer sees `false` (the raw config is not disclosed to ordinary/anon viewers — they rely on `can_use_public_all`). Toggled via `POST /me/groups/:id/post-policy` (§4.7.3). `chain_tag` slug or `null`. `trust_min` ∈ `25|50|75|null`.
 - **Errors:** `bcc_invalid_request` 400 (empty slug) · `bcc_not_found` 404 (unresolved, OR secret + viewer not a member — §S, indistinguishable from missing)
 - **Cache:** anon → `public, max-age=60`; authed → `private, no-store`.
 - **Mapping:** `GroupsDetailEndpoint::show` (route `GroupsDetailEndpoint.php:52`) → `GroupsService::getGroup` (→ `PeepSoGroupRepository::findGroupBySlug` → `GroupContextResolver` → secret-gate → `GroupActivityHeatService` → `findUserMemberships` → NFT enrichment → `buildPermissions` → `ChainRepository::resolveSlugsForGroups`).
@@ -5671,7 +5678,7 @@ Paginated group roster. Offset-paginated (stable-ordered by role + joined_at).
 
 #### `POST /bcc/v1/me/groups` (§4.7.3 — create, V1.6)
 
-Create a plain (non-gated, non-Local) PeepSo group owned by the viewer. (Join/leave siblings are at §4.7.3.)
+Create a plain (non-gated, non-Hall) PeepSo group owned by the viewer. (Join/leave siblings are at §4.7.3.)
 
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized 401`.
 - **Body (JSON):** `name` (**required**, 3–100 chars) · `description` (optional, ≤ 2000, `wp_kses_post`) · `privacy` (optional, default `open`) ∈ `open|closed|secret|trust` (→ PeepSo 0/1/2; `trust` = open + a BCC reputation gate at join) · `trust_min` (**required when `privacy=trust`**) ∈ `25|50|75` · `chain` (**required**) — chain-tag slug, immutable after creation, validated via `ChainRepository::getBySlug`.
@@ -5681,20 +5688,20 @@ Create a plain (non-gated, non-Local) PeepSo group owned by the viewer. (Join/le
 - **Cache:** `no-store`.
 - **Mapping:** `MyGroupsEndpoint::postCreate` (route `MyGroupsEndpoint.php:75`) → `PeepSoGroupWriter::createPlainGroup`; emits `group_create` audit. FE `my-groups-endpoints.ts:createPlainGroup`.
 
-#### `GET /bcc/v1/locals/:slug`
+#### `GET /bcc/v1/halls/:slug`
 
-Single Local detail (auth-optional). Same item shape as the `/locals` directory rows. The `/locals/[slug]` page also composes `GET /groups/:slug` + `GET /groups/:id/feed` (§4.7 composition note).
+Single Hall detail (auth-optional). Same item shape as the `/halls` directory rows. The `/halls/[slug]` page also composes `GET /groups/:slug` + `GET /groups/:id/feed` (§4.7 composition note).
 
 - **Auth:** Anonymous OR Bearer.
 - **Path:** `slug` — `[a-z0-9][a-z0-9-]{0,99}`, required.
 - **Response 200:**
   ```json
-  { "id": 342, "slug": "cosmos-base-fan", "name": "Local 342 Cosmos Base Fan", "number": 342, "chain": "cosmos", "member_count": 412, "viewer_membership": { "is_member": true, "is_primary": true, "joined_at": "2026-01-12T00:00:00Z" }, "links": { "self": "/locals/cosmos-base-fan" } }
+  { "id": 342, "slug": "cosmos-hall", "name": "Cosmos Hall", "chain": "cosmos", "member_count": 412, "viewer_membership": { "is_member": true, "is_primary": true, "joined_at": "2026-01-12T00:00:00Z" }, "links": { "self": "/halls/cosmos-hall" } }
   ```
-  `number`/`chain` parsed from the title (§E3 `Local NNN`), `null` when absent. `viewer_membership` carries `is_primary` (Locals own the primary pointer; unlike §4.7.5).
+  `chain` comes from the `_bcc_chain_tag` meta FK (`null` when absent). `viewer_membership` carries `is_primary` (Halls own the primary pointer; unlike §4.7.5).
 - **Errors:** `bcc_invalid_request` 400 (empty slug) · `bcc_not_found` 404
 - **Cache:** anon → `public, max-age=300`; authed → `private, no-store`.
-- **Mapping:** `LocalsEndpoint::showBySlug` (route `LocalsEndpoint.php:82`) → `LocalsService::getLocal` (`PeepSoGroupRepository::findOneBySlug` + `findUserMemberships` + `bcc_primary_local_group_id`).
+- **Mapping:** `HallsEndpoint::showBySlug` (route `HallsEndpoint.php:82`) → `HallsService::getHall` (`PeepSoGroupRepository::findOneBySlug` + `findUserMemberships` + `bcc_primary_hall_group_id`).
 
 #### `GET /bcc/v1/entities/:target_kind/:target_id/reviews`
 
@@ -5997,7 +6004,7 @@ For each view-model field, the table below names the existing BCC system that ow
 | `is_in_good_standing` | `bcc-trust` derived from tier ≥ neutral AND no moderation flags (§E1) |
 | `flags` | suspension state + `wp_usermeta` moderation flags (`bcc_shadow_limited`/`bcc_hidden`/`bcc_under_review`) via `UserViewService::resolveFlags` — NOT the retired `bcc_trust_flags` vote-flag table |
 | `bio` | PeepSo profile description |
-| `primary_local`, `locals` | `peepso_group_members` (PeepSo's membership ledger — single graph rule) joined with `wp_usermeta.bcc_primary_local_group_id` for the primary pointer; no dedicated BCC table |
+| `primary_hall`, `halls` | `peepso_group_members` (PeepSo's membership ledger — single graph rule) joined with `wp_usermeta.bcc_primary_hall_group_id` for the primary pointer; no dedicated BCC table |
 | `wallets` | `bcc_wallet_links` (existing) |
 | `counts.followers/following` | `peepso_user_followers` aggregates |
 | `counts.watching_size` | `peepso_user_followers` filtered to BCC card kinds |
@@ -6063,14 +6070,14 @@ The following schema additions are **referenced but not implemented** by Phase 1
 - `bcc_photo_alts` — `(pho_id, owner_id, alt_text, updated_at)` (v1.5 §3.3.9 / §4.18; sidecar to `peepso_photos`, PK = `pho_id`, BCC-owned so PeepSo updates can't clobber)
 - `bcc_watch_meta` — `(follow_id, tier_at_watch, batch_id, watched_at)` (§C2). Renamed from `bcc_pull_meta` (and `*_at_pull` columns → `*_at_watch`) via the data-preserving migration documented in §4.5.1.
 - `wp_usermeta.bcc_handle` (§B6)
-- `wp_usermeta.bcc_primary_local_group_id` — singleton pointer to the user's primary Local; membership ledger itself stays in PeepSo's `peepso_group_members` per the single graph rule (§E3)
+- `wp_usermeta.bcc_primary_hall_group_id` — singleton pointer to the user's primary Hall; membership ledger itself stays in PeepSo's `peepso_group_members` per the single graph rule (§E3)
 - `wp_usermeta.bcc_ui_familiar` (§N5 — boolean for UI dual-label drop-off only)
-- `wp_usermeta.bcc_first_review`, `bcc_first_vouch`, `bcc_first_dispute`, `bcc_first_local_join`, `bcc_first_wallet_link` (§O1.2)
+- `wp_usermeta.bcc_first_review`, `bcc_first_vouch`, `bcc_first_dispute`, `bcc_first_hall_join`, `bcc_first_wallet_link` (§O1.2)
 - `wp_usermeta.bcc_privacy_*` keys (§K2)
 - `wp_usermeta.bcc_highlights_dismissed_until` (§O2)
 
 **Removed via 2026-04-27 anti-overengineering pass:**
-- `bcc_user_locals` (duplicated `peepso_group_members`; replaced with `bcc_primary_local_group_id` user-meta key)
+- `bcc_user_locals` (duplicated `peepso_group_members`; replaced with the `bcc_primary_hall_group_id` user-meta key)
 - `bcc_page_claims` (duplicated `bcc_onchain_claims`; merged via `entity_type='page'` + `recovery_pending` column)
 
 **Removed via 2026-05-14 gate-pruning pass:**
@@ -6207,6 +6214,45 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.55 — 2026-07-24 — "Local" group kind renamed to "Hall"; auto-provisioned one per chain
+
+Full wire rename of the dormant `local` group kind to `hall`. Zero `local`
+groups existed in production, so there is no migration and no `v2` namespace —
+this is a rename of an unreleased surface, applied everywhere the wire said
+`local` (routes, view-model fields, enum values, notification types, kicker
+copy). It pairs with bcc-core #36 and bcc-trust #120.
+
+**What Halls are.** A Hall is **auto-provisioned, one per active chain**
+(system-created, open, first-admin-owned) — not member-created and not
+numbered. There is no more `Local NNN` title-prefix convention: a group is a
+Hall iff it carries `_bcc_group_kind = 'hall'` meta, and its chain comes from a
+`_bcc_chain_tag` meta FK (not parsed from the title). A daily `bcc_hall_provision`
+cron reconciles one Hall per active chain, and admins can force a pass via
+**Provision Halls now**.
+
+- **Routes (§4.7, §4.29):** `/bcc/v1/locals` → **`/bcc/v1/halls`**;
+  `/locals/{slug}` → **`/halls/{slug}`**; `/me/locals/{id}/primary` →
+  **`/me/halls/{id}/primary`**; `DELETE /me/locals/primary` →
+  **`DELETE /me/halls/primary`**; `POST|DELETE /me/locals/{id}/membership` →
+  **`/me/halls/{id}/membership`**.
+- **Item shape:** `LocalItem` → **`HallItem`**, and the `number` field is
+  **dropped** (Halls are not numbered). All other fields are unchanged; offset
+  pagination is unchanged.
+- **Type + kicker:** `GroupDiscoveryType` replaces `"local"` with **`"hall"`**;
+  the `tier_label` kicker table maps `hall` → **`"CHAIN HALL"`** (was
+  `local` → `"LOCAL CHAPTER"`); the §4.7.2 `type_label` default becomes **`Hall`**;
+  the action-URL map uses `/me/halls/{id}/{action}`.
+- **Member view-model:** `primary_local` → **`primary_hall`**; the `locals[]`
+  array → **`halls[]`**; the cold-start block's `locals` → **`halls`**
+  (`ColdStartLocal` → `ColdStartHall`, `number` dropped).
+- **Notifications (§I2):** the `bcc_local_post` type → **`bcc_hall_post`**
+  ("posted in your home Hall"); deep-links `/locals/<slug>` → **`/halls/<slug>`**;
+  join copy and the `local-badge` icon rename to Hall.
+- **Drift fix:** several Locals endpoints still documented a `bcc_user_locals`
+  table that was retired in favor of the single-graph model. Corrected: membership
+  lives in PeepSo's `peepso_group_members`; BCC stores only the
+  `bcc_primary_hall_group_id` usermeta pointer.
 
 ### v1.54 — 2026-07-24 — Sender-facing "Queued" messages tab
 

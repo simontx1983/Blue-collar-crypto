@@ -262,7 +262,7 @@ truth ownership check still goes through the third-party reader.
   owns this behavior?*), the answer lives there. Append to §3 of that
   doc whenever a new cross-Domain call lands.
 
-## Groups (cross-kind: NFT / Local / system / user)
+## Groups (cross-kind: NFT / Hall / system / user)
 
 - **Group identity** (type / source / verification / privacy / gate)
   → `BCC\Trust\Core\ValueObjects\GroupContext` resolved via
@@ -291,46 +291,35 @@ truth ownership check still goes through the third-party reader.
   Single-graph rule (§E3): never write to `peepso_group_members`
   directly.
 
-### V1 accepted debt — "Local-ness" is a title-prefix convention, not a column
+### RESOLVED (v1.55) — "Hall-ness" is a meta column, written by the provisioner
 
-**What's load-bearing.** The only thing that distinguishes a Local from
-any other PeepSo group is `post_title LIKE 'Local %'`
-(see [docs/api-contract-v1.md §4.7](api-contract-v1.md), line ~1804).
-There is no `is_local` column, no `bcc_locals` lookup table, no FK.
-`/locals/:slug` and `/groups/:slug` resolve to the same underlying
-`peepso-page` row by shared slug (`post_name`); the Locals detail page
-composes both view-models in parallel (verified 2026-05-11 Locals feed
-wire-up — see [§4.7 composition note](api-contract-v1.md)).
+**History.** Halls were previously called *Locals*, and the only thing
+distinguishing a Local from any other PeepSo group was a
+`post_title LIKE 'Local %'` title-prefix convention — no discriminator
+column, no lookup table. That was recorded here as accepted V1 debt,
+with explicit trigger conditions that would promote it to a real
+discriminator: (a) a second, automated creator of the groups entering
+the system, (b) a "Communities"-style rename pass dropping the title
+prefix from product copy, and (c) a second surface branching on
+"is this one?" at runtime.
 
-**Why composition over normalization (don't relitigate without cause).**
-A Local *is* a PeepSo group. Introducing a sidecar discriminator
-(`is_local` column or `bcc_locals` lookup) creates a second source of
-truth that must be kept in sync forever — a strictly worse problem
-than the current convention. At today's creation cadence (manual,
-admin-only, low-frequency) the convention's failure mode is
-recoverable: an admin renaming a group to drop the "Local " prefix
-silently removes it from the `/locals` listing while `/groups/:slug`
-keeps working. The user hits a 404, files a bug, the prefix gets
-re-added. Acceptable.
+**Why it's resolved.** The v1.55 Hall rename fired those triggers at
+once. Halls are now **auto-provisioned one per active chain** by a
+daily `bcc_hall_provision` cron (the automated second creator), and the
+provisioner **meta-writes the discriminator**: a group is a Hall iff it
+carries `_bcc_group_kind = 'hall'`, with its chain in a `_bcc_chain_tag`
+meta FK. There is no `Local NNN` title prefix any more, and no
+title-`LIKE` scan — reads filter on `_bcc_group_kind` meta. The
+discriminator is a single source of truth written on provision, so the
+old failure mode (an admin renaming a group off-prefix and silently
+dropping it from the listing) no longer exists.
 
-**Trigger conditions that promote this to a real discriminator.** Hit
-any one and normalize (real `is_local TINYINT` on a BCC sidecar OR
-`bcc_locals` lookup keyed on `group_id`; enforce on write):
-
-- A second creator of Locals enters the system (automation, batch
-  admin tool, NFT-collection-seeded Locals, region-seeded Locals,
-  user-initiated Local creation).
-- The "Local " title prefix is dropped from product copy elsewhere
-  (e.g., a "Communities" rename pass) and admin tooling no longer
-  surfaces the convention as a visible hint.
-- A second product surface starts branching on "is this a Local?" as
-  a runtime decision (today only the `/locals` listing filter and the
-  `/locals/[slug]` detail page composition depend on it).
-
-**Until then: do not pre-emptively normalize.** The title-prefix
-convention is correct V1 debt, not silently wrong. A future agent
-reading this section who is considering a `bcc_locals` table or an
-`is_local` flag should re-read the trigger conditions first.
+**Consequently the `bcc_locals` / `is_local` question is closed.** No
+sidecar table was needed: `_bcc_group_kind` meta already serves as the
+enforced-on-write discriminator. `/halls/:slug` and `/groups/:slug`
+still resolve to the same `peepso-page` row by shared slug (`post_name`),
+and the Hall detail page still composes both view-models in parallel
+(see [§4.7 composition note](api-contract-v1.md)).
 
 ## Follow terminology ("Watch" vocabulary)
 
@@ -1028,7 +1017,7 @@ isLoading, error}`-compatible (a superset is fine):
 | Auth / Account | `useAccount`, `useUpdateHandle`, `useUpdateProfile`, `useOAuthConnections` |
 | Feed / Posts | `useFeed`, `useGroupFeed`, `useCreatePost`, `useReactions`, `useComments`, `useHighlights`, `useReportContent`, `useSetPhotoAlt`, `useUserActivity` |
 | Watching | `useWatching`, `useWatch` (legacy `useBinder`, `useBinderPull` retired 2026-05-13) |
-| Communities / Groups | `useGroup`, `useGroupMembers`, `useMyGroups`, `useHolderGroups`, `useLocalsPrimary` |
+| Communities / Groups | `useGroup`, `useGroupMembers`, `useMyGroups`, `useHolderGroups`, `useHallsPrimary` |
 | Disputes / Endorsements | `useDisputes`, `useEndorse` |
 | Messaging | `useConversations`, `useConversation`, `useStartConversation`, `useReplyInConversation`, `useMarkConversationRead`, `useUnreadMessageCount` |
 | Notifications / Push | `useNotifications`, `useNotificationPrefs`, `usePushSubscription` |
@@ -1061,7 +1050,7 @@ isLoading, error}`-compatible (a superset is fine):
 | Groups | 11 | `GroupActionButton`, `GroupAboutPanel`, `GroupCard`, `GroupDetailShell`, `GroupFeedSection`, `GroupGatedNotice`, `GroupMembersStrip`, `GroupMembershipStrip`, `GroupTabs`, `HeatBadge`, `VerificationBadge`. |
 | Landing | 2 | `FloorBriefing`, `FloorIntro`. |
 | Layout | 4 | `FileRail`, `PageHero`, `SiteHeader`, `SiteFooter` (+ `UnderConstructionPage`). |
-| Locals / Members | 3 | `LocalMembershipControls`, `FlippableMemberCard`, `MembersGrid`. |
+| Halls / Members | 3 | `HallMembershipControls`, `FlippableMemberCard`, `MembersGrid`. |
 | Messages | 4 | `ConversationList`, `MessageComposer`, `MessagesBadge`, `ThreadView`. |
 | Notifications | 1 | `NotificationBell`. |
 | Onboarding | 1 | `OnboardingWizard`. |
