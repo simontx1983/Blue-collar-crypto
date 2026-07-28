@@ -35,6 +35,39 @@ separate, explicitly-approved rollout — see [Production](#production-separate-
    read "constraint applied" as "ambiguity is now impossible."** Do not gate the
    kill-switch on the constraint alone; the resolver is what makes go-live safe.
 
+## Delivery requires an HTTP context (scheduler requirement)
+
+Queue **delivery** (the first-claim backlog release and any retries) writes PeepSo
+conversations, which only works in an **HTTP WordPress bootstrap where PeepSo's
+Chat module loads**. PeepSo deliberately disables itself under WP-CLI
+(`php_sapi_name() === 'cli' && WP_CLI`), so its message writer is unavailable
+there.
+
+- **Staging currently delivers correctly**: `bcc_vmq_deliver` is enqueued via
+  Action Scheduler and run by the `action_scheduler_run_queue` WP-Cron event,
+  which fires over **HTTP loopback** (`DISABLE_WP_CRON` is unset). Verified: the
+  Action Scheduler `bcc_vmq_deliver` actions complete and messages deliver.
+- **WP-CLI delivery is unsupported and now fails loudly.** `wp bcc-trust vmq
+  drain` refuses (non-zero exit) when PeepSo's writer is unavailable and mutates
+  nothing — it no longer reports a hollow "complete". If delivery is ever run in
+  a CLI context, the worker skips without touching rows and records the
+  `validator_messaging / delivery_context_unsupported` degradation event instead
+  of silently burning retries. **Do not** wire `wp cron event run` or `wp
+  action-scheduler run` as the delivery runner.
+- **Read-only CLI is fine.** `wp bcc-trust vmq status` and queue SQL inspection
+  work from the CLI and are safe to use for diagnostics.
+- **Recommended Hostinger config (do not change production here):** keep HTTP
+  WP-Cron / Action Scheduler as the runner — i.e. leave `DISABLE_WP_CRON` unset
+  so visitor traffic (or the loopback) drives cron. If you replace
+  visitor-triggered cron with a panel/system cron, point it at an **HTTP request
+  to `wp-cron.php`** (e.g. `curl`/`wget` the URL), **not** a WP-CLI cron runner.
+- **Production preflight (required before enabling):** independently confirm the
+  production scheduler runs delivery in an HTTP context — `DISABLE_WP_CRON` unset
+  (or an HTTP `wp-cron.php` cron), no WP-CLI cron running `bcc_vmq_deliver` /
+  Action Scheduler — and watch `delivery_context_unsupported` on the health
+  surface after enabling. Do not enable validator messaging in production until
+  this passes.
+
 ## Preconditions
 
 - You are on **staging**, not production. Confirm the target before every
