@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.52 · 2026-07-23 · Phase 1 deliverable · **⚠️ BREAKING (v1.51)**
+**Status:** Draft v1.56 · 2026-07-28 · Phase 1 deliverable · **⚠️ BREAKING (v1.51)**
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -4355,7 +4355,7 @@ The viewer's own **pending pre-claim validator messages** — the "Queued" tab o
 
 ### 4.20 Trust Attestations (§J)
 
-The Trust Attestation Layer is foundational product architecture, locked in `docs/trust-attestation-layer.md`. This section encodes the wire-level contracts that follow from that design. **Read the design doc first** — this section assumes the reader knows the three-layer architecture, the three V1 primitives, the bandwidth model on Stand Behind, and the soft-accountability stack. The companion `docs/trust-attestation-risk-assessment.md` documents the threat model + behavioral risk map; Phase 1 implementation must address its §5 Critical items.
+The Trust Attestation Layer is foundational product architecture, locked in `docs/trust-attestation-layer.md`. This section encodes the wire-level contracts that follow from that design. **Read the design doc first** — this section assumes the reader knows the three-layer architecture, the three V1 primitives, the bandwidth model on Backing, and the soft-accountability stack. The companion `docs/trust-attestation-risk-assessment.md` documents the threat model + behavioral risk map; Phase 1 implementation must address its §5 Critical items.
 
 > **Status:** locked 2026-05-13. Phase 1 implementation gates on a separate scope-frozen plan. Endpoint shapes below are the V1 contract surface; routes ship as Phase 1 lands.
 
@@ -4611,7 +4611,7 @@ Returns the signed-in operator's own reliability surface. Mirror, not stigma —
 - **`divergence_state`** — the operator's own divergence-state classification per §J.8. The same value flows to the public §J.6 `negative_signals.divergence_state` for entity-card targets **and, as of the member-disputes slice (2026-06-30), for `user_profile`/member targets too** — members get the full public 5-state surface, same as entities (people are first-class trust subjects). PR-8a ships this as a read-time `DivergenceStateClassifier` output.
 - **`explainer`** — server-pinned copy block explaining the current state in plain language. Per the §J.5 critical-risk-mitigation item #7 ("self-only 'why am I in this state' view"), the operator's self-mirror is the only surface that carries this — never on third-party endpoints. The `headline` + `body` strings are server-rendered per §A2; the FE renders them verbatim.
 - **Cache:** `private, max-age=60`.
-- **`slots_recyclable_count`:** number of currently-allocated Stand Behind slots whose decayed_weight has crossed the 50% threshold and are eligible to auto-free on the next write. FE renders this as a soft "you have N slots about to recycle" hint.
+- **`slots_recyclable_count`:** number of currently-allocated Backing slots whose decayed_weight has crossed the 50% threshold and are eligible to auto-free on the next write. FE renders this as a soft "you have N slots about to recycle" hint.
 
 #### §J.6 Entity view-model extensions
 
@@ -4641,7 +4641,7 @@ Existing card and profile endpoints (`/bcc/v1/cards/:type/:id`, `/bcc/v1/users/:
   },
   "permissions": {
     "can_vouch":        { "allowed": true,  "unlock_hint": null },
-    "can_stand_behind": { "allowed": false, "unlock_hint": "All 5 Stand Behind slots are in use. Drop one to add this." },
+    "can_stand_behind": { "allowed": false, "unlock_hint": "All 5 Backing slots are in use. Drop one to add this." },
     "can_report":       { "allowed": true,  "unlock_hint": null }
   }
 }
@@ -4707,7 +4707,7 @@ Self-report rejection is preserved: reporter_user_id !== target's owner_user_id 
 
 These are deliberately not locked in this contract — they're tuning decisions made in the Phase 1 scope-freeze plan against real performance and product data:
 
-1. Stand Behind slot counts (`bcc_attestation_thresholds.stand_behind_slots_by_tier`)
+1. Backing slot counts (`bcc_attestation_thresholds.stand_behind_slots_by_tier`)
 2. Decay curve shape (`bcc_attestation_thresholds.decay_curve_function` + breakpoints)
 3. Operator Reliability formula weights
 4. Negative-state thresholds — `volatile` flag trigger points (reputation score swing magnitude × window length), and the `polarizing` state's high-reliability-attestor divergence cutoff (per the §J.8 five-state classification). The constitution's §J.10 has the full open-question list; this is the wire-relevant subset.
@@ -5926,7 +5926,7 @@ Retract the viewer's stance (back to neutral). NOT holder-gated — you can alwa
 
 ### 5.1 §N7 — gated actions always visible
 
-Every gated action (Pull, Review, Dispute, Vouch, Stand-behind, etc.) appears in `permissions.*` regardless of whether the viewer can use it. `allowed` is the boolean; `unlock_hint` is the plain-English path forward. Frontend never hides gated actions a viewer could eventually unlock; it renders them disabled with the hint.
+Every gated action (Pull, Review, Dispute, Vouch, Back, etc.) appears in `permissions.*` regardless of whether the viewer can use it. `allowed` is the boolean; `unlock_hint` is the plain-English path forward. Frontend never hides gated actions a viewer could eventually unlock; it renders them disabled with the hint.
 
 Exception: structurally impossible actions (e.g., follow-yourself) have `allowed: false, unlock_hint: null` — frontend hides those.
 
@@ -6214,6 +6214,60 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.56 — 2026-07-28 — "Stand Behind" display labels converge to "Back / Backing"; roster tab becomes "Supporters"
+
+Display-layer rename of the scarce Layer 1 primitive, plus a fix to a
+parent/child naming collision it exposed. Follows the v1.50 Endorse→Vouch
+shape, not the v1.55 Hall shape: **wire names are unchanged.** The DB `kind`
+enum value `stand_behind`, the `kind=stand_behind` REST filter value,
+`can_stand_behind`, `viewer_attestation.stand_behind`, `stand_behind_count`,
+`stand_behind_weight_sum`, `stand_behind_slots_used` / `_total` /
+`_graduated`, `stand_behind_allocation.*`, the
+`bcc_attestation_stand_behind_received` /
+`attestation_stand_behind_received` notification types and preference keys,
+`stand_behind_renewal_nudge`, `bcc_attestation_thresholds.stand_behind_slots_by_tier`,
+the `bcc_reliability_kind_stand_behind` filter, and
+`BCC_RELIABILITY_KIND_STAND_BEHIND` all keep their names. Renaming the three
+persisted user-meta preference keys would silently reset every user's
+notification prefs, and the `kind` enum is a stored column value — neither is
+worth a `v2` namespace for a copy change.
+
+- **Label authority (§J.7 of `docs/trust-attestation-layer.md`):** the label
+  table now maps `stand_behind` → **"Back"** (the action/button) and
+  **"Backing"** (the state, the roster entry, the slots). The
+  60-second comprehension test is restated as *"what's the difference between
+  Vouch and Backing?"*, and the §J.7 onboarding cards are amended — Card 2's
+  Vouch line previously read *"Abundant — back as many as you want,"* which
+  collides with the new action name and now reads *"Abundant — vouch for as
+  many as you want."*
+- **Unlock hints + error text (display strings only):** `can_stand_behind`'s
+  `unlock_hint` values become "Sign in to back operators.", "Reach Neutral
+  standing to back operators.", and "All 5 Backing slots are in use. Drop one
+  to add this." The slot-cap error message becomes "You're backing your
+  maximum of %d operators. Free a slot by revoking one to add another."
+  `error.code` values are unchanged.
+- **Notification + push copy (§I2, §J.7 taxonomy):** "@x is standing behind
+  you." → **"@x is backing you."**; "@x is no longer standing behind you." →
+  **"@x is no longer backing you."**; "@x reaffirmed standing behind you." →
+  **"@x reaffirmed backing you."**; the push aggregate "%d operators are
+  standing behind you." → **"%d operators are backing you."** Type slugs and
+  dedupe tags unchanged.
+- **"Supporters" (§J.6):** the attestation roster — the genus term covering
+  vouches *and* backings — is labelled **"Supporters"**, replacing the
+  frontend's "Backing" tab label on `/u/[handle]` and entity cards. The tab
+  *key* stays `backing`, so `?tab=backing` deep links keep working. Without
+  this, the parent roster and one of its two children would share a name.
+  "Roster" was rejected: it is already the label of the follow-graph tab on
+  the same tab strip.
+- **Naming rule:** `Back` is reserved for the attestation and always appears
+  either with its allocation (`Back · 2/5`) or as a card/profile primary
+  action. Back-*navigation* is always `← BACK TO <destination>` — never a
+  bare "Back". The two co-occur on `/u/[handle]`, where the Photos album view
+  renders `← BACK TO ALBUMS` in the same mono-caps register.
+- **Golden masters:** `bcc-trust/tests/golden/cards.json` and
+  `profile-phillipcosmos.json` embed the `unlock_hint` display strings and
+  were re-captured.
 
 ### v1.55 — 2026-07-24 — "Local" group kind renamed to "Hall"; auto-provisioned one per chain
 
