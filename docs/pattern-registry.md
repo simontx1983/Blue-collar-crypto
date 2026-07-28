@@ -467,7 +467,7 @@ The platform is intentionally resilient — fail-closed throttles, fail-open cac
   - **`nft_indexer` / 1 event** (2026-06-11) — `NftEthIndexerWorker` forward-progress stalls. The worker walks confirmed Transfer events over a clamped block range and advances `wp_bcc_chain_checkpoints` only over fully-read blocks. On a partial drain (the per-tick page budget is hit before the range empties) it **safe-advances** the checkpoint to `maxBlockSeen - 1`: Alchemy returns transfers in ascending `(blockNum, logIndex)` order, so every block strictly below the page-boundary block is fully covered. The next tick resumes at the boundary block; the re-read is loss-free because `NftHoldingsRepository::upsertMany` is `INSERT ... ON DUPLICATE KEY UPDATE` with `GREATEST()` on `last_seen_block` / `confirmed_at`. This guarantees monotonic progress whenever the read pages span ≥2 distinct blocks (the common case).
     - `dense_block_stall` — the PATHOLOGICAL edge at [NftEthIndexerWorker](../app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Workers/NftEthIndexerWorker.php): even the FIRST block of the range carried more transfers than the per-tick page budget (`MAX_PAGES_PER_TICK × ALCHEMY_MAX_COUNT`) can read, so `maxBlockSeen == rangeFrom` and `safeBlock < rangeFrom`. Safe-advance would skip an unread tail of that same block, so the worker holds the checkpoint (no data loss) and bumps this counter. Sustained activation = a chain is wedged on a dense block; an operator must raise the page budget / narrow `BLOCKS_PER_TICK` for that chain or investigate the contract. A single block with >5000 transfers of one tracked contract is near-impossible under block gas limits — a nonzero value is a real incident, not noise.
 
-  - **`validator_messaging` / 4 events** (2026-07-23) — the validator-messaging
+  - **`validator_messaging` / 5 events** (2026-07-23) — the validator-messaging
     surface in bcc-trust: deterministic operator resolution (UNCLAIMED /
     RESOLVED / AMBIGUOUS), the pre-claim message queue, and the
     first-activation backlog delivery worker.
@@ -486,6 +486,15 @@ The platform is intentionally resilient — fail-closed throttles, fail-open cac
     - `lease_reaped` — the sweep returned an expired `processing` lease to
       `retryable` (a delivery worker died mid-row). Self-recovering; sustained
       activation = delivery workers being killed (timeout / OOM) mid-batch.
+    - `delivery_context_unsupported` — the delivery worker ran in an execution
+      context where PeepSo's Chat writer is not booted
+      (`PeepSoMessageWriter::isReady()` is false), canonically **WP-CLI**, where
+      PeepSo disables itself. The worker delivered nothing and touched NO row
+      (no lease, zero attempts consumed), so the backlog stays recoverable by
+      the HTTP Action Scheduler runner. Cooldown-throttled so a frequent CLI
+      cron cannot flood. Sustained activation = something is running delivery
+      via WP-CLI (`wp cron event run` / `wp action-scheduler run`); queue
+      delivery MUST run through the HTTP WP-Cron / Action Scheduler context.
 
   **Pending wirings** (subsequent batches): none currently outstanding.
   All previously-pending subsystems shipped 2026-05-26
