@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.56 · 2026-07-28 · Phase 1 deliverable · **⚠️ BREAKING (v1.51)**
+**Status:** Draft v1.57 · 2026-07-28 · Phase 1 deliverable · **⚠️ BREAKING (v1.57)**
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -453,7 +453,7 @@ Or `null` if the action shouldn't celebrate.
 - For Heavy moments delivered via §4.11, the inline shape is wrapped — `kind`/`label`/`icon` are nested under `celebration`, alongside an `id` for consume targeting. See §4.11 for the wrapper.
 - `label` is what the frontend renders in the toast. Plain English, ≤ 50 chars.
 - `icon` is a server-defined enum the frontend maps to a sprite (`watch`, `review-stamp`, `vouch-handshake`, `dispute-shield`, `rank-up`, `tier-upgrade`, `streak-flame`, `unlock`, `hall-badge`). The legacy `pull` icon name is accepted by the frontend during the §1.1.1 deprecation window — see §4.5.1.
-- `rarity_tint` is non-null only on `light` celebrations triggered by a watch — the value is the watched card's `card_tier`, used for the glow color (§O1).
+- `rarity_tint` is non-null only on `light` celebrations triggered by a watch — the value is the watched card's `reputation_tier`, used for the glow color (§O1).
 - Reduced-motion fallback (§O1.2): the frontend renders the static toast with `label`, ignoring all animation hints. Server contract is identical; the rendering decision is client-side only.
 
 ### 2.4 `LivingBlock`
@@ -642,7 +642,7 @@ Used on Card view-models. The visual identity of the entity.
 ```
 
 - `image_url` is non-null when the entity has uploaded a custom crest; the frontend prefers it over `initials + monogram_color`.
-- `background_kind` is `chain` (background_value = chain slug), `tier` (= card_tier), or `solid` (= hex).
+- `background_kind` is `chain` (background_value = chain slug), `tier` (= reputation_tier), or `solid` (= hex).
 
 ### 2.10 `Links`
 
@@ -744,8 +744,8 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
   "is_self": true,
   "trust_score": 78,
   "reputation_tier": "trusted",
-  "card_tier": "rare",
-  "tier_label": "Rare",
+  "reputation_tier": "trusted",
+  "reputation_tier_label": "Trusted",
   "rank": "journeyman",
   "rank_label": "Journeyman",
   "is_in_good_standing": true,
@@ -836,9 +836,10 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
 
 **Field rules:**
 
-- `trust_score`, `reputation_tier`, `reputation_tier_label`, `card_tier`, `tier_label`, `rank`, `rank_label`, `current_rank_label`, `is_in_good_standing`, `flags` — all derived per §A4 by `bcc-trust`. Frontend renders, never derives.
-- `card_tier` follows §C1 mapping: `elite → legendary`, `trusted → rare`, `neutral → uncommon`, `caution → common`, `risky → null` (hidden from card UI per §C1). This is **entity-card rarity** vocabulary.
-- `reputation_tier_label` is the **honest member trust-tier name** (the chip a human reads): `risky → "Risky"`, `caution → "Caution"`, `neutral → "Neutral"`, `trusted → "Trusted"`, `elite → "Proven"`. Distinct from `card_tier`/`tier_label` rarity — a *caution* member must not read as "Common". Always present on member surfaces.
+- `trust_score`, `reputation_tier`, `reputation_tier_label`, `rank`, `rank_label`, `current_rank_label`, `is_in_good_standing`, `flags` — all derived per §A4 by `bcc-trust`. Frontend renders, never derives.
+- `reputation_tier` ∈ `elite | trusted | neutral | caution | risky`. **Required** on every member and card surface as of v1.57 — it was optional, and the optionality is what let consumers fall back to the retired `card_tier` and lose the ability to show a risky member at all.
+- `reputation_tier_label` is the trust-tier name (the chip a human reads): `risky → "Risky"`, `caution → "Caution"`, `neutral → "Neutral"`, `trusted → "Trusted"`, `elite → "Elite"`. Always present on member and entity surfaces; `null` only on `community` cards, which have no trust system.
+- **`card_tier` / `tier_label` are RETIRED (v1.57).** The collectible-rarity vocabulary is gone — see §10 changelog for the full rationale. Do not reintroduce a rarity mapping anywhere; there is one tier axis and it is `reputation_tier`.
 - `current_rank_label` is the pre-rendered §A2 label for the level-derived **Rank** (`rank_label`'s display string; e.g. `"Master"`). It is a member-axis field.
 - `flags` is an array of short slugs; if non-empty, the frontend may render moderation chips. V1 codes: `suspended`, `shadow_limited`, `hidden`, `under_review`.
 - Hidden privacy fields (per `privacy.*_hidden: true`) cause the corresponding sections in `counts`, `wallets`, etc. to either be omitted or zeroed depending on the viewer's relationship — server decides, client doesn't.
@@ -861,8 +862,8 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
   "trust_score": 98,
   "reputation_tier": "elite",
   "reputation_tier_label": null,
-  "card_tier": "legendary",
-  "tier_label": "Legendary",
+  "reputation_tier": "elite",
+  "reputation_tier_label": "Elite",
   "rank_label": null,
   "current_rank_label": null,
   "is_in_good_standing": true,
@@ -899,7 +900,7 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
   - **Clients MUST NOT infer messaging lifecycle from `is_claimed`** — that field cannot distinguish never-claimed from previously-claimed, which are different destinations. `messaging.destination` is the only sanctioned source. It is a rendering hint: the server re-resolves on every submit, so a stale card degrades to an honest error, never a misroute.
 - `chains` (per §K3) — list of `CardChain` objects when 2+ chains back the same page; `null` otherwise. V1.5 validator-only; creator gallery filter is V2.
 - `rank_label` — **populated on `member` cards** (the level-derived Rank label — Apprentice/Journeyman/Master — via `UserViewService::getSummary`); may be `""` when the member has no derived rank yet. `null` on page kinds (`validator`/`project`/`creator`) — Rank is member-only. The field is always present (the union is `string | null`). `current_rank_label` mirrors it (own/profile surfaces).
-- `reputation_tier_label` — **honest member trust-tier name** (Risky/Caution/Neutral/Trusted/Proven). Populated on `member` cards; `null` on page kinds (entity cards use `card_tier`/`tier_label` rarity instead). Always present (`string | null`).
+- `reputation_tier_label` — trust-tier name (Risky/Caution/Neutral/Trusted/Elite). Populated on `member` AND entity cards as of v1.57 (it was member-only while entity cards carried rarity words instead). `null` only on `community` cards.
 - `member_dossier` — **non-null object on `member` cards, `null` on page kinds** (always present for shape uniformity, like `chains`). Carries the back-of-card signal blocks the `/members`, watchers, and followers/following lists previously emitted as a bare `MemberSummary`. Server-composed from the same `UserViewService::getSummary` resolution (no parallel query). Shape:
   ```json
   "member_dossier": {
@@ -921,7 +922,7 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
   }
   ```
   `primary_hall` is `null` when the member has no primary Hall.
-- `card_tier` may be `null` only when the entity is risky-tier (per §C1) — and in that case the entity should not appear in card UIs at all. If a card response returns `card_tier: null`, the frontend renders nothing visible (treat as a 404 from the UI perspective).
+- Risky entities render like any other tier (v1.57). They previously had no `card_tier` at all, and the contract instructed frontends to render nothing visible for them — which meant the platform actively hid its own strongest warning. The tier strip now renders for all five bands.
 - `permissions.can_watch.allowed` is `false` when (a) viewer is anonymous, (b) viewer is the card subject (you can't follow yourself), or (c) the card is hidden (risky tier). In cases (a) and (c), `unlock_hint` is `null` — these aren't hints the user can resolve. (Legacy permission key `permissions.can_watch` is emitted alongside `can_watch` during the §1.1.1 deprecation window.)
 - `viewer_has_reviewed` / `viewer_has_endorsed` (per §D2 / §V1.5) — drives "WRITE A REVIEW" → "REMOVE YOUR REVIEW" CTA swaps. Always `false` for anonymous viewers. **v1.49:** `viewer_has_reviewed` is REAL on `member` cards too (has the viewer reviewed this member — a vote on their self-page); the old "always false on member cards" rule is retired. `viewer_has_endorsed` stays `false` on member cards (endorsements target page cards only).
 - `review_target_id` (v1.49, **member cards only** — absent on other kinds) — the member's deterministic self-page id (`MemberSelfPageService::selfPageId(user_id)`), i.e. the page member reviews live on. This is the `:id` the frontend passes to `DELETE /me/reviews/:id` to remove its review of the member; the frontend must never derive `ID_BASE` itself (§L5). The WRITE path is unchanged (`POST /posts kind=review target_kind=user_profile target_user_id`).
@@ -930,7 +931,7 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
 
 **Deferred to V1.5:**
 
-- `display: { title, subtitle, badge }` — pre-formatted header strings (e.g., `"Validator · Cosmos"`). Reintroduced when a compact card layout needs the kind+chain combo string. V1 surfaces use `name`, `tier_label`, and the chain band derived from `crest.background_kind === "chain"`.
+- `display: { title, subtitle, badge }` — pre-formatted header strings (e.g., `"Validator · Cosmos"`). Reintroduced when a compact card layout needs the kind+chain combo string. V1 surfaces use `name`, `reputation_tier_label`, and the chain band derived from `crest.background_kind === "chain"`.
 - `chain` (singular slug) and `claimed_by_handle` — superseded by `chains` (plural, §K3) and `claim_target` respectively for V1.
 - `updated_at` — read-model recompute timestamp; will return when client-side cache invalidation needs it.
 
@@ -977,8 +978,8 @@ Communities (PeepSo groups: `nft` / `hall` / `system` / `user`) converge onto th
 
 Locked field rules:
 
-- **Trust placeholders (shape-stable, never rendered as trust):** communities have no trust system. `trust_score: 0`, `reputation_tier: "neutral"`, `card_tier: "common"`, `rank_label: null`, `is_in_good_standing: true`, `flags: []`. The community face does not render a trust dial; the values exist only to keep the envelope shape-stable.
-- **`tier_label` = server-owned group-type kicker** (§L5 — supersedes the frontend `KICKER_BY_TYPE` map): `nft` → `"HOLDER COMMUNITY"`, `validator` → `"DELEGATOR COMMUNITY"`, `hall` → `"CHAIN HALL"`, `system` → `"SYSTEM COMMUNITY"`, `user` → `"COMMUNITY"`. Unknown kinds fall back to `"COMMUNITY"`.
+- **Trust placeholders (shape-stable, never rendered as trust):** communities have no trust system. `trust_score: 0`, `reputation_tier: "neutral"`, `reputation_tier_label: null`, `rank_label: null`, `is_in_good_standing: true`, `flags: []`. The community face does not render a trust dial; the values exist only to keep the envelope shape-stable.
+- **`kicker` = server-owned group-type kicker** (§L5 — supersedes the frontend `KICKER_BY_TYPE` map). Until v1.57 this rode on `tier_label`, overloading a trust field to carry a category word; it now has its own field: `nft` → `"HOLDER COMMUNITY"`, `validator` → `"DELEGATOR COMMUNITY"`, `hall` → `"CHAIN HALL"`, `system` → `"SYSTEM COMMUNITY"`, `user` → `"COMMUNITY"`. Unknown kinds fall back to `"COMMUNITY"`.
   *(v1.52: `HOLDERS GROUP` → `HOLDER COMMUNITY` and `SYSTEM GROUP` → `SYSTEM COMMUNITY` as part of the Communities vocabulary convergence — display-only, `type` values unchanged; `validator` added the same release.)*
 - **Crest band:** the chain-keyed background applies to on-chain-gated kinds with a resolved `chain_tag` — `nft` and, since v1.52, `validator`; every other kind gets the tier band at the fixed `common` tier.
 - **Identity:** `id` = group id, `handle` = group slug, `bio` = group description (plain-text, ~200-char truncation — same bound as page/member bios; `""` when unset).
@@ -1114,7 +1115,7 @@ When entity-as-author posts ship (§D3 identity-toggle), the author block gains 
   "handle": "simontx",
   "display_name": "Simon TX",
   "avatar_url": "https://...",
-  "card_tier": "rare",           // tier badge next to author name
+  "reputation_tier": "trusted",  // tier badge next to author name
   "rank_label": "Journeyman",
   "is_in_good_standing": true,   // standing chip on posts
   "is_followed_by_viewer": false // inline Following chip
@@ -2019,7 +2020,7 @@ Returns a full Card view-model.
 - **Rate limit:** 60/min/user (anonymous: 60/min/IP)
 - **Cache:** `Cache-Control: max-age=30, stale-while-revalidate=60`; React Query `staleTime: 30s`
 - **Mapping:**
-  - `trust_score`, `reputation_tier`, `card_tier`, `tier_label`, `is_in_good_standing`, `flags` ← `bcc_page_read_model` (§A4)
+  - `trust_score`, `reputation_tier`, `reputation_tier_label`, `is_in_good_standing`, `flags` ← `bcc_page_read_model` (§A4)
   - `is_claimed`, `claimed_by_handle` ← `peepso_pages.claimed_by` (§B5)
   - `chain` ← `peepso_page` meta (existing AbstractPageType)
   - `stats[]` per kind ← see §6 mapping table
@@ -2149,8 +2150,8 @@ Personalized "who to follow" recommender. **Relevance/affinity-based, NOT popula
           "handle": "ramona",
           "display_name": "Ramona V.",
           "avatar_url": "https://.../avatar.jpg",
-          "card_tier": "rare",
-          "tier_label": "Rare",
+          "reputation_tier": "trusted",
+          "reputation_tier_label": "Trusted",
           "rank_label": "Journeyman",
           "is_in_good_standing": true,
           "suggestion_reason": { "code": "mutual_follows", "label": "Followed by 3 you follow" }
@@ -2160,8 +2161,8 @@ Personalized "who to follow" recommender. **Relevance/affinity-based, NOT popula
   }
   ```
   - Items are ordered **best-first** by the affinity score.
-  - `card_tier` ∈ `legendary | rare | uncommon | common | null` (mirrors §C1; `null` for risky-tier — but risky users are excluded from this surface anyway).
-  - `tier_label` is the pre-rendered §A2 display string (or `null`).
+  - `reputation_tier` ∈ `elite | trusted | neutral | caution | risky`.
+  - `reputation_tier_label` is the pre-rendered §A2 display string.
   - `suggestion_reason` is the single highest-CONTRIBUTING affinity signal, or `null` for civic cold-start fallback rows. `code` ∈ `follows_you | mutual_follows | co_hall | co_validator | co_nft_community`; `label` is a server-rendered §A2 string (e.g. `"Follows you"`, `"Followed by N you follow"`, `"In the Cosmos Hall with you"`, `"Backs Stakecito too"`, `"In Bored Apes with you"`).
 - **Scoring (affinity only):** `W_RECIP·followsViewer + W_MUTUAL·min(mutualFollows, MUTUAL_CAP) + W_HALL·sharedHalls + W_VALIDATOR·sharedValidatorBacking + W_NFT·sharedHolderCommunities`. Weights are server constants (tunable). **No popularity/trust term participates in ranking.**
 - **Exclusions (security-sensitive):** self; already-following; caution/risky reputation tier; active suspensions; mutual blocks (either direction); and any candidate who hid their watching graph (`watching_hidden`).
@@ -2185,7 +2186,7 @@ Full User view-model.
 - **Cache:** `Cache-Control: private, max-age=30` (own: `no-store`); React Query `staleTime: 30s` (own: 0)
 - **Mapping:**
   - Identity fields ← `wp_users` + `wp_usermeta.bcc_handle`
-  - `trust_score`, `reputation_tier`, `card_tier`, `rank`, `is_in_good_standing`, `flags` ← `bcc-trust` services (§A4)
+  - `trust_score`, `reputation_tier`, `reputation_tier_label`, `rank`, `is_in_good_standing`, `flags` ← `bcc-trust` services (§A4)
   - `living` ← derived from `peepso_activities` + `bcc_trust_score_events` (§A4 owns)
   - `progression` ← `bcc-trust` level + threshold service (rank auto-derived from feature-access level; §4.8)
   - `feature_access` ← `bcc-trust` feature-access service (§O5)
@@ -2256,7 +2257,7 @@ Paginated directory of human members. Sibling to §4.9 `/cards` (entity-card dir
     "type_counts": { "validator": 5, "project": 5, "nft": 5, "dao": 2 }
   }
   ```
-  Each item carries the full §3.2 member-card envelope (`id`, `name`, `handle`, `card_kind: "member"`, `trust_score`, `card_tier`, `tier_label`, `rank_label`, `crest`, `stats`, `permissions`, `actions`, …) plus the `member_dossier` block:
+  Each item carries the full §3.2 member-card envelope (`id`, `name`, `handle`, `card_kind: "member"`, `trust_score`, `reputation_tier`, `reputation_tier_label`, `rank_label`, `crest`, `stats`, `permissions`, `actions`, …) plus the `member_dossier` block:
   ```json
   "member_dossier": {
     "verifications":       { "x_verified": true, "x_username": "phillips_eth", "github_verified": true, "github_username": "phillips", "wallets_verified": 2 },
@@ -2268,7 +2269,7 @@ Paginated directory of human members. Sibling to §4.9 `/cards` (entity-card dir
 - **Errors:** `bcc_validation` (invalid `page` / `per_page`)
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - **Pagination envelope:** offset (`OffsetPagination` per §1.5) — `total_pages` is the canonical field; clients derive "has more" as `page < total_pages`.
-- **Mapping:** `WP_User_Query` ordered by `user_registered DESC`; each row composed via `CardViewService::getMemberCardForList` (one call per user). `UsersEndpoint::members` prefetches eleven batched maps — followers count, primary-Hall resolution, owned-page count, owned-page typed counts, endorsements received, solids received, reviews written, disputes signed, verified-wallet count, X connections, GitHub connections — via `MemberSummaryPrefetcher::primeFor` before the per-row loop; the card builder delegates the dossier resolution to `UserViewService::getSummary($userId, $viewerId, $prefetched)` so the total query budget stays bounded regardless of `per_page` (no parallel dossier query — same resolution as before, now wrapped in the Card shape). `card_tier` mirrors the §C1 slug (`legendary|rare|uncommon|common|null`); null only for risky-tier users (entity hidden from card UI per §C1). `tier_label` is the pre-rendered §A2 display string. Frontends should encode the tier as a color/border treatment on the rank chip rather than rendering `tier_label` as a duplicate word next to `rank_label`.
+- **Mapping:** `WP_User_Query` ordered by `user_registered DESC`; each row composed via `CardViewService::getMemberCardForList` (one call per user). `UsersEndpoint::members` prefetches eleven batched maps — followers count, primary-Hall resolution, owned-page count, owned-page typed counts, endorsements received, solids received, reviews written, disputes signed, verified-wallet count, X connections, GitHub connections — via `MemberSummaryPrefetcher::primeFor` before the per-row loop; the card builder delegates the dossier resolution to `UserViewService::getSummary($userId, $viewerId, $prefetched)` so the total query budget stays bounded regardless of `per_page` (no parallel dossier query — same resolution as before, now wrapped in the Card shape). `reputation_tier` is the tier slug (all five bands). `reputation_tier_label` is the pre-rendered §A2 display string. Frontends should encode the tier as a color/border treatment on the rank chip rather than rendering the label as a duplicate word next to `rank_label`.
 - **Field rules** (the `member_dossier` sub-blocks; the rest follow the §3.2 Card rules):
     - `trust_score` ∈ [0, 100] per §D5. Augmented score = base reputation_score + clamped lifetime participation bonus (`DisputeParticipationRepository::getEarnedLifetimeTrust`). Clamped at the boundary; clients render as a stencil number, never derive. (Top-level card field per §3.2.)
     - `stats[].watchers` (the member-card third stat per §3.2.2) is the passive side of `peepso_user_followers` (people who follow this user), sourced from `UserViewService::getSummary`'s `followers_count`. The full `/users/:handle` response carries both `followers` and `following`; the directory ships the followers count only — `following` isn't a meaningful directory signal and the second SQL isn't worth the cost.
@@ -2464,8 +2465,8 @@ Returns the viewer's watchlist (§C2 — UI projection of PeepSo follows + `bcc_
         "follow_id": 88123,
         "card": { "...": "summary Card view-model" },
         "watched_at": "2026-04-22T09:14:00Z",
-        "card_tier_at_watch": "rare",
-        "tier_label_at_watch": "Rare",
+        "reputation_tier_at_watch": "trusted",
+        "reputation_tier_label_at_watch": "Trusted",
         "batch_id": "batch_abc123"
       }
     ],
@@ -2475,7 +2476,7 @@ Returns the viewer's watchlist (§C2 — UI projection of PeepSo follows + `bcc_
 - **Errors:** `bcc_unauthorized`
 - **Rate limit:** 60/min/user
 - **Cache:** `Cache-Control: private, max-age=30`
-- **Mapping:** JOIN of `peepso_user_followers` + `bcc_watch_meta` (§C2). Removed cards (unwatched) do not appear. `card_tier_at_watch` is the `card_tier` (`legendary|rare|uncommon|common|null`) at the moment the card was watched, not the current tier — preserved for historical narrative. `tier_label_at_watch` is the pre-rendered display string per §A2.
+- **Mapping:** JOIN of `peepso_user_followers` + `bcc_watch_meta` (§C2). Removed cards (unwatched) do not appear. `reputation_tier_at_watch` is the followee's tier at the moment the card was watched, not the current tier — preserved for historical narrative. `reputation_tier_label_at_watch` is the pre-rendered display string per §A2. Rows written before v1.57 held rarity slugs and were rewritten by `watch_tier_vocabulary_v1`; rows snapshotted as risky were stored NULL and are unrecoverable.
 
 #### `GET /bcc/v1/me/watching/summary`
 
@@ -2597,8 +2598,8 @@ fresh-install / no-backcompat policy (same basis the routes were removed on). Th
 field names (`pulled_at`, `tier_at_pull`, `card_tier_at_pull`, `tier_label_at_pull`,
 `binder_size`, `already_in_binder`), the `links.binder` profile-link alias, and the
 `bcc_card_pulled`/`bcc_card_unpulled` events emitted in parallel with `bcc_card_watched`
-are gone. The canonical names are the only ones emitted: `watched_at`, `card_tier_at_watch`,
-`tier_label_at_watch`, `watching_size`, `already_watching`, `links.watching`,
+are gone. The canonical names are the only ones emitted: `watched_at`, `reputation_tier_at_watch`,
+`reputation_tier_label_at_watch`, `watching_size`, `already_watching`, `links.watching`,
 `bcc_card_watched`. The physical storage tables/columns were also renamed
 (`bcc_pull_meta`→`bcc_watch_meta`, `bcc_pull_batches`→`bcc_watch_batches`, the `*_at_pull`
 columns→`*_at_watch`) via a data-preserving migration. Canonical celebration copy is
@@ -3308,8 +3309,8 @@ Top-N search suggestions for the §G1 nav-bar autocomplete. Smaller per-item sha
         "name": "Blacksmith Node",
         "handle": "blacksmith-node",
         "card_kind": "validator",
-        "card_tier": "legendary",
-        "tier_label": "Legendary",
+        "reputation_tier": "elite",
+        "reputation_tier_label": "Elite",
         "trust_score": 98,
         "is_verified": true,
         "is_claim_verified": true,
@@ -3323,7 +3324,7 @@ Top-N search suggestions for the §G1 nav-bar autocomplete. Smaller per-item sha
 - **Cache:** `Cache-Control: private, max-age=15`. Underlying bcc-search caches results for 60s.
 - **Mapping:**
   - Internally calls `GET /bcc/v1/search` (bcc-search plugin) via `rest_do_request` — the FULLTEXT index + trust enrichment + 60s cache + rate limiting all live there
-  - Server maps the flat result shape into `SearchSuggestion`: reputation_tier → card_tier per §C1, category_slug → card_kind per `PageTypeMap`, route prefix per kind (`/v/`, `/p/`, `/c/`)
+  - Server maps the flat result shape into `SearchSuggestion`: reputation_tier passes through verbatim (v1.57 — no rarity translation), category_slug → card_kind per `PageTypeMap`, route prefix per kind (`/v/`, `/p/`, `/c/`)
   - Dropped silently: rows with unrecognized `category_slug` (e.g., `dao` — not a card kind in V1) and rows whose tier maps to risky (entity hidden from card UI)
   - Falls back to empty list when bcc-search is degraded (503) — autocomplete must never block the user mid-type with an error toast
 
@@ -4649,7 +4650,7 @@ Existing card and profile endpoints (`/bcc/v1/cards/:type/:id`, `/bcc/v1/users/:
 
 **`trust_score` cosmetic rename to `reputation_score`:** the API emits BOTH `trust_score` (legacy) AND `reputation_score` (new canonical) for one release cycle. Frontend reads `reputation_score`. `trust_score` is removed in the release after Phase 1 ships.
 
-**`reputation_tier` and `card_tier` unchanged** — they remain the categorical-stratification axes per §C1. Reputation Score is the continuous axis they categorize.
+**`reputation_tier` unchanged** — it remains the categorical-stratification axis per §C1 (`card_tier` was retired in v1.57). Reputation Score is the continuous axis they categorize.
 
 **`is_in_good_standing` unchanged** — sourced from `UserViewService::GOOD_STANDING_TIERS` per §G2.
 
@@ -5623,9 +5624,9 @@ Public cold-start three-block bridge for the home-feed empty state — a civic m
 - **Auth:** auth-permissive. Authed viewers get chain-aligned Halls (`bcc_home_chain`) + a per-(viewer, UTC-day) stable-random operator shuffle; anon viewers share the per-day seed.
 - **Response 200:**
   ```json
-  { "halls": [ { "slug": "cosmos-hall", "name": "Cosmos Hall", "chain_slug": "cosmos", "member_count": 88 } ], "recent_operators": [ { "handle": "ramona", "display_name": "Ramona V.", "avatar_url": "https://…", "card_tier": "rare", "tier_label": "Rare", "rank_label": "Journeyman", "recent_action": "REVIEWED a card", "link": "/u/ramona" } ], "hot_posts": [ /* §3.3 FeedItem[] */ ] }
+  { "halls": [ { "slug": "cosmos-hall", "name": "Cosmos Hall", "chain_slug": "cosmos", "member_count": 88 } ], "recent_operators": [ { "handle": "ramona", "display_name": "Ramona V.", "avatar_url": "https://…", "reputation_tier": "trusted", "reputation_tier_label": "Trusted", "rank_label": "Journeyman", "recent_action": "REVIEWED a card", "link": "/u/ramona" } ], "hot_posts": [ /* §3.3 FeedItem[] */ ] }
   ```
-  `recent_operators` are ordered by a stable daily shuffle (NOT ranked); `recent_action` uses a locked past-tense verb allowlist with a `Recently on the floor.` fallback. `card_tier`/`tier_label` may be `null`. `hot_posts` are `FeedRankingService::getHotFeed` items verbatim.
+  `recent_operators` are ordered by a stable daily shuffle (NOT ranked); `recent_action` uses a locked past-tense verb allowlist with a `Recently on the floor.` fallback. `reputation_tier` is always a real band. `hot_posts` are `FeedRankingService::getHotFeed` items verbatim.
 - **Cache:** `Cache-Control: private, no-store` (per-viewer per-day stable-randomization).
 - **Mapping:** `FeedColdStartEndpoint::handle` (route `FeedColdStartEndpoint.php:45`) → `FeedColdStartService::getColdStart`; operator hydration reuses the `MemberSummaryPrefetcher` bundle. FE `cold-start-endpoints.ts:getColdStart`.
 
@@ -5962,7 +5963,7 @@ Both source from the same server-side resolver. The frontend reads either; never
 ### 5.6 §A2 / §L5 — no business logic on frontend
 
 The frontend MUST NOT compute, derive, or transform any of:
-- `trust_score`, `reputation_tier`, `card_tier`, `tier_label`
+- `trust_score`, `reputation_tier`, `reputation_tier_label`
 - `rank`, `rank_label`
 - `is_in_good_standing`
 - `permissions.*` (any allowed boolean or unlock_hint)
@@ -5998,8 +5999,8 @@ For each view-model field, the table below names the existing BCC system that ow
 | `joined_at` | `wp_users.user_registered` |
 | `trust_score` | `bcc-trust` `ReputationCalculatorService` (§A4) |
 | `reputation_tier` | `bcc-trust` `ReputationCalculatorService` |
-| `reputation_tier_label` | Server-side mapping `reputation_tier → honest label` (`ReputationTierMap::TIER_LABEL`; elite → "Proven") — the member trust chip, distinct from `card_tier` rarity |
-| `card_tier`, `tier_label` | Server-side mapping `reputation_tier → card_tier` (§C1), in `bcc-trust` (entity-card rarity) |
+| `reputation_tier_label` | Server-side mapping `reputation_tier → label` (`ReputationTierMap::TIER_LABEL`; elite → "Elite") — the sole tier vocabulary since v1.57 |
+| ~~`card_tier`, `tier_label`~~ | **RETIRED v1.57** — the rarity vocabulary is gone; use `reputation_tier` / `reputation_tier_label` |
 | `rank`, `rank_label`, `current_rank_label` | Auto-derived from the feature-access **level** (`RankService::rankForLevel`: New→Apprentice, Active→Journeyman, Veteran→Master). Fully level-derived — no conferred-Role rows (§4.8) |
 | `is_in_good_standing` | `bcc-trust` derived from tier ≥ neutral AND no moderation flags (§E1) |
 | `flags` | suspension state + `wp_usermeta` moderation flags (`bcc_shadow_limited`/`bcc_hidden`/`bcc_under_review`) via `UserViewService::resolveFlags` — NOT the retired `bcc_trust_flags` vote-flag table |
@@ -6027,7 +6028,7 @@ For each view-model field, the table below names the existing BCC system that ow
 | `card_kind` | `peepso_pages.peepso_page_type` mapped via `AbstractPageType` |
 | `name`, `handle` | `peepso_pages.name` + slug |
 | `chain` | `peepso_page` meta (existing AbstractPageType) |
-| `trust_score`, `reputation_tier`, `card_tier`, `tier_label`, `is_in_good_standing`, `flags` | `bcc_page_read_model` (denormalized read model, §A4) |
+| `trust_score`, `reputation_tier`, `reputation_tier_label`, `is_in_good_standing`, `flags` | `bcc_page_read_model` (denormalized read model, §A4) |
 | `rank_label` | `null` for V1 entity cards (members only have ranks); for member cards, auto-derived from the feature-access **level** (`RankService::rankForLevel`; §4.8) |
 | `is_claimed` | `peepso_pages.claimed_by IS NOT NULL` (new V1 column, per §B5) |
 | `claimed_by_handle` | JOIN to `wp_usermeta.bcc_handle` |
@@ -6191,7 +6192,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
   - Bonus: `GET /me/onboarding/status` is also registered (read-side flag check; not previously listed in §8).
 - **Directory endpoints (§G1/§G2)** — both fully wired:
   - `GET /cards` — paginated list of Card view-models with `kind`/`tier`/`sort`/`q` filters. Wraps `PageDiscoveryService`; each row hydrated through `CardViewService::getCard()` so the per-item shape is identical to the single-card endpoint. (Historical note: `/bcc/v1/discover` previously shared this service for the legacy bcc-page-slider block; that endpoint was retired 2026-05-15.)
-  - `GET /cards/search` — top-N suggestions for the §G1 nav-bar autocomplete. Internally calls bcc-search via `rest_do_request` and maps the flat result shape (reputation_tier → card_tier, category_slug → card_kind, route prefix per kind) into the `SearchSuggestion` shape per §A2.
+  - `GET /cards/search` — top-N suggestions for the §G1 nav-bar autocomplete. Internally calls bcc-search via `rest_do_request` and maps the flat result shape (category_slug → card_kind, route prefix per kind) into the `SearchSuggestion` shape per §A2.
 - **Notifications endpoints (§I1)** — fully wired:
   - `GET /me/notifications` — cursor-paginated list scoped to `not_module_id = BCC_NOTIFICATION_MODULE_ID` (= 9000). Server-rendered messages + server-built `link` per type per §A2.
   - `GET /me/notifications/unread-count` — drives the bell badge; frontend polls 60s + on window focus.
@@ -6215,6 +6216,109 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
+### v1.57 — 2026-07-28 — ⚠️ BREAKING — card rarity vocabulary retired; Elite gated
+
+Two changes, one vocabulary and one policy.
+
+#### A. `card_tier` / `tier_label` are REMOVED
+
+The collectible-rarity axis (`legendary` / `rare` / `uncommon` / `common`,
+with `risky → null`) is gone. Every tier surface now speaks the reputation
+tier and its label. No shim, no deprecation window — pre-launch, so the
+consumer moves with the producer.
+
+| Removed | Replacement |
+|---|---|
+| `card_tier` | `reputation_tier` (already present on most surfaces) |
+| `tier_label` | `reputation_tier_label` |
+| `card_tier_at_watch` | `reputation_tier_at_watch` |
+| `tier_label_at_watch` | `reputation_tier_label_at_watch` |
+| `tier_label` on `community` cards | `kicker` (a new field — this usage was never a tier) |
+
+Why, in ascending order of severity:
+
+1. **The ordinal was inverted.** `neutral` is the STARTING tier — every
+   member begins there — so by population it is the common case, yet it read
+   as "Uncommon". `caution` must be actively fallen into, making it rarer,
+   yet it read as "Common".
+2. **Rarity words describe a denominator we are deliberately moving.** If the
+   platform works, most members end up trusted or better, at which point
+   calling trusted "Rare" is false. Our own success would break the
+   vocabulary.
+3. **Rarity words are positive-coded.** Labelling a `caution` member "Common"
+   told them their card was unremarkable when the tier means something has
+   gone wrong — and the rarity palette rendered that warning in neutral grey
+   (`#6b6e72`) while the trust ramp has caution in warning yellow. The card
+   did not merely mislabel the signal, it desaturated it.
+4. **`risky` had no rarity slot at all.** The most safety-relevant state in
+   the system rendered as NO TAG on the card, and — because `RankChip` fell
+   back to `card_tier` — as a neutral grey dot everywhere else. A risky
+   member was visually indistinguishable from a brand-new one.
+
+Consequent field changes:
+
+- `reputation_tier` and `reputation_tier_label` are now **REQUIRED** on
+  `FeedAuthor`, `CommentAuthor`, `SuggestedMember`, `ColdStartOperator` and
+  `SearchSuggestion`. They were optional, which is exactly what let the
+  RankChip fallback happen.
+- Entity cards now carry a real `reputation_tier_label`. It was `null` on
+  non-member cards, because the label was considered member-only.
+- `reputation_tier_label` is `null` **only** on `community` cards, which have
+  no trust system; they render `kicker` instead.
+- Crest `background_kind: "tier"` → `background_value` is now a
+  reputation-tier slug (`elite` … `risky`), not a rarity slug. Communities
+  use `neutral` as the shape-stable placeholder.
+- Watch-celebration `rarity_tint` now carries a reputation-tier slug.
+- `GET /cards` `tier` filter accepts `elite|trusted|neutral|caution|risky`
+  verbatim — no translation. **`risky` is filterable for the first time**: it
+  had no rarity slug, so the one cohort an operator most needs to review was
+  the one the directory could not surface.
+
+Server-side, `ReputationTierMap::TIER_TO_CARD` / `CARD_TIER_LABEL` /
+`toCardTier()` / `toCardTierLabel()` / `resolve()` are deleted. Migration
+`watch_tier_vocabulary_v1` rewrites persisted `tier_at_watch` snapshots from
+rarity slugs to reputation tiers (`legendary→elite`, `rare→trusted`,
+`uncommon→neutral`, `common→caution`). Rows snapshotted as `risky` were
+stored as NULL and are unrecoverable — that gap is the defect that motivated
+this change, not a defect of the migration.
+
+The top band's user-facing word is **"Elite"** (`ReputationTierMap::TIER_LABEL`).
+The server previously emitted "Proven" while `RankInfoModal` hardcoded
+"Elite" client-side; both now read "Elite" (owner decision, 2026-07-28).
+
+#### B. §J.12 — Elite is no longer a pure score cutoff
+
+Reaching `BCC_TRUST_TIER_ELITE` (80) is now necessary but not sufficient.
+Two further conditions apply, closing two different attacks.
+
+**The native-conduct floor** closes "wallet depth alone". `onchain_bonus`
+contributes up to 20 points from wallet age, transaction depth and contract
+deployments — all properties of a wallet that can simply be acquired.
+Combined with the 20-point `attestation_bonus` ceiling, an aged wallet plus
+roughly eight vouches reached score 90 with no conduct on the platform at
+all. That contradicted the product's core claim that reputation cannot be
+bought. Elite now additionally requires a score-excluding-`onchain_bonus` of
+at least `BCC_TRUST_ELITE_NATIVE_FLOOR` (71), computed as an independently
+clamped expression — *not* `total_score - onchain_bonus`, which misreports
+whenever the raw sum exceeds the clamp.
+
+**The eligibility gates** close "vouch ring", which the floor does not,
+because `attestation_bonus` counts as native conduct. Elite requires a
+minimum count of DISTINCT active attestors, a minimum account tenure (page
+age for entity cards), and no dispute upheld against the page within a
+trailing window. All four constants are `apply_filters`-wrapped design
+intent, to be tuned against closed-network data.
+
+No wire shape changes — `reputation_tier` simply resolves to `trusted`
+instead of `elite` for a page that clears the score but not the gates. Two
+operational notes for consumers:
+
+- Expect a one-time downgrade wave when `elite_eligibility_backfill_v1`
+  runs. Pages never evaluated are grandfathered until the backfill stamps
+  them, so shipping the column is not itself a demotion.
+- A smaller elite set means fewer attestation casts hit the §J.4 40%
+  elite-source cap, so other subjects' `attestation_bonus` rises on the next
+  synthesis. Convergent, but the first sweep produces real churn.
 ### v1.56 — 2026-07-28 — "Stand Behind" display labels converge to "Back / Backing"; roster tab becomes "Supporters"
 
 Display-layer rename of the scarce Layer 1 primitive, plus a fix to a

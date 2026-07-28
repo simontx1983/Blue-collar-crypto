@@ -183,7 +183,9 @@ Per-(page,category) aggregate score row. Self-page tier is the page row here.
 - recalculate_required · tinyint(1) · NO · K
 - recalc_failures · int unsigned · NO · K
 - contribution_bonus / penalty_adjustment · decimal(10,2) · NO
-- Indexes: PRIMARY (page_id,category_id) [uq]; idx_cat_score (category_id,positive_score,total_score); idx_owner_scores (page_owner_id,total_score); idx_tier_lookup (reputation_tier,total_score); idx_confidence (confidence_score); idx_recalculate (recalculate_required,last_calculated_at); idx_recalc_failures (recalc_failures,recalculate_required)
+- elite_eligible · tinyint(1) · NO · K — §J.12 cross-table gate on the top tier (distinct backers / tenure / clean dispute record), owned by `EliteEligibilityService`. Denormalized here so the eight inline tier-writing UPDATEs can read it without a join.
+- elite_eligible_at · datetime · YES · K — last evaluation. **NULL means "never evaluated" and is GRANDFATHERED by `TrustScoreService::tierSql()`** — without that, shipping the column would itself demote every existing elite. `elite_eligibility_backfill_v1` converts NULLs into real verdicts; once drained the disjunct is dead code and can be dropped.
+- Indexes: PRIMARY (page_id,category_id) [uq]; idx_cat_score (category_id,positive_score,total_score); idx_owner_scores (page_owner_id,total_score); idx_tier_lookup (reputation_tier,total_score); idx_confidence (confidence_score); idx_recalculate (recalculate_required,last_calculated_at); idx_recalc_failures (recalc_failures,recalculate_required); idx_elite_sweep (elite_eligible_at,total_score)
 
 #### wp_bcc_trust_score_events
 Append-only audit of score/tier transitions per page.
