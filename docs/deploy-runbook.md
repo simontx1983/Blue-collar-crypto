@@ -89,6 +89,13 @@ public half in the server's `~/.ssh/authorized_keys`, and update
 Production has **no** auto-deploy and **no** Git Updater — it only changes when
 someone runs the production dispatch (or, historically, a manual copy).
 
+> **Feature flags are separate from deploys.** Deploying the code does not enable
+> a dark-shipped feature. For validator messaging (kill-switch
+> `bcc_validator_messaging_enabled`, default OFF), enablement follows its own
+> gated, staging-first procedure — see
+> [validator-messaging-rollout.md](validator-messaging-rollout.md). Production
+> enablement is separately approved.
+
 ## Troubleshooting
 
 - **Deploy didn't fire after a merge** — check the `CI` run went green; the
