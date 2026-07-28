@@ -79,7 +79,7 @@ schema-install path in `tables.php` is itself routed through the same runner.
 | wp_bcc_trust_page_scores | 403 | Per-(page,category) aggregate score row (self-page tier lives here) | TableRegistry::scores / PageScoreRepository | Active |
 | wp_bcc_trust_score_events | 3969 | Audit trail of score/tier transitions per page | TableRegistry::scoreEvents | Active |
 | wp_bcc_trust_page_scores_velocity | 1 | Daily score-delta track per page | TableRegistry::scoreVelocity | Active |
-| wp_bcc_trust_attestations | 9 | §J attestation layer (Vouch / Stand Behind); successor to the retired endorsements table | TableRegistry::trustAttestations / schema-trust-attestations.php | Active |
+| wp_bcc_trust_attestations | 9 | §J attestation layer (Vouch / Back); successor to the retired endorsements table | TableRegistry::trustAttestations / schema-trust-attestations.php | Active |
 | wp_bcc_attestor_reliability_cache | 4 | Nightly recompute cache of AttestationOutcomeClassifier per attestor (PK user_id); cron owns writes, reads fall back to live compute | TableRegistry::attestorReliabilityCache / schema-attestor-reliability-cache.php | Active |
 | wp_bcc_trust_stokes | 7 | One row per (act_id,user_id) stoke; feeds feed heat_stage + public stoke_count (never scores) | TableRegistry::stokes / schema-stokes.php | Active |
 | wp_bcc_trust_activity | 571 | Recent trust-action activity log (rate-limit + fraud signal) | TableRegistry::activity | Active |
@@ -212,7 +212,7 @@ Folded into `wp_bcc_trust_attestations` (kind=`vouch`); dropped by
 `includes/database/drop-endorsements-table.php`. Column detail removed.
 
 #### wp_bcc_trust_attestations
-§J attestation layer (Vouch / Stand Behind); generalized successor to endorsements.
+§J attestation layer (Vouch / Back); generalized successor to endorsements.
 - id · bigint unsigned · NO · PK auto
 - attestor_user_id · bigint unsigned · NO · K
 - target_kind · varchar(20) · NO · K

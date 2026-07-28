@@ -215,3 +215,4 @@ For incidents involving wallet linking, on-chain fraud, or holder-group abuse, c
 - [pattern-registry.md](pattern-registry.md) — what canonical implementations live where (Search, Trust, Onchain, Disputes…).
 - [cron-registry.md](cron-registry.md) — all scheduled hooks + intervals.
 - [api-contract-v1.md](api-contract-v1.md) — REST envelope + error code reference.
+- [validator-messaging-rollout.md](validator-messaging-rollout.md) — gated staging procedure for enabling validator messaging (kill-switch is OFF by default).

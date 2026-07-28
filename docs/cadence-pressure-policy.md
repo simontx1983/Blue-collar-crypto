@@ -36,11 +36,18 @@ policy doc must be able to name what it forbids):
 <!-- cadence-pressure-guard:allow — enumeration of forbidden phrases -->
 | `in the last N days/weeks/months` | Temporal pressure framing (guard pattern added 2026-07-06) |
 <!-- cadence-pressure-guard:allow — enumeration of forbidden phrases -->
-| `remind(er) to attest/vouch/cast/stand behind` | Soft nudge + action verb (guard pattern added 2026-07-06) |
+| `remind(er) to attest/vouch/cast/back/stand behind` | Soft nudge + action verb (guard pattern added 2026-07-06; `back` added 2026-07-28 with the v1.56 label rename) |
 
 > The authoritative pattern list is the `PATTERNS` array in
-> `scripts/cadence-pressure-guard.sh` — this table mirrors it (synced 2026-07-19,
+> `scripts/cadence-pressure-guard.sh` — this table mirrors it (synced 2026-07-28,
 > 8 patterns). If they ever disagree again, the script wins; update this table.
+>
+> **Note on `back`:** the scarce attestation's label became **Back / Backing** in
+> contract v1.56, so the nudge patterns now cover it. The verb alternations are
+> anchored (`remind(er|ing)? to …`, `you should …`, `consider …`), which is what
+> keeps ordinary uses of "back" — "go back", "back up" — from tripping the guard.
+<!-- cadence-pressure-guard:allow — enumeration of forbidden phrases -->
+> `consider backing` was already forbidden before the rename.
 
 The mechanical guard catches these obvious tells. Subtler tone work is
 human judgment — that's PR-11b walkthrough + PR-11c register.

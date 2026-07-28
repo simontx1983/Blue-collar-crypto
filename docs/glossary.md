@@ -67,8 +67,8 @@ lives in `bcc-frontend/`.
 |---|---|---|
 | **Trust score** | A page's numeric reputation, stored as `total_score` (with `positive_score` / `negative_score` components). There is **no** field named `reputation_score`. | `bcc_trust_page_scores` (`bcc-trust/includes/database/schema-core.php`). |
 | **Reputation tier** | A categorical key derived from the score: `elite` / `trusted` / `neutral` / `caution` / `risky`. | Stored as `reputation_tier` on `bcc_trust_page_scores`. |
-| **Trust Tier label** | The honest member-facing label for the reputation tier: **Risky / Caution / Neutral / Trusted / Proven** (`elite → "Proven"`). **Derived at read time**, not stored. | `ReputationTierMap.php` (`bcc-trust/app/Domain/Core/Support/`), emitted as `reputation_tier_label`. |
-| **Card-rarity tier** | ~~An entity card's rarity classification.~~ **RETIRED (contract v1.56).** The `legendary`/`rare`/`uncommon`/`common` vocabulary and its `card_tier`/`tier_label` fields are gone. Cards carry the Trust Tier above, on every surface, for all five bands. The retirement is documented in `ReputationTierMap.php`'s class docblock; the short version is that the ordinal was inverted (`neutral` is the *starting* tier, so by population it was the common one), the labels made a claim about a denominator we are deliberately moving, they were positive-coded on a warning band, and `risky` had no slot at all — so the most safety-relevant state in the system rendered as nothing. Do not reintroduce. | Retirement rationale: `ReputationTierMap.php`; [api-contract-v1.md](api-contract-v1.md) §10 v1.56. See also [reputation-tokenization-policy.md](reputation-tokenization-policy.md) on why scarcity language and earned tiers should not be mixed. |
+| **Trust Tier label** | The honest member-facing label for the reputation tier: **Risky / Caution / Neutral / Trusted / Elite** (`elite → "Elite"`). **Derived at read time**, not stored. | `ReputationTierMap.php` (`bcc-trust/app/Domain/Core/Support/`), emitted as `reputation_tier_label`. |
+| **Card-rarity tier** | ~~An entity card's rarity classification.~~ **RETIRED (contract v1.57).** The `legendary`/`rare`/`uncommon`/`common` vocabulary and its `card_tier`/`tier_label` fields are gone. Cards carry the Trust Tier above, on every surface, for all five bands. The retirement is documented in `ReputationTierMap.php`'s class docblock; the short version is that the ordinal was inverted (`neutral` is the *starting* tier, so by population it was the common one), the labels made a claim about a denominator we are deliberately moving, they were positive-coded on a warning band, and `risky` had no slot at all — so the most safety-relevant state in the system rendered as nothing. Do not reintroduce. | Retirement rationale: `ReputationTierMap.php`; [api-contract-v1.md](api-contract-v1.md) §10 v1.57. See also [reputation-tokenization-policy.md](reputation-tokenization-policy.md) on why scarcity language and earned tiers should not be mixed. |
 | **Fraud score** | An anti-abuse signal from behavioral + device analysis. | `BehavioralAnalyzer.php`, `DeviceFingerprinter.php` (`bcc-trust/app/Domain/Core/Security/`). |
 | **Read model** | The denormalized fast-query table the API reads from. | `bcc_page_read_model`; `PageReadModelRepository` (`bcc-trust/app/Domain/Core/Repositories/`). |
 
@@ -79,7 +79,7 @@ lives in `bcc-frontend/`.
 | Term | What it is in code | Backing code |
 |---|---|---|
 | **Vote** | The quantitative reputation action backing a Review. | `bcc_trust_votes`; `VoteService`, `VoteRepository` (`bcc-trust/app/Domain/Core/`). |
-| **Attestation** | The current first-class trust statement layer. Kinds: `vouch` and `stand_behind`. Carries `weight_at_time`, `context_note`, `target_kind`/`target_id`. | `bcc_trust_attestations` (`bcc-trust/includes/database/schema-trust-attestations.php`); `AttestationService`, `AttestationRepository`. |
+| **Attestation** | The current first-class trust statement layer. Kinds: `vouch` (labelled "Vouch") and `stand_behind` (labelled "Back" / "Backing" — §J.7). Carries `weight_at_time`, `context_note`, `target_kind`/`target_id`. | `bcc_trust_attestations` (`bcc-trust/includes/database/schema-trust-attestations.php`); `AttestationService`, `AttestationRepository`. |
 | **Vouch** | A per-author credibility toggle (one vouch / one weight per person), rendered next to the author's name — **not** a post reaction. Writes an attestation with `kind=vouch`. | `AuthorVouchButton` (`bcc-frontend/`); `bcc_trust_attestations`. |
 | **Endorse** | **Legacy wire vocabulary only (v1.50).** An "endorsement" is a `kind=vouch` attestation on an entity page — the `/endorse` endpoint writes through the attestation layer, and all display labels say **Vouch** per the §J.7 label table. The name survives on the wire (`/endorse` routes, `endorsement_count`, `viewer_has_endorsed`) but in no user-facing copy. The legacy `bcc_trust_endorsements` table is **dropped** (`drop-endorsements-table.php`); rows were migrated to attestations (`kind=vouch`). | `EndorsementService` (vouch-aligned adapter), `TrustRestController::endorse`, `drop-endorsements-table.php` (`bcc-trust/includes/database/`). |
 | **Reactions** | BCC seeds exactly two reaction types: `solid` (trust grammar — "agree" / drives the solids-received stat) and `fire` (social grammar). Other social kinds (like/love/haha/wow) are PeepSo defaults, not BCC-seeded. | `ReactionTypeRegistry.php` (`KIND_SOLID`, `KIND_FIRE`; `TRUST_KINDS = [solid]`, `ALL_KINDS = [solid, fire]`); seeded into option `bcc_reaction_ids`. |
@@ -88,11 +88,13 @@ lives in `bcc-frontend/`.
 (restrained, signs your name), `social` (expressive, emoji-forward, includes Fire), and
 `tribal` (reserved for V2 — renders nothing).
 
-> **FE/BE drift — "Stand behind":** the backend retired the `stand_behind` reaction (Slice 3,
-> hard-deleted — no longer seeded by `ReactionTypeRegistry`). The frontend trust rail still
-> renders a "Stand behind" button (`ReactionRail.tsx:124`). As a *post reaction* it is dead on
-> the backend; `stand_behind` survives only as an **attestation kind** (§ Attestation above).
-> This drift is current as of this writing.
+> **Wire name ≠ label — `stand_behind`:** the `stand_behind` *reaction* was retired in Slice 3
+> (hard-deleted, no longer seeded by `ReactionTypeRegistry`); the identifier survives only as an
+> **attestation kind** (§ Attestation above). Its user-facing label was "Stand Behind" until
+> 2026-07-28 and is now **"Back"** (the action) / **"Backing"** (the state) per the §J.7 label
+> table — but the wire name is deliberately frozen, because it is a stored `kind` enum value and
+> the root of four view-model field families, the notification type, and three persisted
+> preference keys. Do not "converge" it. Same precedent as **Endorse** above.
 
 ---
 
