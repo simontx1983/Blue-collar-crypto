@@ -73,8 +73,9 @@ session-scoped `/me/wallets` endpoint.
 A full sweep of REST serializers, RSC payloads, frontend props, caches, logs,
 telemetry, notifications, search documents and export paths found **14
 cross-user disclosure paths** (13 in the first pass + the `md5`-email oracle
-below). All 14 are **REMEDIATED** (uncommitted at time of writing; contract
-v1.51).
+below). All 14 are **REMEDIATED and SHIPPED** as contract **v1.51 (BREAKING)** —
+`core#35 → trust#112 → umbrella#88 → fe#64`, merged and auto-deployed to
+**staging**. Production is not yet deployed (see the data note under finding 14).
 
 | # | Surface | Severity | Root cause | Status |
 |---|---|---|---|---|
@@ -118,19 +119,32 @@ wallet (the signup-retry idempotency net behind the `wallet_links` UNIQUE) is
 preserved; it fails closed to a random token if the salt is ever empty.
 `AccountRecoveryService::isPlaceholderEmail` is domain-only, so recovery logic is
 untouched. Existing pre-fix accounts are repaired by
-`includes/database/backfill-wallet-placeholder-emails.php` — a one-shot,
-option-guarded backfill (registered next to the canonical-handle backfill,
-invoked inside `bcc_trust_create_tables()`) that rewrites each placeholder email
-to a `user_id`-keyed token via `$wpdb` (no wallet lookup, so orphaned and
-multi-wallet accounts are handled uniformly; direct write avoids
-`wp_update_user()`'s change-notice mail to the dead placeholder). Covered by
-`WalletPlaceholderEmailTest`.
+`includes/database/backfill-wallet-placeholder-emails.php` — a one-shot backfill
+that rewrites each placeholder email to a `user_id`-keyed token via `$wpdb` (no
+wallet lookup, so orphaned and multi-wallet accounts are handled uniformly;
+direct write avoids `wp_update_user()`'s change-notice mail to the dead
+placeholder). Covered by `WalletPlaceholderEmailTest`.
+
+**How the backfill runs (trust#118).** The backfill is executed by the
+**data-migration runner** — `bcc_trust_run_pending_migrations()` on
+`plugins_loaded`, independent of `BCC_TRUST_SCHEMA_VERSION`. It is *not* invoked
+inside `bcc_trust_create_tables()`; wiring it to the schema-install gate is
+exactly what left it dormant when v1.51 shipped (the fix touched no
+`schema-*.php`, so the gate never fired). Because the runner is schema-hash
+independent, a **files-only deploy is sufficient** to migrate a DB — no schema
+bump required. See `docs/database-schema.md` ▸ *Schema-install gate vs.
+data-migration runner*. The local dormant accounts have been migrated; staging
+migrates on the first request after the trust#118 deploy.
 
 > **Data note.** The *code* fix protects every future signup on any DB. The
 > *backfill* only matters for accounts that already carry an `md5`-derived
 > placeholder email. A fresh production launch with no migrated users needs only
-> the code fix; migrating existing local/staging accounts pulls the backfill in
-> with them (it runs automatically on activation/upgrade).
+> the code fix. Migrating existing local/staging accounts happens automatically
+> via the runner on `plugins_loaded` after deploy — no activation, schema bump,
+> or manual invocation required. **Production rollout stays gated on the
+> PeepSo-Gravatar config check** (`avatars_wordpress_only` / `peepso_use_gravatar`
+> + `avatars_gravatar_enable`): confirmed off on local and staging; verify before
+> the prod deploy so the oracle window never opens.
 
 ## Enforcement
 

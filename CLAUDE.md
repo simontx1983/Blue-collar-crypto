@@ -112,11 +112,16 @@ background audits, worktree-based parallelism), see
   Resolves same-file class constants, **cross-file class constants
   via a one-pass collection of every `ClassName::CONST = 'literal'`
   in the plugin tree**, string concatenation, and reserved-word
-  const names (`NAMESPACE`, `CLASS`, etc.). Reports missing
-  endpoints (contract claims, no code) as FAIL and undocumented
-  endpoints (code, no contract entry) as WARN. **Currently exits 0**
-  — all drift surfaced by the 2026-05-26 first run was addressed
-  (contract v1.22 locals retraction + v1.23 admin/ranks retraction);
+  const names (`NAMESPACE`, `CLASS`, etc.). **All drift now FAILs
+  (exit ≠ 0):** missing endpoints (contract claims, no code), stale
+  `EXEMPT_INTERNAL` entries (route gone or since documented), and — as
+  of the 2026-07-24 ratchet (#89) — any in-scope route registered in
+  PHP that is undocumented in §4 and not allowlisted. The undocumented
+  case was WARN-only while the 2026-05-26 first-run backlog was worked
+  down (contract v1.22 locals retraction + v1.23 admin/ranks retraction);
+  the backlog reached zero, so the ratchet engaged and a new undocumented
+  route now blocks — either document it in §4 or add it to
+  `EXEMPT_INTERNAL` with a reason. **Currently exits 0** (clean tree);
   wired as a blocking umbrella CI check since Phase 2c (2026-06-25).
 
 - `scripts/dead-file-scan.php` — scans bcc-core/bcc-search/bcc-trust for
