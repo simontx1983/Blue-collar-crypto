@@ -12,7 +12,7 @@ contracts that follow from this design.
 Blue Collar Crypto is an **operator intelligence network**.
 
 Operators (validators, builders, creators, traders, contributors) do
-work in crypto. Other operators back them, dispute them, or stay
+work in crypto. Other operators attest to them, dispute them, or stay
 silent. The platform synthesizes those signals into a defensible,
 hard-to-fake reputation graph that counter-parties consult before
 choosing who to trust with capital, code, or governance weight.
@@ -84,7 +84,7 @@ seams.
 - **UX register:** deliberate, accountable, weighted
 - **Primitives (exactly three at V1 — see §J.1):**
   - **Vouch** — abundant, low/medium-conviction positive signal
-  - **Stand Behind** — scarce, high-conviction positive signal
+  - **Back** — scarce, high-conviction positive signal
     with reputation-bandwidth cost
   - **Dispute** — formal adversarial challenge, panel-adjudicated
 - **Purpose:** users express deliberate, accountable opinions about
@@ -160,7 +160,7 @@ generalizes into the attestation pipeline. Existing endorsement rows
 migrate as `kind=vouch, target_kind=*_card`. The wire-level rename
 is cosmetic; the conceptual unification is what matters.
 
-### Stand Behind
+### Back
 
 **Semantic:** "I'm putting my reputation on this entity's work."
 
@@ -168,36 +168,36 @@ is cosmetic; the conceptual unification is what matters.
 
 **Economic cost — the bandwidth model:**
 
-Each operator has a **Stand Behind bandwidth** — a small, scarce
-allocation of high-conviction slots. Adding a new Stand Behind when
+Each operator has a **Backing bandwidth** — a small, scarce
+allocation of high-conviction slots. Adding a new Backing when
 your slots are full forces a choice: either revoke an existing one,
 or accept a diluted weight across all of them.
 
 Bandwidth scales with the attestor's Trust Tier:
 
-| Trust Tier | Stand Behind slots |
+| Trust Tier | Backing slots |
 |---|---|
 | Elite | 7 |
 | Trusted | 5 |
 | Neutral | 3 |
-| Caution / Risky | 0 (cannot stand behind) |
+| Caution / Risky | 0 (cannot back) |
 
 **Why bandwidth, not clawback:**
 
 The earlier draft of this layer proposed *clawing back* reputation
-when an entity you stood behind was later disputed. That model was
+when an entity you backed was later disputed. That model was
 rejected because it would chill attestation supply — operators who
 might back someone would stay silent rather than risk being punished
 for an honest call.
 
 The bandwidth model achieves the same accountability without the
-chilling effect. Standing behind everyone means standing behind no
-one — your weight per stand-behind is finite and you must allocate
-it deliberately. The act of *choosing* who to stand behind is itself
+chilling effect. Backing everyone means backing no one — your
+weight per backing is finite and you must allocate
+it deliberately. The act of *choosing* who to back is itself
 the high-signal moment, not the post-hoc punishment if they fail.
 
-**Slot reclamation:** decayed stand-behinds (>50% of decay curve
-elapsed) automatically free their slot. Old stand-behinds fade
+**Slot reclamation:** decayed backings (>50% of decay curve
+elapsed) automatically free their slot. Old backings fade
 naturally; new ones get the freed allocation. Operators don't have
 to manually revoke just to make room. Time recycles bandwidth.
 
@@ -214,7 +214,7 @@ to manually revoke just to make room. Time recycles bandwidth.
    present-day reputation without forcing manual cleanup.
 
 2. **Soft renewal nudge.** Every 6 months, an attestor receives a
-   notification: *"Your Stand Behind on @target is 6 months old.
+   notification: *"Your Backing on @target is 6 months old.
    Still backing them?"* One-tap reaffirm (resets decay, refreshes
    timestamp), one-tap revoke (frees the slot), or ignore
    (continues to decay naturally). Hard expiry is explicitly
@@ -240,10 +240,10 @@ addressed without introducing a new primitive.
 
 **Targets:** same as Vouch.
 
-**Visible affordance:** the Stand Behind button on a card shows
-the attestor's current allocation state — e.g. `Stand Behind · 2/3`.
-This is the load-bearing UX cue. Users instantly see that stand-
-behinds are scarce; that scarcity teaches the meaning of the action
+**Visible affordance:** the Back button on a card shows
+the attestor's current allocation state — e.g. `Back · 2/3`.
+This is the load-bearing UX cue. Users instantly see that backings
+are scarce; that scarcity teaches the meaning of the action
 without copy.
 
 ### Dispute
@@ -392,7 +392,7 @@ decay_curve:
 badly.** The vouches just fade. This is the load-bearing mechanic
 for natural reputation freshness.
 
-Decay is also the slot-reclamation mechanic for Stand Behind
+Decay is also the slot-reclamation mechanic for Backing
 (§J.1) — once an attestation's decayed weight crosses 50%, its
 bandwidth slot is freed.
 
@@ -406,7 +406,7 @@ operator_reliability =
   (vouches whose targets later disputed-and-upheld → negative weight)
 + (vouches whose targets stayed clean              → positive weight)
 + (vouches whose targets received further vouches  → positive weight)
-+ (stand-behinds with same calculus, higher weight)
++ (backings with same calculus, higher weight)
 ÷ total attestations
 ```
 
@@ -476,12 +476,12 @@ offsetting reward, game theory pushes everyone toward consensus
 alignment and the graph centralizes around Elite opinion. This
 sub-track is the antibody.
 
-**Early-conviction multiplier on Stand Behind reliability.** When
-the synthesis layer computes reliability credit for a stand-behind
+**Early-conviction multiplier on Backing reliability.** When
+the synthesis layer computes reliability credit for a backing
 attestation, the credit is multiplied by how early the attestation
 was cast relative to consensus emergence on that target:
 
-| Stand-behind order | Reliability-credit multiplier |
+| Backing order | Reliability-credit multiplier |
 |---|---|
 | 1st on a target | 2.5× |
 | 2nd–5th | 1.5× |
@@ -496,10 +496,10 @@ protected by first-call protection (§J.3.2). The result:
 independent discovery becomes a viable path to reliability
 standing, distinct from consensus alignment.
 
-**Scope:** the early-conviction multiplier applies to **Stand
-Behind only.** Vouches are abundant and low-cost; multiplying
+**Scope:** the early-conviction multiplier applies to **Backing
+only.** Vouches are abundant and low-cost; multiplying
 their reliability impact would incentivize vouch-spamming obscure
-targets to game discovery. Stand Behind is already scarce via the
+targets to game discovery. Backing is already scarce via the
 bandwidth model — composing the two scarcity layers (limited slots
 + early-credit multiplier) makes the discovery reward expensive to
 fake and meaningful to earn.
@@ -527,7 +527,7 @@ consensus-track operators, which is a legitimate style. The
 platform doesn't pressure everyone into being a discoverer.
 
 **First-mover protection.** The early-conviction multiplier does
-NOT apply to the operator's first 5 stand-behinds. Lottery-ticket
+NOT apply to the operator's first 5 backings. Lottery-ticket
 attestations don't shortcut the path; the operator earns into the
 Early Read reward path the same way they earn into reliability.
 
@@ -547,7 +547,7 @@ the anti-viral-by-design principle above.
 
 ### J.3.3 Meta-dispute — the malice backstop
 
-Deliberate malice (coordinated stand-behind rings, vouch-bombing a
+Deliberate malice (coordinated backing rings, vouch-bombing a
 friend's card to inflate, vouching for a known scammer) is
 addressable via the dispute system pointed at *the attestor's
 pattern* rather than an individual entity.
@@ -578,10 +578,10 @@ anti-inflation stack:
    you Reputation Score; doing nothing keeps you at the floor. Most
    accounts are silent and at zero.
 2. **Cost-to-attest.** Vouching has a fingerprint dedup, a daily
-   throttle, and a tier gate. Stand Behind has a bandwidth cap.
+   throttle, and a tier gate. Backing has a bandwidth cap.
    Dispute has a stake + tier gate + evidence requirement.
-3. **Bandwidth caps on stand-behind.** Even an Elite operator can
-   only stand behind 7 things at once. The supply of high-
+3. **Bandwidth caps on backing.** Even an Elite operator can
+   only back 7 things at once. The supply of high-
    conviction attestation is finite by design.
 4. **Reliability-weighted influence.** Operators whose attestations
    don't bear out gradually lose weight on future attestations.
@@ -663,7 +663,7 @@ intelligence, not by exposing its own arithmetic.
 
 The composite headline number on every entity card and profile.
 0–100 range. Synthesizes:
-- Decayed Layer 1 attestations (vouches + stand-behinds)
+- Decayed Layer 1 attestations (vouches + backings)
 - Dispute history (upheld disputes against the entity)
 - Layer 0 contextual signals (low weight)
 - On-chain bonuses (validator-specific or wallet-link bonuses
@@ -756,15 +756,17 @@ weight. Layout, top to bottom:
 4. **Action cluster**
    - **Vouch** (always shown; eligibility gates render the button as
      disabled with an unlock_hint tooltip when ineligible)
-   - **Stand Behind** with allocation indicator: `Stand Behind ·
-     2/3`
+   - **Back** with allocation indicator: `Back · 2/3`
    - **Dispute** (tier-gated; renders only for eligible viewers)
    - **Report** (always available to authed users)
    - Utility row (de-emphasized): Follow · Message · Block
-5. **Attestation roster** — who has vouched, who is standing
-   behind. Sorted by decayed weight desc. Shows attestor handle,
-   Reliability Standing badge, date, optional context note,
-   revoked status. **This is the primary content of a card.**
+5. **Attestation roster — labelled "Supporters"** — who has
+   vouched, who is backing. Sorted by decayed weight desc. Shows
+   attestor handle, Reliability Standing badge, date, optional
+   context note, revoked status. **This is the primary content of a
+   card.** The label is the genus term covering both positive
+   primitives; it must not be named after either one of them (see
+   §J.7).
 6. **Evidence tab** — Layer 0 surfaces: recent posts, blog entries,
    conversation. Demoted to sub-tab because reputation is the
    headline, not the chronological activity stream.
@@ -772,7 +774,7 @@ weight. Layout, top to bottom:
 ### The profile as operator passport
 
 `/u/[handle]` is the *operator* equivalent of an entity card.
-Same layout shape. Same action cluster (Vouch, Stand Behind,
+Same layout shape. Same action cluster (Vouch, Back,
 Dispute, Report). Profile-scoped attestations land against
 `target_kind=user_profile`.
 
@@ -794,14 +796,14 @@ Layout (desktop):
 ┌───────────────────────────────────────────────┬────────────────┐
 │  TRUST EVENTS (primary column)                │  LAYER 0       │
 │                                                │  CULTURE RAIL  │
-│  • @phillip stood behind Aera Labs · 2h       │                │
+│  • @phillip backed Aera Labs · 2h             │                │
 │    [linked context: 3 supporting posts]       │  • new posts   │
 │                                                │  • trending    │
 │  • 5 operators vouched for Builder-X this week │    discussions │
 │    [trending in cosmos validators]            │  • memes       │
 │                                                │  • shoutouts   │
 │  • Dispute resolved: ProjectY upheld          │                │
-│    [3 stand-behinds reaffirmed]               │  • events      │
+│    [3 backings reaffirmed]                    │  • events      │
 │                                                │                │
 │  • @marcus revoked vouch on Validator-7       │                │
 │    [trailing reasoning thread]                │                │
@@ -892,9 +894,9 @@ taxonomy (full schema + recipient rules + Phase 1 vs Phase 1.5
 sequencing locked in `docs/api-contract-v1.md` §J.7):
 
 - `attestation_vouch_received` — "@phillip vouched for you"
-- `attestation_stand_behind_received` — "@marcus stood behind you"
+- `attestation_stand_behind_received` — "@marcus is backing you"
 - `attestation_revoked` — "@phillip revoked their vouch"
-- `attestation_reaffirmed` — "@marcus reaffirmed their stand behind"
+- `attestation_reaffirmed` — "@marcus reaffirmed backing you"
 - `stand_behind_renewal_nudge` — self-only soft renewal nudge driven
   by §J.1 long-term graph health refinements
 - `dispute_filed_against_you` — formal challenge incoming
@@ -914,11 +916,11 @@ A brand-new user must understand the system in under 60 seconds.
 Specifically, they must understand:
 - **What the platform is for** — vetting operators in crypto
 - **What the card is** — the operator's reputation passport
-- **What actions exist** — Vouch (cheap, abundant), Stand Behind
+- **What actions exist** — Vouch (cheap, abundant), Back
   (scarce, weighty), Dispute (formal, evidenced)
 - **What carries weight** — attestations from high-reliability
   operators
-- **What's scarce** — Stand Behind slots
+- **What's scarce** — Backing slots
 - **What creates reputation** — receiving attestations + clean
   dispute history
 - **What damages credibility** — open disputes, contested patterns,
@@ -931,15 +933,15 @@ here; implementation matches verbatim per
 
 **Card 1 — "What this is."**
 > Blue Collar Crypto is an operator intelligence network. Operators
-> back, dispute, or stay silent about other operators. The platform
+> vouch for, dispute, or stay silent about other operators. The platform
 > synthesizes those signals into a reputation graph counter-parties
 > consult before trusting someone with capital, code, or governance.
 
 **Card 2 — "Three things you can do."**
-> **Vouch** — "I think this operator is competent." Abundant — back
-> as many as you want.
+> **Vouch** — "I think this operator is competent." Abundant — vouch
+> for as many as you want.
 >
-> **Stand Behind** — "I'm putting my reputation on this operator's
+> **Back** — "I'm putting my reputation on this operator's
 > work." Scarce. You only have a few high-conviction slots; spend
 > them deliberately.
 >
@@ -971,7 +973,7 @@ existential cultural failure. The exact wording must ship verbatim;
 softening or rephrasing reopens the failure mode.
 
 If a user completes onboarding and can answer "what's the difference
-between Vouch and Stand Behind?" correctly, the comprehension test
+between Vouch and Backing?" correctly, the comprehension test
 passes. If they can't, the labels and UX are wrong and we iterate.
 
 ### Plain-English labels that the design system enforces
@@ -979,7 +981,7 @@ passes. If they can't, the labels and UX are wrong and we iterate.
 | Mechanic | Internal name | User-facing label |
 |---|---|---|
 | Layer 1 abundant positive | `vouch` | "Vouch" |
-| Layer 1 scarce positive | `stand_behind` | "Stand Behind" |
+| Layer 1 scarce positive | `stand_behind` | "Back" (action) / "Backing" (state, roster, slots) |
 | Layer 1 formal negative | `dispute` | "Dispute" |
 | Composite entity score | `reputation_score` | "Reputation Score" |
 | Per-attestor track record | `operator_reliability` | "Operator Reliability" |
@@ -996,6 +998,32 @@ passes. If they can't, the labels and UX are wrong and we iterate.
 **No algebra leaks into the UI.** Users see labels and badges, not
 formulas or weight calculations. The math lives in the synthesis
 layer, hidden behind plain English.
+
+**The label column is the only thing display code may read.** The
+`Internal name` column is the wire contract and is *deliberately*
+allowed to diverge from the label. `stand_behind` is the standing
+example: the mechanic was labelled "Stand Behind" until 2026-07-28,
+and the wire kept the old name because renaming it would break the
+DB `kind` enum, four view-model field families, the persisted
+notification type, and three user-meta preference keys (renaming
+those silently resets every user's notification prefs). Do **not**
+"fix" the mismatch. Same precedent as `endorse` → "Vouch"
+(contract v1.50).
+
+**Naming rule — `Back` is reserved for the attestation.** The
+`Back` label always carries its allocation (`Back · 2/5`) or stands
+alone as the primary action on a card or profile. Back-*navigation*
+is always written `← BACK TO <destination>` ("BACK TO THE FLOOR",
+"← BACK TO ALBUMS") — never a bare "Back". This keeps the two
+readings separable when they co-occur on one screen, which they do
+on `/u/[handle]` (the Photos tab's album view renders
+`← BACK TO ALBUMS` in the same mono-caps register as the action
+cluster).
+
+**"Backing" is the action, not the roster.** The roster of everyone
+attesting to an operator — vouches *and* backings combined — is
+labelled **"Supporters"** (§J.6). Naming that tab "Backing" would
+make the parent and one of its two children share a name.
 
 ### Ten anti-complexity heuristics — design-system enforced
 
@@ -1023,12 +1051,12 @@ Each is an enforced rule. Violations are bugs, not style choices.
    ABOVE the Reputation Score on every card. Aggregates summarize;
    humans are evidence.
 4. **One action per primitive, no settings panel.** Vouch is one
-   button. Stand Behind is one button. Dispute is one button.
+   button. Backing is one button. Dispute is one button.
    There is no "configure your vouch weight" or "set vouch type"
    — the system handles weighting; the user casts.
 5. **Show what's scarce, hide what's abundant.** Vouch button has
-   no counter (abundance). Stand Behind button always shows
-   allocation: `Stand Behind · 2/5` (scarcity). The presence of a
+   no counter (abundance). Back button always shows
+   allocation: `Back · 2/5` (scarcity). The presence of a
    counter teaches scarcity without explanation; absence teaches
    abundance.
 6. **Plain English for state transitions.** State change
@@ -1040,7 +1068,7 @@ Each is an enforced rule. Violations are bugs, not style choices.
    `Volatile` (historical) is subtle — secondary badge, neutral
    tone. UI weight tracks the actionability of the signal: loud
    = present-tense problem, subtle = historical context.
-8. **The action label IS the explanation.** `Stand Behind 2/5`
+8. **The action label IS the explanation.** `Back 2/5`
    tells the user the action exists, that it's scarce, and that
    they've used some of their allotment. No tooltip required. No
    onboarding card needed. The action documents itself.
@@ -1067,7 +1095,7 @@ this order:
    badge (only if triggered: `Under Review` / `Polarizing` /
    `Disputed`)
 3. **Attestation roster** — top 5 backers visible + "+N more"
-4. **Action cluster** — Vouch / Stand Behind / Dispute / Report +
+4. **Action cluster** — Vouch / Back / Dispute / Report +
    utility row (Follow / Message / Block)
 
 If any of these falls below the fold, the design has failed and
@@ -1075,14 +1103,14 @@ iterates before the surface ships.
 
 ### Edge-case heuristics
 
-- **Heavily-revoked profile.** A profile where many stand-behinds
+- **Heavily-revoked profile.** A profile where many backings
   have been revoked recently does NOT hide the revocations. The
   roster shows revoked entries dimmed behind a `Show revoked`
   toggle. Historical visibility is preserved: "no hiding the past"
   is a core platform value.
 - **Own-profile view is additionally informative.** Signed-in
   operator viewing their own profile sees the Operator
-  Reliability mirror, the Stand Behind slot-allocation breakdown,
+  Reliability mirror, the Backing slot-allocation breakdown,
   the "recyclable slots about to free" hint, and the
   Discovery/Consensus reliability breakdown (when that lands —
   see §J.10 open questions). The operator sees their own
@@ -1120,7 +1148,7 @@ The next stage of work is operational, not architectural:
 
 Specifically deferred until existential failure surfaces:
 
-- New attestation primitives beyond Vouch / Stand Behind / Dispute
+- New attestation primitives beyond Vouch / Back / Dispute
 - New derived intelligence axes beyond Reputation Score /
   Reliability Standing / Confidence / Builder Reputation / Creator
   Reputation / Early Read
@@ -1155,7 +1183,7 @@ before code touches anything.
 - `OperatorReliabilityRepository` read-model
 - `ContentReportService.TARGET_KINDS` extends to `['feed_item',
   'user_profile', 'validator_card', 'project_card', 'creator_card']`
-- Profile + card action cluster (Vouch / Stand Behind / Dispute /
+- Profile + card action cluster (Vouch / Back / Dispute /
   Report + utility cluster)
 - Attestation roster surface on profile/card
 - Reputation Score cosmetic rename of `trust_score`
@@ -1214,7 +1242,7 @@ post-reaction kinds as legacy with zero weight.
 These are deliberately deferred to scope-freeze planning rather than
 hard-locked here:
 
-1. **Stand Behind slot counts** — the 3/5/7 ladder by tier is a
+1. **Backing slot counts** — the 3/5/7 ladder by tier is a
    plausible-feeling default. Real numbers should fall out of
    product playtesting once Phase 1 ships. Lock at "TBD by tier"
    in the contract; pick the V1 numbers in the Phase 1 plan.
@@ -1273,7 +1301,7 @@ hard-locked here:
     Lock in Phase 1; the badge is asymmetric-positive-only either
     way.
 19. **First-mover protection count on Early Read** (§J.3.2.1) — 5
-    stand-behinds is plausible default; reconcile with the §J.3.2
+    backings is plausible default; reconcile with the §J.3.2
     first-call protection count.
 
 ---
@@ -1289,7 +1317,7 @@ For unambiguous closure:
 - **Confirmed Trade as a V1 launch primitive** — parked.
 - **Validator Confidence / Builder Reputation as direct user
   actions** — collapsed into derived intelligence gauges.
-- **Vouch / Stand Behind as trust-graph-contributing post
+- **Vouch / Back as trust-graph-contributing post
   reactions** — frozen at Layer 0; new attestation layer takes
   over Layer 1.
 - **Reddit-style downvote on profiles or cards** — explicitly
@@ -1341,7 +1369,7 @@ For equal unambiguity:
 This document is "right" when:
 
 1. A brand-new user, given only the four-card onboarding flow, can
-   answer in their own words: "what does Stand Behind mean and how
+   answer in their own words: "what does Backing mean and how
    is it different from Vouch?" — and the answer mentions scarcity
    or limited slots without prompting.
 2. An operator with > 6 months of platform use can name their own

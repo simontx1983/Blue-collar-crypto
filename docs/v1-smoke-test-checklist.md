@@ -1,7 +1,7 @@
 # V1 Smoke Test Checklist
 
 **Last updated: 2026-07-02** (refreshed to the current trust model — endorse→vouch/
-stand-behind cutover, pull→watch vocabulary, + new surfaces: verified-search ranking,
+backing cutover, pull→watch vocabulary, + new surfaces: verified-search ranking,
 `/me/reliability`, member self-disputes).
 
 End-to-end manual walkthrough to verify V1 + V1.5 ship-readiness before
@@ -12,7 +12,7 @@ Reconciled 2026-06-11 against a live automated pass (harness:
 `~/bcc-smoke`, Playwright); trust-surface steps re-reconciled to `main` 2026-07-02.
 
 > **Cutover note (2026-07-02):** the platform's positive-trust primitive is now the
-> **attestation cast (Vouch / Stand Behind)** via `AttestationActionCluster`, not the
+> **attestation cast (Vouch / Back)** via `AttestationActionCluster`, not the
 > legacy **Endorse** button. Endorse writes are retired and repointed to attestations
 > (§J.11 "endorse collapses into vouch"); the legacy `EndorseButton` still renders on
 > entity profiles during the transitional window but is not the canonical path. Steps
@@ -177,7 +177,7 @@ Logged in as User A.
   (👍 ❤️ 😂 😮 🔥 = like/love/haha/wow/fire). Click 👍 on someone
   else's post → count increments, your reaction shows highlighted.
   Recipient's bell increments with "@handle reacted to your post."
-  (The Solid/Vouch/Stand-behind trio applies to trust-grammar
+  (The Solid/Vouch/Back trio applies to trust-grammar
   surfaces, not social status posts — those casts live in the
   profile attestation cluster, §J.)
 - [ ] **3.7** **Watch batching (§C3):** watch 3 cards within
@@ -211,7 +211,7 @@ Logged in as User A. Visit `/u/<userA-handle>`.
   308 redirects to `/u/<userB-handle>/watching`. The legacy route
   remains alive for one release per `api-contract-v1.md §4.5.1`.
 - [ ] **4.6** **Reliability self-mirror (§J.5, SELF-ONLY):** as User A
-  (who has cast some vouch/stand-behind attestations), visit
+  (who has cast some vouch/backing attestations), visit
   `/me/reliability` (also reachable via the profile Setup tab →
   RELIABILITY sub-tab). `ReliabilityMirrorBody` renders: **operator
   reliability** numeric, a positive-only **reliability standing** badge
@@ -245,7 +245,7 @@ Pick `/v/<unclaimed-validator-slug>` (page exists, no `claimed_by` user).
   chains, the `<ChainTabs>` strip renders below the stats panel with
   one pill per chain. Single-chain pages: strip is hidden.
 
-## 6. Reviewing + backing (Vouch / Stand Behind)
+## 6. Reviewing + backing (Vouch / Back)
 
 Logged in as User A. Visit `/v/<userC-claimed-page>`.
 
@@ -286,7 +286,7 @@ Logged in as User A. Visit `/v/<userC-claimed-page>`.
   VOUCH + STAND BEHIND are disabled ("You can't back your own page" /
   structurally hidden) — you cannot attest to yourself.
 - [ ] **6.9** **Phase γ error contract:** force an attestation failure
-  (e.g. cast below the tier gate, or a stand-behind with slots exhausted).
+  (e.g. cast below the tier gate, or a backing with slots exhausted).
   The UI copy must be the humanized `err.code` mapping from
   `lib/api/errors.ts` — never the raw backend `err.message` string
   (that's the whole point of `humanizeCode()`; regression guard:

@@ -60,11 +60,13 @@ PATTERNS=(
   # "streak" — gamification language (operator-facing only)
   "\\bstreak\\b"
   # "remind(er)" + action verb — soft nudge
-  "remind(er|ing)? to (attest|vouch|cast|stand behind)"
+  # ("stand behind" retained alongside "back": the label changed in v1.56 but
+  #  older copy may still say it, and a stale pattern costs nothing)
+  "remind(er|ing)? to (attest|vouch|cast|back|stand behind)"
   # "you should X" with attestation verbs
-  "you should (attest|vouch|cast|stand behind)"
+  "you should (attest|vouch|cast|back|stand behind)"
   # "consider attesting" and variants
-  "consider (attesting|casting|vouching|standing behind|backing)"
+  "consider (attesting|casting|vouching|backing|standing behind)"
   # "active operators" + implied scheduling
   "active operators (attest|vouch|cast)"
 )

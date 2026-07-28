@@ -79,7 +79,7 @@ lives in `bcc-frontend/`.
 | Term | What it is in code | Backing code |
 |---|---|---|
 | **Vote** | The quantitative reputation action backing a Review. | `bcc_trust_votes`; `VoteService`, `VoteRepository` (`bcc-trust/app/Domain/Core/`). |
-| **Attestation** | The current first-class trust statement layer. Kinds: `vouch` and `stand_behind`. Carries `weight_at_time`, `context_note`, `target_kind`/`target_id`. | `bcc_trust_attestations` (`bcc-trust/includes/database/schema-trust-attestations.php`); `AttestationService`, `AttestationRepository`. |
+| **Attestation** | The current first-class trust statement layer. Kinds: `vouch` (labelled "Vouch") and `stand_behind` (labelled "Back" / "Backing" — §J.7). Carries `weight_at_time`, `context_note`, `target_kind`/`target_id`. | `bcc_trust_attestations` (`bcc-trust/includes/database/schema-trust-attestations.php`); `AttestationService`, `AttestationRepository`. |
 | **Vouch** | A per-author credibility toggle (one vouch / one weight per person), rendered next to the author's name — **not** a post reaction. Writes an attestation with `kind=vouch`. | `AuthorVouchButton` (`bcc-frontend/`); `bcc_trust_attestations`. |
 | **Endorse** | **Legacy wire vocabulary only (v1.50).** An "endorsement" is a `kind=vouch` attestation on an entity page — the `/endorse` endpoint writes through the attestation layer, and all display labels say **Vouch** per the §J.7 label table. The name survives on the wire (`/endorse` routes, `endorsement_count`, `viewer_has_endorsed`) but in no user-facing copy. The legacy `bcc_trust_endorsements` table is **dropped** (`drop-endorsements-table.php`); rows were migrated to attestations (`kind=vouch`). | `EndorsementService` (vouch-aligned adapter), `TrustRestController::endorse`, `drop-endorsements-table.php` (`bcc-trust/includes/database/`). |
 | **Reactions** | BCC seeds exactly two reaction types: `solid` (trust grammar — "agree" / drives the solids-received stat) and `fire` (social grammar). Other social kinds (like/love/haha/wow) are PeepSo defaults, not BCC-seeded. | `ReactionTypeRegistry.php` (`KIND_SOLID`, `KIND_FIRE`; `TRUST_KINDS = [solid]`, `ALL_KINDS = [solid, fire]`); seeded into option `bcc_reaction_ids`. |
@@ -88,11 +88,13 @@ lives in `bcc-frontend/`.
 (restrained, signs your name), `social` (expressive, emoji-forward, includes Fire), and
 `tribal` (reserved for V2 — renders nothing).
 
-> **FE/BE drift — "Stand behind":** the backend retired the `stand_behind` reaction (Slice 3,
-> hard-deleted — no longer seeded by `ReactionTypeRegistry`). The frontend trust rail still
-> renders a "Stand behind" button (`ReactionRail.tsx:124`). As a *post reaction* it is dead on
-> the backend; `stand_behind` survives only as an **attestation kind** (§ Attestation above).
-> This drift is current as of this writing.
+> **Wire name ≠ label — `stand_behind`:** the `stand_behind` *reaction* was retired in Slice 3
+> (hard-deleted, no longer seeded by `ReactionTypeRegistry`); the identifier survives only as an
+> **attestation kind** (§ Attestation above). Its user-facing label was "Stand Behind" until
+> 2026-07-28 and is now **"Back"** (the action) / **"Backing"** (the state) per the §J.7 label
+> table — but the wire name is deliberately frozen, because it is a stored `kind` enum value and
+> the root of four view-model field families, the notification type, and three persisted
+> preference keys. Do not "converge" it. Same precedent as **Endorse** above.
 
 ---
 

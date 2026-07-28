@@ -73,7 +73,7 @@ distributed across infrastructure to evade dedup.
 - Wallet-link requirement for attestation eligibility
 - Fingerprint dedup (one vouch per device per target per cooldown)
 - Throttle (per-user daily vouching cap)
-- Stand Behind requires tier ≥ neutral plus bandwidth caps
+- Backing requires tier ≥ neutral plus bandwidth caps
 - Diversity multiplier (1.3× for cross-network attestations) —
   homogeneous attestor pools get only baseline weight
 - Reliability weighting (new accounts have no track record, low
@@ -227,7 +227,7 @@ reputation regardless of dispute merit.
 ### 1.4 — Dormant-slot abuse
 
 **Profile.** An attacker farms accounts to elite tier, uses their
-Stand Behind slots, then allows the accounts to go dormant — gaming
+Backing slots, then allows the accounts to go dormant — gaming
 the dormancy-dimming rules.
 
 **Constitutional defenses:**
@@ -243,7 +243,7 @@ the dormancy-dimming rules.
   many accounts
 
 **Watch signals.**
-- Accounts with very thin activity but full Stand Behind slot
+- Accounts with very thin activity but full Backing slot
   allocations
 - Activity patterns clustered just inside dormancy threshold
   boundaries
@@ -319,7 +319,7 @@ avoiding genuine judgment calls.
 **Constitutional defenses:**
 - Early-conviction multiplier (21st+ vouches get 0.5× reliability
   credit)
-- Stand Behind bandwidth cap (forces deliberate allocation)
+- Backing bandwidth cap (forces deliberate allocation)
 - Early Read sub-track surfaces independent-discovery operators
 
 **Residual risk.**
@@ -384,35 +384,35 @@ classification.
 ### 1.8 — Discovery-gaming attempts
 
 **Profile.** An operator deliberately attempts to be "first" on
-many Stand Behind targets to game the Early Read badge.
+many Backing targets to game the Early Read badge.
 
 **Constitutional defenses:**
-- First-mover protection (first 5 stand-behinds don't get the
+- First-mover protection (first 5 backings don't get the
   multiplier)
 - Retrospective surfacing (no real-time race-to-be-first)
 - Early Read badge requires sustained pattern
-- Stand Behind bandwidth cap (limited slots to be "first" with)
+- Backing bandwidth cap (limited slots to be "first" with)
 
 **Residual risk.**
 - An attacker with high tier and full bandwidth can still
-  distribute first stand-behinds widely
+  distribute first backings widely
 - Sticky-first calls on declining trajectories: attestor goes
   early on many targets, some pan out, some don't
 
 **Watch signals.**
-- Operators with high Stand Behind churn (frequent revocations
+- Operators with high Backing churn (frequent revocations
   to free slots for new "first" picks)
-- Stand Behind patterns concentrated in pre-consensus targets
+- Backing patterns concentrated in pre-consensus targets
   with subsequent low validation rate
 
 **Hardening priority: Important.**
 
 **Specific implementation guidance:**
-- **Revocation cooldown on slot availability.** When a Stand
-  Behind is revoked, the slot doesn't free for 7 days — preventing
+- **Revocation cooldown on slot availability.** When a Backing is
+  revoked, the slot doesn't free for 7 days — preventing
   rapid churn for discovery-gaming.
 - **First-mover credit single-use per target.** If an operator
-  revokes a first-mover stand-behind and re-attests later, they
+  revokes a first-mover backing and re-attests later, they
   lose the first-mover credit. The "first" position credits
   exactly once per target lifetime.
 
@@ -502,7 +502,7 @@ echo chamber.
 
 **Constitutional defenses:**
 - Early Read sub-track rewards independent calls
-- Early-conviction multiplier on Stand Behind reliability
+- Early-conviction multiplier on Backing reliability
 - Diversity multiplier rewards cross-network attestation
 
 **Residual risk.**
@@ -512,7 +512,7 @@ echo chamber.
   operators
 
 **Watch signals.**
-- Distribution of stand-behinds — heavy concentration on a small
+- Distribution of backings — heavy concentration on a small
   set of operators = high conformity
 - Long-tail of less-attested operators getting near-zero
   attention
@@ -785,7 +785,7 @@ interpretation.
   vouch from someone you know" affordance that gets them off
   zero quickly. Reduces the visible zero-state.
 - **No "0 attestations" numeric display on profiles.** Use empty
-  state copy instead of `Vouched by 0` or `0 stand-behinds`.
+  state copy instead of `Vouched by 0` or `0 backings`.
   Numeric zeros invite the "no vouches = bad" reading; empty
   state copy redirects it.
 
@@ -866,7 +866,7 @@ graph loses signal density at exactly the moments it matters most.
 - **Self-only `why am I in this state` view.** A self-mirror
   surface that explains the classification in plain English with
   the underlying signals visible: *"Five high-reliability
-  operators have stood behind you. Two have filed disputes. The
+  operators have backed you. Two have filed disputes. The
   reliability of the dispute filers is high. This pattern
   triggers Polarizing classification."* Helps the operator
   contextualize rather than catastrophize.
@@ -898,7 +898,7 @@ mechanic prevents.
 - Asymmetric-display rule reduces public stigma
 - Soft accountability (no clawback, no death spiral) reduces per-
   attestation emotional cost
-- Bandwidth model on Stand Behind forces deliberate-not-frequent
+- Bandwidth model on Backing forces deliberate-not-frequent
   high-conviction decisions
 - Vouch is low-cost; not every interaction requires conviction
 - Layer 0 retention engine gives operators non-judgment surfaces
@@ -995,7 +995,7 @@ the interpretation.
 ### 3.4 — Cultural emergence of an attestation-cadence norm
 
 If a community norm develops that operators are expected to
-vouch/stand-behind/dispute at certain rates, the platform
+vouch/back/dispute at certain rates, the platform
 inherits an engagement-cadence pressure that contradicts the
 anti-viral-by-design constitution. The pressure would re-create
 engagement-economy dynamics through *culture* rather than
@@ -1100,7 +1100,7 @@ to one or more of the threats / behaviors above.
   neutral → trusted, trusted → elite per quarter. Healthy
   baseline TBD; precipitous drop signals tier-promotion gatekeeping.
 - **Attestation timing distribution per target.** Histogram of
-  "what position was each stand-behind in the sequence." A
+  "what position was each backing in the sequence." A
   long-tail toward late positions (median > 20th) signals
   consensus-following behavior dominating.
 - **Network clustering coefficient among Elite operators.**
@@ -1121,7 +1121,7 @@ to one or more of the threats / behaviors above.
 - **Reputation Score velocity for new entities.** How fast do
   entities go from 0 → 30 → 50 → 70? Anomalously fast trajectories
   flag laundering or Sybil attack.
-- **Stand Behind slot churn rate.** Average revocations per
+- **Backing slot churn rate.** Average revocations per
   operator per month. Anomalously high churn flags
   discovery-gaming.
 - **Operator retention after state transitions.** Specifically
@@ -1269,7 +1269,7 @@ watch signals trigger.
     on frivolous resolution.
 19. **Cluster-aware polarization detection** (§1.7) — independence
     of diverging opinions matters.
-20. **Revocation cooldown on Stand Behind slots** (§1.8) — 7-day
+20. **Revocation cooldown on Backing slots** (§1.8) — 7-day
     delay before slot frees on revocation.
 21. **First-mover credit single-use per target** (§1.8) —
     revocation forfeits the first-mover position.
