@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.57 · 2026-07-28 · Phase 1 deliverable · **⚠️ BREAKING (v1.57)**
+**Status:** Draft v1.58 · 2026-07-29 · Phase 1 deliverable · **⚠️ BREAKING (v1.58)**
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -502,11 +502,11 @@ Encodes §N11. Appears on the **own** User view-model (not on others' profiles).
   "progression": {
     "current_rank": "journeyman",
     "current_rank_label": "Journeyman",
-    "next_rank": "master",
-    "next_rank_label": "Master",
+    "next_rank": "veteran",
+    "next_rank_label": "Veteran",
     "next_rank_thresholds": [
       { "metric": "reviews_written", "label": "Reviews", "current": 1,  "required": 3 },
-      { "metric": "days_active",     "label": "Days active", "current": 12, "required": 30 }
+      { "metric": "account_age_days", "label": "Days",   "current": 12, "required": 30 }
     ],
     "trust_score_recent_changes": [
       { "delta":  1, "reason": "Governance vote", "at": "2026-04-22" },
@@ -530,9 +530,10 @@ Encodes §N11. Appears on the **own** User view-model (not on others' profiles).
 
 **Rules:**
 
-- Rank mirrors the feature-access **level** (Apprentice=New, Journeyman=Active, Master=Veteran), so `next_rank_thresholds` is exactly the next level's gate from §2.6 `next_level_thresholds`: **Apprentice → Journeyman** = `pulls` (≥5); **Journeyman → Master** = `reviews_written` (≥3) + `days_active` (≥30).
-- `next_rank` is `null` when the user is at the top of the earned ladder (Master) — `next_rank_thresholds` is then `[]`.
-- Master is the top of the earned ladder — there is no rung above it. (The conferred Foreman **Role** is retired for V1; see §4.8.)
+- Rank mirrors the feature-access **level** (Apprentice=New, Journeyman=Active, Veteran=Veteran), so `next_rank_thresholds` is exactly the next level's gate from §2.6 `next_level_thresholds`: **Apprentice → Journeyman** = `pulls` (≥5); **Journeyman → Veteran** = `reviews_written` (≥3) + `account_age_days` (≥30).
+- `next_rank` is `null` when the user is at the top of the earned ladder (Veteran) — `next_rank_thresholds` is then `[]`.
+- Veteran is the top of the earned ladder — there is no rung above it. (The conferred Foreman **Role** is retired for V1; see §4.8.)
+- **What these metrics actually measure (v1.58).** `pulls` is the viewer's OWN following count; `reviews_written` counts vote rows; `account_age_days` is days since registration, which accrues while the account is dormant and never decreases. None requires sustained or corroborated participation. Consumers must not present the ladder as a competence signal — it is a tenure gate. `account_age_days` was named `days_active` until v1.58, which the progress UI repeated back to users as "days active".
 - The frontend renders the `current/required` ratio for each threshold as a progress bar.
 - `trust_score_recent_changes` is the most recent 5 reputation events (sorted desc by `at`). Reason strings are plain English, ≤ 80 chars. (Trust score drives the *Tier* axis, not Rank — it's surfaced here only as recent-activity context.)
 - `quests` is the §N11 completion checklist and the earned **vote-weight multiplier** (`multiplier`, 1.00–1.30) it grants — the value `VoteWeightCalculator` applies to the operator's votes at cast time. `items` is a stable-ordered list (the quest catalogue order), each with `done` and the `weight_bonus` that quest contributes. `pct` is `round(completed_count / total_count × 100)`. Own-only, like the rest of the block. Copy is descriptive per §2.7 — the frontend never renders a prescriptive "complete this" nudge.
@@ -552,7 +553,7 @@ Encodes §O5 + §O5.1. Appears on the **own** User view-model.
     "next_level_label": "Veteran",
     "next_level_thresholds": [
       { "metric": "reviews_written", "label": "Reviews", "current": 1,  "required": 3 },
-      { "metric": "days_active",     "label": "Days active", "current": 12, "required": 30 }
+      { "metric": "account_age_days", "label": "Days",   "current": 12, "required": 30 }
     ],
     "features": {
       "write_review":         { "allowed": true,  "unlock_hint": null },
@@ -840,7 +841,7 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
 - `reputation_tier` ∈ `elite | trusted | neutral | caution | risky`. **Required** on every member and card surface as of v1.57 — it was optional, and the optionality is what let consumers fall back to the retired `card_tier` and lose the ability to show a risky member at all.
 - `reputation_tier_label` is the trust-tier name (the chip a human reads): `risky → "Risky"`, `caution → "Caution"`, `neutral → "Neutral"`, `trusted → "Trusted"`, `elite → "Elite"`. Always present on member and entity surfaces; `null` only on `community` cards, which have no trust system.
 - **`card_tier` / `tier_label` are RETIRED (v1.57).** The collectible-rarity vocabulary is gone — see §10 changelog for the full rationale. Do not reintroduce a rarity mapping anywhere; there is one tier axis and it is `reputation_tier`.
-- `current_rank_label` is the pre-rendered §A2 label for the level-derived **Rank** (`rank_label`'s display string; e.g. `"Master"`). It is a member-axis field.
+- `current_rank_label` is the pre-rendered §A2 label for the level-derived **Rank** (`rank_label`'s display string; e.g. `"Veteran"`). It is a member-axis field.
 - `flags` is an array of short slugs; if non-empty, the frontend may render moderation chips. V1 codes: `suspended`, `shadow_limited`, `hidden`, `under_review`.
 - Hidden privacy fields (per `privacy.*_hidden: true`) cause the corresponding sections in `counts`, `wallets`, etc. to either be omitted or zeroed depending on the viewer's relationship — server decides, client doesn't.
 - `cover_photo_url` is `null` when no custom cover photo is set; the frontend renders a default treatment in that case. URL is absolute (per §1.7) and points at PeepSo's stored cover image. Self-edits go through `PATCH /me/profile/cover` (multipart upload) — see §V2 Phase 2 endpoints.
@@ -899,7 +900,7 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
   - `none` — not a messageable kind (member/community/project/creator at V1), or the surface is operator-disarmed.
   - **Clients MUST NOT infer messaging lifecycle from `is_claimed`** — that field cannot distinguish never-claimed from previously-claimed, which are different destinations. `messaging.destination` is the only sanctioned source. It is a rendering hint: the server re-resolves on every submit, so a stale card degrades to an honest error, never a misroute.
 - `chains` (per §K3) — list of `CardChain` objects when 2+ chains back the same page; `null` otherwise. V1.5 validator-only; creator gallery filter is V2.
-- `rank_label` — **populated on `member` cards** (the level-derived Rank label — Apprentice/Journeyman/Master — via `UserViewService::getSummary`); may be `""` when the member has no derived rank yet. `null` on page kinds (`validator`/`project`/`creator`) — Rank is member-only. The field is always present (the union is `string | null`). `current_rank_label` mirrors it (own/profile surfaces).
+- `rank_label` — **populated on `member` cards** (the level-derived Rank label — Apprentice/Journeyman/Veteran — via `UserViewService::getSummary`); may be `""` when the member has no derived rank yet. `null` on page kinds (`validator`/`project`/`creator`) — Rank is member-only. The field is always present (the union is `string | null`). `current_rank_label` mirrors it (own/profile surfaces).
 - `reputation_tier_label` — trust-tier name (Risky/Caution/Neutral/Trusted/Elite). Populated on `member` AND entity cards as of v1.57 (it was member-only while entity cards carried rarity words instead). `null` only on `community` cards.
 - `member_dossier` — **non-null object on `member` cards, `null` on page kinds** (always present for shape uniformity, like `chains`). Carries the back-of-card signal blocks the `/members`, watchers, and followers/following lists previously emitted as a bare `MemberSummary`. Server-composed from the same `UserViewService::getSummary` resolution (no parallel query). Shape:
   ```json
@@ -3200,7 +3201,7 @@ The rank catalog and the viewer's current rank.
 earned ladder) and **Trust Tier** (`reputation_tier` / `reputation_tier_label`,
 see §3.2). A member holds one value on each axis, independently. **Rank mirrors
 the feature-access level** (§2.6): `apprentice = New`, `journeyman = Active`,
-`master = Veteran` — earned from activity, **not** from reputation tier. Rank is
+`veteran = Veteran` — earned from activity, **not** from reputation tier. Rank is
 **fully auto-derived**; there are no conferred-Role fields on this endpoint.
 (The conferred Foreman **Role** — locked as a third axis on 2026-06-22 — was
 never given a conferral path and is retired for V1; see the note below.)
@@ -3212,14 +3213,14 @@ never given a conferral path and is retired for V1; see the note below.)
     "ranks": [
       { "key": "apprentice", "label": "Apprentice", "description": "New on the floor.",   "auto_assigned": true, "order": 1 },
       { "key": "journeyman", "label": "Journeyman", "description": "Earned the basics.",   "auto_assigned": true, "order": 2 },
-      { "key": "master",     "label": "Master",     "description": "Master of the trade.", "auto_assigned": true, "order": 3 }
+      { "key": "veteran",    "label": "Veteran",    "description": "Been on the floor a while.", "auto_assigned": true, "order": 3 }
     ],
     "viewer": {
       "current_rank": "journeyman",
       "current_rank_label": "Journeyman",
       "auto_derived_rank": "journeyman",
-      "next_rank": "master",
-      "next_rank_label": "Master"
+      "next_rank": "veteran",
+      "next_rank_label": "Veteran"
     }
   }
   ```
@@ -3227,9 +3228,18 @@ never given a conferral path and is retired for V1; see the note below.)
 - **Mapping:** Static rank catalog from `RankCatalog::all()` (the three earned
   rungs only). `viewer.*` from `RankService::getViewerBlock()`. `current_rank` /
   `auto_derived_rank` are the **level-derived** earned rank and are always equal
-  in V1 (no demotion path). `next_rank` / `next_rank_label` are `null` at
-  `master` (top of the ladder). The viewer block carries no conferred-Role
+  in V1 (no *admin-conferral* path). `next_rank` / `next_rank_label` are `null`
+  at `veteran` (top of the ladder). The viewer block carries no conferred-Role
   fields — Rank is fully level-derived.
+- **Rank can fall (corrected v1.58).** This section previously said "no demotion
+  path", which was true only of admin conferral. Rank is recomputed from live
+  counters on every read with no monotonic clamp, so dropping below a gate —
+  unfollowing under the `pulls` threshold, or losing vote rows — really does
+  demote. `RankProgressionListener` handles it explicitly: the new rank is
+  persisted in both directions, and a demotion is logged quietly with **no**
+  celebration (§E2 / §O1.2 — negative events never fire a Heavy toast).
+  `account_age_days` can never decrease, so a Veteran can only fall back to
+  Journeyman, not to Apprentice.
 
 #### Rank is fully auto-derived — conferred Foreman **Role** retired (v1.36)
 
@@ -3755,7 +3765,7 @@ Clear the stash after the toast renders.
 
 `RankProgressionListener` is the only producer in V1. It seeds quietly on a user's first event so users who are already Journeyman at rollout don't get a phantom celebration on their next activity.
 
-Since Rank mirrors the feature-access **level** 1:1 (Apprentice=New, Journeyman=Active, Master=Veteran), a level crossing **is** a rank-up — there is no separate `level_up` celebration. (The 2026-06-22 identity slice retired the no-op `LevelProgressionListener` + its 0-subscriber `bcc_feature_level_unlocked` event; the frontend `level_up` celebration preset is therefore unreachable and slated for removal.)
+Since Rank mirrors the feature-access **level** 1:1 (Apprentice=New, Journeyman=Active, Veteran=Veteran), a level crossing **is** a rank-up — there is no separate `level_up` celebration. (The 2026-06-22 identity slice retired the no-op `LevelProgressionListener` + its 0-subscriber `bcc_feature_level_unlocked` event; the frontend `level_up` celebration preset is therefore unreachable and slated for removal.)
 
 ### 4.13 Comments (v1.5)
 
@@ -6001,7 +6011,7 @@ For each view-model field, the table below names the existing BCC system that ow
 | `reputation_tier` | `bcc-trust` `ReputationCalculatorService` |
 | `reputation_tier_label` | Server-side mapping `reputation_tier → label` (`ReputationTierMap::TIER_LABEL`; elite → "Elite") — the sole tier vocabulary since v1.57 |
 | ~~`card_tier`, `tier_label`~~ | **RETIRED v1.57** — the rarity vocabulary is gone; use `reputation_tier` / `reputation_tier_label` |
-| `rank`, `rank_label`, `current_rank_label` | Auto-derived from the feature-access **level** (`RankService::rankForLevel`: New→Apprentice, Active→Journeyman, Veteran→Master). Fully level-derived — no conferred-Role rows (§4.8) |
+| `rank`, `rank_label`, `current_rank_label` | Auto-derived from the feature-access **level** (`RankService::rankForLevel`: New→Apprentice, Active→Journeyman, Veteran→Veteran). Fully level-derived — no conferred-Role rows (§4.8) |
 | `is_in_good_standing` | `bcc-trust` derived from tier ≥ neutral AND no moderation flags (§E1) |
 | `flags` | suspension state + `wp_usermeta` moderation flags (`bcc_shadow_limited`/`bcc_hidden`/`bcc_under_review`) via `UserViewService::resolveFlags` — NOT the retired `bcc_trust_flags` vote-flag table |
 | `bio` | PeepSo profile description |
@@ -6215,6 +6225,67 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.58 — 2026-07-29 — ⚠️ BREAKING — top rank rung `master` → `veteran`; `days_active` → `account_age_days`
+
+Naming release. No capability changes: the same users can do the same
+things, gated by the same level and tier. What changes is that the names
+now describe what the code measures.
+
+**`master` → `veteran` (slug AND label).**
+
+- `RankCatalog::RANK_MASTER` → `RANK_VETERAN`; slug `master` → `veteran`;
+  label `"Master"` → `"Veteran"`; description `"Master of the trade."` →
+  `"Been on the floor a while."`
+- Affects every field carrying a rank slug or label: `rank`, `rank_label`,
+  `current_rank_label`, `next_rank`, `next_rank_label`,
+  `auto_derived_rank`, and the `GET /ranks` catalog (§4.8).
+- **Why.** Level 3 requires 5 pulls + 3 votes + 30 days since
+  *registration*. That is tenure, not mastery. "Master" claimed expertise
+  the requirement never tested, and it made the two-axis model unreadable
+  — "Risky Master" parses as a contradiction, while "Risky Veteran" (a
+  long-standing member who burned people) is immediately legible.
+  `LEVEL_VETERAN` was already labelled `"Veteran"` internally, so the
+  mapping is now self-consistent: `veteran` = level Veteran.
+- **The slug moves, not just the label.** Keeping slug `master` with label
+  `"Veteran"` would rebuild the level/rank vocabulary split this change
+  exists to remove. Safe here because the slug is computed on every read
+  and persisted in exactly one place — unlike v1.56's `stand_behind`,
+  which was frozen precisely because it is a persisted attestation kind.
+- **"Master" is RESERVED, not deleted.** It is the natural name for a
+  merit rung earned from outcome-confirmed judgment. It is deliberately
+  **not** scaffolded — a never-built rung is what Foreman was (v1.36).
+  Do not reintroduce it as a label until there is data to earn it.
+- **Atomic cutover — no migration, no compatibility layer.** BCC is a
+  fresh install: no real users, nothing deployed to production, staging is
+  the only target. `bcc_last_seen_rank` holds zero rows with the retired
+  value, so there is nothing to migrate. `master` is simply gone — not
+  dual-read, not grandfathered, not accepted anywhere.
+  For the record, because it constrains any *future* rename: the listener
+  treats an unknown stored slug as a promotion, so renaming a rung against
+  a populated database would fire one spurious rank-up per affected user
+  and would need a backfill. Check the row count first.
+
+**`days_active` → `account_age_days`.**
+
+- The `metric` key in `next_level_thresholds` (§2.6) and
+  `next_rank_thresholds` (§2.5) changes; its `label` changes from
+  `"Days active"` to `"Days"`.
+- **Why.** The counter returned days since `wp_users.user_registered`. It
+  accrues while the user is dormant and can never decrease — it is
+  account age. The progress UI rendered it as "24 more days active" and
+  the unlock hint said "stay active 30 days". Both were false.
+
+**Documentation corrections in the same pass (no code change):**
+
+- §2.5 now states plainly what the ladder's three inputs measure: `pulls`
+  is the viewer's OWN following count, `reviews_written` counts vote
+  rows, `account_age_days` is account age. All are self-dealt. Consumers
+  must not present the ladder as a competence signal.
+- §4.8's "no demotion path" was **wrong** and is corrected. It held only
+  for admin conferral. Rank is recomputed from live counters with no
+  monotonic clamp, so falling below a gate demotes; the listener persists
+  both directions and logs demotions quietly with no celebration.
 
 ### v1.57 — 2026-07-28 — ⚠️ BREAKING — card rarity vocabulary retired; Elite gated
 
