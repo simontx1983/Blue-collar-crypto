@@ -202,6 +202,8 @@ contract, regardless of how many backends back it.
 - **Card-kind ↔ peepso-page type** → `BCC\Trust\Core\Support\PageTypeMap`
 - **Card-kind → URL prefix** → `BCC\Trust\Core\Support\CardUrlMap`
 - **Rank slug → display label** → `BCC\Trust\Core\Support\RankCatalog`
+  (label/description strings live in `bcc-trust/includes/config/ranks.php`;
+  slugs stay class constants — `bcc_last_seen_rank` persists one per user)
 
 ## Sidecar tables for third-party-owned data
 

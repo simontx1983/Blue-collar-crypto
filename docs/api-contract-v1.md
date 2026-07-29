@@ -3206,6 +3206,22 @@ the feature-access level** (§2.6): `apprentice = New`, `journeyman = Active`,
 (The conferred Foreman **Role** — locked as a third axis on 2026-06-22 — was
 never given a conferral path and is retired for V1; see the note below.)
 
+**Where these values come from.** The rank `label` and `description` strings
+are defined in `bcc-trust/includes/config/ranks.php`; `RankCatalog` reads them
+and remains the single source of the catalog shape. The rank **slugs**
+(`apprentice` / `journeyman` / `veteran`) are wire values and stay as class
+constants — one of them is persisted per user in `bcc_last_seen_rank`, so a
+slug change is a migration, not a config edit. Labels are deliberately **not**
+filterable: the frontend renders its own ladder from `rank-ladder.ts`, so a
+runtime label override would desync the two surfaces.
+
+The three level gates behind the ladder resolve as **constant → filter →
+`wp_options('bcc_level_thresholds')`**, and are filterable as
+`bcc_trust_rank_pulls_required`, `bcc_trust_rank_reviews_required` and
+`bcc_trust_rank_account_age_days_required`. Defaults are unchanged (5 / 3 / 30).
+Note that nothing writes `bcc_level_thresholds` today — there is no admin UI,
+and it is settable only by hand.
+
 - **Auth:** Anonymous OR Bearer
 - **Response 200:**
   ```json
