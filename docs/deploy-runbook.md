@@ -96,6 +96,23 @@ someone runs the production dispatch (or, historically, a manual copy).
 > [validator-messaging-rollout.md](validator-messaging-rollout.md). Production
 > enablement is separately approved.
 
+### Pending: rank-vocabulary cutover (prerequisite for Rank-redesign prod work)
+
+Production WordPress still runs the pre-v1.58 rank vocabulary (`master`);
+staging and the production frontend already speak `apprentice/journeyman/
+veteran`. Before **any** Rank-redesign work targets production, promote the
+current `main` of `bcc-trust` (and `bcc-core` if it has un-promoted merges) via
+the manual production dispatch above. Low-risk: there are no real users, and
+the deploy is the standard plugin-scoped rsync.
+
+What this deploy does **not** need to touch: production DB rows holding the
+old `master` slug (`bcc_last_seen_rank` usermeta). The Rank redesign's Phase 5
+cleanup migration removes that meta key entirely, and the listener that could
+misread an unknown historical slug as a promotion is deleted with the old rank
+stack — no interim data surgery. The cutover is a code deploy, nothing more.
+This item unblocks later production phases; it does **not** gate any staging
+slice.
+
 ## Troubleshooting
 
 - **Deploy didn't fire after a merge** — check the `CI` run went green; the
