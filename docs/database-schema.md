@@ -81,6 +81,8 @@ schema-install path in `tables.php` is itself routed through the same runner.
 | wp_bcc_trust_page_scores_velocity | 1 | Daily score-delta track per page | TableRegistry::scoreVelocity | Active |
 | wp_bcc_trust_login_days | 0 | Explicit-login day buckets (Rank Phase 1; RankLoginListener is the only writer — no request-touch) | TableRegistry::loginDays / schema-login-days.php | Active |
 | wp_bcc_trust_tier_days | 0 | Daily trust-tier ordinal per user (Rank Phase 1; feeds the §13.1 promotion windows; missing row = non-qualifying day) | TableRegistry::tierDays / schema-tier-days.php | Active |
+| wp_bcc_trust_rank_events | 0 | Append-only Rank evidence ledger (Rank Phase 4, shadow; one row per event×category; reversal = status flip; NEVER pruned) | TableRegistry::rankEvents / schema-rank-events.php / RankEventsRepository | Active |
+| wp_bcc_trust_cluster_findings | 0 | Formal non-independence determinations (Rank Phase 4, R3; representative-member semantics; distinct from patterns/fraud_analysis signal stores) | TableRegistry::clusterFindings / schema-cluster-findings.php / ClusterFindingsRepository | Active |
 | wp_bcc_trust_attestations | 9 | §J attestation layer (Vouch / Back); successor to the retired endorsements table | TableRegistry::trustAttestations / schema-trust-attestations.php | Active |
 | wp_bcc_attestor_reliability_cache | 4 | Nightly recompute cache of AttestationOutcomeClassifier per attestor (PK user_id); cron owns writes, reads fall back to live compute | TableRegistry::attestorReliabilityCache / schema-attestor-reliability-cache.php | Active |
 | wp_bcc_trust_stokes | 7 | One row per (act_id,user_id) stoke; feeds feed heat_stage + public stoke_count (never scores) | TableRegistry::stokes / schema-stokes.php | Active |
@@ -227,6 +229,46 @@ IGNORE; a missing row is a non-qualifying day (fail-safe strict).
 - day · date · NO · PK
 - tier_ord · tinyint unsigned · NO
 - Indexes: PRIMARY (user_id,day) [uq]; idx_day (day)
+
+#### wp_bcc_trust_rank_events
+Append-only Rank evidence ledger (Rank redesign Phase 4, shadow).
+One row per (event, category); INSERT IGNORE idempotency via the
+unique key; reversal flips status (rows never mutate otherwise);
+NEVER pruned — Rank stays reproducible from this ledger (§24.1).
+- id · bigint unsigned · NO · PK auto
+- event_uid · varchar(120) · NO · UQ(+category)
+- subject_user_id · bigint unsigned · NO · K
+- source_type · varchar(30) · NO · K
+- source_id · bigint unsigned · NO
+- category · varchar(20) · NO
+- relationship_user_id · bigint unsigned · NO
+- raw_value · decimal(8,4) · NO
+- capped_value · decimal(8,4) · NO
+- status · varchar(12) · NO
+- created_at · datetime · NO
+- effective_at · datetime · NO
+- reversed_at · datetime · YES
+- reversal_reason · varchar(120) · YES
+- Indexes: PRIMARY (id) [uq]; uq_event_category (event_uid,category) [uq]; idx_subject_status (subject_user_id,status,category); idx_source (source_type,source_id)
+
+#### wp_bcc_trust_cluster_findings
+Formal non-independence determinations (Rank redesign Phase 4, R3).
+Representative-member semantics: one counted voice per confirmed
+cluster. Distinct from the expiring signal stores (patterns,
+fraud_analysis) — determinations are decided, auditable, reversible.
+- id · bigint unsigned · NO · PK auto
+- level · varchar(12) · NO · K
+- member_user_ids · text · NO (JSON list)
+- representative_user_id · bigint unsigned · NO
+- selection_method · varchar(30) · NO
+- evidence_refs · text · YES (JSON)
+- confidence · decimal(4,3) · NO
+- decided_by · bigint unsigned · NO
+- decided_at · datetime · NO
+- effective_at · datetime · NO
+- reversed_at · datetime · YES
+- reversal_reason · varchar(160) · YES
+- Indexes: PRIMARY (id) [uq]; idx_active_level (reversed_at,level)
 
 #### wp_bcc_trust_endorsements — RETIRED (2026-07-02)
 Folded into `wp_bcc_trust_attestations` (kind=`vouch`); dropped by
