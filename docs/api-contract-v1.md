@@ -2717,6 +2717,8 @@ List of available Halls (PeepSo Groups in BCC clothing).
         "name": "Cosmos Hall",
         "chain": "cosmos",
         "member_count": 412,
+        "validator_count": 261,
+        "collection_count": 95,
         "viewer_membership": {
           "is_member": true,
           "is_primary": true,
@@ -2730,6 +2732,17 @@ List of available Halls (PeepSo Groups in BCC clothing).
   ```
 - **Cache:** `Cache-Control: public, max-age=300`
 - **Mapping:** `peepso-group` CPT posts filtered to Halls (`_bcc_group_kind = 'hall'` meta), JOINed with `peepso_group_members` for `member_count` and viewer membership; the viewer's primary pointer comes from `bcc_primary_hall_group_id` usermeta.
+
+**`validator_count` / `collection_count`** are the indexed on-chain content for the
+Hall's chain. They exist because a Hall with one member reads as dead while the same
+Hall showing "261 validators · 95 collections" reads as somewhere worth opening — and
+that is true on day one, because the on-chain indexers already populated it. A Hall
+with no chain, or a chain with nothing indexed, reports `0` for both.
+
+Both come from whole-table `GROUP BY chain_id` aggregates that `ValidatorRepository`
+and `CollectionRepository` already cache, so the directory costs **two extra queries
+for the whole page regardless of page size** (zero on a warm object cache). Do not
+reimplement these as a per-Hall lookup — that is an N+1 across the default 20-row page.
 
 **`viewer_membership` semantics:**
 - Anonymous viewer: `null` (no current user).
@@ -2808,6 +2821,39 @@ A Hall is a semantic wrapper around a PeepSo group; the slug is identical on bot
 **Group-feed visibility filter (§4.7.6, v1.24):** `GET /bcc/v1/groups/:id/feed` now returns a feed for non-members of non-secret groups instead of refusing them. Members get the **full** feed (all visibilities). Non-members of an `nft` / `closed` / `open` (non-secret) group get a **public-only filtered feed** — only `public_group` + `public_all` posts (per the `_bcc_post_visibility` post-meta set at compose time; see §4.14 / §4.15); `members_only` posts, and any post with no visibility meta, are never returned to non-members. This is the read-only teaser surface. **Secret groups are unchanged**: non-members still get `bcc_not_found 404` (existence never leaks). Consequently the §4.7.5 `GroupDetailResponse` now reports `feed_visible: true` and `permissions.can_read_feed.allowed: true` for non-members of `nft` / `closed` groups, so `<GroupFeedSection>` renders the teaser feed rather than a locked notice. (Previously non-members of NFT/closed groups received `403 bcc_permission_denied` from the feed endpoint and `feed_visible: false` from the detail view-model.)
 
 No `/bcc/v1/halls/:slug/feed` endpoint exists or is planned. The two read calls are independent: a failed `/groups/:slug` read does not 500 the page — the header still renders and the feed slot shows a non-blocking notice. A 404 from `/halls/:slug` is still authoritative for page existence (Next `notFound()`).
+
+**`GET /bcc/v1/halls/:slug` chain-content preview.** The detail response is a
+**superset** of a `GET /halls` item — same keys, plus two preview lists:
+
+```json
+{
+  "validators": [
+    {
+      "id": 12, "moniker": "Coinbase01", "logo_url": "https://…",
+      "total_stake": "67355405.19476300", "delegator_count": 942,
+      "uptime_30d": "99.98", "voting_power_rank": 1, "commission_rate": "0.0500"
+    }
+  ],
+  "collections": [
+    { "id": 5, "name": "Bad Kids", "image_url": "https://…", "contract_address": "cosmos1…" }
+  ]
+}
+```
+
+Both are capped at **6** and ordered by stake (validators) / holder count
+(collections). This is a *"worth a look"* preview, **not** a directory —
+`/validators?chain=` and `/cards` remain the full lists and the client links to them
+rather than paginating here. A Hall with no chain, or a chain with nothing indexed,
+returns `[]` for both (never `null`).
+
+⚠️ **Closed field set — privacy.** `total_stake`, `uptime_30d` and `commission_rate`
+stay **strings**: they exceed float precision. More importantly, the validator row in
+the database also carries `wallet_link_id` (a pointer into a member's linked wallet)
+and `operator_address`, and **neither is projected**. §4.24 (v1.51) closed 14
+cross-user wallet-disclosure paths, and this is a public, unauthenticated read — do
+not widen this list without re-reading that section. The projection is a pure static
+(`HallsService::previewFromRows`) and `HallsChainPreviewTest` asserts the key set is
+exactly the above, so an accidental widening fails CI rather than shipping.
 
 ### 4.7.1 Holder Groups (NFT-gated)
 
