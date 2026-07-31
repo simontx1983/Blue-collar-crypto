@@ -79,6 +79,8 @@ schema-install path in `tables.php` is itself routed through the same runner.
 | wp_bcc_trust_page_scores | 403 | Per-(page,category) aggregate score row (self-page tier lives here) | TableRegistry::scores / PageScoreRepository | Active |
 | wp_bcc_trust_score_events | 3969 | Audit trail of score/tier transitions per page | TableRegistry::scoreEvents | Active |
 | wp_bcc_trust_page_scores_velocity | 1 | Daily score-delta track per page | TableRegistry::scoreVelocity | Active |
+| wp_bcc_trust_login_days | 0 | Explicit-login day buckets (Rank Phase 1; RankLoginListener is the only writer — no request-touch) | TableRegistry::loginDays / schema-login-days.php | Active |
+| wp_bcc_trust_tier_days | 0 | Daily trust-tier ordinal per user (Rank Phase 1; feeds the §13.1 promotion windows; missing row = non-qualifying day) | TableRegistry::tierDays / schema-tier-days.php | Active |
 | wp_bcc_trust_attestations | 9 | §J attestation layer (Vouch / Back); successor to the retired endorsements table | TableRegistry::trustAttestations / schema-trust-attestations.php | Active |
 | wp_bcc_attestor_reliability_cache | 4 | Nightly recompute cache of AttestationOutcomeClassifier per attestor (PK user_id); cron owns writes, reads fall back to live compute | TableRegistry::attestorReliabilityCache / schema-attestor-reliability-cache.php | Active |
 | wp_bcc_trust_stokes | 7 | One row per (act_id,user_id) stoke; feeds feed heat_stage + public stoke_count (never scores) | TableRegistry::stokes / schema-stokes.php | Active |
@@ -206,6 +208,25 @@ Daily score-delta per page (velocity tracking).
 - track_date · date · NO · PK
 - score_delta · decimal(8,4) · NO
 - Indexes: PRIMARY (page_id,track_date) [uq]; idx_date (track_date)
+
+#### wp_bcc_trust_login_days
+Explicit-login day buckets (Rank redesign Phase 1). Written only by
+RankLoginListener on deliberate-auth events; refresh/re-mint paths never
+reach it. Feeds time credit, the inactivity clock, and DormancyDetector.
+- user_id · bigint unsigned · NO · PK
+- day · date · NO · PK
+- source · varchar(20) · NO
+- created_at · datetime · NO
+- Indexes: PRIMARY (user_id,day) [uq]; idx_day (day)
+
+#### wp_bcc_trust_tier_days
+Daily trust-tier ordinal per user (Rank redesign Phase 1). Written by
+TierSnapshotService (daily sweep + lazy today-row fallback), INSERT
+IGNORE; a missing row is a non-qualifying day (fail-safe strict).
+- user_id · bigint unsigned · NO · PK
+- day · date · NO · PK
+- tier_ord · tinyint unsigned · NO
+- Indexes: PRIMARY (user_id,day) [uq]; idx_day (day)
 
 #### wp_bcc_trust_endorsements — RETIRED (2026-07-02)
 Folded into `wp_bcc_trust_attestations` (kind=`vouch`); dropped by
