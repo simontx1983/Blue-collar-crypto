@@ -83,6 +83,8 @@ schema-install path in `tables.php` is itself routed through the same runner.
 | wp_bcc_trust_tier_days | 0 | Daily trust-tier ordinal per user (Rank Phase 1; feeds the §13.1 promotion windows; missing row = non-qualifying day) | TableRegistry::tierDays / schema-tier-days.php | Active |
 | wp_bcc_trust_rank_events | 0 | Append-only Rank evidence ledger (Rank Phase 4, shadow; one row per event×category; reversal = status flip; NEVER pruned) | TableRegistry::rankEvents / schema-rank-events.php / RankEventsRepository | Active |
 | wp_bcc_trust_cluster_findings | 0 | Formal non-independence determinations (Rank Phase 4, R3; representative-member semantics; distinct from patterns/fraud_analysis signal stores) | TableRegistry::clusterFindings / schema-cluster-findings.php / ClusterFindingsRepository | Active |
+| wp_bcc_trust_rank_state | 0 | Canonical Rank progression row (Rank Phase 5; one row per RANKED member — missing row = New Member fail-safe; column is rank_slug because RANK is a MySQL 8 reserved word) | TableRegistry::rankState / schema-rank-state.php / RankStateRepository | Active |
+| wp_bcc_trust_rank_pending | 0 | 24h Apprentice confirmation clock (Rank Phase 5, R1; states pending/confirmed/voided) | TableRegistry::rankPending / schema-rank-pending.php / RankPendingRepository | Active |
 | wp_bcc_trust_attestations | 9 | §J attestation layer (Vouch / Back); successor to the retired endorsements table | TableRegistry::trustAttestations / schema-trust-attestations.php | Active |
 | wp_bcc_attestor_reliability_cache | 4 | Nightly recompute cache of AttestationOutcomeClassifier per attestor (PK user_id); cron owns writes, reads fall back to live compute | TableRegistry::attestorReliabilityCache / schema-attestor-reliability-cache.php | Active |
 | wp_bcc_trust_stokes | 7 | One row per (act_id,user_id) stoke; feeds feed heat_stage + public stoke_count (never scores) | TableRegistry::stokes / schema-stokes.php | Active |
@@ -269,6 +271,55 @@ fraud_analysis) — determinations are decided, auditable, reversible.
 - reversed_at · datetime · YES
 - reversal_reason · varchar(160) · YES
 - Indexes: PRIMARY (id) [uq]; idx_active_level (reversed_at,level)
+
+#### wp_bcc_trust_rank_state
+Canonical Rank progression state (Rank redesign Phase 5, §24). One row
+per RANKED member; a MISSING row is the New Member account state
+(fail-safe: no row ⇒ no rank ⇒ no reputation-bearing capability).
+Column is `rank_slug`, not `rank` — RANK is a MySQL 8 reserved word.
+`apprentice_awarded_at` is the §16.3 maturity epoch (vesting runs from
+it and survives promotion). Scores are a materialization of
+RankScoreCalculator over the append-only rank_events ledger — the
+ledger is authoritative; this row is reproducible from it and is
+rewritten by the promotion engine, never hand-edited.
+`recovery_status='grace'` + `recovery_deadline` carry the §14.1 90-day
+evidence-loss grace.
+- user_id · bigint unsigned · NO · PK
+- rank_slug · varchar(12) · NO · K
+- apprentice_awarded_at · datetime · NO
+- journeyman_awarded_at · datetime · YES
+- veteran_awarded_at · datetime · YES
+- score · decimal(7,4) · NO
+- cat_contribution · decimal(7,4) · NO
+- cat_helping · decimal(7,4) · NO
+- cat_recognition · decimal(7,4) · NO
+- cat_outcomes · decimal(7,4) · NO
+- cat_time · decimal(7,4) · NO
+- recovery_status · varchar(12) · NO
+- recovery_deadline · datetime · YES
+- updated_at · datetime · NO
+- Indexes: PRIMARY (user_id) [uq]; idx_rank (rank_slug)
+
+#### wp_bcc_trust_rank_pending
+24-hour Apprentice confirmation clock (Rank redesign Phase 5, R1 — NO
+HELD state). One row per New Member whose first qualifying contribution
+started the §5.2 confirmation. The 5-minute sweep
+(`bcc_rank_confirmation_sweep`) awards Apprentice at `due_at` iff the
+six R1 conditions hold; pending reports and report-volume auto-hide
+never pause, reset, or extend the clock. States: pending → confirmed |
+voided. `content_act_id` sits alongside the wp_posts id because content
+reports key feed items by activity id (the R1 report-resolution check
+needs it).
+- user_id · bigint unsigned · NO · PK
+- source_type · varchar(30) · NO
+- source_id · bigint unsigned · NO
+- content_act_id · bigint unsigned · NO
+- due_at · datetime · NO · K
+- status · varchar(12) · NO · K
+- voided_reason · varchar(120) · YES
+- created_at · datetime · NO
+- resolved_at · datetime · YES
+- Indexes: PRIMARY (user_id) [uq]; idx_due (status,due_at)
 
 #### wp_bcc_trust_endorsements — RETIRED (2026-07-02)
 Folded into `wp_bcc_trust_attestations` (kind=`vouch`); dropped by

@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.58 · 2026-07-29 · Phase 1 deliverable · **⚠️ BREAKING (v1.58)**
+**Status:** Draft v1.59 · 2026-07-31 · Phase 1 deliverable · **⚠️ BREAKING (v1.59)**
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -384,7 +384,7 @@ The single most important shared type. Encodes §N7 (always visible, disabled wi
 - When `allowed: true`, `unlock_hint` is `null` (not omitted — explicit `null` so client typing is uniform).
 - When a gate is **structurally impossible** for this viewer (e.g., viewing your own card → `can_watch: false`, you can't follow yourself), `unlock_hint` is `null` and the frontend hides the action UI per §N7's "structurally impossible" carve-out (the always-visible rule applies to *gates a viewer could resolve*, not to nonsensical actions).
 
-**Permission stacking (§O5+D2):** when both an O5 level gate and a D2 reputation/wallet gate apply, the server resolves both checks and returns a single `allowed` boolean. The frontend never combines gates. The `unlock_hint` describes whichever gate is closer to resolution (e.g., if the user has rep ≥ neutral but is Level 1, the hint says "Reach Level 2…", not "Earn neutral reputation…").
+**Permission stacking (§O5+D2, reworded v1.59):** when multiple gates apply to an action (the §2.6 capability policy — ranked member + tier ≥ neutral — plus any D2 reputation/wallet gate), the server resolves every check and returns a single `allowed` boolean. The frontend never combines gates. The `unlock_hint` describes whichever gate is closer to resolution. (The pre-v1.59 example hint "Reach Level 2…" referenced the retired integer-Level ladder.)
 
 ### 2.2 `SocialProof`
 
@@ -490,79 +490,77 @@ Encodes §O3 + §O3.1. Appears on User view-models.
 - `comparison.kind` is one of: `network_percentile`, `local_peer`. The "friend comparison" variant was cut (§O3.1, deferred list).
 - `comparison` rotates server-side every 24h between the available kinds. If the user has no primary Hall, only `network_percentile` is returned.
 - `comparison` is `null` when the user is too new for a meaningful comparison (server threshold: < 7 days active OR < 5 actions logged).
+- **`rank_progress` is REMOVED (v1.59).** The v1.3 changelog added a `rank_progress` sub-object (`{current_rank, next_rank, percent, remaining_label}`) to this block; it was never consumed by any frontend surface (zero consumers) and died at the Rank redesign Phase 5 cutover. Progression rendering lives exclusively in §2.5 / `GET /bcc/v1/me/progression`. Do not reintroduce it here.
 
 ### 2.5 `ProgressionBlock`
 
-Encodes §N11. Appears on the **own** User view-model (not on others' profiles).
+**Shape REPLACED at v1.59 (Rank redesign Phase 5).** The canonical
+member-facing Rank progression block. Appears on the **own** User
+view-model (not on others' profiles) AND is served standalone by
+`GET /bcc/v1/me/progression` (§4.8) — same server builder
+(`RankStateService::progressionFor`), identical shape on both surfaces.
 
-**Shape:**
+`member_state` discriminates the two variants. **New Member is an
+account state, NOT a rank** — the catalog has exactly three rungs
+(Apprentice / Journeyman / Veteran, §4.8) — so a New Member gets a
+readiness view instead of rank math.
+
+**Shape (ranked member — `member_state: "ranked"`):**
 
 ```json
 {
   "progression": {
-    "current_rank": "journeyman",
-    "current_rank_label": "Journeyman",
+    "member_state": "ranked",
+    "rank": "journeyman",
+    "rank_label": "Journeyman",
     "next_rank": "veteran",
     "next_rank_label": "Veteran",
-    "next_rank_thresholds": [
-      { "metric": "reviews_written", "label": "Reviews", "current": 1,  "required": 3 },
-      { "metric": "account_age_days", "label": "Days",   "current": 12, "required": 30 }
-    ],
-    "trust_score_recent_changes": [
-      { "delta":  1, "reason": "Governance vote", "at": "2026-04-22" },
-      { "delta":  2, "reason": "Uptime streak (14d)", "at": "2026-04-15" },
-      { "delta": -1, "reason": "Dispute lost", "at": "2026-04-10" }
-    ],
+    "rank_score": 46.75,
+    "next_threshold": 80,
+    "categories": {
+      "contribution": { "score": 14.5, "max": 25 },
+      "helping":      { "score": 11.25, "max": 25 },
+      "recognition":  { "score": 8.0,  "max": 15 },
+      "outcomes":     { "score": 6.0,  "max": 15 },
+      "time":         { "score": 7.0,  "max": 20 }
+    },
+    "diversity":   { "contribution_types": 3, "journeyman_required": 3, "veteran_required": 5 },
+    "recognizers": { "independent": 4, "journeyman_required": 3, "veteran_required": 5 },
+    "outcomes":    { "count": 2, "types": 1, "veteran_required": 5, "veteran_types_required": 2 },
+    "trust_windows": {
+      "journeyman": { "qualifying": 48, "required": 45,  "window": 60,  "min_tier": "neutral" },
+      "veteran":    { "qualifying": 61, "required": 120, "window": 180, "min_tier": "trusted" }
+    },
+    "vesting": { "maturity": 0.4142, "days_elapsed": 33, "span_days": 90 },
+    "decay":   { "active": false, "points": 0 },
+    "recovery": null,
     "quests": {
-      "multiplier": 1.28,
       "completed_count": 4,
       "total_count": 7,
       "pct": 57,
       "items": [
-        { "slug": "connect_wallet", "label": "Connect a Wallet", "hint": "Prove on-chain identity for higher credibility.", "done": true,  "weight_bonus": 0.08, "category": "identity" },
-        { "slug": "verify_github",  "label": "Verify GitHub Account", "hint": "Proves code ownership — boosts your vote weight.", "done": true,  "weight_bonus": 0.07, "category": "identity" },
-        { "slug": "explore_projects", "label": "Explore 3 Projects", "hint": "Browse and evaluate real projects.", "done": false, "weight_bonus": 0.02, "category": "engagement" }
+        { "slug": "connect_wallet", "label": "Connect a Wallet", "hint": "Prove on-chain identity for higher credibility.", "done": true,  "category": "identity" },
+        { "slug": "verify_github",  "label": "Verify GitHub Account", "hint": "Proves code ownership.", "done": true,  "category": "identity" },
+        { "slug": "explore_projects", "label": "Explore 3 Projects", "hint": "Browse and evaluate real projects.", "done": false, "category": "engagement" }
       ]
     }
   }
 }
 ```
 
-**Rules:**
-
-- Rank mirrors the feature-access **level** (Apprentice=New, Journeyman=Active, Veteran=Veteran), so `next_rank_thresholds` is exactly the next level's gate from §2.6 `next_level_thresholds`: **Apprentice → Journeyman** = `pulls` (≥5); **Journeyman → Veteran** = `reviews_written` (≥3) + `account_age_days` (≥30).
-- `next_rank` is `null` when the user is at the top of the earned ladder (Veteran) — `next_rank_thresholds` is then `[]`.
-- Veteran is the top of the earned ladder — there is no rung above it. (The conferred Foreman **Role** is retired for V1; see §4.8.)
-- **What these metrics actually measure (v1.58).** `pulls` is the viewer's OWN following count; `reviews_written` counts vote rows; `account_age_days` is days since registration, which accrues while the account is dormant and never decreases. None requires sustained or corroborated participation. Consumers must not present the ladder as a competence signal — it is a tenure gate. `account_age_days` was named `days_active` until v1.58, which the progress UI repeated back to users as "days active".
-- The frontend renders the `current/required` ratio for each threshold as a progress bar.
-- `trust_score_recent_changes` is the most recent 5 reputation events (sorted desc by `at`). Reason strings are plain English, ≤ 80 chars. (Trust score drives the *Tier* axis, not Rank — it's surfaced here only as recent-activity context.)
-- `quests` is the §N11 completion checklist and the earned **vote-weight multiplier** (`multiplier`, 1.00–1.30) it grants — the value `VoteWeightCalculator` applies to the operator's votes at cast time. `items` is a stable-ordered list (the quest catalogue order), each with `done` and the `weight_bonus` that quest contributes. `pct` is `round(completed_count / total_count × 100)`. Own-only, like the rest of the block. Copy is descriptive per §2.7 — the frontend never renders a prescriptive "complete this" nudge.
-
-### 2.6 `FeatureAccess`
-
-Encodes §O5 + §O5.1. Appears on the **own** User view-model.
-
-**Shape:**
+**Shape (New Member — `member_state: "new_member"`):**
 
 ```json
 {
-  "feature_access": {
-    "level": 2,
-    "level_label": "Active",
-    "next_level": 3,
-    "next_level_label": "Veteran",
-    "next_level_thresholds": [
-      { "metric": "reviews_written", "label": "Reviews", "current": 1,  "required": 3 },
-      { "metric": "account_age_days", "label": "Days",   "current": 12, "required": 30 }
-    ],
-    "features": {
-      "write_review":         { "allowed": true,  "unlock_hint": null },
-      "vouch_reaction":       { "allowed": true,  "unlock_hint": null },
-      "sign_dispute":         { "allowed": false, "unlock_hint": "Write 3 reviews and stay active 30 days to sign disputes." },
-      "open_dispute":         { "allowed": false, "unlock_hint": "Write 3 reviews and stay active 30 days to open disputes." },
-      "see_signal_details":   { "allowed": false, "unlock_hint": "Reach Level 3 to read on-chain signal details." },
-      "see_trust_breakdown":  { "allowed": false, "unlock_hint": "Reach Level 3 to see your trust score breakdown." },
-      "feed_tab_signals":     { "allowed": false, "unlock_hint": "Reach Level 3 to filter the Floor by Signals." }
+  "progression": {
+    "member_state": "new_member",
+    "rank": null,
+    "rank_label": null,
+    "readiness": {
+      "profile_setup": true,
+      "verified_identity": true,
+      "qualifying_contribution": true,
+      "confirmation_due_at": "2026-07-31 18:00:00"
     }
   }
 }
@@ -570,11 +568,100 @@ Encodes §O5 + §O5.1. Appears on the **own** User view-model.
 
 **Rules:**
 
-- `level` is the integer level (1, 2, 3); `level_label` is the user-facing string ("New", "Active", "Veteran").
-- `features.<name>` uses the same `{allowed, unlock_hint}` pair as `PermissionsBlock` — one contract, two surfaces.
-- `next_level_thresholds` is server-computed against `bcc_options` thresholds (§O5; admin-tunable).
-- **Retroactive unlocks (§O5):** a feature that just unlocked applies to ALL past content immediately. There is no "feature_access.<name>.applies_from" timestamp — unlocks are global.
-- The keys in `features` are the canonical names the rest of the contract uses. When `permissions.can_X` appears on a Card view-model, its falsy state's `unlock_hint` is sourced from this same table.
+- The block is built entirely backend-side; the frontend derives **no**
+  thresholds, labels, or permissions from it — it renders (§A2 / §5.6).
+- `rank` / `next_rank` are catalog keys (§4.8); `next_rank` and
+  `next_rank_label` are `null` at Veteran (top of the ladder).
+  `next_threshold` is the score threshold for `next_rank`, `null` at the
+  top.
+- `rank_score` is the materialized RankScoreCalculator total over the
+  append-only rank-events ledger; `categories` maps the five scoring
+  categories (`contribution` / `helping` / `recognition` / `outcomes` /
+  `time`) to `{score, max}` (maxima total 100).
+- `diversity` — distinct contribution types earned vs. the per-rung
+  requirements. `recognizers` — count of **independent** recognizers vs.
+  per-rung requirements. `outcomes` — confirmed-outcome `count` and
+  distinct `types` vs. the Veteran requirements.
+- `trust_windows` maps `journeyman` / `veteran` to
+  `{qualifying, required, window, min_tier}` — qualifying days at
+  `min_tier`-or-better within the trailing `window` days.
+- `vesting` is the §16.3 Apprentice maturity ramp: `maturity` ∈
+  (floor, 1.0], linear over `span_days` from the Apprentice award epoch
+  (survives promotion). `decay` reports inactivity decay
+  (`{active, points}`). `recovery` is `null` or `{deadline}` when the
+  member is inside the 90-day evidence-loss grace window.
+- `quests` stays as onboarding guidance / achievements ONLY. **The quest
+  power fields are GONE (v1.59, decision D-1):** the per-item
+  `weight_bonus` and the top-level vote-weight `multiplier` no longer
+  exist anywhere on the wire — quests grant no voting, Trust, or Rank
+  power. `pct` is `round(completed_count / total_count × 100)`; `items`
+  is the stable quest-catalogue order.
+- New Member variant: `readiness` mirrors the §5.2 Apprentice readiness
+  path — `profile_setup`, `verified_identity`,
+  `qualifying_contribution` booleans plus `confirmation_due_at` (the
+  24-hour confirmation clock; `null` until a qualifying contribution
+  starts it or once it resolves).
+- `confirmation_due_at` and `recovery.deadline` are UTC
+  `YYYY-MM-DD HH:MM:SS` datetime strings (server-stored form), not the
+  §1.7 `T…Z` ISO shape — display-only values; clients render, never
+  parse-and-compute against them.
+- **Do-not-expose (plan §22.2):** this block never carries per-action
+  point formulas, fraud/IP/device/cluster signals, or any other
+  member's weights. Own-view only — there is no third-party progression
+  surface.
+- Copy is descriptive per §2.7 — the frontend never renders a
+  prescriptive "complete this" nudge.
+- Historical: the pre-v1.59 shape (`current_rank`,
+  `next_rank_thresholds`, `trust_score_recent_changes`,
+  `quests.multiplier` / `weight_bonus`) encoded the retired
+  feature-access Level ladder and is gone with it.
+
+### 2.6 `Capabilities`
+
+**The `feature_access` block is RETIRED (v1.59).** The Level machinery
+it encoded (`level` / `level_label` / `next_level_thresholds` /
+`features`, §O5's integer ladder) died at the Rank redesign Phase 5
+cutover — the earned Rank state (§4.8) is canonical and there is no
+Level to report. A drift note for the record: the retired block's
+sample carried a `sign_dispute` feature key that was never a documented
+member of the `features` union after the §J `can_dispute` scaffold was
+retired on 2026-07-08 — that undocumented sample-key drift dies with
+the block.
+
+Its replacement is the `capabilities` block. Appears on the **own**
+User view-model (own-only, like its predecessor).
+
+**Shape:**
+
+```json
+{
+  "capabilities": {
+    "write_review": { "allowed": true, "reason": null },
+    "vouch":        { "allowed": true, "reason": null },
+    "stand_behind": { "allowed": true, "reason": null }
+  }
+}
+```
+
+**Rules:**
+
+- Exactly three keys — the reputation-bearing write actions:
+  `write_review`, `vouch`, `stand_behind`.
+- `allowed` answers **"is this CLASS of action available to this
+  member"** — general availability, not per-target permission.
+  Target-specific conditions (self-target, slot limits, fraud gates,
+  per-resource `permissions.can_X`) still apply at action time; an
+  `allowed: true` here can still be refused for a particular target.
+- `reason` ∈ `null` (allowed) · `"new_member"` · `"below_neutral"`.
+  Frontend branches on the code, never on copy (Phase γ rule).
+- **Final policy (v1.59): Apprentice+ AND Neutral+.** All three actions
+  require `member_state: "ranked"` (any rung — Apprentice suffices;
+  **Journeyman is never required**) and trust tier ≥ `neutral`. New
+  Members are excluded from all reputation-bearing actions
+  (`reason: "new_member"`).
+- Source: `RankStateService::capabilitiesBlock` (rank_state row
+  presence + trust tier). No unlock-hint strings here — per-resource
+  hint copy stays on `permissions.can_X` (§2.1).
 
 ### 2.7 `UxHelpers`
 
@@ -747,6 +834,7 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
   "reputation_tier": "trusted",
   "reputation_tier": "trusted",
   "reputation_tier_label": "Trusted",
+  "member_state": "ranked",
   "rank": "journeyman",
   "rank_label": "Journeyman",
   "is_in_good_standing": true,
@@ -806,7 +894,7 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
   },
   "living": { "...": "see §2.4" },
   "progression": { "...": "see §2.5 — own profile only" },
-  "feature_access": { "...": "see §2.6 — own profile only" },
+  "capabilities": { "...": "see §2.6 — own profile only (replaced feature_access, v1.59)" },
   "ux_helpers": { "...": "see §2.7 — own profile only" },
   "permissions": {
     "can_follow":     { "allowed": false, "unlock_hint": null },
@@ -829,7 +917,7 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
 **Shape (others' profile, key differences):**
 
 - `is_self: false`
-- `progression`, `feature_access`, `ux_helpers` are **omitted entirely** (not even `null`). They are own-only.
+- `progression`, `capabilities`, `ux_helpers` are **omitted entirely** (not even `null`). They are own-only.
 - `privacy` block reduced to `{ watching_hidden, reviews_hidden, ... }` reflecting what the viewer can see, not what's set.
 - `permissions.can_follow` becomes meaningful (`allowed: true` if the viewer can watch this user as a member card).
 - `permissions.can_message` (v1.53) mirrors the DM write gates exactly — it runs the same messaging-policy evaluator as `POST /me/conversations` (mutual block, recipient `chat_enabled`, friends-only, sender suspension/ban). It was previously a bare chat-enabled probe, so a friends-only or mutually-blocked recipient rendered an enabled Message button that always failed on submit. The `{allowed, unlock_hint}` shape is unchanged, but `unlock_hint` may now be non-null on this surface (e.g. the friends-only copy) and `allowed` is stricter. The mutual-block and DMs-off cases remain indistinguishable to the client.
@@ -837,11 +925,13 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
 
 **Field rules:**
 
-- `trust_score`, `reputation_tier`, `reputation_tier_label`, `rank`, `rank_label`, `current_rank_label`, `is_in_good_standing`, `flags` — all derived per §A4 by `bcc-trust`. Frontend renders, never derives.
+- `trust_score`, `reputation_tier`, `reputation_tier_label`, `member_state`, `rank`, `rank_label`, `current_rank_label`, `is_in_good_standing`, `flags` — all derived per §A4 by `bcc-trust`. Frontend renders, never derives.
+- `member_state` (v1.59) ∈ `"new_member" | "ranked"` — **ALWAYS present** on member payloads. It distinguishes the **New Member account state** from a data failure: an API/read fault can never masquerade as "new member" because the state is an explicit field, never an absence. New Member is an account state, **NOT** a rank — the rank catalog has exactly three rungs (§4.8).
+- `rank`, `rank_label`, `current_rank_label` are **NULLABLE (v1.59)**: all three are `null` when `member_state` is `"new_member"` (no rank_state row). For ranked members, `rank` is the earned catalog key and the labels are its §A2 display string.
 - `reputation_tier` ∈ `elite | trusted | neutral | caution | risky`. **Required** on every member and card surface as of v1.57 — it was optional, and the optionality is what let consumers fall back to the retired `card_tier` and lose the ability to show a risky member at all.
 - `reputation_tier_label` is the trust-tier name (the chip a human reads): `risky → "Risky"`, `caution → "Caution"`, `neutral → "Neutral"`, `trusted → "Trusted"`, `elite → "Elite"`. Always present on member and entity surfaces; `null` only on `community` cards, which have no trust system.
 - **`card_tier` / `tier_label` are RETIRED (v1.57).** The collectible-rarity vocabulary is gone — see §10 changelog for the full rationale. Do not reintroduce a rarity mapping anywhere; there is one tier axis and it is `reputation_tier`.
-- `current_rank_label` is the pre-rendered §A2 label for the level-derived **Rank** (`rank_label`'s display string; e.g. `"Veteran"`). It is a member-axis field.
+- `current_rank_label` mirrors `rank_label` exactly (same nullable string; e.g. `"Veteran"`, or `null` for New Members). It is a member-axis field kept for surface compatibility.
 - `flags` is an array of short slugs; if non-empty, the frontend may render moderation chips. V1 codes: `suspended`, `shadow_limited`, `hidden`, `under_review`.
 - Hidden privacy fields (per `privacy.*_hidden: true`) cause the corresponding sections in `counts`, `wallets`, etc. to either be omitted or zeroed depending on the viewer's relationship — server decides, client doesn't.
 - `cover_photo_url` is `null` when no custom cover photo is set; the frontend renders a default treatment in that case. URL is absolute (per §1.7) and points at PeepSo's stored cover image. Self-edits go through `PATCH /me/profile/cover` (multipart upload) — see §V2 Phase 2 endpoints.
@@ -900,7 +990,7 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
   - `none` — not a messageable kind (member/community/project/creator at V1), or the surface is operator-disarmed.
   - **Clients MUST NOT infer messaging lifecycle from `is_claimed`** — that field cannot distinguish never-claimed from previously-claimed, which are different destinations. `messaging.destination` is the only sanctioned source. It is a rendering hint: the server re-resolves on every submit, so a stale card degrades to an honest error, never a misroute.
 - `chains` (per §K3) — list of `CardChain` objects when 2+ chains back the same page; `null` otherwise. V1.5 validator-only; creator gallery filter is V2.
-- `rank_label` — **populated on `member` cards** (the level-derived Rank label — Apprentice/Journeyman/Veteran — via `UserViewService::getSummary`); may be `""` when the member has no derived rank yet. `null` on page kinds (`validator`/`project`/`creator`) — Rank is member-only. The field is always present (the union is `string | null`). `current_rank_label` mirrors it (own/profile surfaces).
+- `rank_label` — **populated on ranked `member` cards** (the earned Rank label — Apprentice/Journeyman/Veteran — via `UserViewService::getSummary`'s member-state resolution, §4.8). **`null` for New Members (v1.59** — a New Member card carries no rank chip; the pre-v1.59 `""` empty-string case is gone**)** and `null` on page kinds (`validator`/`project`/`creator`) — Rank is member-only. The field is always present (the union is `string | null`). `current_rank_label` mirrors it (own/profile surfaces). Card view-models do not carry `member_state`; the member summary / `member_dossier` resolution path does (§3.1).
 - `reputation_tier_label` — trust-tier name (Risky/Caution/Neutral/Trusted/Elite). Populated on `member` AND entity cards as of v1.57 (it was member-only while entity cards carried rarity words instead). `null` only on `community` cards.
 - `member_dossier` — **non-null object on `member` cards, `null` on page kinds** (always present for shape uniformity, like `chains`). Carries the back-of-card signal blocks the `/members`, watchers, and followers/following lists previously emitted as a bare `MemberSummary`. Server-composed from the same `UserViewService::getSummary` resolution (no parallel query). Shape:
   ```json
@@ -2187,10 +2277,11 @@ Full User view-model.
 - **Cache:** `Cache-Control: private, max-age=30` (own: `no-store`); React Query `staleTime: 30s` (own: 0)
 - **Mapping:**
   - Identity fields ← `wp_users` + `wp_usermeta.bcc_handle`
-  - `trust_score`, `reputation_tier`, `reputation_tier_label`, `rank`, `is_in_good_standing`, `flags` ← `bcc-trust` services (§A4)
+  - `trust_score`, `reputation_tier`, `reputation_tier_label`, `is_in_good_standing`, `flags` ← `bcc-trust` services (§A4)
+  - `member_state`, `rank`, `rank_label`, `current_rank_label` ← `RankStateService::memberState` over `wp_bcc_trust_rank_state` (v1.59; missing row = New Member, nullable rank fields)
   - `living` ← derived from `peepso_activities` + `bcc_trust_score_events` (§A4 owns)
-  - `progression` ← `bcc-trust` level + threshold service (rank auto-derived from feature-access level; §4.8)
-  - `feature_access` ← `bcc-trust` feature-access service (§O5)
+  - `progression` ← `RankStateService::progressionFor` (§2.5 — same builder as `GET /me/progression`, §4.8)
+  - `capabilities` ← `RankStateService::capabilitiesBlock` (§2.6; replaced `feature_access` at v1.59)
   - `wallets` ← `bcc_wallet_links`
   - `primary_hall`, `halls` ← `peepso_group_members` (joined to `peepso_groups`; single graph rule) + `bcc_primary_hall_group_id` usermeta for the primary pointer
 - **Profile-page extension:** the response also carries the
@@ -3241,35 +3332,32 @@ Server half of the site-wide product-tour "seen" store (bcc-trust `MeToursSeenEn
 
 #### `GET /bcc/v1/ranks`
 
-The rank catalog and the viewer's current rank.
+The rank catalog and the viewer's member state. **Reworked at v1.59
+(Rank redesign Phase 5).**
 
-**Identity is two orthogonal axes (v1.36):** **Rank** (this endpoint's
-earned ladder) and **Trust Tier** (`reputation_tier` / `reputation_tier_label`,
-see §3.2). A member holds one value on each axis, independently. **Rank mirrors
-the feature-access level** (§2.6): `apprentice = New`, `journeyman = Active`,
-`veteran = Veteran` — earned from activity, **not** from reputation tier. Rank is
-**fully auto-derived**; there are no conferred-Role fields on this endpoint.
-(The conferred Foreman **Role** — locked as a third axis on 2026-06-22 — was
-never given a conferral path and is retired for V1; see the note below.)
+**Identity is two orthogonal axes:** **Rank** (this endpoint's earned
+ladder) and **Trust Tier** (`reputation_tier` / `reputation_tier_label`,
+see §3.2). A member holds one value on each axis, independently. Since
+v1.59 Rank is **EARNED**: the member's current rung lives in the
+`wp_bcc_trust_rank_state` table, written by the promotion engine and the
+§5.2 Apprentice readiness path — it is no longer derived from the
+retired feature-access **Level** (whose gates, thresholds, and
+`bcc_level_thresholds` machinery are gone). A member with **no
+rank_state row is a New Member** — an account **state**, NOT a rank;
+the catalog has exactly three rungs.
 
-**Where these values come from.** The rank `label` and `description` strings
-are defined in `bcc-trust/includes/config/ranks.php`; `RankCatalog` reads them
-and remains the single source of the catalog shape. The rank **slugs**
-(`apprentice` / `journeyman` / `veteran`) are wire values and stay as class
-constants — one of them is persisted per user in `bcc_last_seen_rank`, so a
-slug change is a migration, not a config edit. Labels are deliberately **not**
-filterable: the frontend renders its own ladder from `rank-ladder.ts`, so a
-runtime label override would desync the two surfaces.
-
-The three level gates behind the ladder resolve as **constant → filter →
-`wp_options('bcc_level_thresholds')`**, and are filterable as
-`bcc_trust_rank_pulls_required`, `bcc_trust_rank_reviews_required` and
-`bcc_trust_rank_account_age_days_required`. Defaults are unchanged (5 / 3 / 30).
-Note that nothing writes `bcc_level_thresholds` today — there is no admin UI,
-and it is settable only by hand.
+**Where these values come from.** The rank `label` and `description`
+strings are defined in `bcc-trust/includes/config/ranks.php`;
+`RankCatalog` reads them and remains the single source of the catalog
+shape. The rank **slugs** (`apprentice` / `journeyman` / `veteran`) are
+wire values and stay as class constants — one of them is persisted per
+ranked user in `wp_bcc_trust_rank_state.rank_slug`, so a slug change is
+a migration, not a config edit. Labels are deliberately **not**
+filterable: the frontend renders its own ladder from `rank-ladder.ts`,
+so a runtime label override would desync the two surfaces.
 
 - **Auth:** Anonymous OR Bearer
-- **Response 200:**
+- **Response 200 (authenticated, ranked viewer):**
   ```json
   {
     "ranks": [
@@ -3278,40 +3366,65 @@ and it is settable only by hand.
       { "key": "veteran",    "label": "Veteran",    "description": "Been on the floor a while.", "auto_assigned": true, "order": 3 }
     ],
     "viewer": {
-      "current_rank": "journeyman",
-      "current_rank_label": "Journeyman",
-      "auto_derived_rank": "journeyman",
-      "next_rank": "veteran",
-      "next_rank_label": "Veteran"
+      "member_state": "ranked",
+      "rank": "journeyman",
+      "rank_label": "Journeyman"
     }
   }
   ```
-- **Cache:** `Cache-Control: public, max-age=300`
-- **Mapping:** Static rank catalog from `RankCatalog::all()` (the three earned
-  rungs only). `viewer.*` from `RankService::getViewerBlock()`. `current_rank` /
-  `auto_derived_rank` are the **level-derived** earned rank and are always equal
-  in V1 (no *admin-conferral* path). `next_rank` / `next_rank_label` are `null`
-  at `veteran` (top of the ladder). The viewer block carries no conferred-Role
-  fields — Rank is fully level-derived.
-- **Rank can fall (corrected v1.58).** This section previously said "no demotion
-  path", which was true only of admin conferral. Rank is recomputed from live
-  counters on every read with no monotonic clamp, so dropping below a gate —
-  unfollowing under the `pulls` threshold, or losing vote rows — really does
-  demote. `RankProgressionListener` handles it explicitly: the new rank is
-  persisted in both directions, and a demotion is logged quietly with **no**
-  celebration (§E2 / §O1.2 — negative events never fire a Heavy toast).
-  `account_age_days` can never decrease, so a Veteran can only fall back to
-  Journeyman, not to Apprentice.
+- **Viewer block variants:** an authenticated **New Member** gets
+  `{ "member_state": "new_member", "rank": null, "rank_label": null }`.
+  An **anonymous** viewer gets the all-null object
+  `{ "member_state": null, "rank": null, "rank_label": null }` —
+  `member_state: null` means "no viewer", which is distinct from the
+  explicit `"new_member"` account state.
+- **Cache:** `Cache-Control: public, max-age=300` anonymous ·
+  `private, max-age=60` authenticated (the viewer block is personal).
+- **Mapping:** catalog from `RankCatalog::all()` (the three earned
+  rungs only); `viewer` from `RankStateService::memberState` (the
+  Phase 5 read facade over `rank_state`).
+- **Rank can fall.** Promotion AND demotion are decided by the daily
+  evaluate (`RankPromotionEngine::runDailyEvaluate` over ranked
+  members) against the rank-events ledger, trust windows, and decay —
+  not recomputed from live counters at read time (that was the retired
+  Level behaviour). Demotions persist quietly with **no** celebration
+  (§E2 / §O1.2 — negative events never fire a Heavy toast).
+
+#### `GET /bcc/v1/me/progression`
+
+The canonical member-facing Rank progression surface (v1.59, Rank
+redesign Phase 5). Returns the §2.5 `ProgressionBlock` — the SAME
+server builder as the §3.1 own-profile `progression` embed
+(`RankStateService::progressionFor`), exposed standalone so progression
+surfaces can refresh without re-fetching the full profile.
+
+- **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
+  Each member sees ONLY their own progression — there is no third-party
+  variant of this route.
+- **Response 200:** the §2.5 block under the standard `data` envelope —
+  the `member_state: "ranked"` variant (rank math) or the
+  `member_state: "new_member"` variant (§5.2 readiness view).
+- **Errors:** `bcc_unauthorized` 401
+- **Cache:** `Cache-Control: private, no-store`
+- **Mapping:** `MeProgressionEndpoint::handle` →
+  `RankStateService::progressionFor` (assessment via
+  `RankPromotionEngine::assess`; quest checklist via the quest-progress
+  service — guidance only, no power fields per D-1). The plan-§22.2
+  do-not-expose list holds by construction: no per-action point
+  formulas, no fraud/IP/device/cluster signals, no other member's
+  weights.
 
 #### Rank is fully auto-derived — conferred Foreman **Role** retired (v1.36)
 
-V1 **Rank** is **fully auto-derived** from feature-access level by
-[`RankProgressionListener`](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/RankProgressionListener.php),
-which fires `bcc_rank_awarded` on real promotions. There is no admin-conferral
-path: the contract once documented `POST /admin/ranks/award` and
-`DELETE /admin/ranks/:rank/:user_id`, but those endpoints were never registered
-in `register_rest_route` and had no frontend caller (parity guard correctly
-flagged them as documenting endpoints that don't exist).
+**Rank** is **fully auto-derived** — there is no admin-conferral path.
+(Until the v1.59 Phase 5 cutover the derivation was from feature-access
+level via `RankProgressionListener`; both are retired — the promotion
+engine writing `rank_state` is now the sole assigner, and it fires
+`bcc_rank_awarded` on real promotions.) The contract once documented
+`POST /admin/ranks/award` and `DELETE /admin/ranks/:rank/:user_id`, but
+those endpoints were never registered in `register_rest_route` and had
+no frontend caller (parity guard correctly flagged them as documenting
+endpoints that don't exist).
 
 The **Foreman Role** was locked as a third identity axis on 2026-06-22 (v1.28)
 with read-side placeholders (`foreman_insignia`, `is_admin_conferred`), but a
@@ -5524,7 +5637,7 @@ Flip the onboarding-completion flag (and optionally persist the wizard's home-ch
 
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
 - **Body (JSON):** `home_chain` (optional) — lowercased + trimmed, allowlist-checked against `cosmos|osmosis|injective|ethereum|solana|polkadot|thorchain|near`; null/empty = skipped; stored to `bcc_home_chain`.
-- **Response 200:** `{ "data": { "completed": true, "home_chain": "ethereum", "rank_label": "Apprentice" } }` — `home_chain` null when none supplied; `rank_label` is the current auto-derived §A2 label (`""` for unknown).
+- **Response 200:** `{ "data": { "completed": true, "home_chain": "ethereum", "member_state": "new_member", "rank_label": null } }` — `home_chain` null when none supplied. **v1.59:** `member_state` added and `rank_label` is now nullable (`RankStateService::memberState`). A just-onboarded user is a **New Member** (`member_state: "new_member"`, `rank_label: null`) — that is the correct, expected shape: Apprentice is earned via the §5.2 readiness path, never granted by finishing the wizard.
 - **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 422 (`home_chain` not in allowlist)
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** `OnboardingEndpoint::completeOnboarding` (route `OnboardingEndpoint.php:129`); sets `bcc_onboarding_completed = '1'`, audit-logs `onboarding_completed` on first completion, fires `do_action('bcc_onboarding_completed', …)`.
@@ -6005,7 +6118,7 @@ Exception: structurally impossible actions (e.g., follow-yourself) have `allowed
 
 ### 5.2 §O5 + §D2 — feature gating with permission stacking
 
-When both an O5 level gate and a D2 reputation/wallet gate apply, the server resolves both checks and returns one combined `allowed` boolean per `permissions.can_X`. The client never combines gates. The `unlock_hint` describes whichever gate is closer to resolution, with priority: nearest threshold first (e.g., if user is Level 1 with neutral rep, the hint is "Reach Level 2…", since level is the closer unlock).
+When more than one gate applies to a write action, the server resolves every check and returns one combined `allowed` boolean per `permissions.can_X`. The client never combines gates. The `unlock_hint` describes whichever gate is closer to resolution. (v1.59: the O5 integer-Level gate this section was written around is retired — the stacked gates are now the §2.6 capability policy — member_state ranked + tier ≥ neutral — plus any D2 reputation/wallet gate; the one-combined-boolean rule is unchanged.)
 
 Retroactive: when a user crosses a threshold, the unlock applies to all past content (§O5).
 
@@ -6025,12 +6138,8 @@ Server contract: `watch_batch.frozen` is always `true` in V1. The field exists f
 
 ### 5.5 `unlock_hint` usage
 
-One concept, two surfaces:
-
-- `permissions.can_X.unlock_hint` (Card, User, FeedItem) — describes how to unlock a per-resource action.
-- `feature_access.<name>.unlock_hint` (User own profile) — describes how to unlock a system-wide feature.
-
-Both source from the same server-side resolver. The frontend reads either; never composes its own hint text.
+- `permissions.can_X.unlock_hint` (Card, User, FeedItem) — describes how to unlock a per-resource action. Server-composed; the frontend renders it verbatim and never composes its own hint text.
+- (v1.59) The second `unlock_hint` surface — `feature_access.<name>.unlock_hint` on the own User profile — is gone with the retired `feature_access` block. Its replacement `capabilities` block (§2.6) carries machine-readable `reason` codes, not hint strings; class-of-action copy is a frontend rendering concern keyed on the code.
 
 ### 5.6 §A2 / §L5 — no business logic on frontend
 
@@ -6042,8 +6151,9 @@ The frontend MUST NOT compute, derive, or transform any of:
 - `flags`
 - `social_proof.headline` (already composed)
 - `living.comparison.headline`
-- `progression.next_rank_thresholds[].current/required` (server pre-computed)
-- `feature_access.*`
+- `progression.*` (scores, thresholds, windows, maturity, readiness — all server pre-computed per §2.5)
+- `member_state` and any New-Member/ranked branching derived from anything other than the explicit field
+- `capabilities.*` (the `allowed`/`reason` pairs; v1.59 — formerly `feature_access.*`)
 - Any tier-color, badge label, or category derived from reputation
 
 The frontend MAY compute:
@@ -6073,7 +6183,7 @@ For each view-model field, the table below names the existing BCC system that ow
 | `reputation_tier` | `bcc-trust` `ReputationCalculatorService` |
 | `reputation_tier_label` | Server-side mapping `reputation_tier → label` (`ReputationTierMap::TIER_LABEL`; elite → "Elite") — the sole tier vocabulary since v1.57 |
 | ~~`card_tier`, `tier_label`~~ | **RETIRED v1.57** — the rarity vocabulary is gone; use `reputation_tier` / `reputation_tier_label` |
-| `rank`, `rank_label`, `current_rank_label` | Auto-derived from the feature-access **level** (`RankService::rankForLevel`: New→Apprentice, Active→Journeyman, Veteran→Veteran). Fully level-derived — no conferred-Role rows (§4.8) |
+| `member_state`, `rank`, `rank_label`, `current_rank_label` | `RankStateService::memberState` over `wp_bcc_trust_rank_state` (v1.59 — earned Rank, written by the promotion engine / §5.2 readiness path). Missing row = New Member: `member_state: "new_member"`, nullable rank fields. No conferred-Role rows (§4.8) |
 | `is_in_good_standing` | `bcc-trust` derived from tier ≥ neutral AND no moderation flags (§E1) |
 | `flags` | suspension state + `wp_usermeta` moderation flags (`bcc_shadow_limited`/`bcc_hidden`/`bcc_under_review`) via `UserViewService::resolveFlags` — NOT the retired `bcc_trust_flags` vote-flag table |
 | `bio` | PeepSo profile description |
@@ -6088,8 +6198,8 @@ For each view-model field, the table below names the existing BCC system that ow
 | `living.streak_days` | `bcc-trust` streak service (new V1, derived from `peepso_activities`) |
 | `living.today` | `peepso_activities` filtered to last 24h |
 | `living.comparison` | `bcc-trust` ranking service (§A4) |
-| `progression.*` | `bcc-trust` threshold service (new V1) reading `bcc_options` |
-| `feature_access.*` | `bcc-trust` feature-access service (new V1, per §O5) |
+| `progression.*` | `RankStateService::progressionFor` (v1.59 — rank_state row + rank-events assessment + quest checklist; §2.5) |
+| `capabilities.*` | `RankStateService::capabilitiesBlock` (v1.59 — rank_state presence + trust tier; replaced `feature_access.*`) |
 | `ux_helpers.show_helpers` | `wp_usermeta.bcc_ui_familiar` (new V1, per §N5) |
 
 ### 6.2 Card view-model
@@ -6101,7 +6211,7 @@ For each view-model field, the table below names the existing BCC system that ow
 | `name`, `handle` | `peepso_pages.name` + slug |
 | `chain` | `peepso_page` meta (existing AbstractPageType) |
 | `trust_score`, `reputation_tier`, `reputation_tier_label`, `is_in_good_standing`, `flags` | `bcc_page_read_model` (denormalized read model, §A4) |
-| `rank_label` | `null` for V1 entity cards (members only have ranks); for member cards, auto-derived from the feature-access **level** (`RankService::rankForLevel`; §4.8) |
+| `rank_label` | `null` for V1 entity cards (members only have ranks); for member cards, the earned-Rank label via `UserViewService::getSummary`'s member-state resolution over `wp_bcc_trust_rank_state` (v1.59; `null` for New Members; §4.8) |
 | `is_claimed` | `peepso_pages.claimed_by IS NOT NULL` (new V1 column, per §B5) |
 | `claimed_by_handle` | JOIN to `wp_usermeta.bcc_handle` |
 | `crest` | `peepso_pages` meta + AbstractPageType convention |
@@ -6210,8 +6320,9 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
     `act_module_id=204` on the activity row — see
     `PeepSoActivityWriter::MODULE_ID_BY_NAME`). Auth-required;
     rejects unknown kinds with `bcc_invalid_request`/400. Reviews
-    are gated on Level 2 + reputation tier ≥ neutral via
-    `FeatureAccessService`. Blog accepts `title`, `excerpt`,
+    are gated on the v1.59 capability policy — ranked member
+    (Apprentice+) AND reputation tier ≥ neutral — via
+    `CapabilityResolver` (§2.6). Blog accepts `title`, `excerpt`,
     `content`, `category`, `tags[]`, `chain_tags[]` (slugs resolved
     server-side), `disclosure` (`null = none` /
     `{tickers, note} = declared`; empty struct rejected), and
@@ -6260,7 +6371,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
   - `POST /auth/signup` — email / password / handle account creation. Rate-limited; validates handle availability; maps `db_insert_error` race conditions to `bcc_conflict`/409.
   - `GET /onboarding/suggestions` — three buckets (validators / projects / creators) populated via `PageDiscoveryService::query` + `CardViewService::getCard`. Returns real `Card` view-models per §3.2. Cached `private, max-age=60` for the wizard's tab-switching.
   - `PATCH /me/handle` — §B6 7-day cooldown enforced FIRST so probe attempts can't bypass it, then validation + conflict detection. No-op renames short-circuit without arming the cooldown.
-  - `POST /me/onboarding/complete` — persists the `bcc_onboarded` flag + optional `home_chain` (validated against the `HOME_CHAINS` enum). Response carries `rank_label` (server-rendered per §A2 — the §O1 dopamine moment renders it verbatim, no client-side rank mapping). Idempotent on re-run.
+  - `POST /me/onboarding/complete` — persists the `bcc_onboarded` flag + optional `home_chain` (validated against the `HOME_CHAINS` enum). Response carries `member_state` + nullable `rank_label` (server-rendered per §A2; a just-onboarded user is a New Member with `rank_label: null` — v1.59). Idempotent on re-run.
   - Bonus: `GET /me/onboarding/status` is also registered (read-side flag check; not previously listed in §8).
 - **Directory endpoints (§G1/§G2)** — both fully wired:
   - `GET /cards` — paginated list of Card view-models with `kind`/`tier`/`sort`/`q` filters. Wraps `PageDiscoveryService`; each row hydrated through `CardViewService::getCard()` so the per-item shape is identical to the single-card endpoint. (Historical note: `/bcc/v1/discover` previously shared this service for the legacy bcc-page-slider block; that endpoint was retired 2026-05-15.)
@@ -6273,7 +6384,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 - **Celebrations endpoints (§O1.2 out-of-band path)** — fully wired:
   - `GET /me/celebrations/pending` — reads the single-slot `wp_usermeta.bcc_pending_celebration` stash. Frontend polls 60s + on window focus.
   - `POST /me/celebrations/consume` — clears the stash. Idempotent.
-  - `RankProgressionListener` is the only producer in V1 — listens to activity events and detects auto-derived rank changes via `RankCatalog::orderOf` comparison, seeds quietly on first sighting so existing users at rollout don't get phantom celebrations.
+  - Producers (v1.59): `FirstActionListener` + `TierUpgradeListener`. The retired `RankProgressionListener` was the sole producer while Rank was level-derived; since the Phase 5 cutover rank transitions surface via the `bcc_rank_awarded` / `bcc_rank_demoted` notification events instead of the celebration stash.
 
 ---
 
@@ -6287,6 +6398,64 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.59 — 2026-07-31 — ⚠️ BREAKING — Rank redesign Phase 5 cutover: earned Rank, `member_state`, `capabilities`, `GET /me/progression`
+
+The atomic cutover from the retired feature-access **Level** ladder to
+the earned Rank system. Canonical state is the new
+`wp_bcc_trust_rank_state` row (written by `RankPromotionEngine` and the
+§5.2 Apprentice readiness path); a missing row is the **New Member**
+account state — an account state, NOT a rank; the catalog keeps exactly
+three rungs (Apprentice / Journeyman / Veteran).
+
+- **`member_state` added** (§3.1): `"new_member" | "ranked"`, ALWAYS
+  present on member payloads (User view-model, member summaries /
+  `member_dossier` resolution, `/ranks` viewer block, onboarding
+  complete response). Explicit-by-construction so a data failure can
+  never masquerade as "new member".
+- **`rank`, `rank_label`, `current_rank_label` become NULLABLE** —
+  `null` for New Members on every surface (member cards' pre-v1.59
+  `""` empty-string case is gone too).
+- **§2.5 `ProgressionBlock` shape REPLACED** — new canonical block from
+  `RankStateService::progressionFor`: rank score + five scoring
+  categories, diversity / recognizers / outcomes vs. per-rung
+  requirements, trust windows, vesting maturity, decay, recovery, and
+  the quest checklist. New Members get a `readiness` view instead of
+  rank math. **Quest power fields are GONE (decision D-1):**
+  `quests.multiplier` and per-item `weight_bonus` no longer exist —
+  quests grant no voting, Trust, or Rank power. The old
+  `next_rank_thresholds` / `trust_score_recent_changes` Level shape is
+  retired with the Level machinery.
+- **NEW endpoint `GET /bcc/v1/me/progression`** (§4.8) — authenticated,
+  self-only, returns the §2.5 block (same builder as the §3.1 embed);
+  `private, no-store`. Anonymous → `bcc_unauthorized` 401.
+- **§2.6 `feature_access` RETIRED → `capabilities`** — three keys
+  (`write_review` / `vouch` / `stand_behind`), each
+  `{allowed, reason: null|"new_member"|"below_neutral"}`.
+  Class-of-action availability only; target-specific checks still
+  apply at action time. The retired sample's undocumented
+  `sign_dispute` key drift died with the block.
+- **Final capability policy: Apprentice+ AND Neutral+** for
+  write-review, vouch, and stand-behind. Journeyman is never required.
+  **New Members are excluded from all reputation-bearing actions**
+  (`reason: "new_member"`).
+- **`GET /bcc/v1/ranks` reworked** (§4.8) — `viewer` is now the
+  member-state block `{member_state, rank, rank_label}` (all-null
+  `member_state: null` object for anonymous); Level/threshold-era
+  viewer fields (`current_rank`, `auto_derived_rank`, `next_rank`,
+  `next_rank_label`) and prose are gone. Cache splits:
+  `public, max-age=300` anon · `private, max-age=60` authed.
+- **§2.4 `rank_progress` removed** — the v1.3-era LivingBlock
+  sub-object had zero consumers; progression rendering lives only in
+  §2.5 / `GET /me/progression`.
+- Onboarding `POST /me/onboarding/complete` response: `member_state`
+  added, `rank_label` nullable — a just-onboarded user is a New Member.
+- Storage: new `wp_bcc_trust_rank_state` (canonical rank row; column
+  `rank_slug` — RANK is a MySQL 8 reserved word) and
+  `wp_bcc_trust_rank_pending` (24h Apprentice confirmation clock)
+  tables; see docs/database-schema.md. New cron:
+  `bcc_rank_confirmation_sweep` (5-min) + `bcc_rank_daily_evaluate`
+  (daily); see docs/cron-registry.md.
 
 ### v1.58 — 2026-07-29 — ⚠️ BREAKING — top rank rung `master` → `veteran`; `days_active` → `account_age_days`
 
