@@ -17,15 +17,16 @@
 > inventory now matches code-declared == live. Row counts below remain the 2026-06-25
 > snapshot unless noted.
 
-Prefix: `wp_`. Engine: InnoDB. **58** `wp_bcc_*` tables live — all active; no orphans.
+Prefix: `wp_`. Engine: InnoDB. **60** `wp_bcc_*` tables live — all active; no orphans.
 (Recounted 2026-08-04: the prior "48" was the 2026-07-23 reconcile snapshot and had
 gone stale as Rank Phases 1–5, validator messaging, and search analytics appended
 rows without bumping it. Rank Phase 6 itself is a net-zero swap —
 `wp_bcc_trust_polls` + `wp_bcc_trust_ballots` added; `wp_bcc_dispute_panel` +
 `wp_bcc_dispute_participations` dropped by the `cleanup_dispute_panel_v1` /
 `cleanup_dispute_participations_v1` migrations. Rank Phase 7 (2026-08-04) added
-`wp_bcc_trust_community_ownership_log`, 57 → 58. The inventory below holds 58
-Active rows + 1 RETIRED marker (`wp_bcc_user_ranks`).)
+`wp_bcc_trust_community_ownership_log`, 57 → 58. Rank Phase 8 (2026-08-04) added
+`wp_bcc_trust_findings` + `wp_bcc_trust_finding_decisions`, 58 → 60. The
+inventory below holds 60 Active rows + 1 RETIRED marker (`wp_bcc_user_ranks`).)
 
 Row counts are exact (`SELECT COUNT(*)`) for orphan candidates and ambiguous
 tables; the rest are the InnoDB `information_schema` estimate (≈), adequate for a
@@ -94,6 +95,8 @@ schema-install path in `tables.php` is itself routed through the same runner.
 | wp_bcc_trust_rank_state | 0 | Canonical Rank progression row (Rank Phase 5; one row per RANKED member — missing row = New Member fail-safe; column is rank_slug because RANK is a MySQL 8 reserved word) | TableRegistry::rankState / schema-rank-state.php / RankStateRepository | Active |
 | wp_bcc_trust_rank_pending | 0 | 24h Apprentice confirmation clock (Rank Phase 5, R1; states pending/confirmed/voided) | TableRegistry::rankPending / schema-rank-pending.php / RankPendingRepository | Active |
 | wp_bcc_trust_community_ownership_log | 0 | Append-only custody ledger for User-kind communities (Rank Phase 7, §21.2; events create/receive/transfer_out; cooldown = MAX(created_at) per user, read live; rows never mutate) | TableRegistry::communityOwnershipLog / schema-community-ownership-log.php / CommunityOwnershipLogRepository | Active |
+| wp_bcc_trust_findings | 0 | Formal misconduct findings per member (Rank Phase 8, §15; wp-admin issuance ONLY; penalty/ceiling values are issuance-time snapshots; status active/reversed; once-only appeal gate on appeal_status; distinct from cluster_findings) | TableRegistry::findings / schema-findings.php / FindingsRepository | Active |
+| wp_bcc_trust_finding_decisions | 0 | Append-only decision history per finding (Rank Phase 8, §15.5; issued + upheld/reduced/reversed/remanded rows; no update, no delete — original penalty snapshot survives in the issued row) | TableRegistry::findingDecisions / schema-finding-decisions.php / FindingDecisionsRepository | Active |
 | wp_bcc_trust_attestations | 9 | §J attestation layer (Vouch / Back); successor to the retired endorsements table | TableRegistry::trustAttestations / schema-trust-attestations.php | Active |
 | wp_bcc_attestor_reliability_cache | 4 | Nightly recompute cache of AttestationOutcomeClassifier per attestor (PK user_id); cron owns writes, reads fall back to live compute | TableRegistry::attestorReliabilityCache / schema-attestor-reliability-cache.php | Active |
 | wp_bcc_trust_stokes | 7 | One row per (act_id,user_id) stoke; feeds feed heat_stage + public stoke_count (never scores) | TableRegistry::stokes / schema-stokes.php | Active |
@@ -352,6 +355,71 @@ never derived from this log. `created_at` is UTC computed in PHP
 - counterparty_user_id · bigint unsigned · YES
 - created_at · datetime · NO
 - Indexes: PRIMARY (id) [uq]; idx_user_created (user_id,created_at); idx_group (group_id)
+
+#### wp_bcc_trust_findings
+Formal misconduct findings against a member (Rank redesign Phase 8,
+§15). One row per finding. §15.1: raw reports / downvotes /
+accusations NEVER create rows — issuance is an explicit admin decision
+(wp-admin Rank Findings is the only writer). `source` records
+provenance: `admin` (direct), `dispute` (an admin read a closed
+dispute and issued manually — §18.4 forbids automation from dispute
+outcomes), or `fraud_detection` (reserved enum value; NO writer
+exists). `score_penalty` / `ceiling_rank_slug` / expiries are
+**SNAPSHOT from the §15.3 config at issuance** — config edits never
+rewrite history; the promotion engine reads them as calculation-time
+inputs (capped active penalties fold into the score; the lowest
+active ceiling caps the rung). `status` is `active`/`reversed`
+(reversal is an atomic status='active'-guarded claim — two admins
+cannot both reverse). `appeal_status` is the once-only member appeal
+machine: `''` → `requested` (single guarded UPDATE — the
+`POST /me/findings/:id/appeal` gate) → `upheld`/`reduced`/`reversed`/
+`remanded` written by admin reconsideration (which may consume the
+slot without a member appeal). `restriction_note` is free text
+recording suspension/restriction context; enforcement stays in the
+Permissions machinery (§15.2). Decision history is append-only in
+`wp_bcc_trust_finding_decisions`. BOUNDARY: distinct from
+`wp_bcc_trust_cluster_findings` (Phase 4 non-independence
+determinations) — different domain, different lifecycle; do not merge.
+- id · bigint unsigned · NO · PK auto
+- subject_user_id · bigint unsigned · NO · K
+- finding_type · varchar(40) · NO
+- severity · varchar(12) · NO (minor|moderate|serious|severe)
+- evidence_refs · text · YES
+- source · varchar(20) · NO (admin|dispute|fraud_detection)
+- issued_by · bigint unsigned · NO
+- created_at · datetime · NO
+- effective_at · datetime · NO
+- score_penalty · decimal(6,2) · NO
+- ceiling_rank_slug · varchar(20) · YES
+- ceiling_expires_at · datetime · YES
+- penalty_expires_at · datetime · NO
+- restriction_note · text · YES
+- status · varchar(12) · NO (default 'active'; active|reversed)
+- appeal_status · varchar(12) · NO (default ''; ''|requested|upheld|reduced|reversed|remanded)
+- reversed_at · datetime · YES
+- reversal_reason · varchar(160) · YES
+- Indexes: PRIMARY (id) [uq]; idx_subject_status (subject_user_id,status); idx_appeal (appeal_status)
+
+#### wp_bcc_trust_finding_decisions
+APPEND-ONLY decision history for misconduct findings (Rank redesign
+Phase 8, §15.5). One row per decision on a finding: `issued` at
+creation — **carrying the original penalty snapshot in
+`penalty_after`, which survives forever whatever later reductions
+do** — then any number of reconsiderations
+(`upheld`|`reduced`|`reversed`|`remanded`). §15.5: appeal decisions
+never edit the original silently — a reduction updates the finding's
+CURRENT `score_penalty` column, but the issued row here preserves the
+original. The owning repository (`FindingDecisionsRepository`)
+exposes **append + bounded read ONLY — no update, no delete** —
+append-only by construction, like the rank_events ledger.
+- id · bigint unsigned · NO · PK auto
+- finding_id · bigint unsigned · NO · K
+- decision · varchar(12) · NO (issued|upheld|reduced|reversed|remanded)
+- decided_by · bigint unsigned · NO
+- reason · text · NO
+- penalty_after · decimal(6,2) · YES
+- created_at · datetime · NO
+- Indexes: PRIMARY (id) [uq]; idx_finding (finding_id)
 
 #### wp_bcc_trust_endorsements — RETIRED (2026-07-02)
 Folded into `wp_bcc_trust_attestations` (kind=`vouch`); dropped by
