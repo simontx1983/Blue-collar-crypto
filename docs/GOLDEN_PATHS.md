@@ -375,14 +375,14 @@ $rows = $wpdb->get_results("SELECT action, COUNT(*) c, MAX(created_at) latest FR
   \"account_email_changed\", \"account_password_changed\", \"account_deleted\",
   \"user_blocked\", \"user_unblocked\",
   \"wallet_linked\", \"wallet_unlinked\",
-  \"dispute_submitted\", \"dispute_panel_vote_cast\",
+  \"dispute_submitted\", \"dispute_vote_cast\", \"dispute_vote_withdrawn\",
   \"group_join\", \"group_leave\"
 ) GROUP BY action ORDER BY latest DESC");
 foreach ($rows as $r) printf("  %-30s  count=%d  latest=%s\n", $r->action, $r->c, $r->latest);
 '
 ```
 
-**Expected:** All 17 actions appear at least once across the platform's lifetime (after at least one end-to-end smoke).
+**Expected:** All 18 actions appear at least once across the platform's lifetime (after at least one end-to-end smoke). (`dispute_panel_vote_cast` retired with the §D5 panel — Rank Phase 6; the community-vote surface writes `dispute_vote_cast` / `dispute_vote_withdrawn`.)
 
 **Failure means:** A destructive endpoint failed to emit its audit row. Either:
 - The endpoint is not on a tagged Tier 1A–1D path (verify against `pattern-registry.md §"Destructive mutation hardening"`).
@@ -809,14 +809,14 @@ foreach (($dm["degradation_metrics"]["subsystems"] ?? []) as $name => $events) {
 - `legacy_ajax` (3 events — was 9; 6 wallet/collection AJAX handlers retired 2026-05-25)
 - `account_security_mail` (7 events — Tier D `sessions_revoked_all_send_failed` added 2026-05-16; `password_reset_requested_send_failed` added 2026-05-30)
 - `cron_dispatch` (2 events — soft wp_schedule_single_event / AsyncDispatcher enqueue failures on the unrecoverable trust async surface)
-- `post_commit_task` (2 events — `vote_subtask_failed` + `dispute_backfill_failed`; a post-commit trust step threw during execution and was swallowed; NOT a wp_options signal)
+- `post_commit_task` (1 event — `vote_subtask_failed`; a post-commit trust step threw during execution and was swallowed; NOT a wp_options signal. `dispute_backfill_failed` retired with the §D5 backfill, Rank Phase 6)
 - `helius_dedup` (3 events — `replay_skipped` (webhook replay-protection activations; sustained = double-send or replay attempt), `ingest_failed_unmarked` (ingest threw, signatures unmarked so Helius can redeliver — recovered), `unmark_failed` (ingest threw and unmark incomplete — batch lost, resend refused, P1 manual replay))
 - `gated_group_provision` (3 events — `bcc_gated_group_provision` cron sweep failure modes; sustained = retry path not catching up)
 - `contribution_recovery` (1 event — `user_eval_failed`; per-user failure in the daily trust-recovery sweep; sustained = caution/risky cohort silently stops climbing back)
 - `attestation_synthesis` (2 events — `event_recompute_failed` (per cast/revoke/reaffirm) + `decay_recompute_failed` (daily decay sweep); Slice E attestation→score fold; sustained = `attestation_bonus` going stale, backing stops moving the score)
 - `elite_eligibility` (4 events — `event_recompute_failed` (per cast/revoke/reaffirm) + `dispute_recompute_failed` (dispute resolved) + `tier_celebration_failed` (promotion notification) + `schema_unavailable` (code ahead of dbDelta; verdict not persisted, retryable); §J.12 cross-table gate on the top tier; sustained = FAIL-OPEN, unevaluated pages stay grandfathered as elite — trust-integrity alarm)
 - `validator_messaging` (5 events — `ambiguous_operator` (>1 verified operator claim on one validator page; surface fails closed, any occurrence is an incident), `schedule_failed` (backlog-delivery enqueue soft-failed at first activation; recurring sweep re-enqueues), `delivery_failed_terminal` (queued message exhausted MAX_ATTEMPTS; durably parked, needs `wp bcc-trust vmq` recovery), `lease_reaped` (expired processing lease returned to retryable; delivery worker died mid-row), `delivery_context_unsupported` (delivery ran where PeepSo's Chat writer is not booted — canonically WP-CLI; nothing delivered, no row touched, cooldown-throttled; sustained = delivery is being run via WP-CLI cron instead of the HTTP Action Scheduler / WP-Cron runner))
-- `rank_scoring` (3 events — `tier_snapshot_failed` (the daily per-user tier-day snapshot sweep threw; the §13.1 trust-window history develops gaps — fail-safe strict, a gap can only delay a promotion, never grant one, but sustained activation means promotions will resolve conservatively) + `login_write_failed` (a RankLoginListener login-day write threw; that member's login day may be missing from the time-credit / inactivity clocks) + `evidence_ingest_failed` (a Phase 4 rank_events ledger subscriber threw; that evidence event is missing from the member's ledger — fail-safe strict, but sustained activation means the ledger is silently under-recording); Rank redesign Phases 1+4, 2026-07-31)
+- `rank_scoring` (4 events — `tier_snapshot_failed` (the daily per-user tier-day snapshot sweep threw; the §13.1 trust-window history develops gaps — fail-safe strict, a gap can only delay a promotion, never grant one, but sustained activation means promotions will resolve conservatively) + `login_write_failed` (a RankLoginListener login-day write threw; that member's login day may be missing from the time-credit / inactivity clocks) + `evidence_ingest_failed` (a Phase 4 rank_events ledger subscriber threw; that evidence event is missing from the member's ledger — fail-safe strict, but sustained activation means the ledger is silently under-recording) + `poll_close_failed` (the hourly Phase 6 meaningful-vote poll-close sweep threw; due polls stop closing, so disputes stall open in `reviewing` — fail-safe strict, no outcome is ever applied early, recovers when the sweep next succeeds); Rank redesign Phases 1+4+6, 2026-08-04)
 
 **Failure means:** A registered subsystem dropped out of the canonical map in `bcc-core/bcc-core.php`. New subsystems wired into `DegradationMetrics::record()` MUST register here — the map is the only place future agents discover which events are even possible.
 
@@ -1066,7 +1066,7 @@ These behaviors are intentional. If a future contributor "fixes" them, that's a 
 
 These are operational checks that warrant golden-path coverage but require more verification work before codifying:
 
-- **Dispute panel quorum + auto-resolve.** End-to-end test requires multiple test users with Trusted/Elite tier.
+- **Open community dispute voting — binding close.** End-to-end test requires ≥10 eligible voters (Apprentice+ AND Trust Neutral+, non-parties) to satisfy the dual quorum (10 counted voters & 7.5 counted effective weight) plus the 60% majority past the day-7 window. Never exercised end-to-end; the poll engine's unit suite covers the mechanics, not the live close→async-resolve chain.
 - **OAuth verification (X / GitHub).** Round-trip requires live OAuth app credentials.
 - **Helius webhook signature verification.** Requires Helius secret + a way to forge a delivery.
 - **Search FULLTEXT index rebuild under load.** Requires a stampede simulator.

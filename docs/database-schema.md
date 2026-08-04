@@ -17,7 +17,14 @@
 > inventory now matches code-declared == live. Row counts below remain the 2026-06-25
 > snapshot unless noted.
 
-Prefix: `wp_`. Engine: InnoDB. **48** `wp_bcc_*` tables live — all active; no orphans.
+Prefix: `wp_`. Engine: InnoDB. **57** `wp_bcc_*` tables live — all active; no orphans.
+(Recounted 2026-08-04: the prior "48" was the 2026-07-23 reconcile snapshot and had
+gone stale as Rank Phases 1–5, validator messaging, and search analytics appended
+rows without bumping it. Rank Phase 6 itself is a net-zero swap —
+`wp_bcc_trust_polls` + `wp_bcc_trust_ballots` added; `wp_bcc_dispute_panel` +
+`wp_bcc_dispute_participations` dropped by the `cleanup_dispute_panel_v1` /
+`cleanup_dispute_participations_v1` migrations. The inventory below holds 57
+Active rows + 1 RETIRED marker (`wp_bcc_user_ranks`).)
 
 Row counts are exact (`SELECT COUNT(*)`) for orphan candidates and ambiguous
 tables; the rest are the InnoDB `information_schema` estimate (≈), adequate for a
@@ -112,9 +119,9 @@ schema-install path in `tables.php` is itself routed through the same runner.
 | wp_bcc_user_reports | 2 | Member-on-member reports | UserReportRepository | Active |
 | wp_bcc_hidden_activities | 0 | Moderator-hidden activity ids | TableRegistry::hiddenActivities | Active |
 | wp_bcc_target_divergence_state | 5 | §J.8 divergence-state notifier sidecar (prior-state memory) | TableRegistry::targetDivergenceState | Active |
-| wp_bcc_disputes | 1 | Vote disputes (status, panel tally, adjudication) | Disputes domain (DisputeRepository) | Active |
-| wp_bcc_dispute_panel | 5 | Panelist assignments + decisions per dispute | Disputes domain | Active |
-| wp_bcc_dispute_participations | 1 | Per-(user,dispute) participation + credit outcome | TableRegistry::disputeParticipations | Active |
+| wp_bcc_disputes | 1 | Vote disputes (status, adjudication) — decided by open community polls (Rank Phase 6) | Disputes domain (DisputeRepository) | Active |
+| wp_bcc_trust_polls | 0 | Generic meaningful-voting poll engine — one row per poll over a subject (Rank Phase 6; `dispute` is the first poll_type; one OPEN poll per subject via STORED generated `open_lock` + unique index) | TableRegistry::polls / schema-polls.php / PollRepository | Active |
+| wp_bcc_trust_ballots | 0 | Per-voter poll ballots — one row per CAST (recast/withdraw close a row; §16.6 weight snapshot copied verbatim; close-time cluster-audit columns; one ACTIVE ballot per voter per poll via `active_lock`) | TableRegistry::ballots / schema-ballots.php / BallotRepository | Active |
 | wp_bcc_push_subscriptions | 3 | Web-push VAPID subscriptions per user/device | TableRegistry::pushSubscriptions | Active |
 | wp_bcc_chains | 21 | Supported chains registry (RPC/REST/explorer config) | schema-chains.php (Onchain) | Active |
 | wp_bcc_chain_checkpoints | 7 | Per-chain indexer checkpoint + CU budget | schema-chain-checkpoints.php | Active |
@@ -628,7 +635,10 @@ Moderator-hidden activity ids.
 ### Disputes
 
 #### wp_bcc_disputes
-Vote disputes (status, panel tally, adjudication, reopen).
+Vote disputes (status, adjudication, reopen) — decided by open community
+polls since Rank Phase 6 (D-7). The panel-era denormalised tally columns
+(`panel_accepts` / `panel_rejects` / `panel_size`) were dropped by the
+`cleanup_dispute_panel_v1` migration.
 - id · bigint unsigned · NO · PK auto
 - vote_id · bigint unsigned · NO · K
 - page_id · bigint unsigned · NO · K
@@ -637,7 +647,6 @@ Vote disputes (status, panel tally, adjudication, reopen).
 - reason · varchar(1000) · NO
 - evidence_url · varchar(2083) · YES
 - status · varchar(20) · NO · K
-- panel_accepts / panel_rejects / panel_size · tinyint unsigned · NO
 - created_at · datetime · NO; resolved_at · datetime · YES
 - adjudication_status · varchar(20) · NO · K
 - reopen_count · tinyint unsigned · NO
@@ -646,28 +655,78 @@ Vote disputes (status, panel tally, adjudication, reopen).
 - resolution_enqueued_at · datetime · YES
 - Indexes: PRIMARY (id) [uq]; uq_active_vote (active_vote_lock) [uq]; idx_vote; idx_page; idx_reporter; idx_reporter_created; idx_status; idx_status_created; idx_adjudication; idx_reconcile (status,adjudication_status,resolved_at)
 
-#### wp_bcc_dispute_panel
-Panelist assignments + decisions per dispute.
+#### wp_bcc_trust_polls
+Generic meaningful-voting poll engine (Rank Phase 6, §16–§19) — one row
+per poll over a SUBJECT (`poll_type` + `subject_type` + `subject_id`);
+`dispute` is the first poll_type. Windows are precomputed UTC at open
+(`binding_earliest_at` = day-7, `expires_at` = day-90) and NEVER reset;
+the hourly `bcc_rank_poll_close_sweep` cron (`PollService::closeDuePolls`)
+closes `passed`/`failed` on dual quorum + 60% majority past binding, or
+`inconclusive` at expiry. C10: while a row is `open`, no read surface
+exposes tallies — the closed tally is derived from the ballot closure
+audit only after `closed_at` is set. One-OPEN-poll-per-subject is a
+DATABASE constraint via the generated-column trick: STORED `open_lock`
+(1 while status='open', NULL otherwise) inside UNIQUE
+`uniq_open_subject` — MySQL UNIQUE ignores NULLs, so closed rows fall
+out of the constraint. dbDelta can't express generated columns, so
+`open_lock` + the unique index are added by an idempotent post-install
+migration (`bcc_trust_migrate_polls_open_lock`), not the CREATE TABLE.
 - id · bigint unsigned · NO · PK auto
-- dispute_id · bigint unsigned · NO · K
-- panelist_user_id · bigint unsigned · NO · K
-- decision · varchar(20) · YES · K
-- note · varchar(500) · YES
-- assigned_at · datetime · NO
-- voted_at / notified_at · datetime · YES
-- Indexes: PRIMARY (id) [uq]; uq_panelist_dispute (dispute_id,panelist_user_id) [uq]; idx_dispute; idx_panelist; idx_panelist_decision (panelist_user_id,decision); idx_undecided (decision)
+- poll_type · varchar(20) · NO
+- subject_type · varchar(20) · NO
+- subject_id · bigint unsigned · NO
+- status · varchar(12) · NO
+- outcome · varchar(16) · YES
+- opened_at · datetime · NO
+- binding_earliest_at · datetime · NO
+- expires_at · datetime · NO
+- closed_at · datetime · YES
+- open_lock · tinyint · YES · UQ (STORED GENERATED, post-install migration)
+- Indexes: PRIMARY (id) [uq]; idx_status_expiry (status,expires_at); idx_subject (subject_type,subject_id); uniq_open_subject (poll_type,subject_type,subject_id,open_lock) [uq]
 
-#### wp_bcc_dispute_participations
-Per-(user,dispute) participation + credit outcome.
+#### wp_bcc_trust_ballots
+Per-voter ballots for the poll engine (Rank Phase 6). One row per CAST —
+recasts/withdrawals never rewrite a row's substance; they close it
+(`superseded`/`withdrawn`) and a recast inserts a fresh `active` row.
+The §16.6 weight-input snapshot (`rank_slug` … `effective_weight`) is
+captured at the ORIGINAL cast and copied verbatim onto every recast row
+(snapshot model, no re-weighting). The cluster-audit columns
+(`suspected_cluster_id` / `confirmed_cluster_id` / `counted_weight` /
+`counted`) stay NULL until the `bcc_rank_poll_close_sweep` close
+evaluates the poll — they record what actually counted after the §18/§19
+cluster rules, and the C10-sealed closed tally is derived from them.
+One-ACTIVE-ballot-per-voter-per-poll uses the same generated-column
+uniqueness trick as the polls table (`active_lock` + UNIQUE
+`uniq_active_ballot`, added by the idempotent post-install migration
+`bcc_trust_migrate_ballots_active_lock`).
 - id · bigint unsigned · NO · PK auto
-- user_id · bigint unsigned · NO · K
-- dispute_id · bigint unsigned · NO · K
-- decision · enum('accept','reject') · NO
-- was_credited · tinyint(1) · NO
-- credit_skipped_reason · varchar(32) · YES
-- outcome_match · tinyint(1) · YES
-- created_at · datetime · NO
-- Indexes: PRIMARY (id) [uq]; uq_user_dispute (user_id,dispute_id) [uq]; idx_dispute; idx_user_created (user_id,created_at); idx_user_outcome (user_id,outcome_match). The retired was_credited composites `idx_user_credited_created` / `idx_user_credited_outcome` (deliberately replaced per the schema docblock) were dropped by drop-legacy-indexes v2 (2026-07-23).
+- poll_id · bigint unsigned · NO · K
+- voter_user_id · bigint unsigned · NO · K
+- choice · varchar(16) · NO
+- status · varchar(12) · NO
+- recast_count · tinyint unsigned · NO
+- rank_slug · varchar(20) · YES
+- maturity · decimal(6,4) · NO
+- rank_multiplier · decimal(6,4) · NO
+- trust_multiplier · decimal(6,4) · NO
+- trust_score · decimal(6,2) · NO
+- fraud_discount · decimal(6,4) · NO
+- effective_weight · decimal(8,4) · NO
+- suspected_cluster_id · bigint unsigned · YES
+- confirmed_cluster_id · bigint unsigned · YES
+- counted_weight · decimal(8,4) · YES
+- counted · tinyint(1) · YES
+- cast_at · datetime · NO
+- last_action_at · datetime · NO
+- withdrawn_at · datetime · YES
+- superseded_at · datetime · YES
+- active_lock · tinyint · YES · UQ (STORED GENERATED, post-install migration)
+- Indexes: PRIMARY (id) [uq]; idx_poll_status (poll_id,status); idx_voter (voter_user_id); uniq_active_ballot (poll_id,voter_user_id,active_lock) [uq]
+
+(`wp_bcc_dispute_panel` and `wp_bcc_dispute_participations` — the §D5
+panel + participation-credit tables — were dropped by the
+`cleanup_dispute_panel_v1` / `cleanup_dispute_participations_v1`
+migrations, Rank Phase 6 D-7.)
 
 ### Onchain
 
