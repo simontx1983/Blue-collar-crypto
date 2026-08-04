@@ -809,7 +809,7 @@ foreach (($dm["degradation_metrics"]["subsystems"] ?? []) as $name => $events) {
 - `legacy_ajax` (3 events — was 9; 6 wallet/collection AJAX handlers retired 2026-05-25)
 - `account_security_mail` (7 events — Tier D `sessions_revoked_all_send_failed` added 2026-05-16; `password_reset_requested_send_failed` added 2026-05-30)
 - `cron_dispatch` (2 events — soft wp_schedule_single_event / AsyncDispatcher enqueue failures on the unrecoverable trust async surface)
-- `post_commit_task` (2 events — `vote_subtask_failed` + `dispute_backfill_failed`; a post-commit trust step threw during execution and was swallowed; NOT a wp_options signal)
+- `post_commit_task` (1 event — `vote_subtask_failed`; a post-commit trust step threw during execution and was swallowed; NOT a wp_options signal. `dispute_backfill_failed` retired with the §D5 backfill, Rank Phase 6)
 - `helius_dedup` (3 events — `replay_skipped` (webhook replay-protection activations; sustained = double-send or replay attempt), `ingest_failed_unmarked` (ingest threw, signatures unmarked so Helius can redeliver — recovered), `unmark_failed` (ingest threw and unmark incomplete — batch lost, resend refused, P1 manual replay))
 - `gated_group_provision` (3 events — `bcc_gated_group_provision` cron sweep failure modes; sustained = retry path not catching up)
 - `contribution_recovery` (1 event — `user_eval_failed`; per-user failure in the daily trust-recovery sweep; sustained = caution/risky cohort silently stops climbing back)
