@@ -801,7 +801,7 @@ foreach (($dm["degradation_metrics"]["subsystems"] ?? []) as $name => $events) {
 
 - `throttle`
 - `null_trust_read` + 9 other `null_*` NullService activations
-- `peepso_absence` (18 events)
+- `peepso_absence` (19 events)
 - `search_lkg` (2 events)
 - `search_ft_index` (1 event — FT-eligible query served by title-prefix fallback because the FULLTEXT index is missing; added 2026-07-19)
 - `read_model_fallback` (1 event)

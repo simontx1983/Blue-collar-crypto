@@ -17,13 +17,14 @@
 > inventory now matches code-declared == live. Row counts below remain the 2026-06-25
 > snapshot unless noted.
 
-Prefix: `wp_`. Engine: InnoDB. **57** `wp_bcc_*` tables live — all active; no orphans.
+Prefix: `wp_`. Engine: InnoDB. **58** `wp_bcc_*` tables live — all active; no orphans.
 (Recounted 2026-08-04: the prior "48" was the 2026-07-23 reconcile snapshot and had
 gone stale as Rank Phases 1–5, validator messaging, and search analytics appended
 rows without bumping it. Rank Phase 6 itself is a net-zero swap —
 `wp_bcc_trust_polls` + `wp_bcc_trust_ballots` added; `wp_bcc_dispute_panel` +
 `wp_bcc_dispute_participations` dropped by the `cleanup_dispute_panel_v1` /
-`cleanup_dispute_participations_v1` migrations. The inventory below holds 57
+`cleanup_dispute_participations_v1` migrations. Rank Phase 7 (2026-08-04) added
+`wp_bcc_trust_community_ownership_log`, 57 → 58. The inventory below holds 58
 Active rows + 1 RETIRED marker (`wp_bcc_user_ranks`).)
 
 Row counts are exact (`SELECT COUNT(*)`) for orphan candidates and ambiguous
@@ -92,6 +93,7 @@ schema-install path in `tables.php` is itself routed through the same runner.
 | wp_bcc_trust_cluster_findings | 0 | Formal non-independence determinations (Rank Phase 4, R3; representative-member semantics; distinct from patterns/fraud_analysis signal stores) | TableRegistry::clusterFindings / schema-cluster-findings.php / ClusterFindingsRepository | Active |
 | wp_bcc_trust_rank_state | 0 | Canonical Rank progression row (Rank Phase 5; one row per RANKED member — missing row = New Member fail-safe; column is rank_slug because RANK is a MySQL 8 reserved word) | TableRegistry::rankState / schema-rank-state.php / RankStateRepository | Active |
 | wp_bcc_trust_rank_pending | 0 | 24h Apprentice confirmation clock (Rank Phase 5, R1; states pending/confirmed/voided) | TableRegistry::rankPending / schema-rank-pending.php / RankPendingRepository | Active |
+| wp_bcc_trust_community_ownership_log | 0 | Append-only custody ledger for User-kind communities (Rank Phase 7, §21.2; events create/receive/transfer_out; cooldown = MAX(created_at) per user, read live; rows never mutate) | TableRegistry::communityOwnershipLog / schema-community-ownership-log.php / CommunityOwnershipLogRepository | Active |
 | wp_bcc_trust_attestations | 9 | §J attestation layer (Vouch / Back); successor to the retired endorsements table | TableRegistry::trustAttestations / schema-trust-attestations.php | Active |
 | wp_bcc_attestor_reliability_cache | 4 | Nightly recompute cache of AttestationOutcomeClassifier per attestor (PK user_id); cron owns writes, reads fall back to live compute | TableRegistry::attestorReliabilityCache / schema-attestor-reliability-cache.php | Active |
 | wp_bcc_trust_stokes | 7 | One row per (act_id,user_id) stoke; feeds feed heat_stage + public stoke_count (never scores) | TableRegistry::stokes / schema-stokes.php | Active |
@@ -327,6 +329,29 @@ needs it).
 - created_at · datetime · NO
 - resolved_at · datetime · YES
 - Indexes: PRIMARY (user_id) [uq]; idx_due (status,due_at)
+
+#### wp_bcc_trust_community_ownership_log
+Append-only custody ledger for User-kind (member-created) communities
+(Rank redesign Phase 7, §21.2). One row per custody event: `create`
+(the user created a community), `receive` (ownership transferred TO
+the user), `transfer_out` (the user transferred ownership away) —
+`counterparty_user_id` records the other side of a transfer (NULL for
+`create`). Every event (re)arms the actor's 30-day GLOBAL custody
+cooldown, which the CapabilityResolver reads **live** as
+`MAX(created_at)` per user
+(`CommunityOwnershipLogRepository::lastCustodyEventAt`) — nothing is
+materialized, and rows are NEVER updated or deleted. Currently-owned
+group counts (the per-rank caps 2/5/10) are read **live from the
+PeepSo owner rows** (`PeepSoGroupRepository::countOwnedUserGroups`),
+never derived from this log. `created_at` is UTC computed in PHP
+(`gmdate`), never MySQL `NOW()` (session tz is not UTC on this host).
+- id · bigint unsigned · NO · PK auto
+- user_id · bigint unsigned · NO · K
+- group_id · bigint unsigned · NO · K
+- event · varchar(16) · NO
+- counterparty_user_id · bigint unsigned · YES
+- created_at · datetime · NO
+- Indexes: PRIMARY (id) [uq]; idx_user_created (user_id,created_at); idx_group (group_id)
 
 #### wp_bcc_trust_endorsements — RETIRED (2026-07-02)
 Folded into `wp_bcc_trust_attestations` (kind=`vouch`); dropped by
