@@ -12,7 +12,7 @@ and what (cannot be confirmed to) block merge.
 
 | Location | Workflow(s) | Triggers (`on:`) | Runs | Gates |
 |---|---|---|---|---|
-| **umbrella** (root) | `.github/workflows/ci.yml` + `staging-cache-probe.yml` | ci: `push:[main]`, `pull_request`, `workflow_dispatch`, `repository_dispatch:[sibling-push]`; probe: schedule (weekly) + `workflow_dispatch` | ci: reassembles the WP layout (checks out all 4 siblings into their dev paths), PHP 8.2, then **4 static guards**: `contract-parity-guard.php`, `subsystem-count-guard.php`, `cadence-pressure-guard.sh`, `dead-file-scan.php`. probe: runs `scripts/auth-cache-isolation-probe.sh` against staging (Authorization cache-isolation regression watch, 2026-07-19) | the cross-repo static guards |
+| **umbrella** (root) | `.github/workflows/ci.yml` + `staging-cache-probe.yml` | ci: `push:[main]`, `pull_request`, `workflow_dispatch`, `repository_dispatch:[sibling-push]`; probe: schedule (weekly) + `workflow_dispatch` | ci: reassembles the WP layout (checks out all 4 siblings into their dev paths), PHP 8.2, then **5 static guards**: `contract-parity-guard.php`, `subsystem-count-guard.php`, `cadence-pressure-guard.sh`, `dead-file-scan.php`, `schema-drift-guard.php` (static mode — live-DB checks self-skip; armed 2026-07-23). probe: runs `scripts/auth-cache-isolation-probe.sh` against staging (Authorization cache-isolation regression watch, 2026-07-19) | the cross-repo static guards |
 | **bcc-trust** | `ci.yml` + `deploy.yml` + `notify-root.yml` | `push:[main]`, `pull_request`; deploy: `workflow_run` (CI success on main) + `workflow_dispatch` | job `php`: checks out bcc-core as sibling, `composer update`, **PHPStan L8**, **PHPUnit**, **arch-guardrails**. job `integration`: **MySQL 8.0 service** + integration tests vs real `$wpdb` | bcc-trust's PHPStan/PHPUnit/integration/guardrails |
 | **bcc-core** | `ci.yml` + `deploy.yml` + `notify-root.yml` | `push:[main]`, `pull_request`; deploy: as above | `composer install`, **PHPStan L8** (`--memory-limit=4G`), **PHPUnit**. No integration/guardrails job. | bcc-core's PHPStan/PHPUnit |
 | **bcc-search** | `ci.yml` + `deploy.yml` + `notify-root.yml` | `push:[main]`, `pull_request`; deploy: as above | **PHP syntax · PHPStan L8 · PHPUnit** (test harness landed 2026-07-08 — this doc previously said "no CI of its own"; that is no longer true) | bcc-search's PHPStan/PHPUnit (not yet required by branch protection — see below) |
@@ -26,7 +26,8 @@ and what (cannot be confirmed to) block merge.
    static-analysis + unit; `bcc-frontend` is typecheck + lint + unit; `bcc-search` has none.
 2. **The umbrella owns the cross-repo static guards** that span the *contract docs* (which live
    in the umbrella) and the *code* (which lives in the siblings): contract-vs-code parity,
-   subsystem-count parity, cadence-pressure policy, dead-file scan. The umbrella workflow
+   subsystem-count parity, cadence-pressure policy, dead-file scan, schema-drift parity
+   (static mode). The umbrella workflow
    reassembles the WordPress layout in the runner so these path-spanning scripts can see both.
    It runs **only static guards** — no PHPStan/PHPUnit/tsc.
 3. **Deploy layer (2026-07-15).** Each plugin repo's `deploy.yml` rsyncs the CI-green merge
@@ -38,7 +39,7 @@ and what (cannot be confirmed to) block merge.
    wouldn't otherwise re-check the contract docs in the umbrella. Each sibling has an identical
    `notify-root.yml` that, on push to `main`, calls
    `POST repos/simontx1983/Blue-collar-crypto/dispatches` with `event_type=sibling-push`. The
-   umbrella's `ci.yml` listens via `repository_dispatch:[sibling-push]` and re-runs the 4 guards
+   umbrella's `ci.yml` listens via `repository_dispatch:[sibling-push]` and re-runs the 5 guards
    against the freshly-pushed sibling. Requires a `DISPATCH_TOKEN` secret in each sibling; if
    unset, the notify job emits a `::warning::` and no-ops (non-breaking).
 
@@ -57,7 +58,9 @@ and what (cannot be confirmed to) block merge.
   - **bcc-search** — still **not protected** (verified `gh api …/branches/main/protection` → 404,
     2026-07-19). The original reason ("no CI checks of its own to require") no longer holds — it
     gained PHPStan/PHPUnit CI on 2026-07-08; protecting it is an open operator decision.
-  Once the Phase-5 `schema-drift-guard.php` is armed, add it to the umbrella required-checks list.
+  `schema-drift-guard.php` was armed in the umbrella `ci.yml` on 2026-07-23 (static mode). It
+  runs as a step inside the same required `Cross-repo guards` job, so it already blocks
+  umbrella merges — the required-check *name* string is unchanged.
 - **`bcc-search` has no test/type CI** — only the notify shim. Any quality gate for it is not
   expressed as a workflow.
 - **Cross-repo trigger is push-to-`main` only.** A plugin *PR* does not re-trigger the umbrella

@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.59 · 2026-07-31 · Phase 1 deliverable · **⚠️ BREAKING (v1.59)**
+**Status:** Draft v1.60 · 2026-08-04 · Phase 1 deliverable · **⚠️ BREAKING (v1.60)**
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2363,7 +2363,7 @@ Paginated directory of human members. Sibling to §4.9 `/cards` (entity-card dir
 - **Pagination envelope:** offset (`OffsetPagination` per §1.5) — `total_pages` is the canonical field; clients derive "has more" as `page < total_pages`.
 - **Mapping:** `WP_User_Query` ordered by `user_registered DESC`; each row composed via `CardViewService::getMemberCardForList` (one call per user). `UsersEndpoint::members` prefetches eleven batched maps — followers count, primary-Hall resolution, owned-page count, owned-page typed counts, endorsements received, solids received, reviews written, disputes signed, verified-wallet count, X connections, GitHub connections — via `MemberSummaryPrefetcher::primeFor` before the per-row loop; the card builder delegates the dossier resolution to `UserViewService::getSummary($userId, $viewerId, $prefetched)` so the total query budget stays bounded regardless of `per_page` (no parallel dossier query — same resolution as before, now wrapped in the Card shape). `reputation_tier` is the tier slug (all five bands). `reputation_tier_label` is the pre-rendered §A2 display string. Frontends should encode the tier as a color/border treatment on the rank chip rather than rendering the label as a duplicate word next to `rank_label`.
 - **Field rules** (the `member_dossier` sub-blocks; the rest follow the §3.2 Card rules):
-    - `trust_score` ∈ [0, 100] per §D5. Augmented score = base reputation_score + clamped lifetime participation bonus (`DisputeParticipationRepository::getEarnedLifetimeTrust`). Clamped at the boundary; clients render as a stencil number, never derive. (Top-level card field per §3.2.)
+    - `trust_score` ∈ [0, 100] — the reputation base, clamped at the boundary (v1.60: the §D5 read-time panel-participation bonus retired with the panel; `trust_score` no longer carries any augmentation). Clients render as a stencil number, never derive. (Top-level card field per §3.2.)
     - `stats[].watchers` (the member-card third stat per §3.2.2) is the passive side of `peepso_user_followers` (people who follow this user), sourced from `UserViewService::getSummary`'s `followers_count`. The full `/users/:handle` response carries both `followers` and `following`; the directory ships the followers count only — `following` isn't a meaningful directory signal and the second SQL isn't worth the cost.
     - `member_dossier.primary_hall` shape matches `MemberProfile.primary_hall`. Frontends render display strings client-side from `name`. `null` when the member has no primary Hall.
     - `member_dossier.owned_pages_by_type` is a per-canonical-type count of `member_owner` pages, derived from the PeepSo page-categories taxonomy (`peepso_page_categories` joined to the `peepso-page-cat` CPT). The four type keys (`validator`, `project`, `nft`, `dao`) are stable wire identifiers — decoupled from the underlying PeepSo category slugs (which are admin-controlled and may include legacy typos like `vaildators`). PeepSo pages are tag-shaped, not type-shaped: a single page can carry multiple categories. Frontends should render one badge per non-zero bucket (`6 PROJECTS`, `5 NFT COLLECTIONS`, `1 VALIDATOR`). New canonical types require a contract amendment + a new key in the response shape; we don't fall back to an "OTHER" bucket for unrecognized categories.
@@ -3778,7 +3778,6 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
     "events": {
       "review":            true,
       "dispute_outcome":   true,
-      "panelist_selected": true,
       "mention":           true,
       "hall_post":         true,
       "comment_received":  true
@@ -3886,7 +3885,8 @@ Push deliveries fan out via `PushDispatcher::enqueue` (5-minute debounce + count
 |---|---|---|
 | `review`         | `bcc_review_published`                   | [`NotificationDispatcher::dispatch`](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/NotificationDispatcher.php) — alongside the bell write |
 | `dispute_outcome`| `bcc_disputes_email_reporter_result`     | [`bcc-trust.php`](../app/public/wp-content/plugins/bcc-trust/bcc-trust.php) — additive subscriber alongside the existing email handler |
-| `panelist_selected` | `bcc_disputes_notify_panelist`        | [`bcc-trust.php`](../app/public/wp-content/plugins/bcc-trust/bcc-trust.php) — additive subscriber alongside the existing email handler |
+
+(The `panelist_selected` push event + its `bcc_disputes_notify_panelist` subscriber were retired with the five-member panel — Rank Phase 6, v1.60.)
 
 **Self-suppression:** push inherits `NotificationDispatcher::dispatch`'s actor-vs-recipient guard for free (review). Disputes pushes always fire to a different recipient than the actor by construction.
 
@@ -5590,7 +5590,7 @@ Report another **member** (distinct from `POST /me/reports`, which reports a `fe
 - **Auth:** Bearer **required** (`is_user_logged_in() && Permissions::is_not_suspended(null, false)`).
 - **Body (JSON):** `reported_user_id` (**required**, int ≥ 1) · `reason_key` (**required**) ∈ `spam|harassment|fraud|misinformation|inappropriate|impersonation|other` (`sanitize_key`) · `reason_detail` (optional, string, ≤ 1000, `sanitize_textarea_field`, default `""`; **required ≥ `BCC_DISPUTES_MIN_DETAIL_LENGTH` chars when `reason_key = other`**)
 - **Response 200:** `{ "data": { "message": "Your report has been submitted. Our team will review it shortly." }, "_meta": {...} }`
-- **Errors (bare codes, not `bcc_`-prefixed — consistent with the other `DisputeController` routes):** `rate_limited` 429 (60s submit throttle) · `cannot_self_report` 400 · `user_not_found` 404 · `detail_required` 400 (`other` with too-short detail) · `report_limit_reached` 429 (reporter ≥ 5/day) · `already_reported` 409 (active report already exists reporter→reported) · `target_report_limit` 429 (target already has ≥ 10 active reports — anti-brigading) · `db_error` 500
+- **Errors (bare codes, not `bcc_`-prefixed — consistent with the legacy `DisputeController` routes; the Phase 6 `/disputes/:id/vote` trio is the `bcc_dispute_vote_*` exception):** `rate_limited` 429 (60s submit throttle) · `cannot_self_report` 400 · `user_not_found` 404 · `detail_required` 400 (`other` with too-short detail) · `report_limit_reached` 429 (reporter ≥ 5/day) · `already_reported` 409 (active report already exists reporter→reported) · `target_report_limit` 429 (target already has ≥ 10 active reports — anti-brigading) · `db_error` 500
 - **Rate limit:** 1 / 60s / reporter, plus the 5/day reporter cap and the 10-active-against-target ceiling above.
 - **Side effects:** inserts a `bcc_user_reports` row (`DisputeRepository::createReport`); enqueues two async emails (`bcc_disputes_email_reported_user`, `bcc_disputes_email_admin_report`) — enqueue failures are isolated so the 200 still returns and the row remains for a later retry; `CoreLogger::audit('user_reported', …)`.
 - **Cache:** `no-store`.
@@ -5933,23 +5933,23 @@ Paginated NFT collection gallery for a creator page (`/c/[slug]`). **Supersedes 
 - **Cache:** `Cache-Control: public, max-age=30, stale-while-revalidate=60`.
 - **Mapping:** `CreatorGalleryEndpoint::handle` (route `CreatorGalleryEndpoint.php:80`) → `CollectionService::getForProject` → per-row `shapeRow` (§A2) → staleness sweep → `maybeDispatchRefresh`. FE `creator-gallery-endpoints.ts:getCreatorGallery`.
 
-### 4.30 Disputes (file / vote / panel) & received endorsements
+### 4.30 Disputes (file / community vote) & received endorsements
 
-The §D5 vote-dispute panel-adjudication system (owner files a dispute against a downvote → a peer panel votes accept/reject → the verdict resolves async), plus the endorsement read direction. Dispute endpoints live in `DisputeController`; the endorsement reads live in `UserEndorsementsEndpoint`.
+The vote-dispute system (owner files a dispute against a downvote → an **open community vote** on the meaningful-voting poll engine decides it → the verdict resolves async), plus the endorsement read direction. Rank Phase 6 (owner decision D-7) retired the §D5 five-member peer panel: there is no panelist selection, no panel queue, and no participation credit. Any eligible member (Apprentice+ · Trust Neutral+ · not a party · not fraud-blocked) may vote `uphold`/`reject`; the poll closes on **dual quorum (10 counted voters AND 7.5 counted effective weight) + 60% effective-weight majority**, no earlier than day 7, or Inconclusive at day 90. Dispute endpoints live in `DisputeController`; the endorsement reads live in `UserEndorsementsEndpoint`.
 
-> **Envelope note (load-bearing asymmetry — do not "fix"):** dispute endpoints emit the canonical `{ data, _meta }` envelope via `ApiResponse::ok`/`error`. The two `/endorsements/mine*` reads return **unenveloped, top-level JSON** via raw `rest_ensure_response([...])` (they predate the helper; shape matches the §4.22 public read), and their error bodies are non-standard bare `{message}`. Documented reality, not the §1.4 target. The admin-only `POST /disputes/:id/resolve` (force-resolve) and `GET /disputes/health` are **internal** and intentionally undocumented (allowlisted).
+> **Envelope note (load-bearing asymmetry — do not "fix"):** dispute endpoints emit the canonical `{ data, _meta }` envelope via `ApiResponse::ok`/`error`. The legacy `DisputeController` routes use bare (non-`bcc_`-prefixed) error codes; the Phase 6 `/disputes/:id/vote` trio uses `bcc_dispute_vote_*` codes. The two `/endorsements/mine*` reads return **unenveloped, top-level JSON** via raw `rest_ensure_response([...])` (they predate the helper; shape matches the §4.22 public read), and their error bodies are non-standard bare `{message}`. Documented reality, not the §1.4 target. The admin-only `POST /disputes/:id/resolve` (force-resolve) and `GET /disputes/health` are **internal** and intentionally undocumented (allowlisted).
 
 #### `POST /bcc/v1/disputes`
 
-File a dispute against a single downvote on a page the caller owns. The server atomically selects `BCC_DISPUTES_PANEL_SIZE` qualified panelists (§D5 affinity overlay + outsider quota) and queues per-panelist notifications.
+File a dispute against a single downvote on a page the caller owns. The server opens the community-vote poll for the dispute (the seam where panel assignment used to trigger — poll-open failure never 500s the submit; a missing poll self-heals via the daily backstop sweep) and queues the disputed-voter notification async.
 
 - **Auth:** Bearer **required** (`is_user_logged_in() && Permissions::is_not_suspended`). Page-ownership enforced in-handler.
 - **Body:** `vote_id` (**required**, int ≥ 1) · `reason` (**required**, `sandbox`d via `sanitize_textarea_field`; `BCC_DISPUTES_MIN_REASON_LENGTH`–`MAX_REASON_LENGTH` non-whitespace chars) · `evidence_url` (optional, ≤ 2083, `esc_url_raw`)
-- **Response 200:** `{ "data": { "dispute_id": 41, "panelists": 5, "message": "Dispute submitted. 5 panelists have been notified." }, "_meta": {...} }`
-- **Errors (bare codes, NOT `bcc_`-prefixed):** `dispute_subsystem_unhealthy` 503 (UNIQUE constraint missing) · `rate_limited` 429 · `vote_not_found` 404 · `not_page_owner` 403 · `cannot_self_dispute` 400 · `upvote_not_disputable` 400 · `already_disputed` 409 · `insufficient_panelists` 503 · `dispute_limit_reached` 429 · `reporter_limit_reached` 429 · `vote_no_longer_active` 410 · `db_transient` 503 · `db_error` 500
+- **Response 200:** `{ "data": { "dispute_id": 41, "message": "Dispute submitted. The community vote is now open." }, "_meta": {...} }` — the panel-era `panelists` field is GONE (v1.60).
+- **Errors (bare codes, NOT `bcc_`-prefixed):** `dispute_subsystem_unhealthy` 503 (UNIQUE constraint missing) · `rate_limited` 429 · `vote_not_found` 404 · `not_page_owner` 403 · `cannot_self_dispute` 400 · `upvote_not_disputable` 400 · `already_disputed` 409 · `dispute_limit_reached` 429 · `reporter_limit_reached` 429 · `vote_no_longer_active` 410 · `db_transient` 503 · `db_error` 500 (`insufficient_panelists` died with the panel)
 - **Rate limit:** 1 / 60s / user (`Throttle::allow('dispute_submit', 1, 60)`)
 - **Cache:** `no-store`.
-- **Mapping:** `DisputeController::open` (route `DisputeController.php:37`) → ownership `Permissions::owns_page`, vote context `TrustReadService::getVoteById`, `selectPanelists` → `rankPanelistsByAffinity`, atomic `DisputeRepository::createDisputeWithPanel`, async `DisputeNotificationService::enqueueAsync`. FE `disputes-endpoints.ts:openDispute`.
+- **Mapping:** `DisputeController::submit` (route `DisputeController.php:34`) → ownership `Permissions::owns_page`, vote context `TrustReadService::getVoteById`, atomic `DisputeRepository::createDispute`, poll open `DisputeVoteService::openPollForDispute`, async `DisputeNotificationService::enqueueAsync`. FE `disputes-endpoints.ts:openDispute`.
 
 #### `GET /bcc/v1/disputes/votes/:page_id`
 
@@ -5972,55 +5972,54 @@ The disputes the caller has filed (page-owner view). Offset-paginated via header
 
 - **Auth:** Bearer **required**.
 - **Query:** `page` (default 1) · `per_page` (default 20, max 100) · `page_id` (optional — caller must own that page or be admin, else 403; closes a probe vector)
-- **Response 200:** `data` is a flat array of the shared `formatDispute` shape:
+- **Response 200:** `data` is a flat array of the shared `formatDispute` shape (v1.60 — **tally-free in every state**, C10):
   ```json
-  { "data": [ { "id": 41, "vote_id": 9912, "page_id": 5521, "page_title": "Stakecito", "voter_name": "Dale R.", "reporter_name": "Owner", "reason": "…", "evidence_url": "", "status": "reviewing", "accepts": 1, "rejects": 0, "panel_size": 5, "my_decision": null, "created_at": "…", "resolved_at": null } ], "_meta": {...} }
+  { "data": [ { "id": 41, "vote_id": 9912, "page_id": 5521, "page_title": "Stakecito", "voter_name": "Dale R.", "reporter_name": "Owner", "reason": "…", "evidence_url": "", "status": "reviewing", "created_at": "…", "resolved_at": null } ], "_meta": {...} }
   ```
-  `status` ∈ `reviewing|accepted|rejected|dismissed|timeout_no_quorum`. `my_decision` is **always `null`** here (the reporter is never a panelist on their own dispute).
+  `status` ∈ `reviewing|accepted|rejected|dismissed|timeout_no_quorum` (`timeout_no_quorum` is the Inconclusive terminal). The panel-era `accepts`/`rejects`/`panel_size`/`my_decision` fields are GONE — outcome is carried by `status`, and the closed tally is served **exclusively** by `GET /disputes/:id/vote` after close.
 - **Errors:** `forbidden` 403 (`page_id` for a page the caller doesn't own / isn't admin)
 - **Cache:** `no-store`. **Headers:** `X-WP-Total`, `X-WP-TotalPages`.
-- **Mapping:** `DisputeController::getMyDisputes` (route `DisputeController.php:57`) → `DisputeRepository::countByReporter` + `getByReporterPaginated`. FE `disputes-endpoints.ts:getMyDisputes`.
-
-#### `GET /bcc/v1/disputes/panel`
-
-The caller's panelist queue. Offset-paginated via headers. The **independent-deliberation privacy mask** is applied per row: for a panelist who hasn't finished, `reporter_name`/`accepts`/`rejects` are nulled and a terminal `status` is rewritten to `"closed"` so the tally can't be inferred.
-
-- **Auth:** Bearer **required**.
-- **Query:** `page` (default 1) · `per_page` (default 20, max 100)
-- **Response 200:** `data` is a flat array of the masked `formatDispute` shape; `my_decision` ∈ `accept|reject|null` is set on these rows. FE MUST NOT treat `0`/null `accepts` or empty `reporter_name` as ground truth.
-- **Errors:** none beyond auth.
-- **Cache:** `no-store`. **Headers:** `X-WP-Total`, `X-WP-TotalPages`.
-- **Mapping:** `DisputeController::getPanelQueue` (route `DisputeController.php:64`) — opportunistic self-heal `DisputeScheduler::emergencyResolveIfStale()` runs first; `DisputeRepository::countPanelQueueForUser` + `getPanelQueueForUser`. FE `disputes-endpoints.ts:getPanelQueue`.
+- **Mapping:** `DisputeController::mine` (route `DisputeController.php:54`) → `DisputeRepository::countByReporter` + `getByReporterPaginated`. FE `disputes-endpoints.ts:getMyDisputes`.
 
 #### `POST /bcc/v1/disputes/:id/vote`
 
-Cast the caller's panel vote (accept/reject) on a dispute they're assigned to. The deciding vote enqueues async resolution; **running tallies are intentionally omitted** from the response.
+Cast the caller's community vote on an open dispute — or, when they already have an active ballot, **change** it (a same-choice re-submit is an idempotent no-op that never burns recast budget). Eligibility is fail-closed in-handler (§18): signed-in · not suspended · **Apprentice+** (a `rank_state` row) · **Trust Neutral+** · **not a party** (dispute opener, disputed voter, or the disputed page's current owner — owner resolution failing also denies) · not fraud-hard-blocked. Ballot weight is the §16.6 effective-weight snapshot taken at first cast (never re-weighted). Engine budget: max **2 changes** per poll, **24h cooldown** between ballot actions. The response is the same C10-safe viewer state as the GET — **no running tallies, ever**.
 
-- **Auth:** Bearer **required**. Panelist assignment enforced in-handler.
-- **Path:** `id` (int, `(?P<id>\d+)`). **Body:** `decision` (**required**, ∈ `accept|reject`) · `note` (optional, ≤ 500, `sanitize_textarea_field`)
-- **Response 200:**
-  ```json
-  { "data": { "message": "Vote recorded.", "decision": "accept", "participation": { "credited": true, "reason": null, "credited_today": 3, "credited_lifetime": 27 } }, "_meta": {...} }
-  ```
-  `participation.reason` ∈ `daily_cap|total_cap|suspended|fraud_flag|already_recorded|service_unavailable|null`; `credited_*` are post-vote counts.
-- **Errors:** `rate_limited` 429 (10s) · `invalid_decision` 400 · `not_assigned` 403 · `already_voted` 409 · `dispute_closed` 410 · plus `{code, message, http}` surfaced by the atomic vote tx
-- **Rate limit:** 1 / 10s / user (`Throttle::allow('panel_vote', 1, 10)`)
-- **Cache:** `no-store`.
-- **Mapping:** `DisputeController::castPanelVote` (route `DisputeController.php:71`) → assignment check `getPanelAssignment`, atomic `castPanelVoteAtomic`, verdict `computeVerdict`, deciding-vote async `bcc_disputes_async_resolve` enqueue, participation `DisputeParticipationService::recordParticipation` (outside the vote tx). FE `disputes-endpoints.ts:castPanelVote`.
+- **Auth:** Bearer **required** (`is_user_logged_in() && Permissions::is_not_suspended`).
+- **Path:** `id` (int, `(?P<id>\d+)`). **Body:** `choice` (**required**, ∈ `uphold|reject`)
+- **Response 200:** the viewer-state payload — see `GET /disputes/:id/vote` below (open-poll form: no `outcome`/`tally`).
+- **Errors (`bcc_`-prefixed, unlike the legacy dispute routes):** `rate_limited` 429 (bare code — shared 10s throttle) · `bcc_dispute_vote_forbidden` 403 (eligibility failed; `error.data.reason` ∈ `not_authenticated|suspended|rank_required|tier_required|party_to_dispute|party_check_unavailable|fraud_blocked`) · `bcc_dispute_vote_not_found` 404 (dispute missing, or a pre-Phase-6 panel-era dispute that never had a poll) · `bcc_dispute_vote_recast_exhausted` 409 (both changes used) · `bcc_dispute_vote_cooldown` 429 (24h since last ballot action not elapsed) · `bcc_dispute_vote_closed` 410 (dispute resolved / poll closed / not accepting changes)
+- **Rate limit:** 1 / 10s / user (`Throttle::allow('dispute_vote', 1, 10)` — bucket shared with DELETE).
+- **Cache:** `Cache-Control: private, no-store`.
+- **Mapping:** `DisputeController::cast_dispute_vote` (route `DisputeController.php:63`) → `DisputeVoteService::castOrChange` (§18 eligibility + `uphold`→`for`/`reject`→`against` vocabulary map) → `PollService::cast`/`changeBallot`; weight snapshot `VoteService::assembleBallotWeightSnapshot`. Audit: `dispute_vote_cast`.
 
-#### `GET /bcc/v1/disputes/participation/me`
+#### `DELETE /bcc/v1/disputes/:id/vote`
 
-The caller's own §D5 panel-vote participation counters + caps. Powers the `/panel` header. Never throws; returns zeros for a user who has never sat on a panel.
+Withdraw the caller's active ballot on an open dispute vote (24h cooldown since the last ballot action applies). The voter may re-enter later via POST while their recast budget lasts — every re-entry consumes one of the two changes.
 
 - **Auth:** Bearer **required**.
-- **Response 200:**
+- **Path:** `id` (int, `(?P<id>\d+)`). No body.
+- **Response 200:** the viewer-state payload (`viewer.my_choice` back to `null`).
+- **Errors:** `rate_limited` 429 (bare code — shared 10s throttle) · `bcc_dispute_vote_not_found` 404 (dispute/poll missing, **or no active ballot to withdraw**) · `bcc_dispute_vote_cooldown` 429 · `bcc_dispute_vote_closed` 410
+- **Rate limit:** shared `dispute_vote` bucket (1 / 10s / user).
+- **Cache:** `Cache-Control: private, no-store`.
+- **Mapping:** `DisputeController::withdraw_dispute_vote` (route `DisputeController.php:63`) → `DisputeVoteService::withdraw` → `PollService::withdraw`. Audit: `dispute_vote_withdrawn`.
+
+#### `GET /bcc/v1/disputes/:id/vote`
+
+The viewer's C10-safe state of a dispute's community vote. **Open poll: windows + the viewer's own ballot facts ONLY** — no counts, no totals, no quorum progress. **Closed poll:** adds the outcome, `closed_at`, and the counted tally (§17.3 — this is the only surface that ever exposes a tally).
+
+- **Auth:** Bearer **required** (any signed-in, non-suspended member — eligibility is NOT required to read).
+- **Path:** `id` (int, `(?P<id>\d+)`).
+- **Response 200 (open):**
   ```json
-  { "data": { "credited_today": 3, "credited_lifetime": 27, "correct_count": 19, "earned_today": 0.06, "earned_lifetime": 0.41, "caps": { "daily_trust": 1.0, "lifetime_trust": 10.0, "min_for_accuracy": 5, "base_weight": 0.01, "accuracy_weight": 0.02 } }, "_meta": {...} }
+  { "data": { "dispute_id": 41, "status": "open", "opened_at": "2026-08-03 12:00:00", "binding_earliest_at": "2026-08-10 12:00:00", "expires_at": "2026-11-01 12:00:00", "viewer": { "my_choice": "uphold", "my_effective_weight": 1.25, "can_change": true, "can_withdraw": true } }, "_meta": {...} }
   ```
-  `credited_*`/`correct_count` are row counts; `earned_*` are clamped trust-point contributions (4dp). `caps.*` mirror the `BCC_DISPUTE_PARTICIPATION_*` server constants so the FE never hardcodes them.
-- **Errors:** none beyond auth (read-only, total-failure-safe).
-- **Cache:** `no-store`.
-- **Mapping:** `DisputeController::getMyParticipation` (route `DisputeController.php:115`) → `DisputeParticipationService::getStatus`. FE `disputes-endpoints.ts:getMyParticipation`.
+  `viewer.my_choice` ∈ `uphold|reject|null` (dispute vocabulary, mapped back from the engine's `for`/`against`); `my_effective_weight` `null` when no active ballot; `can_change` false once both changes are used; both booleans false during the 24h cooldown and for non-ballot-holders.
+- **Response 200 (closed):** same keys **plus** `outcome` ∈ `upheld|rejected|inconclusive`, `closed_at`, and `tally: { "counted_voters": 12, "weight_uphold": 9.5, "weight_reject": 3.25 }` (post-cluster-cap counted numbers — the §19 audit values, not raw casts).
+- **Errors:** `bcc_dispute_vote_not_found` 404 (dispute missing, or a panel-era terminal dispute that never had a poll). No throttle on the GET.
+- **Cache:** `Cache-Control: private, no-store`.
+- **Mapping:** `DisputeController::get_dispute_vote` (route `DisputeController.php:63`) → `DisputeVoteService::viewerState` → `PollService::viewerState` (+ closed tally from the persisted closure audit).
 
 #### `GET /bcc/v1/endorsements/mine`
 
@@ -6398,6 +6397,57 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.60 — 2026-08-04 — ⚠️ BREAKING — Rank redesign Phase 6 voting batch: dispute panel retired, open community dispute voting
+
+Owner decision D-7: the five-member §D5 peer panel is deleted and vote
+disputes are decided by an **open community vote** riding the generic
+meaningful-voting poll engine (`wp_bcc_trust_polls` /
+`wp_bcc_trust_ballots`). Binding rules (server-side, from
+`RankScoringConfig`): **dual quorum — 10 counted voters AND 7.5 counted
+effective weight, both required**; **60% effective-weight majority**
+(exactly 60.00% passes); **day-7 minimum** before any binding close;
+at **day-90** a poll that never bound closes **Inconclusive** (maps to
+the existing no-consequence `timeout_no_quorum` terminal — no
+adjudicator call, no reporter penalty). The hourly
+`bcc_rank_poll_close_sweep` cron owns closing.
+
+- **Routes DELETED:** `GET /bcc/v1/disputes/panel` ·
+  `GET /bcc/v1/disputes/participation/me` (the §D5 participation-credit
+  system is retired wholesale — counters, caps, and trust credit).
+- **`POST /bcc/v1/disputes/:id/vote` REPLACED** — no longer the
+  panelist ballot (`decision` ∈ `accept|reject` + `participation`
+  block). Now the open community vote: body `choice` ∈ `uphold|reject`;
+  eligibility fail-closed in-handler (Apprentice+ · Trust Neutral+ ·
+  not a party · not fraud-blocked); errors moved to `bcc_dispute_vote_*`
+  codes; response is the C10-safe viewer state.
+- **Routes ADDED:** `DELETE /bcc/v1/disputes/:id/vote` (withdraw) ·
+  `GET /bcc/v1/disputes/:id/vote` (viewer state; the ONLY surface that
+  ever exposes a tally, and only after close).
+- **C10 open-poll tally sealing:** while the vote is open, NO surface
+  exposes counts, totals, or quorum progress — the viewer sees windows
+  + their own ballot facts only. The closed tally
+  (`counted_voters` / `weight_uphold` / `weight_reject`) appears only
+  on the vote GET after close.
+- **`GET /bcc/v1/disputes/mine` rows slimmed** — panel-tally fields
+  `accepts` / `rejects` / `panel_size` / `my_decision` are GONE
+  (columns dropped by the `cleanup_dispute_panel_v1` migration).
+  Outcome is carried by `status`; the closed tally lives on the vote
+  GET only.
+- **`POST /bcc/v1/disputes` response slimmed** — the `panelists` field
+  is gone (no panel is selected); `insufficient_panelists` 503 no
+  longer exists. Submission opens the community-vote poll instead
+  (failure self-heals via the daily backstop).
+- Ballot mechanics (engine-enforced): max **2 changes** per poll,
+  **24h cooldown** between ballot actions, same-choice re-submit is an
+  idempotent no-op; withdrawal allowed (re-entry consumes recast
+  budget). Ballot weight is a §16.6 snapshot taken at first cast —
+  never re-weighted.
+- **`trust_score` de-augmented** (value semantics, shape unchanged):
+  the §D5 read-time panel-participation bonus died with the panel, so
+  `trust_score` on member payloads is now the clamped reputation base
+  only. The `panelist_selected` push event + its subscriber are gone
+  from the §4.10 push taxonomy.
 
 ### v1.59 — 2026-07-31 — ⚠️ BREAKING — Rank redesign Phase 5 cutover: earned Rank, `member_state`, `capabilities`, `GET /me/progression`
 
