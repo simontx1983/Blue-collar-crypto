@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.62 · 2026-08-04 · Phase 1 deliverable
+**Status:** Draft v1.63 · 2026-08-04 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -534,6 +534,7 @@ readiness view instead of rank math.
     "vesting": { "maturity": 0.4142, "days_elapsed": 33, "span_days": 90 },
     "decay":   { "active": false, "points": 0 },
     "recovery": null,
+    "findings": [],
     "quests": {
       "completed_count": 4,
       "total_count": 7,
@@ -588,8 +589,48 @@ readiness view instead of rank math.
 - `vesting` is the §16.3 Apprentice maturity ramp: `maturity` ∈
   (floor, 1.0], linear over `span_days` from the Apprentice award epoch
   (survives promotion). `decay` reports inactivity decay
-  (`{active, points}`). `recovery` is `null` or `{deadline}` when the
-  member is inside the 90-day evidence-loss grace window.
+  (`{active, points}`).
+- `recovery` — **shape CHANGED at v1.63 (Rank Phase 8)**: `null` when
+  the member is not in recovery, else
+  `{deadline, paused_privileges, instructions}`. The pre-v1.63 shape
+  was `{deadline}` alone; the block gained two fields when the §14.2
+  privilege pauses shipped. `paused_privileges` is a list of stable
+  snake_case privilege slugs — currently `vote_multiplier` (§31.4: the
+  earned rank vote multiplier pauses down to the Apprentice value
+  during grace; ballot weight snapshots already cast stay immutable),
+  `ranked_hall_posting`, `community_custody`, and `mentor_listing`
+  (the three v1.62 §21 gates). Slugs are wire identifiers — the
+  frontend renders its own labels. `instructions` is one plain
+  server-rendered sentence (§A2); deadline-framed, never a §2.7
+  schedule nudge. Recovery state is own-view only (§22.3 — nothing
+  recovery-related appears on any public surface).
+- `findings` — **NEW at v1.63 (Rank Phase 8, spec §15)**: the member's
+  own misconduct findings — active ones plus reversals from the last
+  30 days; `[]` when clean. Own-view only (§22.3): this list exists
+  solely inside the self-scoped progression block; no public surface
+  carries findings. Each item:
+  `{id, type, severity, score_penalty, ceiling_rank,
+  ceiling_expires_at, penalty_expires_at, appeal_status, status,
+  created_at}`.
+  - `id` (int) — the finding id; feeds the §4.8 appeal endpoint.
+  - `type` (string ≤ 40 chars) — admin-entered finding type.
+  - `severity` ∈ `minor | moderate | serious | severe` — the
+    owner-approved §15.3 severity class (minor 5 pts / 90d · moderate
+    15 / 180d · serious 25 + Journeyman ceiling 180d · severe 40 +
+    Apprentice ceiling 365d + immediate demotion). Values are
+    issuance-time snapshots — later config edits never rewrite them.
+  - `score_penalty` (number) — the finding's CURRENT penalty (a
+    reduction rewrites it; the original snapshot survives in the
+    append-only decision history).
+  - `ceiling_rank` (rank slug | `null`) + `ceiling_expires_at`
+    (datetime | `null`) — the rank ceiling, when the class carries one.
+  - `penalty_expires_at` (datetime) — when the penalty stops counting.
+  - `appeal_status` ∈ `"" | requested | upheld | reduced | reversed |
+    remanded` — `""` means the once-only member appeal is still
+    available; anything else means the slot is consumed (see the §4.8
+    appeal endpoint).
+  - `status` ∈ `active | reversed` — reversed findings remain visible
+    own-view for 30 days (restoration statement), then drop off.
 - `quests` stays as onboarding guidance / achievements ONLY. **The quest
   power fields are GONE (v1.59, decision D-1):** the per-item
   `weight_bonus` and the top-level vote-weight `multiplier` no longer
@@ -601,10 +642,11 @@ readiness view instead of rank math.
   `qualifying_contribution` booleans plus `confirmation_due_at` (the
   24-hour confirmation clock; `null` until a qualifying contribution
   starts it or once it resolves).
-- `confirmation_due_at` and `recovery.deadline` are UTC
-  `YYYY-MM-DD HH:MM:SS` datetime strings (server-stored form), not the
-  §1.7 `T…Z` ISO shape — display-only values; clients render, never
-  parse-and-compute against them.
+- `confirmation_due_at`, `recovery.deadline`, and the `findings`
+  datetimes (`ceiling_expires_at` / `penalty_expires_at` /
+  `created_at`) are UTC `YYYY-MM-DD HH:MM:SS` datetime strings
+  (server-stored form), not the §1.7 `T…Z` ISO shape — display-only
+  values; clients render, never parse-and-compute against them.
 - **Do-not-expose (plan §22.2):** this block never carries per-action
   point formulas, fraud/IP/device/cluster signals, or any other
   member's weights. Own-view only — there is no third-party progression
@@ -3417,6 +3459,49 @@ surfaces can refresh without re-fetching the full profile.
   formulas, no fraud/IP/device/cluster signals, no other member's
   weights.
 
+#### `POST /bcc/v1/me/findings/:id/appeal`
+
+*(New in v1.63 — Rank Phase 8, spec §15.5.)* The **once-only** member
+appeal on a misconduct finding. `:id` is a finding id from the §2.5
+`findings` block. Adjudication is admin-side (wp-admin Rank Findings);
+the outcome lands as an append-only decision row plus a
+`bcc_rank_appeal_outcome` / `bcc_rank_finding_reversed` bell notice —
+there is no member-facing adjudication surface beyond the progression
+block's `appeal_status` field.
+
+- **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
+  **Own finding only** — a foreign or unknown `:id` returns the same
+  404, so the route cannot be used to probe whether a finding exists
+  for another member (no-leak posture; §22.3).
+- **Body:** none.
+- **Response 200:**
+  ```json
+  { "data": { "ok": true, "finding_id": 17, "appeal_status": "requested" }, "_meta": {...} }
+  ```
+- **Errors:**
+  - `bcc_unauthorized` 401 — no session
+  - `bcc_rate_limited` 429 — over the 5-per-rolling-hour per-member
+    throttle (checked before the finding lookup)
+  - `bcc_not_found` 404 — unknown id OR someone else's finding
+    (identical on purpose — no existence leak)
+  - `bcc_conflict` 409 — the once-only slot is already consumed:
+    an appeal was already requested, **or the finding has already
+    been adjudicated**. Note an admin-initiated reconsideration
+    (uphold / reduce / reverse / remand) also writes `appeal_status`,
+    so it **may consume the appeal slot without the member ever
+    appealing** — the finding has then already received the §15.5
+    reconsideration the appeal would have requested.
+- **Once-only semantics:** the gate is a single guarded UPDATE
+  (`appeal_status = ''` → `'requested'`, subject-scoped), so replays
+  and races get a clean 409 — exactly one caller ever sees 200.
+- **Cache:** `Cache-Control: private, no-store`
+- **Mapping:** `MeFindingAppealEndpoint::handle` →
+  `FindingsRepository::getById` (ownership check) →
+  `FindingsRepository::requestAppeal` (guarded UPDATE); audits
+  `rank_appeal_requested`; fires `bcc_rank_appeal_requested`. Admin
+  reconsideration flows through `FindingsService::reconsider`
+  (§15.5 append-only decision history).
+
 #### Rank is fully auto-derived — conferred Foreman **Role** retired (v1.36)
 
 **Rank** is **fully auto-derived** — there is no admin-conferral path.
@@ -3767,14 +3852,22 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
 {
   "email_digest": false,
   "bell": {
-    "bcc_reaction":         true,
-    "bcc_review":           true,
-    "bcc_card_watched":     true,
-    "bcc_rank_up":          true,
-    "bcc_welcome":          true,
-    "bcc_mention":          true,
-    "bcc_hall_post":        true,
-    "bcc_comment_received": true
+    "bcc_reaction":               true,
+    "bcc_review":                 true,
+    "bcc_card_watched":           true,
+    "bcc_rank_up":                true,
+    "bcc_rank_demoted":           true,
+    "bcc_rank_recovery_started":  true,
+    "bcc_rank_recovery_reminder": true,
+    "bcc_rank_decay_warning":     true,
+    "bcc_rank_finding_issued":    true,
+    "bcc_rank_appeal_outcome":    true,
+    "bcc_rank_finding_reversed":  true,
+    "bcc_welcome":                true,
+    "bcc_mention":                true,
+    "bcc_hall_post":              true,
+    "bcc_comment_received":       true,
+    "bcc_holder_community_live":  true
   },
   "push": {
     "enabled": false,
@@ -3789,7 +3882,8 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
 }
 ```
 
-- `bell.*` keys mirror the bell `type` taxonomy (matches §4.10's notification-shape `type` field). Defaults are all-on per §I1 baseline.
+- `bell.*` keys mirror the bell `type` taxonomy (matches §4.10's notification-shape `type` field). Defaults are all-on per §I1 baseline. The full key set is `NotificationPrefs::BELL_TYPES`, which is pinned equal to `NotificationType::ALL` by a generic registration test (v1.63) — the sample above shows the §I2 base taxonomy plus the v1.63 Rank keys; the §J.7 attestation keys and `bcc_divergence_state_warning` (documented where those events are specified) appear in the map too.
+- **v1.63 (Rank Phase 8):** eight bell keys are new in the map. Six are new bell-only notice types (`bcc_rank_recovery_started`, `bcc_rank_recovery_reminder`, `bcc_rank_decay_warning`, `bcc_rank_finding_issued`, `bcc_rank_appeal_outcome`, `bcc_rank_finding_reversed` — deliberately no push variants; none are urgent). Two are **repairs** of registration drift: `bcc_rank_demoted` (dispatched since v1.59 but absent from the type whitelist — its bell rows were silently rejected read-side and its pref key never appeared here) and `bcc_holder_community_live` (rows rendered fine but the pref key was missing from this surface, so the toggle documented at v1.32 was not actually exposed).
 - `email_digest` defaults `false` (opt-in).
 - `push.enabled` is the master toggle. Defaults `false` until the user explicitly enables it (a browser permission prompt fires on enable; no silent dispatch).
 - `push.events.*` defaults are all-on per V2 Phase 1 §P1.C3 — anti-noise carries the load via debounce + 5-min aggregation in `PushDispatcher`. The push event taxonomy is intentionally narrower than the bell ("bell shows everything; push is 'you really need to know'"). Adding a new push event requires extending `NotificationPrefs::PUSH_TYPES` server-side and the corresponding subscriber wiring.
@@ -6456,6 +6550,70 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.63 — 2026-08-04 — additive + one changed block — Rank Phase 8: recovery machine + misconduct findings
+
+Rank redesign Phase 8 (spec §14 / §15): the recovery grace machine
+completes and formal misconduct findings ship, under the
+**owner-approved 2026-08-04 severity model (spec §15.3)** — minor
+5 pts / 90d · moderate 15 / 180d · serious 25 + Journeyman ceiling
+180d · severe 40 + Apprentice ceiling 365d + immediate demotion;
+per-finding penalty cap 40, total-active cap 60. Issuance is
+**wp-admin only** (§15.1 — no automated writers; `fraud_detection`
+exists as a reserved provenance value with no writer; §18.4
+dispute-sourced findings are an admin manually issuing with
+`source='dispute'`). Penalty / ceiling / expiry values are
+**issuance-time snapshots** — config edits never rewrite history.
+
+- **§2.5 `recovery` block shape CHANGED** — the one non-additive
+  change. Old: `null | {deadline}`. New:
+  `null | {deadline, paused_privileges, instructions}`. The §14.2
+  recovery pauses are now complete: `paused_privileges` names the
+  paused slugs — `vote_multiplier` (**§31.4, new in this phase**: the
+  earned rank vote multiplier drops to the Apprentice value during
+  grace, on both the page-vote path and poll ballot snapshots via the
+  shared `VoteWeightCalculator::rankMultiplier` seam; ballots already
+  cast keep their immutable snapshot — recasting re-snapshots) plus
+  the three v1.62 §21 gates (`ranked_hall_posting`,
+  `community_custody`, `mentor_listing`).
+- **§2.5 `findings` sibling ADDED** (own-view only, §22.3): active
+  misconduct findings + last-30-day reversals, each
+  `{id, type, severity, score_penalty, ceiling_rank,
+  ceiling_expires_at, penalty_expires_at, appeal_status, status,
+  created_at}`. Findings fold into the rank score as capped
+  calculation-time penalties; the lowest active ceiling caps the
+  attainable rung; a severe finding demotes immediately (no §14.1
+  grace).
+- **NEW `POST /bcc/v1/me/findings/:id/appeal`** (§4.8) — the
+  once-only §15.5 member appeal. Own finding only (foreign/unknown id
+  → identical no-leak 404); 5/hour throttle (`bcc_rate_limited` 429);
+  replay/race → `bcc_conflict` 409 via a single guarded UPDATE. An
+  admin-initiated reconsideration also writes `appeal_status`, so it
+  **may consume the appeal slot** without a member appeal ever being
+  filed.
+- **Notices: 6 new + 2 repaired bell types** (see the §4.10
+  notification-prefs doc). New, all bell-only self-notifications
+  (deliberately no push; §2.7-clean deadline-framed copy):
+  `bcc_rank_recovery_started`, `bcc_rank_recovery_reminder` (fired by
+  the daily evaluate at exactly 30 and 7 days remaining),
+  `bcc_rank_decay_warning` (30-day re-notify gate),
+  `bcc_rank_finding_issued` (severity-neutral copy),
+  `bcc_rank_appeal_outcome` (upheld / reduced / remanded),
+  `bcc_rank_finding_reversed` (restoration statement). Repaired:
+  **`bcc_rank_demoted` was documented-but-undeliverable since v1.59**
+  — the dispatcher wrote its bell rows but the type was missing from
+  the read-side whitelist (`NotificationType::ALL`) and the prefs
+  surface, so every demotion bell was silently rejected; it now
+  delivers. `bcc_holder_community_live` had the narrower half of the
+  same drift (rows delivered; pref toggle missing). A generic
+  registration test now pins whitelist == prefs == defaults so the
+  drift class is structurally impossible.
+- Storage: new `wp_bcc_trust_findings` +
+  `wp_bcc_trust_finding_decisions` (append-only §15.5 decision
+  history; the original penalty snapshot survives in the `issued`
+  decision row after any reduction); see docs/database-schema.md.
+  No new cron — recovery reminders and decay warnings ride
+  `bcc_rank_daily_evaluate` (docs/cron-registry.md).
 
 ### v1.62 — 2026-08-04 — additive — Rank Phase 7 privileges
 
