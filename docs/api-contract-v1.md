@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.60 · 2026-08-04 · Phase 1 deliverable · **⚠️ BREAKING (v1.60)**
+**Status:** Draft v1.61 · 2026-08-04 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1164,7 +1164,8 @@ Feed items share an envelope and vary by `post_kind`.
   "comment_count": 7,
   "social_proof": { "...": "see §2.2 — applies to feed posts per §O4" },
   "permissions": {
-    "can_report": { "allowed": true, "unlock_hint": null }
+    "can_report": { "allowed": true, "unlock_hint": null },
+    "can_delete": { "allowed": false, "unlock_hint": null }
   },
   "links": {
     "self":   "/u/simontx/post/aBcDeFgH",
@@ -2254,7 +2255,8 @@ Personalized "who to follow" recommender. **Relevance/affinity-based, NOT popula
   - Items are ordered **best-first** by the affinity score.
   - `reputation_tier` ∈ `elite | trusted | neutral | caution | risky`.
   - `reputation_tier_label` is the pre-rendered §A2 display string.
-  - `suggestion_reason` is the single highest-CONTRIBUTING affinity signal, or `null` for civic cold-start fallback rows. `code` ∈ `follows_you | mutual_follows | co_hall | co_validator | co_nft_community`; `label` is a server-rendered §A2 string (e.g. `"Follows you"`, `"Followed by N you follow"`, `"In the Cosmos Hall with you"`, `"Backs Stakecito too"`, `"In Bored Apes with you"`).
+  - `suggestion_reason` is the single highest-CONTRIBUTING affinity signal, or `null` for civic cold-start fallback rows. `code` ∈ `follows_you | mutual_follows | co_hall | co_validator | co_nft_community`; `label` is a server-rendered §A2 string (e.g. `"Watches you"`, `"Watched by N you watch"`, `"In the Cosmos Hall with you"`, `"Backs Stakecito too"`, `"In Bored Apes with you"` — the two follow-graph labels moved to watch vocabulary in v1.61).
+  - *(v1.61, additive)* `mutual_follows` rows may carry `suggestion_reason.avatars` — up to 3 `{ "handle": string, "avatar_url": string }` sampled mutual connections (`getSecondDegreeCandidatesWithSamples`) so the row can render avatar chips beside the count. Absent for other codes and on older backends; consumers treat missing as empty.
 - **Scoring (affinity only):** `W_RECIP·followsViewer + W_MUTUAL·min(mutualFollows, MUTUAL_CAP) + W_HALL·sharedHalls + W_VALIDATOR·sharedValidatorBacking + W_NFT·sharedHolderCommunities`. Weights are server constants (tunable). **No popularity/trust term participates in ranking.**
 - **Exclusions (security-sensitive):** self; already-following; caution/risky reputation tier; active suspensions; mutual blocks (either direction); and any candidate who hid their watching graph (`watching_hidden`).
 - **Cold-start fallback:** when fewer than `limit` candidates survive scoring + exclusions (the dominant empty-graph case), the response tops up from the same civic recent-operators source the cold-start feed uses (recency + stable daily shuffle, NOT ranked), with `suggestion_reason: null`.
@@ -5675,6 +5677,34 @@ Remove the viewer's own review on a page.
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** `PostsEndpoint::removeReview` (route `PostsEndpoint.php:58`) → `PostsService::removeReview` → `VoteService::removePageVote` (a review is the viewer's page vote).
 
+#### `DELETE /bcc/v1/feed/:feed_id`
+
+*(New in v1.61.)* Delete a post — the viewer's own, or (site admins
+only) any post. Authorization is **server-side only**: the feed item's
+`permissions.can_delete` drives the frontend affordance but is never
+the gate.
+
+- **Auth:** required, checked in-handler (`__return_true` permission
+  callback, same posture as the comments delete) — anonymous →
+  `bcc_unauthorized` 401.
+- **Path:** `feed_id` — `feed_<act_id>` (`[a-z0-9_]+`, strictly parsed;
+  anything else → `bcc_invalid_request`).
+- **Behavior:** `wp_trash_post()` on the activity's linked wp_post —
+  reversible; every feed/permalink read filters `post_status='publish'`
+  so the post disappears from all surfaces immediately. Deletion
+  reverses the post's Rank contribution evidence
+  (`bcc_post_deleted` → `RankEvidenceIngestor::reverse('post', post_id)`);
+  an admin delete of another member's post is audit-logged.
+- **Kill switch:** option `bcc_post_delete_enabled` (default true) —
+  false degrades every call to `bcc_feature_disabled` 403.
+- **Response 200:** `{ "data": { "ok": true, "feed_id": "feed_2210184" } }`
+- **Errors:** `bcc_unauthorized` 401 · `bcc_feature_disabled` 403 ·
+  `bcc_rate_limited` 429 (10 / 10 min / viewer) · `bcc_invalid_request`
+  400 · `bcc_not_found` 404 · `bcc_forbidden` 403 (not owner, not
+  admin) · `bcc_internal_error` 500 (trash failure)
+- **Cache:** `Cache-Control: no-store`
+- **Mapping:** `PostsEndpoint::deleteFeedPost` → `PostsService::deletePost`.
+
 ### 4.28 Posts, reactions, blog composer & cold-start feed
 
 The umbrella composer-create endpoint plus the reaction writer, the §D6 crypto-blog read/edit/picker surfaces, and the home-feed cold-start bridge. All in the `bcc/v1` namespace, standard §1.4 envelope. Read surfaces return §3.3 `FeedItem`s; the reaction shape is §2.11 `ReactionState`. Photo (§4.14) and GIF (§4.15) posts are separate routes; comments are §4.13.
@@ -6397,6 +6427,26 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.61 — 2026-08-04 — additive — delete-post + suggestion avatars
+
+- **NEW `DELETE /bcc/v1/feed/:feed_id`** — delete a post: the author's
+  own for any signed-in viewer, any post for a site admin
+  (`manage_options`). Authorization is server-side only; deletion is a
+  reversible `wp_trash_post` on the linked wp_post (every read filters
+  `post_status='publish'`). Kill switch `bcc_post_delete_enabled`
+  (default true). Deleting a post **reverses its Rank contribution
+  evidence** (`RankEvidenceIngestor::reverse('post', post_id)`) so
+  publish→delete→repeat cannot farm credit; the R1 Apprentice
+  confirmation already voids on trash via its `post_status` check.
+- **§3.3 FeedItem `permissions.can_delete`** (additive) — UX-sugar
+  visibility flag mirroring the server gate (author or admin); absent
+  ⇒ false on older backends.
+- **`GET /bcc/v1/suggestions/users`**: `suggestion_reason` gains an
+  optional `avatars` list (≤ 3 `{handle, avatar_url}` sampled mutual
+  connections, `mutual_follows` rows only) and the two remaining
+  follow-era labels move to watch vocabulary (`"Watches you"`,
+  `"Watched by N you watch"`).
 
 ### v1.60 — 2026-08-04 — ⚠️ BREAKING — Rank redesign Phase 6 voting batch: dispute panel retired, open community dispute voting
 
