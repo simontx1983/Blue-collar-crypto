@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.61 · 2026-08-04 · Phase 1 deliverable
+**Status:** Draft v1.62 · 2026-08-04 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2340,7 +2340,7 @@ Full User view-model.
 Paginated directory of human members. Sibling to §4.9 `/cards` (entity-card directory). **Each item is a full member `Card` view-model (§3.2, `card_kind: "member"`)** so the frontend renders directory rows through the canonical `<CardFactory>` — the same component the entity-card directory uses. The per-member back-of-card signal blocks (verifications, engagement, owned-page typed counts, primary Hall) ride along on the card's `member_dossier` block; nothing the older slim `MemberSummary` shape carried is lost. Click-through navigates to `/u/:handle` for the full profile.
 
 - **Auth:** Anonymous OR Bearer (privacy-filtered — `real_name_hidden` honored)
-- **Query:** `page` (1-indexed, default 1), `per_page` (default 20, max 50), `q` (optional — bounded to 64 chars, matched against `user_login` + `display_name` + `user_nicename`), `type` (optional — one of `validator | project | nft | dao`; restricts results to users with ≥1 owned page of that canonical type, intersecting with `q` when both are present)
+- **Query:** `page` (1-indexed, default 1), `per_page` (default 20, max 50), `q` (optional — bounded to 64 chars, matched against `user_login` + `display_name` + `user_nicename`), `type` (optional — one of `validator | project | nft | dao`; restricts results to users with ≥1 owned page of that canonical type, intersecting with `q` when both are present), `mentors` (optional bool — *v1.62, Rank Phase 7 spec §21.4*; restricts results to **actively listed mentors**: explicit `mentor_opt_in` AND the live `list_as_mentor` capability (Veteran AND Trusted+ AND not suspended AND not in Rank recovery), composed at read time via `MentorListingService::activeMentorIds`; intersects (AND) with the other filter axes)
 - **Response 200:**
   ```json
   {
@@ -2372,6 +2372,7 @@ Paginated directory of human members. Sibling to §4.9 `/cards` (entity-card dir
     - `type_counts` is the **global** count of distinct users with ≥1 owned page per canonical type. Independent of the active `q` and `type` filters by design — the chip-strip's `VALIDATORS · 5` numbers shouldn't shift around as a viewer types in the search box. Same four keys as `member_dossier.owned_pages_by_type`. Always emitted (even on the type-empty short-circuit) so a filter-specific empty state can suggest alternative chips with non-zero counts.
     - `member_dossier.verifications` carries connection presence + provider username for the social-proof panel on the back of the directory card. `x_verified` / `github_verified` are `true` only when an active row exists in `bcc_trust_user_verifications` AND `verified_at` is non-null — token presence alone does not count. `x_username` / `github_username` are the public handles for click-through display (`@phillips` etc.); never decrypt tokens into this payload. `wallets_verified` is the count of `bcc_wallet_links` rows where `verified_at IS NOT NULL` — the per-wallet detail (chain, address) lives on `MemberProfile.wallets`.
     - `member_dossier.engagement` carries lifetime activity counts for the back-of-card "ON THE FLOOR" panel. `endorsements_received` is summed across every page the user owns (`peepso_page_members.pm_user_status = 'member_owner'` JOINed to `bcc_trust_endorsements` on `page_id`); a multi-page operator's endorsement count is the union of endorsements on all their pages. `solids_received` counts `peepso_reactions` rows of kind `KIND_SOLID` on activities the user owns; returns 0 when the reaction set isn't seeded yet (`ReactionTypeRegistry::solidId() === null`). `reviews_written` mirrors `MemberCounts.reviews_written` (count via `VoteRepository::countByVoter`). `disputes_signed` mirrors `MemberCounts.disputes_signed` (count via `FlagsRepository::countByFlagger`).
+    - `is_mentor` *(v1.62 — Rank Phase 7, spec §21.4; additive)* — top-level card field, emitted as `true` **only** on rows for actively-listed mentors (opt-in AND live `list_as_mentor` verdict — same composition as the `mentors` filter, so filter and badge can't drift); **absent** (not `false`) on every other row. Resolved at the endpoint via `MentorListingService::listedAmong` (one bounded opt-in enumeration for the page, never a per-row meta read; reuses the filter's set when `mentors=1` ran) — the golden-pinned card emitter is untouched, so mentorless fixtures stay byte-identical.
 
 #### `GET /bcc/v1/users/mention-search` (v1.5)
 
@@ -4043,6 +4044,7 @@ Create a photo post on the viewer's own wall. Single photo per post; optional ca
   - `caption` (string, optional, 0–500 chars after trim) — accompanying text. Empty/missing → photo-only post.
   - `group_id` (integer, optional, > 0) — §4.7.6 group-scope. When present, the post lands inside that PeepSo group's wall (server stamps `peepso_group_id` post-meta on the new wp_post + fires `peepso_groups_new_post`). Viewer MUST be an active member: server returns `bcc_not_found 404` when the group is missing OR `secret` and the viewer isn't a member (defense-in-depth — never leaks existence), `bcc_permission_denied 403` when the viewer is not a member of an open/closed group (`error.message` is the server-pinned unlock hint, filterable via `bcc_group_post_membership_required`). Omit/0 → posts to viewer's own wall (existing behavior).
   - `visibility` (string, optional, default `members_only`) — enum `members_only` | `public_group` | `public_all`. **Only honored when `group_id` is present** (silently ignored on own-wall posts). Controls the group post's reach: `members_only` — only group members read it (group feed only); `public_group` — members plus non-members reading the group page (read-only teaser per §4.7.6), but NOT in the global `/feed`; `public_all` — group feed AND the global `/feed` (the only way a group post syndicates to the global feed; see §4.3). Stored server-side as `_bcc_post_visibility` post-meta. No response-shape change. **`public_all` is authorization-gated (not everyone may choose it):** in an `open` group any active posting member may; in a `closed`/`secret` group only the owner / group-admin roles (owner, manager, moderator) may — unless the owner opted ordinary members in via `POST /me/groups/:id/post-policy` (§4.7.3). A `member_readonly`/non-member/unauthorized request for `public_all` is **rejected** with `bcc_permission_denied 403` (backend-authoritative; a direct API call cannot bypass it), never silently down-clamped.
+  - `hall_feed` (string, optional, default `main`) — enum `main` | `ranked` *(v1.62 — Rank Phase 7, spec §21.3; multipart form field here)*. Same semantics + gate matrix as `POST /posts` `kind=status`: `ranked` only valid when `group_id` targets a Hall (else `bcc_invalid_request 400`); the author must pass `can('post_ranked_hall_feed')` (Journeyman+ AND Neutral+ AND not suspended AND not in recovery — else `bcc_forbidden 403` with `error.data.reason`); anything except the literal `ranked` clamps to `main`; ranked posts stamped `_bcc_ranked_feed = '1'`.
 - **Rate limit:** burst seatbelt — `BCC_TRUST_RATE_LIMIT_STATUS_POST` (5) per `BCC_TRUST_RATE_WINDOW_STATUS_POST` (120s) per author. Same as status / blog.
 - **Storage:** PeepSo owns the photo plumbing under the hood — wp_post (peepso-post CPT), peepso_activities row stamped with `act_module_id = 4` (PeepSoSharePhotos::MODULE_ID), peepso_photos row + thumbnail variants + Imagick metadata strip + JPEG compression. BCC's `PeepSoPhotoWriter` drives this via PeepSo's documented filter+hook surface; no parallel image pipeline.
 - **Response 200 data shape:**
@@ -4057,10 +4059,10 @@ Create a photo post on the viewer's own wall. Single photo per post; optional ca
   ```
 - **Errors:**
   - `bcc_unauthorized 401` — anonymous.
-  - `bcc_invalid_request 400` — missing `photo` field, multi-photo upload (V1 single-photo only), upload error, oversized file, unsupported mime.
+  - `bcc_invalid_request 400` — missing `photo` field, multi-photo upload (V1 single-photo only), upload error, oversized file, unsupported mime, **or `hall_feed=ranked` with no group / a non-Hall group (v1.62 §21.3)**.
   - `bcc_invalid_mention_target 400` — caption contains `@peepso_user_<id>(name)` token for a user_id that fails the §3.3.12 `MentionPolicy`. Error payload echoes `{user_id: <int>}`, no reason.
   - `bcc_too_many_mentions 400` — caption contains more than `max` mention tokens. Error payload echoes `{max: 10}`.
-  - `bcc_forbidden 403` — PeepSo's `PERM_POST` permission check refused (rare; pseudo-banned accounts).
+  - `bcc_forbidden 403` — PeepSo's `PERM_POST` permission check refused (rare; pseudo-banned accounts); **or `hall_feed=ranked` by a Hall member failing `can('post_ranked_hall_feed')` — `error.data.reason` ∈ `suspended|new_member|below_journeyman|below_neutral|in_recovery` (v1.62 §21.3)**.
   - `bcc_permission_denied 403` — `visibility=public_all` requested by a member not authorized to syndicate this group publicly (see the `visibility` rule above; filterable via `bcc_group_public_all_denied`).
   - `bcc_rate_limited 429` — burst seatbelt fired.
   - `bcc_unavailable 503` — PeepSo deactivated, tmp dir un-creatable, persist failure.
@@ -4091,6 +4093,7 @@ Create a GIF post on the viewer's own wall. Single GIF per post; optional captio
   - `caption` (string, optional, 0–500 chars after trim) — accompanying text.
   - `group_id` (integer, optional, > 0) — §4.7.6 group-scope. Same gate matrix as `POST /posts/photo` (404 missing-or-secret, 403 non-member, server-pinned unlock hint in `error.message`). Omit/0 → viewer's own wall.
   - `visibility` (string, optional, default `members_only`) — enum `members_only` | `public_group` | `public_all`. Same semantics as `POST /posts/photo` (only honored when `group_id` is present; controls group-feed / public-teaser / global-feed reach; stored as `_bcc_post_visibility` post-meta). No response-shape change.
+  - `hall_feed` (string, optional, default `main`) — enum `main` | `ranked` *(v1.62 — Rank Phase 7, spec §21.3)*. Same semantics + gate matrix as `POST /posts` `kind=status` / `POST /posts/photo`: `ranked` only valid on a Hall (`bcc_invalid_request 400` otherwise); `can('post_ranked_hall_feed')` gate (`bcc_forbidden 403` + `error.data.reason` ∈ `suspended|new_member|below_journeyman|below_neutral|in_recovery`); non-`ranked` clamps to `main`; ranked posts stamped `_bcc_ranked_feed = '1'`.
 - **Rate limit:** burst seatbelt — `BCC_TRUST_RATE_LIMIT_STATUS_POST` (5) per `BCC_TRUST_RATE_WINDOW_STATUS_POST` (120s) per author. Same as status / photo.
 - **Storage:** PeepSo handles the post_meta write under the hood. BCC's `PeepSoGifWriter` drives PeepSo's `PeepSoGiphy::after_add_post` hook by setting `$_POST['type'] = 'giphy'` + `$_POST['giphy'] = <url>` before calling `PeepSoActivity::add_post`. The activity row gets `act_module_id = 1` (status); the `peepso_giphy` post_meta on the wp_post is what discriminates this as a GIF post at hydration time (see §3.3.11).
 - **Response 200 data shape:**
@@ -4104,10 +4107,10 @@ Create a GIF post on the viewer's own wall. Single GIF per post; optional captio
   ```
 - **Errors:**
   - `bcc_unauthorized 401` — anonymous.
-  - `bcc_invalid_request 400` — empty URL, URL doesn't contain `giphy.com`, caption over 500 chars.
+  - `bcc_invalid_request 400` — empty URL, URL doesn't contain `giphy.com`, caption over 500 chars, **or `hall_feed=ranked` with no group / a non-Hall group (v1.62 §21.3)**.
   - `bcc_invalid_mention_target 400` — caption contains `@peepso_user_<id>(name)` token for a user_id that fails the §3.3.12 `MentionPolicy`. Error payload echoes `{user_id: <int>}`, no reason.
   - `bcc_too_many_mentions 400` — caption contains more than `max` mention tokens. Error payload echoes `{max: 10}`.
-  - `bcc_forbidden 403` — PeepSo's `PERM_POST` permission check refused.
+  - `bcc_forbidden 403` — PeepSo's `PERM_POST` permission check refused; **or `hall_feed=ranked` by a Hall member failing `can('post_ranked_hall_feed')` — `error.data.reason` as on `POST /posts` (v1.62 §21.3)**.
   - `bcc_rate_limited 429` — burst seatbelt fired.
   - `bcc_unavailable 503` — PeepSo deactivated, persist failure.
 - **Side effects:**
@@ -4195,15 +4198,20 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
 - **Response 200 data shape:**
   ```json
   {
-    "profile_visibility": "public" | "members" | "private",
-    "post_visibility":    "members" | "private",
-    "hide_birthday_year": false
+    "profile_visibility":        "public" | "members" | "private",
+    "post_visibility":           "members" | "private",
+    "hide_birthday_year":        false,
+    "mentor_opt_in":             false,
+    "mentor_listed":             false,
+    "mentor_eligibility_reason": "below_veteran"
   }
   ```
 - **Storage:**
   - `profile_visibility` → `peepso_users.usr_profile_acc` column (PeepSo's user-search and feed gate join against this — writing through this endpoint keeps gating coherent).
   - `post_visibility` → `peepso_profile_post_acc` user_meta. PUBLIC is intentionally absent (matches PeepSo's `access-profile-post` UI which strips it).
   - `hide_birthday_year` → `peepso_hide_birthday_year` user_meta, "1"/"0".
+  - `mentor_opt_in` *(v1.62 — Rank Phase 7, spec §21.4)* → `bcc_mentor_opt_in` user_meta, "1"/"0" (via `MentorListingService`). Read/write bool. Opting in requires **no** eligibility — a non-Veteran may pre-opt-in and lists automatically the day they qualify.
+- **Read-only mentor pair (v1.62, GET response only — never writable):** `mentor_listed` (bool) — whether the user is **actively listed** in the mentor directory *right now*; the listing composes **live** as opt-in AND `can('list_as_mentor')` (**Veteran** rank AND trust tier ≥ **Trusted** AND not suspended AND not in §14.2 Rank recovery). Nothing is materialized — when any condition fails the listing **pauses automatically on the next read** (no sweep, no flag to un-stick). `mentor_eligibility_reason` (string|null) — the resolver's stable deny slug ∈ `suspended|new_member|below_veteran|below_trusted|in_recovery` so the frontend can explain a paused listing; `null` while eligible (regardless of opt-in).
 - **PATCH** is partial — missing keys are untouched.
 
 #### `PATCH /bcc/v1/me/account/email` (V2 Phase 2.5)
@@ -5716,14 +5724,14 @@ Create a post. The `kind` discriminator routes to one of three writers (`status`
 - **Auth:** required. Anonymous → `bcc_unauthorized 401`.
 - **Content-Type:** `application/json`.
 - **Body (common):** `kind` (string, optional, default `status`) ∈ `status|review|blog` (`sanitize_key`) · `content` (string, **required**) — kind-dependent (PeepSo's `add_post` owns escaping; not `wp_kses`'d at the REST layer).
-- **Body (`kind=status`):** `group_id` (int, optional, > 0 — §4.7.6 group-scope; viewer must be an active member, validated before throttle) · `visibility` (string, optional, default `members_only`) ∈ `members_only|public_group|public_all` (only meaningful when `group_id > 0`; unrecognized clamps to `members_only`; stored `_bcc_post_visibility`; **`public_all` is authorization-gated — see the §4.14 `visibility` rule: open → any posting member, closed/secret → owner/admin or opted-in members, else `bcc_permission_denied 403`**) · content 1–500 chars.
+- **Body (`kind=status`):** `group_id` (int, optional, > 0 — §4.7.6 group-scope; viewer must be an active member, validated before throttle) · `visibility` (string, optional, default `members_only`) ∈ `members_only|public_group|public_all` (only meaningful when `group_id > 0`; unrecognized clamps to `members_only`; stored `_bcc_post_visibility`; **`public_all` is authorization-gated — see the §4.14 `visibility` rule: open → any posting member, closed/secret → owner/admin or opted-in members, else `bcc_permission_denied 403`**) · `hall_feed` (string, optional, default `main`) ∈ `main|ranked` *(v1.62 — Rank Phase 7, spec §21.3; status kind only)* — Hall feed-channel selector: `ranked` targets the Hall's second feed and is only valid when `group_id` targets a **Hall** (`ranked` with no group or a non-Hall group → `bcc_invalid_request 400` "Only Halls have a ranked feed."); anything except the literal `ranked` clamps to `main` (defense in depth — a malformed value posts to the main channel it was always allowed to post to). The write gate is `can('post_ranked_hall_feed')` (Journeyman+ AND Neutral+ AND not suspended AND not in §14.2 recovery), checked **after** membership so a Hall member below Journeyman gets the honest capability denial (`bcc_forbidden 403`, reason in `error.data.reason` ∈ `suspended|new_member|below_journeyman|below_neutral|in_recovery`), not a shape error. A ranked post is stamped `_bcc_ranked_feed = '1'` post-meta (main-channel posts carry no marker) · content 1–500 chars.
 - **Body (`kind=review`):** the target is **either** an entity page **or** a member. Entity: `target_page_id` (int, > 0; `group_id` ignored). Member (Slice 2, Architecture A — a person is a trust subject): `target_kind` = `user_profile` + `target_user_id` (int, > 0) — resolved server-side to the member's lazily-provisioned self-page; the self-page id scheme stays a backend detail. Always: `grade` (string, **required**) ∈ `trust|neutral|caution` (→ vote_type +1/0/−1) · content 1–4000 chars (the written reason — required for every review, incl. a down-review). A member down-review additionally fails closed (`bcc_forbidden`) when the target reported the voter within `BCC_TRUST_RETALIATION_WINDOW_DAYS`; self-reviews and the Trusted/Elite downvote gate apply identically to entity votes.
 - **Body (`kind=blog`, §D6):** `content` (**required**, full_text, 1–60000) · `excerpt` (**required**, 80–500) · `title` (optional, ≤ 120) · `category` (optional) ∈ `news|analysis|guide|opinion|tools|events` · `tags` (string[], ≤ 5; lowercase `[a-z0-9-]`, ≤ 24 each, deduped) · `chain_tags` (string[], ≤ 3 — chain **slugs** over the wire, resolved via `ChainRepository::getBySlug`) · `disclosure` ({tickers ≤ 20 uppercase `[A-Z0-9]` ≤ 12 each, note ≤ 500} | null — empty struct rejected, send `null`) · `sources` (string[], ≤ 20, ≤ 280 each, deduped) · `cover_image_id` (int, > 0 — from `POST /blog/cover-image`, must be an `attachment` owned by the author) · `status` (optional, default `publish`) ∈ `draft|publish` (a draft fires no `bcc_blog_post_created`, gets no activity row, reachable only via `GET /posts/:id`). `group_id` is **rejected** for `kind=blog` (V1 blogs land on the author's own wall).
 - **Rate limit:** burst seatbelt — 5 / 120s / author, keyed separately for status / blog. Reviews additionally pass through `VoteService`'s fraud/rate/coordination pipeline.
 - **Response 200 (`kind=status`):** `{ "ok": true, "feed_id": "feed_2210184", "post_id": 4012, "act_id": 2210184 }`
 - **Response 200 (`kind=review`):** `{ "ok": true, "feed_id": null, "vote_id": 9001, "page_id": 55, "grade": "trust" }` — `feed_id` is `null` (the activity row is written async by `ActivityStreamWriter` on `bcc_review_published`). For a member review `page_id` is the resolved self-page id.
 - **Response 200 (`kind=blog`):** `{ "ok": true, "post_id": 4012, "excerpt_length": 142, "full_text_length": 5300, "status": "publish" }`
-- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (unsupported kind; missing/over-length content/excerpt/title/tag/source; under-length excerpt; review missing/zero `target_page_id` (entity) or `target_user_id` (member); invalid grade; unknown category/chain_tag; malformed tags/disclosure; cover not found/owned; invalid status; `kind=blog` with `group_id`) · `bcc_invalid_mention_target` 400 (§3.3.12 `MentionPolicy`; echoes `{user_id}`) · `bcc_too_many_mentions` 400 (`{max: 10}`) · `bcc_forbidden` 403 (review eligibility / PeepSo `PERM_POST`) · `bcc_permission_denied` 403 (group-scoped status, non-member; **or `visibility=public_all` by a member not authorized to syndicate — §4.14 `visibility` rule**) · `bcc_not_found` 404 (group missing/secret) · `bcc_rate_limited` 429 · `bcc_unavailable` 503
+- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (unsupported kind; missing/over-length content/excerpt/title/tag/source; under-length excerpt; review missing/zero `target_page_id` (entity) or `target_user_id` (member); invalid grade; unknown category/chain_tag; malformed tags/disclosure; cover not found/owned; invalid status; `kind=blog` with `group_id`; **`hall_feed=ranked` with no group or a non-Hall group — v1.62 §21.3**) · `bcc_invalid_mention_target` 400 (§3.3.12 `MentionPolicy`; echoes `{user_id}`) · `bcc_too_many_mentions` 400 (`{max: 10}`) · `bcc_forbidden` 403 (review eligibility / PeepSo `PERM_POST`; **or `hall_feed=ranked` by a Hall member failing `can('post_ranked_hall_feed')` — `error.data.reason` ∈ `suspended|new_member|below_journeyman|below_neutral|in_recovery`, v1.62 §21.3**) · `bcc_permission_denied` 403 (group-scoped status, non-member; **or `visibility=public_all` by a member not authorized to syndicate — §4.14 `visibility` rule**) · `bcc_not_found` 404 (group missing/secret) · `bcc_rate_limited` 429 · `bcc_unavailable` 503
 - **Side effects:** `bcc_post_created` / `bcc_review_published` / `bcc_blog_post_created` (publish only) on the §A3 bus; subscribers run async via Action Scheduler.
 - **Cache:** `no-store`.
 - **Mapping:** `PostsEndpoint::create` (route `PostsEndpoint.php:75`) → `PostsService::createStatus` / `createReview` / `createBlog`.
@@ -5871,11 +5879,11 @@ Group-scoped, cursor-paginated activity stream. Membership-gated in the handler;
 
 - **Auth:** Anonymous OR Bearer. Members get the **full** feed (incl. `members_only`); non-members of nft/closed/open (non-secret) groups and anonymous viewers get a **public-only teaser** (`public_group` + `public_all` only; absent-meta posts excluded), enforced by an SQL INNER JOIN.
 - **Path:** `id` (int, required — group id, not slug).
-- **Query:** `cursor` (optional, opaque per §1.5) · `limit` (optional, default 20, min 1, max 50)
+- **Query:** `cursor` (optional, opaque per §1.5) · `limit` (optional, default 20, min 1, max 50) · `hall_feed` (optional, default `main`) ∈ `main|ranked` *(v1.62 — Rank Phase 7, spec §21.3)* — Hall feed-channel selector: `ranked` returns **only** ranked-channel posts (`_bcc_ranked_feed = '1'` INNER JOIN); `main`/absent returns the ordinary feed with ranked posts **excluded** (anti-join) so the channels never double-serve. **Reading the ranked channel is open to everyone** (member/non-member/anon alike — posting is what's gated, on the write side); anything except the literal `ranked` clamps to `main`. On a non-Hall group `ranked` is simply empty (no posts carry the marker outside Halls) — no error.
 - **Response 200:** `CursorEnvelope<FeedItem>` — identical shape to `/feed`: `data = { items: FeedItem[] (§3.3), pagination: { next_cursor, has_more } }`.
 - **Errors:** `bcc_invalid_request` 400 (invalid/zero id) · `bcc_not_found` 404 (group missing OR secret + non-member). No 403 in v1.24 (non-members get the teaser rather than a refusal).
 - **Cache:** `private, no-store`; `Vary: Authorization, Cookie`.
-- **Mapping:** `GroupsDetailEndpoint::feed` (route `GroupsDetailEndpoint.php:69`) → `GroupsService::gateGroupFeed` → `FeedRankingService::getGroupFeed($viewerId, $groupId, $cursor, $limit, $publicOnly)`. FE `useGroupFeed`.
+- **Mapping:** `GroupsDetailEndpoint::feed` (route `GroupsDetailEndpoint.php:69`) → `GroupsService::gateGroupFeed` → `FeedRankingService::getGroupFeed($viewerId, $groupId, $cursor, $limit, $publicOnly, $hallFeed)` (channel filter applied in bcc-core `PeepSoActivityRepository` on the group-scoped path only). FE `useGroupFeed`.
 
 #### `GET /bcc/v1/groups/:id/members` (§4.7.7)
 
@@ -5899,10 +5907,31 @@ Create a plain (non-gated, non-Hall) PeepSo group owned by the viewer. (Join/lea
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized 401`.
 - **Body (JSON):** `name` (**required**, 3–100 chars) · `description` (optional, ≤ 2000, `wp_kses_post`) · `privacy` (optional, default `open`) ∈ `open|closed|secret|trust` (→ PeepSo 0/1/2; `trust` = open + a BCC reputation gate at join) · `trust_min` (**required when `privacy=trust`**) ∈ `25|50|75` · `chain` (**required**) — chain-tag slug, immutable after creation, validated via `ChainRepository::getBySlug`.
 - **Response 201:** `{ "group_id": 5120, "slug": "evm-builders", "name": "EVM Builders", "privacy": "trust", "chain_tag": "ethereum", "trust_min": 50 }` (`trust_min` echoes the threshold for `privacy=trust`, else `null`).
-- **Errors:** `bcc_unauthorized` 401 · `bcc_forbidden` 403 (account suspended — "Your account is suspended.", admin bypass off) · `bcc_invalid_request` 400 (name length, description > 2000, missing/unknown chain, `trust` without valid `trust_min`) · `bcc_rate_limited` 429 (5/hour/user) · `bcc_internal_error` 500
+- **Errors:** `bcc_unauthorized` 401 · `bcc_forbidden` 403 (two gates, in order: **(a)** account suspended — "Your account is suspended.", admin bypass off, no `error.data`; **(b)** *(v1.62 — Rank Phase 7, spec §21.2)* the custody acquisition gate `can('create_community')`, stable machine reason in `error.data.reason`, gate order: `suspended` (vocabulary-stable but pre-empted by gate (a) on this route) → `new_member` (Apprentice+ required — missing `rank_state` row) → `below_neutral` (Trust tier Neutral+ required) → `in_recovery` (§14.2 Rank-recovery pause) → `cap_reached` → `cooldown_active`) · `bcc_invalid_request` 400 (name length, description > 2000, missing/unknown chain, `trust` without valid `trust_min`) · `bcc_rate_limited` 429 (5/hour/user) · `bcc_internal_error` 500
+- **Custody caps + cooldown (v1.62, §21.2):** per-rank ownership caps over **currently-owned User-kind groups** (counted live from PeepSo owner rows): Apprentice **2** / Journeyman **5** / Veteran **10**. Plus a **30-day global custody cooldown** re-armed by *every* custody event — create, receive, or transfer-away (`POST /me/groups/:id/transfer`) — read as `MAX(created_at)` per user from the append-only `wp_bcc_trust_community_ownership_log` ledger. A successful create appends a `create` ledger row (re-arming the caller's cooldown).
 - **Rate limit:** 5/hour/user (`group_create:{user_id}`)
 - **Cache:** `no-store`.
-- **Mapping:** `MyGroupsEndpoint::postCreate` (route `MyGroupsEndpoint.php:75`) → `PeepSoGroupWriter::createPlainGroup`; emits `group_create` audit. FE `my-groups-endpoints.ts:createPlainGroup`.
+- **Mapping:** `MyGroupsEndpoint::postCreate` (route `MyGroupsEndpoint.php:75`) → `CapabilityResolver::can('create_community')` → `PeepSoGroupWriter::createPlainGroup` → `CommunityOwnershipLogRepository::record('create')`; emits `group_create` audit. FE `my-groups-endpoints.ts:createPlainGroup`.
+
+#### `POST /bcc/v1/me/groups/:id/transfer`
+
+*(New in v1.62 — Rank Phase 7, spec §21.2.)* Hand ownership of a **User-kind (member-created)** community to another **active member**. Halls, holder (`nft`), delegator (`validator`), and `system` communities are infra- or gate-provisioned and **never transferable**. The receiver must already hold an active membership row in the group (anti-grief: an unsolicited transfer to a stranger would burn *their* cap and re-arm *their* cooldown — membership is the consent proxy). On success the PeepSo owner row moves via `PeepSoGroupWriter::transferOwnership` and **two custody rows** (giver `transfer_out`, receiver `receive`) are appended to `wp_bcc_trust_community_ownership_log` — **both parties' 30-day global custody cooldowns re-arm**. Audit-logged (`group_ownership_transferred`).
+
+- **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized 401`.
+- **Path:** `id` (int — group id). **Body (JSON):** `to_user_id` (**required**, int) — the new owner.
+- **Rate limit:** 5/hour/user (`group_transfer:{user_id}` — matches the create bucket; caps cooldown-ledger churn).
+- **Response 200:** `{ "ok": true, "group_id": 4231, "new_owner_id": 87 }`
+- **Cache:** `no-store`.
+- **Errors** (gate order is spec-locked; the first failing gate wins):
+  - `bcc_unauthorized` 401 — anonymous.
+  - `bcc_rate_limited` 429 — throttle (checked before every non-auth read).
+  - `bcc_not_found` 404 — nonexistent group, viewer not a member, **or** a pending/banned membership row — all collapse to the same 404 (no existence leak on secret groups; a *member* who isn't the owner gets 403 instead, since membership already proves existence to them).
+  - `bcc_forbidden` 403 — with the stable machine reason in `error.data.reason` **except** the not-owner case (an active non-owner member gets a plain 403, no `data`). Reason vocabulary:
+    - **giver** (the caller, via `can('transfer_community')` — deliberately **no** cap/cooldown check: the cooldown blocks *acquiring* custody, never relinquishing it): `suspended` · `new_member` · `in_recovery` (§14.2 pause).
+    - **receiver** (evaluated *for* `to_user_id` via `can('receive_community')` — the full acquisition gate; wire reason carries the `receiver_` prefix): `receiver_suspended` · `receiver_new_member` · `receiver_below_neutral` · `receiver_in_recovery` · `receiver_cap_reached` (per-rank cap over currently-owned User-kind groups: 2/5/10) · `receiver_cooldown_active` (inside their own 30-day custody cooldown).
+  - `bcc_invalid_request` 400 — non-User-kind group ("Only member-created communities can be transferred."); `to_user_id` is self, zero, or an unknown user; **or** the receiver is not already an active member of the group.
+  - `bcc_internal_error` 500 — the PeepSo ownership write failed; nothing transferred.
+- **Mapping:** `MyGroupsEndpoint::postTransfer` (route `MyGroupsEndpoint.php:138`; auth + throttle + envelope only) → `CommunityCustodyService::transfer` (the full gate chain) → `PeepSoGroupWriter::transferOwnership` → `CommunityOwnershipLogRepository::record` ×2 → `AuditLogger`.
 
 #### `GET /bcc/v1/halls/:slug`
 
@@ -6427,6 +6456,38 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.62 — 2026-08-04 — additive — Rank Phase 7 privileges
+
+Rank redesign Phase 7 (spec §21.2–§21.4, plus the §14.2 recovery
+pauses): community custody, the ranked Hall feed channel, and mentor
+listing. Every gate resolves through the `CapabilityResolver`
+(`create_community` / `receive_community` / `transfer_community` /
+`post_ranked_hall_feed` / `list_as_mentor`); stable snake_case deny
+reasons ride in `error.data.reason`. A Rank **recovery** (§14.2
+`rank_state.recovery_status='grace'`) pauses all three privilege
+families live — no sweep, no materialized flag.
+
+- **Community custody (§21.2):** `POST /me/groups` gains the custody
+  acquisition gate — per-rank ownership caps (Apprentice 2 /
+  Journeyman 5 / Veteran 10 currently-owned User-kind groups) + a
+  **30-day global custody cooldown** re-armed by every create /
+  receive / transfer-away event (append-only ledger
+  `wp_bcc_trust_community_ownership_log`). **NEW
+  `POST /bcc/v1/me/groups/:id/transfer`** — hand a User-kind
+  (member-created) community to another **active member**; both
+  parties' cooldowns re-arm.
+- **Ranked Hall feed (§21.3):** `POST /posts` (kind=status) +
+  `/posts/photo` + `/posts/gif` gain optional `hall_feed` ∈
+  `main|ranked` (write gate: Journeyman+ AND Neutral+ AND Hall
+  member); `GET /groups/:id/feed` gains the same param on the read
+  side (read open to everyone; `main` excludes ranked posts). Ranked
+  posts carry `_bcc_ranked_feed` post-meta.
+- **Mentors (§21.4):** `/me/profile-prefs` gains `mentor_opt_in` (rw)
+  + read-only `mentor_listed` / `mentor_eligibility_reason`; listing
+  composes live (Veteran AND Trusted+ AND no recovery/suspension AND
+  opt-in) and pauses automatically. `GET /members` gains the
+  `mentors` filter + additive per-row `is_mentor: true`.
 
 ### v1.61 — 2026-08-04 — additive — delete-post + suggestion avatars
 
