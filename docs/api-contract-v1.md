@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.63 · 2026-08-04 · Phase 1 deliverable
+**Status:** Draft v1.64 · 2026-08-04 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -964,6 +964,7 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
 - `permissions.can_follow` becomes meaningful (`allowed: true` if the viewer can watch this user as a member card).
 - `permissions.can_message` (v1.53) mirrors the DM write gates exactly — it runs the same messaging-policy evaluator as `POST /me/conversations` (mutual block, recipient `chat_enabled`, friends-only, sender suspension/ban). It was previously a bare chat-enabled probe, so a friends-only or mutually-blocked recipient rendered an enabled Message button that always failed on submit. The `{allowed, unlock_hint}` shape is unchanged, but `unlock_hint` may now be non-null on this surface (e.g. the friends-only copy) and `allowed` is stricter. The mutual-block and DMs-off cases remain indistinguishable to the client.
 - `wallets` is **`[]`** — always, for every viewer who is not the profile owner (authenticated stranger *and* anonymous alike). Not a masked address, not a wallet-link id, no entries at all. Wallet connections are private account data; the only wallet signal that crosses a member boundary is the derived `verifications.wallets_verified` count, which remains accurate because the server sources it from the repository rather than counting this array. See [docs/wallet-privacy-policy.md](wallet-privacy-policy.md).
+- `verifications.profile_completeness` *(documented v1.64 — shipped earlier)* is the 0–100 percentage `QuestValidator` computes from filled profile fields. `verifications.profile_complete` *(v1.64)* is the server's completeness **verdict** (same `QuestValidator` code path the Apprentice-readiness check uses — the threshold never leaves PHP) and is **own-view only: the key is absent for every non-self viewer**; frontends treat absence as not-complete.
 
 **Field rules:**
 
@@ -1042,7 +1043,9 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
       "x_username": "blacksmith",
       "github_verified": false,
       "github_username": null,
-      "wallets_verified": 3
+      "wallets_verified": 3,
+      "profile_completeness": 84,
+      "profile_complete": true
     },
     "engagement": {
       "endorsements_received": 12,
@@ -2382,7 +2385,7 @@ Full User view-model.
 Paginated directory of human members. Sibling to §4.9 `/cards` (entity-card directory). **Each item is a full member `Card` view-model (§3.2, `card_kind: "member"`)** so the frontend renders directory rows through the canonical `<CardFactory>` — the same component the entity-card directory uses. The per-member back-of-card signal blocks (verifications, engagement, owned-page typed counts, primary Hall) ride along on the card's `member_dossier` block; nothing the older slim `MemberSummary` shape carried is lost. Click-through navigates to `/u/:handle` for the full profile.
 
 - **Auth:** Anonymous OR Bearer (privacy-filtered — `real_name_hidden` honored)
-- **Query:** `page` (1-indexed, default 1), `per_page` (default 20, max 50), `q` (optional — bounded to 64 chars, matched against `user_login` + `display_name` + `user_nicename`), `type` (optional — one of `validator | project | nft | dao`; restricts results to users with ≥1 owned page of that canonical type, intersecting with `q` when both are present), `mentors` (optional bool — *v1.62, Rank Phase 7 spec §21.4*; restricts results to **actively listed mentors**: explicit `mentor_opt_in` AND the live `list_as_mentor` capability (Veteran AND Trusted+ AND not suspended AND not in Rank recovery), composed at read time via `MentorListingService::activeMentorIds`; intersects (AND) with the other filter axes)
+- **Query:** `page` (1-indexed, default 1), `per_page` (default 20, max 50), `q` (optional — bounded to 64 chars, matched against `user_login` + `display_name` + `user_nicename`), `type` (optional — one of `validator | project | nft | dao`; restricts results to users with ≥1 owned page of that canonical type, intersecting with `q` when both are present), `mentors` (optional bool — *v1.62, Rank Phase 7 spec §21.4*; restricts results to **actively listed mentors**: explicit `mentor_opt_in` AND the live `list_as_mentor` capability (Veteran AND Trusted+ AND not suspended AND not in Rank recovery), composed at read time via `MentorListingService::activeMentorIds`; intersects (AND) with the other filter axes), `verified[]` (optional array — *documented v1.64, shipped earlier*; each ∈ `x | github | wallet`; **AND semantics** — every listed provider must be verified for the member to match; intersects with the other filter axes)
 - **Response 200:**
   ```json
   {
@@ -3736,12 +3739,13 @@ PeepSo's `peepso_notifications` table is the storage layer (§I1 "extend, don't 
   - `bcc_reaction` → `/?focus=<act_id>` (jump back to the post)
   - `bcc_review` → `/v/<page-handle>` etc. (the reviewed page, route prefix per kind)
   - `bcc_card_watched` → `/u/<actor-handle>` (the watcher's profile) — legacy `bcc_card_watched` resolves identically during deprecation
-  - `bcc_rank_up` → `/u/<recipient-handle>` (your own profile — progression strip lives there)
+  - `bcc_rank_up` → `/me/progression` *(v1.64 — was `/u/<recipient-handle>`; the standing page is where promotion detail lives)*
+  - the other rank/finding self-notices *(v1.64)* — `bcc_rank_demoted`, `bcc_rank_recovery_started`, `bcc_rank_recovery_reminder`, `bcc_rank_decay_warning`, `bcc_rank_finding_issued`, `bcc_rank_appeal_outcome`, `bcc_rank_finding_reversed` → `/me/progression` (previously fell to the `/` default)
   - `bcc_welcome` → `/` (the floor — the user is probably already there when they see it)
   - `bcc_mention` → `/?focus=<act_id>` (jump to the floor focused on the post containing the @-tag; for comment mentions `act_id` is the **parent post's** act_id — the FE has no comment-anchor consumer in V1)
   - `bcc_hall_post` → `/halls/<slug>` resolved from `external_id` (the Hall's group_id). Falls back to `/halls` when the group is no longer a Hall (deleted, `_bcc_group_kind` meta cleared).
   - `bcc_comment_received` → `/?focus=<act_id>` (jump to the floor focused on the parent post that received the comment; mirrors REACTION + MENTION shape — the FE has no comment-anchor consumer in V1). Covers both the "commented on your post" and the v1.45 "replied to your comment" messages — same type, same link shape.
-- Self-notifications are emitted only for `bcc_rank_up` + `bcc_welcome` (audit trail beyond the §O1.2 Heavy toast / first-touch retention). Other types skip the dispatch when actor === recipient.
+- Self-notifications are emitted for `bcc_rank_up` + `bcc_welcome` and *(v1.63)* every rank/finding notice listed above (all are to==from system events). Other types skip the dispatch when actor === recipient.
 
 #### `GET /bcc/v1/me/notifications`
 
@@ -4295,6 +4299,9 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
     "profile_visibility":        "public" | "members" | "private",
     "post_visibility":           "members" | "private",
     "hide_birthday_year":        false,
+    "hide_online":               false,
+    "hide_from_search":          false,
+    "default_post_audience":     "public" | "members" | "private",
     "mentor_opt_in":             false,
     "mentor_listed":             false,
     "mentor_eligibility_reason": "below_veteran"
@@ -4304,6 +4311,9 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
   - `profile_visibility` → `peepso_users.usr_profile_acc` column (PeepSo's user-search and feed gate join against this — writing through this endpoint keeps gating coherent).
   - `post_visibility` → `peepso_profile_post_acc` user_meta. PUBLIC is intentionally absent (matches PeepSo's `access-profile-post` UI which strips it).
   - `hide_birthday_year` → `peepso_hide_birthday_year` user_meta, "1"/"0".
+  - `hide_online` *(documented v1.64 — shipped earlier)* → `peepso_hide_online_status` user_meta, "1"/"0" — PeepSo's presence indicators treat "1" as "hide the green dot".
+  - `hide_from_search` *(documented v1.64 — shipped earlier)* → `peepso_is_hide_profile_from_user_listing` user_meta, "1"/"0" — "1" excludes the user from directory + member search (direct profile links still work).
+  - `default_post_audience` *(documented v1.64 — shipped earlier)* → `peepso_last_used_post_privacy` user_meta (int 10/20/40 ↔ public/members/private) — defaults PeepSo's audience picker; PeepSo itself overwrites it on every post, so this is a default, not a lock.
   - `mentor_opt_in` *(v1.62 — Rank Phase 7, spec §21.4)* → `bcc_mentor_opt_in` user_meta, "1"/"0" (via `MentorListingService`). Read/write bool. Opting in requires **no** eligibility — a non-Veteran may pre-opt-in and lists automatically the day they qualify.
 - **Read-only mentor pair (v1.62, GET response only — never writable):** `mentor_listed` (bool) — whether the user is **actively listed** in the mentor directory *right now*; the listing composes **live** as opt-in AND `can('list_as_mentor')` (**Veteran** rank AND trust tier ≥ **Trusted** AND not suspended AND not in §14.2 Rank recovery). Nothing is materialized — when any condition fails the listing **pauses automatically on the next read** (no sweep, no flag to un-stick). `mentor_eligibility_reason` (string|null) — the resolver's stable deny slug ∈ `suspended|new_member|below_veteran|below_trusted|in_recovery` so the frontend can explain a paused listing; `null` while eligible (regardless of opt-in).
 - **PATCH** is partial — missing keys are untouched.
@@ -6550,6 +6560,24 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.64 — 2026-08-04 — additive + documentation repairs — post-redesign cleanup batch
+
+- **NEW `verifications.profile_complete`** (own-view only, absent for
+  non-self viewers) — the server's completeness verdict via the same
+  `QuestValidator` path Apprentice readiness uses; the FE dropped its
+  mirrored threshold constant.
+- **Notification links**: `bcc_rank_up` now `/me/progression` (was the
+  profile); all seven other rank/finding notices route there too
+  (previously fell to `/`).
+- **Documentation repairs (shipped earlier, never documented)**:
+  `/me/profile-prefs` `hide_online` / `hide_from_search` /
+  `default_post_audience`; `/members` `verified[]` filter (AND
+  semantics); `verifications.profile_completeness`.
+- Non-contract, same batch: comment deletion now reverses the comment's
+  Rank contribution evidence (closing the publish→delete farming vector
+  the post path closed in v1.61); the live contract checker dropped its
+  retired `/locals` probe.
 
 ### v1.63 — 2026-08-04 — additive + one changed block — Rank Phase 8: recovery machine + misconduct findings
 
