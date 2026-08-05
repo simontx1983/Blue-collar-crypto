@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.66 · 2026-08-04 · Phase 1 deliverable
+**Status:** Draft v1.67 · 2026-08-05 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1235,8 +1235,9 @@ Feed items share an envelope and vary by `post_kind`.
 - `comment_count` is the number of visible (non-trashed) comments on the post at response-time. Server-computed via one batched COUNT(*) GROUP BY across the page. Clients MUST treat this as a count badge — the actual list is fetched separately via §4.13. Always present; `0` when there are no comments.
 - `group` is **omitted** (not `null`) when the post does NOT come from a PeepSo group. When present, the post is a wall post inside a group:
   - `id` — group_id (matches `group_id` in §4.7.x endpoints).
-  - `type` ∈ `nft` | `hall` | `user` | `system` — matches §4.7.2 group `type`.
+  - `type` ∈ `nft` | `validator` | `hall` | `user` | `system` — matches §4.7.2 group `type`.
   - `verification` is `null` for non-NFT groups; for NFT-gated groups it carries `{kind: 'on_chain', label: 'On-Chain Verified'}`. Frontend MUST render `label` verbatim — never abbreviate to "Verified" alone.
+  - `name` (optional) — the group's display name (`post_title`). `link` (optional) — the group's canonical frontend route: `/halls/{slug}` when `type == hall`, else `/groups/{slug}` (slug = `post_name`). Together they back the "Posted in {name} →" attribution line. **Secret-group privacy gate:** `name` + `link` reveal the group's *identity*, so they are emitted **only when the viewer is allowed to know the group exists** — i.e. the group is not secret, OR the viewer is an active member of it. For a secret group a non-member or anonymous viewer sees a syndicated post from, both fields are **omitted** and only the opaque `{id, type, verification}` ship (byte-compatible with the pre-`name`/`link` shape). Both are also omitted for a deleted/unresolvable group. Composed server-side via `CardUrlMap::groupUrl`; membership is one batched read scoped to the page's secret groups (no N+1, no anon query).
   - **No server-side ranking is applied based on this field in v1.** The Floor feed continues to order strictly by recency. The `group` block is metadata for badge rendering and (optional) client-side prioritization. A scored ranking layer is deferred until usage telemetry exists to tune it honestly.
   - **Mapping:** `peepso_group_id` post-meta on the activity's wp_post (PeepSo writes this when a status post is created inside a group) → `GroupContextResolver::forManyGroups`. Batched per page; no N+1.
 - V1 author block is **user-only** — every post in V1 is authored by a WP user (status, review, watch_batch, page_claim, dispute_signed, blog). System-emitted signals (§3.3.5) currently ride the same shape with the system actor's user_id; their `post_kind` discriminates them, not the author block.
@@ -6590,6 +6591,18 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.67 — 2026-08-05 — additive — feed group attribution ("Posted in …")
+
+- **§3.3 FeedItem `group` block** gains optional `name` + `link` so the
+  feed can render a "Posted in {name} →" attribution per group post.
+  `link` is a server-built relative route (`/halls/{slug}` for halls,
+  else `/groups/{slug}`, via `CardUrlMap::groupUrl`). **Secret-group
+  privacy gate:** both fields are emitted only when the viewer may know
+  the group exists (non-secret, or an active member); for a secret
+  group a non-member/anon viewer sees the byte-identical
+  `{id, type, verification}` shape (no leak). Also corrects the
+  `group.type` enum to include `validator` (was missing).
 
 ### v1.66 — 2026-08-04 — additive — "Mark helpful" endorsement (Rank helping category)
 
