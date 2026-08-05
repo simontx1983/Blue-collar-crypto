@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.68 · 2026-08-05 · Phase 1 deliverable
+**Status:** Draft v1.69 · 2026-08-05 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -5632,7 +5632,7 @@ Block a target user. Idempotent — re-blocking returns `state: "existing"`.
 - **Errors:** `bcc_unauthorized` (401) · `bcc_rate_limited` (429, > 20 creates/60s, checked before target resolution) · `bcc_invalid_request` (400, `user_id` ≤ 0 or self-block) · `bcc_not_found` (404, target missing) · `bcc_unavailable` (503, insert failed)
 - **Audit:** `user_blocked` fires only on the `created` transition.
 - **Rate limit:** 20/60s/viewer
-- **Mapping:** `MyBlocksEndpoint::create` (route `MyBlocksEndpoint.php:48`, CREATABLE entry) → `PeepSoBlockWriter::block` (fires `peepso_user_blocked` + `bcc_user_blocked` on create). FE `blocks-endpoints.ts:blockUser`.
+- **Mapping:** `MyBlocksEndpoint::create` (route `MyBlocksEndpoint.php:48`, CREATABLE entry) → `PeepSoBlockWriter::block` (fires `peepso_user_blocked` on create — PeepSo-native-wire compat; the block audit trail is written inline via `AuditLogger`, not a subscriber). FE `blocks-endpoints.ts:blockUser`.
 
 #### `DELETE /bcc/v1/me/blocks/:user_id`
 
@@ -5894,7 +5894,7 @@ Remove the viewer's reaction. Idempotent — removing when nothing is set is a n
 - **Rate limit:** 60/min/user (shared `react` budget).
 - **Response 200:** §2.11 `ReactionState` for the post's grammar (`viewer_reaction` typically `null`).
 - **Errors:** same as `POST /reactions` minus cross-grammar — `bcc_unauthorized` 401 · `bcc_rate_limited` 429 · `bcc_invalid_request` 400 · `bcc_permission_denied` 403 · `bcc_internal_error` 500
-- **Side effects:** `bcc_reaction_removed` on the §A3 bus.
+- **Side effects:** none (removes the reaction row only).
 - **Cache:** `no-store`.
 - **Mapping:** `ReactionsEndpoint::removeReaction` (route `ReactionsEndpoint.php:105`). FE `reaction-endpoints.ts:removeReaction`.
 
@@ -5910,7 +5910,7 @@ Stoke — the forge-fire engagement toggle (v1.33 backfill). X-"like" model: one
   - `viewer_has_stoked` (bool)
   - `stoke_count` (int) — public total
 - **Errors:** `bcc_unauthorized` 401 · `bcc_rate_limited` 429 · `bcc_invalid_request` 400 (non-positive id) · `bcc_permission_denied` 403 (group-scoped post, non-member — `GroupInteractionGate`, same posture as `/reactions`) · `bcc_internal_error` 500 (repository write failed)
-- **Side effects:** `bcc_stoke_added` / `bcc_stoke_removed` on the §A3 bus.
+- **Side effects:** none (toggles the stoke row only).
 - **Cache:** `no-store`.
 - **Mapping:** `StokeEndpoint::addStoke` / `removeStoke` → `StokeRepository`. FE `stoke-endpoints.ts`.
 
@@ -5923,7 +5923,7 @@ Stoke on a **comment** (v1.38). A comment is itself a `peepso_activities` row, s
 - **Rate limit:** 60/min/user (key `comment_stoke`, shared across add/remove, separate bucket from post `stoke`).
 - **Response 200 (both verbs):** the comment's stoke pair only — `{ stoke_count, viewer_has_stoked }`. No reaction envelope, no `heat_stage`.
 - **Errors:** `bcc_unauthorized` 401 · `bcc_rate_limited` 429 · `bcc_invalid_request` 400 (non-positive id) · `bcc_not_found` 404 (act_id is not a published comment row — top-level post act_ids 404 here by design) · `bcc_permission_denied` 403 (parent post is group-scoped, viewer not a member — `GroupInteractionGate::checkPost`) · `bcc_internal_error` 500 (repository write failed)
-- **Side effects:** `bcc_stoke_added` / `bcc_stoke_removed` on the §A3 bus (same events as post stokes; the payload act_id may now be a comment's).
+- **Side effects:** none (toggles the comment stoke row only).
 - **Cache:** `no-store`.
 - **Mapping:** `CommentStokeEndpoint::addStoke` / `removeStoke` → `CommentRepository::getCommentMeta` (parent resolve) + `StokeRepository`. FE `comment-endpoints.ts:setCommentStoke/removeCommentStoke` via `useCommentStoke`.
 
@@ -6574,7 +6574,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
   - `GET /me/notifications` — cursor-paginated list scoped to `not_module_id = BCC_NOTIFICATION_MODULE_ID` (= 9000). Server-rendered messages + server-built `link` per type per §A2.
   - `GET /me/notifications/unread-count` — drives the bell badge; frontend polls 60s + on window focus.
   - `POST /me/notifications/mark-read` — single (`{id: N}`) + bulk (`{}`) in one route. Idempotent.
-  - `NotificationDispatcher` subscribes to `bcc_reaction_added`, `bcc_review_published`, `bcc_card_watched` (and its legacy alias `bcc_card_watched` during the §1.1.1 deprecation window), `bcc_rank_awarded`. Writes through `PeepSoNotificationWriter` (bcc-core) — single-graph rule per §I1. The `bcc_reaction_added` / `bcc_reaction_removed` events were added to `ReactionsEndpoint` as part of this work (only event the catalogue was missing).
+  - `NotificationDispatcher` subscribes to `bcc_reaction_added`, `bcc_review_published`, `bcc_card_watched` (and its legacy alias `bcc_card_watched` during the §1.1.1 deprecation window), `bcc_rank_awarded`. Writes through `PeepSoNotificationWriter` (bcc-core) — single-graph rule per §I1. The `bcc_reaction_added` event is emitted by `ReactionsEndpoint` for this subscriber (its subscriber-less `bcc_reaction_removed` twin was pruned in v1.69).
 - **Celebrations endpoints (§O1.2 out-of-band path)** — fully wired:
   - `GET /me/celebrations/pending` — reads the single-slot `wp_usermeta.bcc_pending_celebration` stash. Frontend polls 60s + on window focus.
   - `POST /me/celebrations/consume` — clears the stash. Idempotent.
@@ -6592,6 +6592,22 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.69 — 2026-08-05 — §A3 side-effect cleanup (prune orphan events)
+
+- Removed five subscriber-less §A3 internal events that never had a consumer:
+  `bcc_stoke_added` / `bcc_stoke_removed` (POST/DELETE post + comment stokes),
+  `bcc_reaction_removed` (DELETE reaction), and `bcc_user_blocked` /
+  `bcc_user_unblocked` (block writer — the block audit trail is written inline
+  via `AuditLogger`, not via a subscriber). The endpoints are otherwise
+  unchanged; they simply no longer emit a dead event. `bcc_reaction_added`
+  (wired to the `NotificationDispatcher`) is unaffected.
+- `bcc_content_auto_hidden` now has a wired consumer — an audit-log entry per
+  auto-hide (admin hides were already audited; this closes the gap). The event
+  is unchanged.
+- `bcc_dispute_status_changed` retained — it carries a documented cross-plugin
+  integration contract and fires on real transitions.
+- No REST request/response shape changed.
 
 ### v1.68 — 2026-08-05 — group route canonicalization (non-hall → /communities)
 
