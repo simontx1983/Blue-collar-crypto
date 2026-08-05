@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.71 · 2026-08-05 · Phase 1 deliverable
+**Status:** Draft v1.72 · 2026-08-05 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -503,7 +503,10 @@ view-model (not on others' profiles) AND is served standalone by
 `member_state` discriminates the two variants. **New Member is an
 account state, NOT a rank** — the catalog has exactly three rungs
 (Apprentice / Journeyman / Veteran, §4.8) — so a New Member gets a
-readiness view instead of rank math.
+readiness view instead of rank math. But the **rank-chip is never empty**
+(v1.72): `rank` (the catalog key) stays `null`, while `rank_label` renders
+the literal **`"New Member"`** status chip (§D-3), so every post / comment /
+profile shows a chip (New Member · Neutral tier), not a hole.
 
 **Shape (ranked member — `member_state: "ranked"`):**
 
@@ -556,7 +559,7 @@ readiness view instead of rank math.
   "progression": {
     "member_state": "new_member",
     "rank": null,
-    "rank_label": null,
+    "rank_label": "New Member",
     "readiness": {
       "profile_setup": true,
       "verified_identity": true,
@@ -972,11 +975,11 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
 
 - `trust_score`, `reputation_tier`, `reputation_tier_label`, `member_state`, `rank`, `rank_label`, `current_rank_label`, `is_in_good_standing`, `flags` — all derived per §A4 by `bcc-trust`. Frontend renders, never derives.
 - `member_state` (v1.59) ∈ `"new_member" | "ranked"` — **ALWAYS present** on member payloads. It distinguishes the **New Member account state** from a data failure: an API/read fault can never masquerade as "new member" because the state is an explicit field, never an absence. New Member is an account state, **NOT** a rank — the rank catalog has exactly three rungs (§4.8).
-- `rank`, `rank_label`, `current_rank_label` are **NULLABLE (v1.59)**: all three are `null` when `member_state` is `"new_member"` (no rank_state row). For ranked members, `rank` is the earned catalog key and the labels are its §A2 display string.
+- `rank` is **NULLABLE**: `null` when `member_state` is `"new_member"` (no rank_state row — New Member is not a catalog rung), else the earned catalog key. `rank_label` / `current_rank_label` are **always a string for a member** (v1.72): the earned rung's §A2 label for ranked members, or the literal **`"New Member"`** status chip for New Members — so the rank-chip is never empty. They are `null` only on **non-member** entity cards (validator / project / creator / community), which have no rank axis.
 - `reputation_tier` ∈ `elite | trusted | neutral | caution | risky`. **Required** on every member and card surface as of v1.57 — it was optional, and the optionality is what let consumers fall back to the retired `card_tier` and lose the ability to show a risky member at all.
 - `reputation_tier_label` is the trust-tier name (the chip a human reads): `risky → "Risky"`, `caution → "Caution"`, `neutral → "Neutral"`, `trusted → "Trusted"`, `elite → "Elite"`. Always present on member and entity surfaces; `null` only on `community` cards, which have no trust system.
 - **`card_tier` / `tier_label` are RETIRED (v1.57).** The collectible-rarity vocabulary is gone — see §10 changelog for the full rationale. Do not reintroduce a rarity mapping anywhere; there is one tier axis and it is `reputation_tier`.
-- `current_rank_label` mirrors `rank_label` exactly (same nullable string; e.g. `"Veteran"`, or `null` for New Members). It is a member-axis field kept for surface compatibility.
+- `current_rank_label` mirrors `rank_label` exactly (e.g. `"Veteran"`, or `"New Member"` for New Members). It is a member-axis field kept for surface compatibility.
 - `flags` is an array of short slugs; if non-empty, the frontend may render moderation chips. V1 codes: `suspended`, `shadow_limited`, `hidden`, `under_review`.
 - Hidden privacy fields (per `privacy.*_hidden: true`) cause the corresponding sections in `counts`, `wallets`, etc. to either be omitted or zeroed depending on the viewer's relationship — server decides, client doesn't.
 - `cover_photo_url` is `null` when no custom cover photo is set; the frontend renders a default treatment in that case. URL is absolute (per §1.7) and points at PeepSo's stored cover image. Self-edits go through `PATCH /me/profile/cover` (multipart upload) — see §V2 Phase 2 endpoints.
@@ -3425,7 +3428,7 @@ so a runtime label override would desync the two surfaces.
   }
   ```
 - **Viewer block variants:** an authenticated **New Member** gets
-  `{ "member_state": "new_member", "rank": null, "rank_label": null }`.
+  `{ "member_state": "new_member", "rank": null, "rank_label": "New Member" }`.
   An **anonymous** viewer gets the all-null object
   `{ "member_state": null, "rank": null, "rank_label": null }` —
   `member_state: null` means "no viewer", which is distinct from the
@@ -6626,6 +6629,25 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.72 — 2026-08-05 — New Member rank-chip (never empty) + member_state on author badges
+
+- **The rank-chip is never empty for a member.** A New Member's `rank_label`
+  now renders the literal **`"New Member"`** status chip (§D-3) instead of
+  `null`. `rank` stays `null` — New Member is a status chip, not a catalog
+  rung — so this is **display only**, never authorization (the gates read the
+  `rank_state` row, not the label). Fixes the regression where a New Member's
+  post / comment / profile showed a blank rank slot next to everyone else's
+  chip. `current_rank_label` mirrors it (`"New Member"`).
+- **`member_state` added to the feed + comment author badges and the member
+  card** (`AuthorBadgeResolver`, `FeedHydrationPipeline`, `CommentService`,
+  `CardViewService`) — it was already on the profile summary (v1.59).
+  `∈ "new_member" | "ranked"`; lets the frontend style the New Member chip
+  distinctly from an earned rank without string-matching the label.
+- **Non-member** entity cards (validator / project / creator / community) keep
+  `rank_label: null` — they have no rank axis; unchanged.
+- Display-only: no gate, no rank-taxonomy change (still exactly 3 rungs), no
+  REST route or request/response field removed.
 
 ### v1.71 — 2026-08-05 — vote-weight maturity vests from signup, not Apprentice-award
 
