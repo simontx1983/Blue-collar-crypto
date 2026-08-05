@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.67 · 2026-08-05 · Phase 1 deliverable
+**Status:** Draft v1.68 · 2026-08-05 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1237,7 +1237,7 @@ Feed items share an envelope and vary by `post_kind`.
   - `id` — group_id (matches `group_id` in §4.7.x endpoints).
   - `type` ∈ `nft` | `validator` | `hall` | `user` | `system` — matches §4.7.2 group `type`.
   - `verification` is `null` for non-NFT groups; for NFT-gated groups it carries `{kind: 'on_chain', label: 'On-Chain Verified'}`. Frontend MUST render `label` verbatim — never abbreviate to "Verified" alone.
-  - `name` (optional) — the group's display name (`post_title`). `link` (optional) — the group's canonical frontend route: `/halls/{slug}` when `type == hall`, else `/groups/{slug}` (slug = `post_name`). Together they back the "Posted in {name} →" attribution line. **Secret-group privacy gate:** `name` + `link` reveal the group's *identity*, so they are emitted **only when the viewer is allowed to know the group exists** — i.e. the group is not secret, OR the viewer is an active member of it. For a secret group a non-member or anonymous viewer sees a syndicated post from, both fields are **omitted** and only the opaque `{id, type, verification}` ship (byte-compatible with the pre-`name`/`link` shape). Both are also omitted for a deleted/unresolvable group. Composed server-side via `CardUrlMap::groupUrl`; membership is one batched read scoped to the page's secret groups (no N+1, no anon query).
+  - `name` (optional) — the group's display name (`post_title`). `link` (optional) — the group's canonical frontend route: `/halls/{slug}` when `type == hall`, else `/communities/{slug}` (slug = `post_name`; matches the §4.7.5 group-card `links.self`). Together they back the "Posted in {name} →" attribution line. **Secret-group privacy gate:** `name` + `link` reveal the group's *identity*, so they are emitted **only when the viewer is allowed to know the group exists** — i.e. the group is not secret, OR the viewer is an active member of it. For a secret group a non-member or anonymous viewer sees a syndicated post from, both fields are **omitted** and only the opaque `{id, type, verification}` ship (byte-compatible with the pre-`name`/`link` shape). Both are also omitted for a deleted/unresolvable group. Composed server-side via `CardUrlMap::groupUrl`; membership is one batched read scoped to the page's secret groups (no N+1, no anon query).
   - **No server-side ranking is applied based on this field in v1.** The Floor feed continues to order strictly by recency. The `group` block is metadata for badge rendering and (optional) client-side prioritization. A scored ranking layer is deferred until usage telemetry exists to tune it honestly.
   - **Mapping:** `peepso_group_id` post-meta on the activity's wp_post (PeepSo writes this when a status post is created inside a group) → `GroupContextResolver::forManyGroups`. Batched per page; no N+1.
 - V1 author block is **user-only** — every post in V1 is authored by a WP user (status, review, watch_batch, page_claim, dispute_signed, blog). System-emitted signals (§3.3.5) currently ride the same shape with the system actor's user_id; their `post_kind` discriminates them, not the author block.
@@ -3699,12 +3699,13 @@ Groups vertical — separate cache + rate-limit bucket. Returns PeepSo group row
         "slug": "cosmos-hall",
         "description": "The Cosmos chain's home hall.",
         "avatar_url": "https://…",
-        "group_url": "/halls/cosmos-hall"
+        "group_url": "/communities/cosmos-hall"
       }
     ],
     "meta": { "count": 1, "query": "cosmos" }
   }
   ```
+  - `group_url` is a **relative** Next.js route (rendered verbatim by the frontend; an absolute URL would navigate off the headless app). Group search is **not hall-aware** — every kind, halls included, resolves through the cross-kind `/communities/{slug}` page, so `group_url` is always `/communities/{slug}`.
 - **Errors (legacy WP shape):**
   - `rate_limit_exceeded` (HTTP 429)
   - `group_search_unavailable` (HTTP 503; `Retry-After: 5`)
@@ -6591,6 +6592,32 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.68 — 2026-08-05 — group route canonicalization (non-hall → /communities)
+
+- **Non-hall groups now canonicalize on `/communities/{slug}`** (halls stay
+  `/halls/{slug}`). This aligns three surfaces that had drifted onto the
+  legacy `/groups/{slug}` route with the §4.7.5 group-card contract, which
+  already specified `links.self = /communities/{slug}`:
+  - **§3.3 FeedItem `group.link`** — the non-hall value moves `/groups/{slug}`
+    → `/communities/{slug}` (supersedes v1.67; halls unchanged). Composed via
+    `CardUrlMap::groupUrl`, whose non-hall branch is now `/communities/`.
+  - **§4.7.5 group detail `links.self`** — `GroupsService` now emits the
+    already-documented `/communities/{slug}` (it had been emitting
+    `/groups/{slug}` in code — a doc/code drift, now closed). No contract
+    text change; code caught up to spec.
+  - **Group search `group_url`** — now a **relative** Next.js community route
+    `/communities/{slug}` (was an absolute PeepSo URL with a `/groups/`
+    fallback, which violated the frontend's relative-route contract and could
+    navigate users off the headless app). Not hall-aware — halls resolve via
+    the cross-kind `/communities/[slug]` page.
+- **`/groups/[slug]` frontend route retired** — a thin duplicate of the
+  richer, sub-route-bearing `/communities/[slug]` page (same `GET
+  /bcc/v1/groups/{slug}` view-model). No surface emits `/groups/{slug}` any
+  more; `/communities/[slug]` and `/halls/[slug]` are the canonical group
+  routes.
+- URLs only — the frontend renders these verbatim. No request/response schema
+  field was added or removed.
 
 ### v1.67 — 2026-08-05 — additive — feed group attribution ("Posted in …")
 
