@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.69 · 2026-08-05 · Phase 1 deliverable
+**Status:** Draft v1.70 · 2026-08-05 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -586,9 +586,11 @@ readiness view instead of rank math.
 - `trust_windows` maps `journeyman` / `veteran` to
   `{qualifying, required, window, min_tier}` — qualifying days at
   `min_tier`-or-better within the trailing `window` days.
-- `vesting` is the §16.3 Apprentice maturity ramp: `maturity` ∈
-  (floor, 1.0], linear over `span_days` from the Apprentice award epoch
-  (survives promotion). `decay` reports inactivity decay
+- `vesting` is the §16.3 account-tenure maturity ramp: `maturity` ∈
+  (floor, 1.0], linear over `span_days` from the member's **signup date**
+  (`user_registered`) — anchoring on account tenure (not the Apprentice
+  award moment) means onboarding time is not a vesting penalty;
+  `days_elapsed` counts from signup. `decay` reports inactivity decay
   (`{active, points}`).
 - `recovery` — **shape CHANGED at v1.63 (Rank Phase 8)**: `null` when
   the member is not in recovery, else
@@ -6592,6 +6594,22 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.70 — 2026-08-05 — vote-weight maturity vests from signup, not Apprentice-award
+
+- **§16.3 maturity re-anchored to account tenure (signup).** The vote-weight
+  maturity ramp (floor → 1.0 over `span_days`) now measures days from the
+  member's registration date (`wp_users.user_registered`) instead of
+  `apprentice_awarded_at`. Onboarding time (the New Member → Apprentice
+  confirmation) is no longer a vesting penalty — a member who lurked before
+  engaging isn't restarted at full ramp when they confirm. The **gate is
+  unchanged**: New Members still can't cast a weighted vote (rank multiplier
+  0) until confirmed; only the *clock* moved.
+- **§2.5 / `GET /me/progression` `vesting`**: same `{maturity, days_elapsed,
+  span_days}` shape, but `days_elapsed` now counts from signup. No field
+  added or removed.
+- Applies to both weight paths (page-vote `castPageVote` and the dispute/poll
+  ballot snapshot) via the shared `VoteWeightCalculator::maturity()` seam.
 
 ### v1.69 — 2026-08-05 — §A3 side-effect cleanup (prune orphan events)
 
