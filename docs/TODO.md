@@ -28,7 +28,7 @@ Real drift surfaced by the 2026-05-26 first run of `scripts/contract-parity-guar
 ### Residue cleanup (ported 2026-07-19 from `archive/backend-implementation-audit-2026-07-08.md` §5, before that report's archival — fresh-install policy: delete, no shims)
 
 - [ ] **Dead code:** `includes/block-helpers.php` (FSE render helpers); `VoteService::{getPageVoteStats, getUserVotes, getUserVoteSummary, getSuspiciousVotesForPage}`; `AttestationService::{getViewerCanDisputeProfile, viewerIsTrustedPlus}`; `AsyncDispatcher::registerRecurring()`; `bcc_onchain_refresh_page` handler (never scheduled); `bcc.resolve.table_name` stale docblock.
-- [ ] **Orphan event emitters** (no listeners, not extension points): `bcc_stoke_added/removed`, `bcc_reaction_removed`, `bcc_content_auto_hidden`, `bcc.domain.dispute_resolved`, `bcc_dispute_status_changed`, `bcc_user_blocked/unblocked` — delete or wire, per emitter. (`bcc_comment_deleted` WIRED 2026-08-04 — Rank-evidence reversal subscriber.)
+- [ ] **Orphan event emitters** (no listeners, not extension points): `bcc_stoke_added/removed`, `bcc_reaction_removed`, `bcc_content_auto_hidden`, `bcc_dispute_status_changed`, `bcc_user_blocked/unblocked` — delete or wire, per emitter. (`bcc_comment_deleted` WIRED 2026-08-04 — Rank-evidence reversal; `bcc.domain.dispute_resolved` WIRED 2026-08-05 — elite-eligibility recompute subscriber at Plugin.php:2568.)
 - [ ] **17 orphan physical tables in the dev DB** — prod/fresh DBs auto-drop via `drop-legacy-orphans.php`; drop from dev too (dev-hygiene, LOW).
 - [ ] **M1.4 `app/Infrastructure/` collapse never completed** — partially overtaken: `app/Infrastructure/EdgeCache.php` landed 2026-07-16, so the dir is no longer empty scaffold. Decide: finish the collapse or retire the M1.4 line item.
 - [ ] **NFT indexer one-shot backfill** (audit MEDIUM) — V2 EVM walker is forward-only; first run anchors the checkpoint at head−12, so pre-existing holdings are never indexed. One-shot backfill pass when NFT depth matters.
@@ -44,7 +44,7 @@ Deferred from the 2026-07-09 backend security/bug-hunt pass (real, lower-severit
 - [x] **`ChainCheckpointRepository::addCuUsage`** — SHIPPED (bcc-trust #66): logs the rollback (`Logger::error`) so a lost CU write is no longer silent. A dedicated `DegradationMetric` subsystem remains an optional follow-up.
 - [ ] **`VoteJobDispatcher:180`** — `as_enqueue_async_action` return discarded; a soft AS-enqueue failure loses all post-vote async work (fraud/trust-graph/stats) silently. Emit `cron_dispatch` on failure (parity with the wp-cron fallback at `:132`).
 - [ ] **`VoteJobDispatcher::handlePostVote:67-79`** — post-vote sub-tasks log-only on failure, no retry, no metric.
-- [ ] **`DisputeResolver` backfill `:182-192`** — panelist accuracy marks dropped log-only.
+- [x] **`DisputeResolver` backfill** — MOOT: the §D5 panelist-accuracy backfill was deleted with the dispute-panel retirement (Rank Phase 6, 2026-08-04); nothing writes participation rows or reads accuracy marks.
 - [ ] **`FeedRankingService.php:152`** (design decision, not a bug) — hot-feed cache key folds only the moderation generation, not score/vote generation → ranking serves stale order for TTL 60–300s. Confirm the contract or add a generation fold.
 - [ ] **`VoteService.php:1285-1293`** — `recalculateScore` proceeds without the lock on >10s timeout, reopening the new-category INSERT race under sustained contention. Review the deliberate degradation.
 
