@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.65 · 2026-08-04 · Phase 1 deliverable
+**Status:** Draft v1.66 · 2026-08-04 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -5925,6 +5925,32 @@ Stoke on a **comment** (v1.38). A comment is itself a `peepso_activities` row, s
 - **Cache:** `no-store`.
 - **Mapping:** `CommentStokeEndpoint::addStoke` / `removeStoke` → `CommentRepository::getCommentMeta` (parent resolve) + `StokeRepository`. FE `comment-endpoints.ts:setCommentStoke/removeCommentStoke` via `useCommentStoke`.
 
+#### `POST /bcc/v1/feed/:id/helpful` · `DELETE /bcc/v1/feed/:id/helpful`
+
+**Mark helpful** on a post — the deliberate §9.2 endorsement route, NOT a cosmetic reaction. X-"like" model: one mark per person per act; POST sets it, DELETE clears it, both **idempotent**. Backed by its own `wp_bcc_trust_helpful_marks` table (`HelpfulMarkRepository`), deliberately separate from `/reactions` (PeepSo-cosmetic) and `/stoke` (cosmetic feed heat) so the §8.5 line stays sharp: cosmetic reactions carry **no** Rank weight, this mark does. A **credible** marker's mark (Apprentice+ rank AND Trust tier Neutral+ AND not suspended AND not fraud-blocked, §9.2) mints Rank `helping` evidence for the **content author** (server-side, off the `bcc_helpful_mark_added` event); self-marks and non-credible marks are recorded but mint no evidence. Same throttle + group-privacy gate as `/stoke`.
+
+- **Auth:** required (in-handler). Anonymous → `bcc_unauthorized 401`.
+- **Path:** `id` (int — raw activity id, same as `GET /feed/:id`).
+- **Rate limit:** 60/min/user (key `helpful_mark`, shared across add/remove and the comment variant).
+- **Response 200 (both verbs):** the mark pair only — `{ helpful_count (int, public total), viewer_has_marked (bool) }`. No reaction envelope.
+- **Errors:** `bcc_unauthorized` 401 · `bcc_rate_limited` 429 · `bcc_invalid_request` 400 (non-positive id) · `bcc_permission_denied` 403 (group-scoped post, non-member — `GroupInteractionGate`) · `bcc_internal_error` 500 (repository write failed)
+- **Side effects:** `bcc_helpful_mark_added` (`userId, actId, markId`) / `bcc_helpful_mark_removed` on the §A3 bus. The ADD event drives Rank helping evidence; DELETE reverses it (`reverse('helpful_mark', markId)`).
+- **Cache:** `no-store`.
+- **Mapping:** `HelpfulMarkEndpoint::addPostMark` / `removePostMark` → `HelpfulMarkRepository`.
+
+#### `POST /bcc/v1/comments/:id/helpful` · `DELETE /bcc/v1/comments/:id/helpful`
+
+**Mark helpful** on a **comment**. A comment is itself a `peepso_activities` row, so its act_id keys `wp_bcc_trust_helpful_marks` exactly like a post's — same `HelpfulMarkRepository`. Dedicated route (not a reuse of `/feed/:id/helpful`) because the group gate resolves membership off the comment's **parent post** (the comment's own wp_post carries no `peepso_group_id`) — same split as the Stoke pair. Same §9.2 credibility gating and author-credit semantics as the post variant; the credited subject is the comment's author.
+
+- **Auth:** required (in-handler). Anonymous → `bcc_unauthorized 401`.
+- **Path:** `id` (int — the comment's raw act_id).
+- **Rate limit:** 60/min/user (key `helpful_mark`).
+- **Response 200 (both verbs):** `{ helpful_count, viewer_has_marked }`.
+- **Errors:** `bcc_unauthorized` 401 · `bcc_rate_limited` 429 · `bcc_invalid_request` 400 (non-positive id) · `bcc_not_found` 404 (act_id is not a comment row) · `bcc_permission_denied` 403 (parent post group-scoped, non-member — `GroupInteractionGate::checkPost`) · `bcc_internal_error` 500
+- **Side effects:** `bcc_helpful_mark_added` / `bcc_helpful_mark_removed` on the §A3 bus (same events as post marks).
+- **Cache:** `no-store`.
+- **Mapping:** `HelpfulMarkEndpoint::addCommentMark` / `removeCommentMark` → `CommentRepository::getCommentMeta` (parent resolve) + `HelpfulMarkRepository`.
+
 #### `GET /bcc/v1/blog/chain-options`
 
 Public picker source for the §D6 composer's chain-tag multi-select. Returns active `bcc_onchain_chains` rows with only display fields (chain internals omitted).
@@ -6564,6 +6590,23 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.66 — 2026-08-04 — additive — "Mark helpful" endorsement (Rank helping category)
+
+- **NEW** `POST`/`DELETE /bcc/v1/feed/:id/helpful` and
+  `POST`/`DELETE /bcc/v1/comments/:id/helpful` — the deliberate §9.2
+  "credible Helpful marks" route that makes the Rank `helping` category
+  earnable. A distinct mark (own `wp_bcc_trust_helpful_marks` table),
+  **not** a cosmetic reaction (§8.5 line preserved): a credible marker's
+  mark (Apprentice+ ∧ Neutral+ ∧ not suspended/fraud) mints `helping`
+  evidence for the content author; self / non-credible marks record but
+  mint nothing; reversible on unmark. Response `{ helpful_count,
+  viewer_has_marked }`. Feed/comment view-model hydration of those two
+  fields is a follow-up (optional; absent ⇒ neutral state).
+- **Companion (non-contract)**: a weekly `bcc_rank_stewardship_sweep`
+  credits owners of genuinely-active User-kind communities (the
+  `stewardship` evidence source → contribution + helping). The config
+  helping minimums / Veteran diversity remain calibration-gated.
 
 ### v1.65 — 2026-08-04 — hardening + card stats
 
