@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.70 · 2026-08-05 · Phase 1 deliverable
+**Status:** Draft v1.71 · 2026-08-05 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -997,8 +997,6 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
   "bio": "Cosmos validator. Regular in the Cosmos Hall.",
   "trust_score": 98,
   "reputation_tier": "elite",
-  "reputation_tier_label": null,
-  "reputation_tier": "elite",
   "reputation_tier_label": "Elite",
   "rank_label": null,
   "current_rank_label": null,
@@ -1120,9 +1118,9 @@ Locked field rules:
 - **Trust placeholders (shape-stable, never rendered as trust):** communities have no trust system. `trust_score: 0`, `reputation_tier: "neutral"`, `reputation_tier_label: null`, `rank_label: null`, `is_in_good_standing: true`, `flags: []`. The community face does not render a trust dial; the values exist only to keep the envelope shape-stable.
 - **`kicker` = server-owned group-type kicker** (§L5 — supersedes the frontend `KICKER_BY_TYPE` map). Until v1.57 this rode on `tier_label`, overloading a trust field to carry a category word; it now has its own field: `nft` → `"HOLDER COMMUNITY"`, `validator` → `"DELEGATOR COMMUNITY"`, `hall` → `"CHAIN HALL"`, `system` → `"SYSTEM COMMUNITY"`, `user` → `"COMMUNITY"`. Unknown kinds fall back to `"COMMUNITY"`.
   *(v1.52: `HOLDERS GROUP` → `HOLDER COMMUNITY` and `SYSTEM GROUP` → `SYSTEM COMMUNITY` as part of the Communities vocabulary convergence — display-only, `type` values unchanged; `validator` added the same release.)*
-- **Crest band:** the chain-keyed background applies to on-chain-gated kinds with a resolved `chain_tag` — `nft` and, since v1.52, `validator`; every other kind gets the tier band at the fixed `common` tier.
+- **Crest band:** the chain-keyed background applies to on-chain-gated kinds with a resolved `chain_tag` — `nft` and, since v1.52, `validator`; every other kind gets the tier band at the fixed `neutral` tier (the §3.2.4 shape-stable placeholder — `common` was the retired rarity slug; doc corrected v1.70).
 - **Identity:** `id` = group id, `handle` = group slug, `bio` = group description (plain-text, ~200-char truncation — same bound as page/member bios; `""` when unset).
-- **Crest (§2.9 grammar):** `initials` from the group name (same server derivation as the other kinds), `image_url` = the group's cover (NFT collection art; `null` → FE monogram fallback). Background: NFT groups WITH a `chain_tag` → `background_kind: "chain"`, `background_value: <chain_tag>`; otherwise `background_kind: "tier"`, `background_value: "common"`.
+- **Crest (§2.9 grammar):** `initials` from the group name (same server derivation as the other kinds), `image_url` = the group's cover (NFT collection art; `null` → FE monogram fallback). Background: NFT groups WITH a `chain_tag` → `background_kind: "chain"`, `background_value: <chain_tag>`; otherwise `background_kind: "tier"`, `background_value: "neutral"` (doc corrected v1.70 — the emitter always used the reputation placeholder, never the retired rarity slug).
 - **Stats (same CardStat shape as the other kinds):**
   ```json
   "stats": [
@@ -3542,7 +3540,7 @@ Paginated list of Cards filtered + sorted server-side. Backs `/directory`.
 - **Auth:** Anonymous OR Bearer (per-viewer `permissions` + `social_proof` vary)
 - **Query:**
   - `kind` ∈ {`validator`, `project`, `creator`} — optional; omitted = all kinds (member excluded — members aren't browsed here)
-  - `tier` ∈ {`legendary`, `rare`, `uncommon`, `common`} — optional; canonical card-tier values per §C1. Risky tier is intentionally not selectable (entity hidden from card UI per §C1).
+  - `tier` ∈ {`elite`, `trusted`, `neutral`, `caution`, `risky`} — optional; reputation-tier slugs accepted verbatim (v1.57 retired the rarity vocabulary and its translation; doc corrected v1.70 — `risky` is selectable).
   - `sort` ∈ {`trust`, `newest`, `endorsements`, `followers`, `self_stake`} — optional; default `trust`. `self_stake` (bonded self-stake, DESC) is **validator-only** — see the validator-axis note below.
   - `q` (search string) — optional; passed verbatim to the underlying `PageDiscoveryService`
   - `good_standing_only` (`1`|`true`|`on`|`yes` → true; anything else → false) — optional; default false. When true, restricts results to operators in good standing per §E1 (`reputation_tier ∈ {neutral, trusted, elite}`). Composes with `tier` via AND server-side, so `tier=common&good_standing_only=1` is a vacuously empty intersection rather than an error.
@@ -3569,7 +3567,7 @@ Paginated list of Cards filtered + sorted server-side. Backs `/directory`.
 - **Mapping:**
   - Filter SQL ← `PageDiscoveryService::query()`. (`/bcc/v1/discover` was retired 2026-05-15 along with the legacy bcc-page-slider Gutenberg block it served; `PageDiscoveryService` is now used solely by this endpoint.)
   - Server translates canonical kind → legacy `_bcc_page_type` (validator→validator, project→builder, creator→nft) via `PageTypeMap`
-  - Server translates canonical card-tier → reputation tier (legendary→elite, rare→trusted, uncommon→neutral, common→caution)
+  - `tier` filter accepts reputation-tier slugs verbatim (v1.57 — no rarity translation; doc corrected v1.70)
   - The `good_standing_only` `IN`-clause sources its tier list from `UserViewService::GOOD_STANDING_TIERS` — the same constant `isInGoodStanding()` (and therefore the per-row `is_in_good_standing` stamp + the `/auth/*` response `in_good_standing` flag) reads from. The filter chip and the per-row stamp can never disagree.
   - Each row hydrated through `CardViewService::getCard()` so the per-item shape is identical to `GET /cards/:type/:id`
   - `status` / `min_self_stake` / `sort=self_stake` read `bcc_onchain_validators.{status,self_stake}` via the validator JOIN. `sort=self_stake` orders DESC; MySQL sorts NULL last, so validators with no stake reading fall to the bottom.
@@ -3581,7 +3579,7 @@ Top-N search suggestions for the §G1 nav-bar autocomplete. Smaller per-item sha
 - **Auth:** Anonymous OR Bearer
 - **Query:**
   - `q` (search string) — required; minimum 2 chars (server returns empty list for shorter; bcc-search has the same gate)
-  - `kind` ∈ {`validator`, `project`, `creator`} — optional; restricts to one card kind
+  - `kind` ∈ {`validator`, `project`, `creator`, `member`, `community`} — optional; restricts to one suggestion kind (`member` + `community` added v1.70). Page kinds route to the projects vertical (`GET /bcc/v1/search`); `member` routes to `GET /bcc/v1/search/users` only; `community` routes to `GET /bcc/v1/search/groups` only — a scoped request queries exactly one vertical.
 - **Response 200:**
   ```json
   {
@@ -3597,17 +3595,46 @@ Top-N search suggestions for the §G1 nav-bar autocomplete. Smaller per-item sha
         "is_verified": true,
         "is_claim_verified": true,
         "href": "/v/blacksmith-node"
+      },
+      {
+        "id": 17,
+        "name": "Cosmos Hall",
+        "handle": "cosmos-hall",
+        "card_kind": "community",
+        "reputation_tier": "neutral",
+        "reputation_tier_label": null,
+        "trust_score": null,
+        "is_claim_verified": false,
+        "href": "/halls/cosmos-hall"
+      },
+      {
+        "id": 42,
+        "name": "Simon",
+        "handle": "simontx",
+        "card_kind": "member",
+        "reputation_tier": "trusted",
+        "reputation_tier_label": "Trusted",
+        "trust_score": 71,
+        "is_claim_verified": false,
+        "href": "/u/simontx"
       }
     ]
   }
   ```
+- **Result cap + All-scope allocation (v1.70):** the response never exceeds **12 items** (mirrors the upstream `/bcc/v1/search` cap; previously undocumented). With no `kind`, three verticals merge deterministically: floors first — 1 page, then 1 community, then 1 member, each only when that vertical returned results and capacity remains — then communities top up to **3**, members top up to **3**, and pages absorb ALL remaining capacity (unused community/member quota flows back to pages). Display grouping is pages → communities → members; within each vertical the upstream ranking order is preserved. The count may be **fewer** than 12 (vertical shortfall, dropped rows). With `kind`, the single vertical is queried and capped at 12. A degraded/rate-limited vertical is silently absent from the merge — autocomplete never surfaces a partial-failure error.
+- **Per-kind field semantics (v1.70):**
+  - Page kinds (`validator`/`project`/`creator`): unchanged — real tier/label/score, `is_verified` (owner email), `is_claim_verified` per the verified-wins slice below.
+  - `community` rows: the §3.2.4 trust placeholders — `reputation_tier: "neutral"`, `reputation_tier_label: null` (the FE tier chip is null-label-suppressed), `trust_score: null` (this shape admits null, unlike the Card shape's `0`), `is_claim_verified: false` (§3.2 — communities are not on-chain-claimed). `handle` = group slug; `href` = the groups vertical's relative `group_url` (kind-aware: `/halls/{slug}` for halls, `/communities/{slug}` otherwise), server-validated as an internal path.
+  - `member` rows: **real** `reputation_tier` / `reputation_tier_label` / `trust_score` — the same values the member Card carries, resolved in one bounded batch (no per-row queries). All tiers are searchable, including `caution` and `risky` — autocomplete is a lookup surface, not an endorsement surface. `is_claim_verified: false` (§3.2 — member self-pages cannot hold on-chain claims). `handle` = canonical `username` (§B6 `bcc_handle`); `name` = `display_name`; `href` = the users vertical's relative `profile_url` (`/u/{handle}`), server-validated as an internal path.
+  - **`is_verified` presence:** present only on page-kind rows. It is **omitted** from `member` rows because `/search/users` does not provide the authoritative email-verification signal (`bcc_trust_user_info.is_verified`) and no bounded batch reader currently exists for it — omission means **unavailable, not false**; members do have a real email-verification value. It is omitted from `community` rows because no owner-email verification meaning exists for a community on this surface.
+  - `trust_score` is `int | null` on ALL rows (nullable since the field's introduction — a page row whose enrichment is missing ships `null`; previously undocumented).
 - **`is_verified` vs `is_claim_verified` (verified-wins slice, 2026-06-30):** `is_verified` = the owner's **email** verification (weak; not an authenticity signal). `is_claim_verified` = the page has a **verified on-chain operator/creator claim** (`onchain_claims.status='verified' AND claim_role IN ('operator','creator')`) — i.e. the real entity proved key control. The FE renders the "✓ Verified Operator" badge from `is_claim_verified`, NOT `is_verified`. Claim-verified pages also receive a dominant ranking bonus (`bcc_rank_claim_verified_bonus`), and bcc-search demotes any unverified same-name look-alike strictly below the verified canonical page.
 - **Errors:** `bcc_invalid_request` (bad `kind`)
 - **Cache:** `Cache-Control: private, max-age=15`. Underlying bcc-search caches results for 60s.
 - **Mapping:**
-  - Internally calls `GET /bcc/v1/search` (bcc-search plugin) via `rest_do_request` — the FULLTEXT index + trust enrichment + 60s cache + rate limiting all live there
-  - Server maps the flat result shape into `SearchSuggestion`: reputation_tier passes through verbatim (v1.57 — no rarity translation), category_slug → card_kind per `PageTypeMap`, route prefix per kind (`/v/`, `/p/`, `/c/`)
-  - Dropped silently: rows with unrecognized `category_slug` (e.g., `dao` — not a card kind in V1) and rows whose tier maps to risky (entity hidden from card UI)
+  - Internally calls `GET /bcc/v1/search` (pages) and — in All scope, v1.70 — additionally `GET /bcc/v1/search/groups` + `GET /bcc/v1/search/users`, all via `rest_do_request`; matching, enrichment, per-vertical caches, and rate limiting live in bcc-search
+  - Server maps the flat result shapes into `SearchSuggestion`: reputation_tier passes through verbatim for pages (v1.57 — no rarity translation), category_slug → card_kind per `PageTypeMap`, route prefix per kind (`/v/`, `/p/`, `/c/`); community/member rows (v1.70) normalize from the groups/users verticals, `href` taken from the vertical's relative URL after internal-path validation
+  - Dropped silently: rows with unrecognized `category_slug` (e.g., `dao` — not a card kind in V1), rows missing required identity fields, and community/member rows whose URL fails internal-path validation (defense against absolute/off-app hrefs). *(Doc corrected v1.70: the old "rows whose tier maps to risky are dropped" claim described pre-v1.57 behaviour — risky pages and members appear with their honest tier chip.)*
   - Falls back to empty list when bcc-search is degraded (503) — autocomplete must never block the user mid-type with an error toast
 
 #### `GET /bcc/v1/search` (multi-vertical: projects + trending)
@@ -3691,6 +3718,7 @@ Groups vertical — separate cache + rate-limit bucket. Returns PeepSo group row
 - **Query:**
   - `q` (string) — 2..100 chars. Over 100 chars → `rest_invalid_param` 400 (v1.47).
   - `limit` (int, optional) — default 20, capped at 50
+- **Matching (v1.70):** bounded substring over the group title (`LIKE '%q%'`), prefix matches ranked first, then alphabetical. *(Previously title-prefix only — "hall" could never find "Cosmos Hall".)*
 - **Response 200:**
   ```json
   {
@@ -3701,13 +3729,17 @@ Groups vertical — separate cache + rate-limit bucket. Returns PeepSo group row
         "slug": "cosmos-hall",
         "description": "The Cosmos chain's home hall.",
         "avatar_url": "https://…",
-        "group_url": "/communities/cosmos-hall"
+        "group_url": "/halls/cosmos-hall",
+        "kind": "hall",
+        "kind_label": "CHAIN HALL"
       }
     ],
     "meta": { "count": 1, "query": "cosmos" }
   }
   ```
-  - `group_url` is a **relative** Next.js route (rendered verbatim by the frontend; an absolute URL would navigate off the headless app). Group search is **not hall-aware** — every kind, halls included, resolves through the cross-kind `/communities/{slug}` page, so `group_url` is always `/communities/{slug}`.
+- **`kind` (v1.70)** ∈ {`hall`, `nft`, `validator`, `system`, `user`} — the §3.2.4 community-kind vocabulary, resolved from `_bcc_group_kind` post-meta (raw values `hall` / `holders` / `delegators` / `system`; absent → `user`).
+- **`kind_label` (v1.70)** — the pre-rendered §A2 display string, exactly the §3.2.4 kicker vocabulary (`CHAIN HALL`, `HOLDER COMMUNITY`, `DELEGATOR COMMUNITY`, `SYSTEM COMMUNITY`, `COMMUNITY`). Frontend renders it verbatim, never maps `kind` → words.
+- **`group_url`** is a **relative** Next.js route (rendered verbatim by the frontend; an absolute URL would navigate off the headless app) and — as of v1.70 — **kind-aware**: `hall` → `/halls/{slug}`, every other kind → `/communities/{slug}`, matching `CardUrlMap::groupUrl`'s canonical mapping (v1.68). *(Supersedes v1.68's "not hall-aware" caveat — that release fixed the absolute-URL drift but had no kind projected; now the vertical projects `kind`, halls route to their flavored surface. Non-hall kinds still resolve on the cross-kind `/communities/[slug]` page.)*
 - **Errors (legacy WP shape):**
   - `rate_limit_exceeded` (HTTP 429)
   - `group_search_unavailable` (HTTP 503; `Retry-After: 5`)
@@ -6571,7 +6603,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
   - Bonus: `GET /me/onboarding/status` is also registered (read-side flag check; not previously listed in §8).
 - **Directory endpoints (§G1/§G2)** — both fully wired:
   - `GET /cards` — paginated list of Card view-models with `kind`/`tier`/`sort`/`q` filters. Wraps `PageDiscoveryService`; each row hydrated through `CardViewService::getCard()` so the per-item shape is identical to the single-card endpoint. (Historical note: `/bcc/v1/discover` previously shared this service for the legacy bcc-page-slider block; that endpoint was retired 2026-05-15.)
-  - `GET /cards/search` — top-N suggestions for the §G1 nav-bar autocomplete. Internally calls bcc-search via `rest_do_request` and maps the flat result shape (category_slug → card_kind, route prefix per kind) into the `SearchSuggestion` shape per §A2.
+  - `GET /cards/search` — top-N suggestions for the §G1 nav-bar autocomplete. Internally fans out via `rest_do_request` — pages always, plus the groups + users verticals in All scope (v1.70) — and merges the normalized rows (category_slug → card_kind, route prefix per kind; community/member rows from their verticals) into the `SearchSuggestion` shape per §A2 under the 12-item cap.
 - **Notifications endpoints (§I1)** — fully wired:
   - `GET /me/notifications` — cursor-paginated list scoped to `not_module_id = BCC_NOTIFICATION_MODULE_ID` (= 9000). Server-rendered messages + server-built `link` per type per §A2.
   - `GET /me/notifications/unread-count` — drives the bell badge; frontend polls 60s + on window focus.
@@ -6595,7 +6627,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.70 — 2026-08-05 — vote-weight maturity vests from signup, not Apprentice-award
+### v1.71 — 2026-08-05 — vote-weight maturity vests from signup, not Apprentice-award
 
 - **§16.3 maturity re-anchored to account tenure (signup).** The vote-weight
   maturity ramp (floor → 1.0 over `span_days`) now measures days from the
@@ -6610,6 +6642,46 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
   added or removed.
 - Applies to both weight paths (page-vote `castPageVote` and the dispute/poll
   ballot snapshot) via the shared `VoteWeightCalculator::maturity()` seam.
+
+### v1.70 — 2026-08-05 — additive — search-scope dropdown + communities/members in nav autocomplete
+
+Communities were unreachable from the header search bar (the autocomplete
+endpoint hardcoded the three page kinds) and the groups vertical was
+prefix-match-only. This release makes the nav autocomplete serve all five
+suggestion kinds behind a frontend scope dropdown (All · Validators ·
+Projects · Creators · Members · Communities).
+
+- **`GET /cards/search`:** `kind` enum gains `member` + `community`
+  (a scoped request queries exactly one vertical). With no `kind`, three
+  verticals merge deterministically under a now-documented **12-item
+  cap**: floors (1 page → 1 community → 1 member), quotas (≤3
+  communities, ≤3 members), pages absorb unused capacity; grouping
+  pages → communities → members. Community rows carry the §3.2.4 trust
+  placeholders (`neutral` / null label / null score); member rows carry
+  **real** tier/label/score (one bounded batch, no per-row queries; all
+  tiers searchable — lookup surface, not endorsement).
+  `is_claim_verified: false` on both (§3.2). **`is_verified` is
+  omitted** from member rows (the users vertical doesn't provide the
+  authoritative email signal and no bounded batch reader exists —
+  omission means unavailable, not false) and from community rows (no
+  owner-email meaning on this surface). `href` = the vertical's
+  relative URL after internal-path validation (rejects absolute /
+  protocol-relative / malformed paths).
+- **`GET /search/groups`:** additive `kind`
+  (`hall|nft|validator|system|user`) + `kind_label` (server-rendered
+  §A2 kicker). Matching broadened from title-prefix to bounded
+  substring, prefix-ranked first. `group_url` becomes **kind-aware**
+  (`hall` → `/halls/{slug}`, else `/communities/{slug}`, per
+  `CardUrlMap::groupUrl`'s canonical v1.68 mapping) — supersedes
+  v1.68's "not hall-aware" caveat, which predated the vertical
+  projecting `kind`.
+- **Doc drift fixed while here:** `GET /cards` `tier` filter documented
+  with the retired rarity vocabulary (it accepts the five reputation
+  slugs verbatim since v1.57, `risky` included); `/cards/search`
+  "risky rows dropped" claim (retired v1.57); §3.2.4 crest
+  `background_value` said `common` (the emitter always used `neutral`);
+  §3.2 sample carried a duplicated `reputation_tier` key pair;
+  `/cards/search` `trust_score` nullability documented.
 
 ### v1.69 — 2026-08-05 — §A3 side-effect cleanup (prune orphan events)
 
