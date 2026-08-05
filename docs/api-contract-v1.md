@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.64 · 2026-08-04 · Phase 1 deliverable
+**Status:** Draft v1.65 · 2026-08-04 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1090,11 +1090,12 @@ V1 emits a single shared stat shape for all entity card kinds. On-chain–derive
 "stats": [
   { "key": "trust",           "label": "Trust",    "value": "78", "format": "score", "raw": 78 },
   { "key": "reviews_written", "label": "Reviews",  "value": "8",  "format": "count", "raw": 8 },
-  { "key": "watchers",        "label": "Watchers", "value": "31", "format": "count", "raw": 31 }
+  { "key": "watchers",        "label": "Watchers", "value": "31", "format": "count", "raw": 31 },
+  { "key": "watching",        "label": "Watching", "value": "12", "format": "count", "raw": 12 }
 ]
 ```
 
-The `watchers` stat is the member's follower count (sourced from the same `UserViewService::getSummary` `followers_count` the `member_dossier` resolution already reads — no extra query), giving the member card the full 3-column stat panel.
+The `watchers` stat is the member's follower count (sourced from the same `UserViewService::getSummary` `followers_count` the `member_dossier` resolution already reads — no extra query). *(v1.65)* The `watching` stat is the **active** side of the same follow graph (`getSummary` `following_count` — accounts this member watches, both sides resolved in one `getCounts()` call), added so the card shows both directions of the identity block; emitted even at zero. **Distinct from `watching_size`** (§3.2 field rule): `watching_size` is the member's total *watchlist* (member follows **plus** entity follows); the `watching` stat is the member-to-member follow-graph count only. There is still no top-level `following_count` **field** — this is a stat entry.
 
 **3.2.3 Per-kind stat expansion — Deferred to V1.5:**
 
@@ -1120,14 +1121,16 @@ Locked field rules:
 - **Crest band:** the chain-keyed background applies to on-chain-gated kinds with a resolved `chain_tag` — `nft` and, since v1.52, `validator`; every other kind gets the tier band at the fixed `common` tier.
 - **Identity:** `id` = group id, `handle` = group slug, `bio` = group description (plain-text, ~200-char truncation — same bound as page/member bios; `""` when unset).
 - **Crest (§2.9 grammar):** `initials` from the group name (same server derivation as the other kinds), `image_url` = the group's cover (NFT collection art; `null` → FE monogram fallback). Background: NFT groups WITH a `chain_tag` → `background_kind: "chain"`, `background_value: <chain_tag>`; otherwise `background_kind: "tier"`, `background_value: "common"`.
-- **Stats (same CardStat shape as the other kinds, ≤3):**
+- **Stats (same CardStat shape as the other kinds):**
   ```json
   "stats": [
     { "key": "members",  "label": "Members",    "value": "87", "raw": 87, "format": "count" },
-    { "key": "posts_7d", "label": "Posts (7d)", "value": "14", "raw": 14, "format": "count" }
+    { "key": "posts_7d", "label": "Posts (7d)", "value": "14", "raw": 14, "format": "count" },
+    { "key": "active",   "label": "Active",     "value": "9",  "raw": 9,  "format": "count" },
+    { "key": "access",   "label": "Access",     "value": "Public",         "format": "text" }
   ]
   ```
-  `posts_7d` is the §4.7.1 activity-heat `posts_last_7d` number (already resolved by both producers — no extra query).
+  `posts_7d` is the §4.7.1 activity-heat `posts_last_7d` number (already resolved by both producers — no extra query). *(v1.65)* `active` is the count of **distinct authors** who posted in that same 7-day window (`getActivityHeat` `actives`, riding free on the heat aggregate); `members` rides in the nameplate slot other kinds use for watchers, and `access` is a **server-rendered** text word (`Public` / `Private` — precedence matches the front-face standing strip; §A2 — the client never derives the gate). Communities have no trust axis, so Trust/Reviews/Vouches never appear here.
 - **Permissions:** the full §3.2 key set (`can_watch`, `can_review`, `can_open_dispute`, `can_endorse`, `can_post_as_entity`, `can_edit_bio`, `can_edit_image`, `can_vouch`, `can_stand_behind`, `can_report`), every entry `{ allowed: false, unlock_hint: null, reason_code: "not_applicable" }` for ALL viewers — anon and authed alike. Communities use JOIN (gated on the group detail's own `permissions.can_join`), never the card verbs; signing in unlocks nothing on the card itself, so no `signin_required` copy is emitted.
 - **Always-null/constant envelope fields:** `member_dossier: null`, `chains: null`, `claim_target: null`, `onchain_signals: null`, `social_proof: null`, `viewer_attestation: null`, `viewer_has_reviewed: false`, `viewer_has_endorsed: false`, `endorse_unlock_hint: null`, `is_claimed: true`.
 - **`community_dossier`** — the community-only block, mirror of how `member_dossier` works: ALWAYS present on the wire, non-null on community cards, `null` on every other kind (and `member_dossier` is `null` here). Powers the community back face (`collection_stats` replaces FlippableNftCard's bespoke stats display):
@@ -6011,7 +6014,7 @@ Create a plain (non-gated, non-Hall) PeepSo group owned by the viewer. (Join/lea
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized 401`.
 - **Body (JSON):** `name` (**required**, 3–100 chars) · `description` (optional, ≤ 2000, `wp_kses_post`) · `privacy` (optional, default `open`) ∈ `open|closed|secret|trust` (→ PeepSo 0/1/2; `trust` = open + a BCC reputation gate at join) · `trust_min` (**required when `privacy=trust`**) ∈ `25|50|75` · `chain` (**required**) — chain-tag slug, immutable after creation, validated via `ChainRepository::getBySlug`.
 - **Response 201:** `{ "group_id": 5120, "slug": "evm-builders", "name": "EVM Builders", "privacy": "trust", "chain_tag": "ethereum", "trust_min": 50 }` (`trust_min` echoes the threshold for `privacy=trust`, else `null`).
-- **Errors:** `bcc_unauthorized` 401 · `bcc_forbidden` 403 (two gates, in order: **(a)** account suspended — "Your account is suspended.", admin bypass off, no `error.data`; **(b)** *(v1.62 — Rank Phase 7, spec §21.2)* the custody acquisition gate `can('create_community')`, stable machine reason in `error.data.reason`, gate order: `suspended` (vocabulary-stable but pre-empted by gate (a) on this route) → `new_member` (Apprentice+ required — missing `rank_state` row) → `below_neutral` (Trust tier Neutral+ required) → `in_recovery` (§14.2 Rank-recovery pause) → `cap_reached` → `cooldown_active`) · `bcc_invalid_request` 400 (name length, description > 2000, missing/unknown chain, `trust` without valid `trust_min`) · `bcc_rate_limited` 429 (5/hour/user) · `bcc_internal_error` 500
+- **Errors:** `bcc_unauthorized` 401 · `bcc_forbidden` 403 (two gates, in order: **(a)** account suspended — "Your account is suspended.", admin bypass off, no `error.data`; **(b)** *(v1.62 — Rank Phase 7, spec §21.2)* the custody acquisition gate `can('create_community')`, stable machine reason in `error.data.reason`, gate order: `suspended` (vocabulary-stable but pre-empted by gate (a) on this route) → `new_member` (Apprentice+ required — missing `rank_state` row) → `below_neutral` (Trust tier Neutral+ required) → `in_recovery` (§14.2 Rank-recovery pause) → `cap_reached` → `cooldown_active`) · `bcc_conflict` 409 *(v1.65 — the cap/cooldown check-then-write is advisory-locked per user; lock contention fails closed as retryable "Please retry.")* · `bcc_invalid_request` 400 (name length, description > 2000, missing/unknown chain, `trust` without valid `trust_min`) · `bcc_rate_limited` 429 (5/hour/user) · `bcc_internal_error` 500
 - **Custody caps + cooldown (v1.62, §21.2):** per-rank ownership caps over **currently-owned User-kind groups** (counted live from PeepSo owner rows): Apprentice **2** / Journeyman **5** / Veteran **10**. Plus a **30-day global custody cooldown** re-armed by *every* custody event — create, receive, or transfer-away (`POST /me/groups/:id/transfer`) — read as `MAX(created_at)` per user from the append-only `wp_bcc_trust_community_ownership_log` ledger. A successful create appends a `create` ledger row (re-arming the caller's cooldown).
 - **Rate limit:** 5/hour/user (`group_create:{user_id}`)
 - **Cache:** `no-store`.
@@ -6032,7 +6035,8 @@ Create a plain (non-gated, non-Hall) PeepSo group owned by the viewer. (Join/lea
   - `bcc_not_found` 404 — nonexistent group, viewer not a member, **or** a pending/banned membership row — all collapse to the same 404 (no existence leak on secret groups; a *member* who isn't the owner gets 403 instead, since membership already proves existence to them).
   - `bcc_forbidden` 403 — with the stable machine reason in `error.data.reason` **except** the not-owner case (an active non-owner member gets a plain 403, no `data`). Reason vocabulary:
     - **giver** (the caller, via `can('transfer_community')` — deliberately **no** cap/cooldown check: the cooldown blocks *acquiring* custody, never relinquishing it): `suspended` · `new_member` · `in_recovery` (§14.2 pause).
-    - **receiver** (evaluated *for* `to_user_id` via `can('receive_community')` — the full acquisition gate; wire reason carries the `receiver_` prefix): `receiver_suspended` · `receiver_new_member` · `receiver_below_neutral` · `receiver_in_recovery` · `receiver_cap_reached` (per-rank cap over currently-owned User-kind groups: 2/5/10) · `receiver_cooldown_active` (inside their own 30-day custody cooldown).
+    - **receiver** (evaluated *for* `to_user_id` via `can('receive_community')` — the full acquisition gate): *(changed v1.65 — privacy)* a receiver failure now returns the **single generic** reason `receiver_ineligible`, never the specific cause. The six former sub-reasons (`receiver_suspended` / `receiver_new_member` / `receiver_below_neutral` / `receiver_in_recovery` / `receiver_cap_reached` / `receiver_cooldown_active`) are **collapsed** so a group owner cannot probe a member's suspension / rank / tier / cooldown status by attempting a transfer; the true cause is logged server-side only. (Giver reasons stay specific — that is the caller's own status.)
+  - `bcc_conflict` 409 — *(v1.65)* the cap/cooldown check-then-act is serialized under a per-user advisory lock; on lock contention the request fails closed with "Please retry." (**retryable**, not a permanent denial). Applies to both this route and `POST /me/groups`.
   - `bcc_invalid_request` 400 — non-User-kind group ("Only member-created communities can be transferred."); `to_user_id` is self, zero, or an unknown user; **or** the receiver is not already an active member of the group.
   - `bcc_internal_error` 500 — the PeepSo ownership write failed; nothing transferred.
 - **Mapping:** `MyGroupsEndpoint::postTransfer` (route `MyGroupsEndpoint.php:138`; auth + throttle + envelope only) → `CommunityCustodyService::transfer` (the full gate chain) → `PeepSoGroupWriter::transferOwnership` → `CommunityOwnershipLogRepository::record` ×2 → `AuditLogger`.
@@ -6560,6 +6564,22 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.65 — 2026-08-04 — hardening + card stats
+
+- **Community-transfer privacy (changed)**: `POST /me/groups/:id/transfer`
+  receiver denials collapse the six `receiver_*` reasons to a single
+  `receiver_ineligible` so an owner can't probe a member's status; the
+  true cause is server-logged only. Giver reasons unchanged.
+- **Concurrency (additive)**: create + transfer now advisory-lock the
+  cap/cooldown check-then-write; contention fails closed as **409
+  `bcc_conflict`** ("Please retry.", retryable) — closes a TOCTOU that
+  could push ownership one over the rank cap.
+- **Card stats (additive)**: member cards gain a `watching` stat
+  (follow-graph active side; distinct from the `watching_size`
+  watchlist total); community cards gain `active` (distinct 7-day
+  posters) and a server-rendered `access` text stat. (bcc-core adds
+  `getActivityHeat.actives`.)
 
 ### v1.64 — 2026-08-04 — additive + documentation repairs — post-redesign cleanup batch
 
