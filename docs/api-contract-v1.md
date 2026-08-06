@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.75 · 2026-08-06 · Phase 1 deliverable
+**Status:** Draft v1.76 · 2026-08-06 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2604,30 +2604,52 @@ Photos inside a single album (§3.1 Photos drill-down). Album access is re-check
 
 #### `GET /bcc/v1/me/watching`
 
-Returns the viewer's watchlist (§C2 — UI projection of PeepSo follows + `bcc_watch_meta` sidecar). The watchlist is the canonical name for what was formerly the "binder."
+Returns the viewer's watchlist (§C2 — UI projection of PeepSo follows + `bcc_watch_meta` sidecar, plus pre-claim page follows from `bcc_page_follows`). The watchlist is the canonical name for what was formerly the "binder."
+
+*(doc corrected v1.76 — this block previously described the pre-implementation cursor/filter design: `cursor`/`limit`/`filter`/`tier` params, a per-item summary `card`, cursor pagination, and `max-age=30`. None of that shipped. The shipped endpoint is documented below; `include=cards` is the only v1.76 behavior addition.)*
 
 - **Auth:** Bearer
-- **Query:** `cursor`, `limit` (default 18 = 2 watchlist pages of 3×3, max 54), `filter` (optional: `validator|project|creator|member`), `tier` (optional: `legendary|rare|uncommon|common`)
+- **Query:**
+  - `page` (default 1), `page_size` (default 20, max 50; **max 24 when `include=cards`** — silently clamped, echoed in `pagination.page_size`)
+  - `include` (optional; only accepted value `cards`) — attaches a full §3.2 Card view-model to every item (v1.76, additive)
 - **Response 200:**
   ```json
   {
     "items": [
       {
         "follow_id": 88123,
-        "card": { "...": "summary Card view-model" },
-        "watched_at": "2026-04-22T09:14:00Z",
+        "follow_source": "peepso",
+        "card_kind": "validator",
+        "is_resolved": true,
+        "card_id": 42,
+        "card_handle": "blacksmith",
+        "card_slug": "blacksmith-node",
+        "page_id": 1842,
         "reputation_tier_at_watch": "trusted",
         "reputation_tier_label_at_watch": "Trusted",
-        "batch_id": "batch_abc123"
+        "batch_id": "batch_abc123",
+        "watched_at": "2026-04-22T09:14:00Z",
+        "is_legacy": false,
+        "links": { "card": "/validators/blacksmith-node" },
+        "actions": {
+          "view": { "method": "GET", "href": "...", "idempotent": true, "requires_auth": false }
+        },
+        "card": { "...": "full §3.2 Card view-model — ONLY when include=cards; Card | null" }
       }
     ],
-    "pagination": { "next_cursor": "...", "has_more": true }
+    "pagination": { "page": 1, "page_size": 20, "total": 39, "total_pages": 2 }
   }
   ```
+- **Field semantics (LOCKED, mirrored from the shipped implementation):**
+  - `follow_source` — `peepso` (user→user graph) or `page` (pre-claim page-scoped follow store). Echoed back on `DELETE /me/watching/:follow_id` so the server routes the unwatch to the right table.
+  - `is_resolved` — page-backed (a peepso-page was found for the followed user), **regardless** of whether the page type maps to a contract kind. `{is_resolved: true, card_kind: "member"}` is a valid, intentional state (e.g. a `dao` page in V1) — frontend renders these as generic members.
+  - `card_id` — always the followee **user_id** for `peepso` rows (stable React key anchored to the follow relationship, never a post id). Identifier rule: member kinds route by `card_handle`; validator/project/creator route by `card_slug`.
+  - `is_legacy` — no `bcc_watch_meta` sidecar row (follow pre-dates the watch pipeline or came via PeepSo native UI); `watched_at` is `null`. Legacy items MUST NOT be surfaced as recent watches.
+  - `card` *(v1.76, additive)* — present **iff** the request carried `include=cards`; absent otherwise (the default response is byte-identical to pre-v1.76). Full §3.2 Card view-model built with the **watcher as viewer**, or `null` when the target is unhydratable (deleted user/page, page-type mismatch, unrecognized kind). Rows are **never dropped** for hydration reasons: `items` length, `total`, and `total_pages` are identical with and without `include=cards`.
 - **Errors:** `bcc_unauthorized`
 - **Rate limit:** 60/min/user
-- **Cache:** `Cache-Control: private, max-age=30`
-- **Mapping:** JOIN of `peepso_user_followers` + `bcc_watch_meta` (§C2). Removed cards (unwatched) do not appear. `reputation_tier_at_watch` is the followee's tier at the moment the card was watched, not the current tier — preserved for historical narrative. `reputation_tier_label_at_watch` is the pre-rendered display string per §A2. Rows written before v1.57 held rarity slugs and were rewritten by `watch_tier_vocabulary_v1`; rows snapshotted as risky were stored NULL and are unrecoverable.
+- **Cache:** `Cache-Control: no-store` *(doc corrected v1.76 — was documented `private, max-age=30`, never shipped)*
+- **Mapping:** JOIN of `peepso_user_followers` + `bcc_watch_meta` (§C2), merged with `bcc_page_follows` rows (page 1 prepends the pre-claim follows). Removed cards (unwatched) do not appear. `reputation_tier_at_watch` is the followee's tier at the moment the card was watched, not the current tier — preserved for historical narrative; label pre-rendered per §A2. Rows written before v1.57 held rarity slugs and were rewritten by `watch_tier_vocabulary_v1`; rows snapshotted as risky were stored NULL and are unrecoverable. Hydration (`include=cards`) reuses the §L5 list builders behind `/members` and `/cards` with one batch prefetch per kind — no per-row queries.
 
 #### `GET /bcc/v1/me/watching/summary`
 
@@ -2899,7 +2921,7 @@ reimplement these as a per-Hall lookup — that is an N+1 across the default 20-
 - Authenticated non-member: `{ "is_member": false, "is_primary": false, "joined_at": null }`.
 - Authenticated member: `{ "is_member": true, "is_primary": <bool>, "joined_at": "<iso8601>" }`.
 
-**Pagination:** uses **offset** envelope per §1.5 (Halls is a directory, not a time-ordered feed). Cursor pagination is reserved for `/feed`, `/feed/hot`, and `/me/watching`.
+**Pagination:** uses **offset** envelope per §1.5 (Halls is a directory, not a time-ordered feed). Cursor pagination is reserved for `/feed` and `/feed/hot`. *(doc corrected v1.76 — `/me/watching` was listed here but ships offset pagination; see §4.5.)*
 
 #### `POST /bcc/v1/me/halls/:id/membership`
 
@@ -6671,6 +6693,41 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.76 — 2026-08-06 — additive — `/me/watching` full-card hydration (`include=cards`) + §4.5 doc truthing
+
+Additive change enabling the redesigned two-tab `/watching` surface, which renders
+the watchlist with the same card design as `/members` instead of identifier-only tiles.
+
+**Behavior addition (§4.5 `GET /bcc/v1/me/watching`):**
+
+- New optional query param **`include`** (only accepted value: `cards`). When present,
+  every item gains a **`card`** field: the full §3.2 Card view-model built with the
+  **watcher as viewer**, or `null` when the target is unhydratable (deleted user/page,
+  page-type mismatch, unrecognized kind).
+- When `include` is absent the `card` key is **absent entirely** — the default response
+  is byte-identical to pre-v1.76, so every existing identifier-only consumer is untouched.
+- Rows are **never dropped** for hydration reasons: `items` length, `pagination.total`,
+  and `total_pages` are identical with and without `include=cards`.
+- `page_size` caps at **24** in hydrated mode (50 identifier-only) — silently clamped and
+  echoed in `pagination.page_size`, matching the page grain of the sibling hydrated
+  surfaces (`/users/:slug/followers|following`, `/cards`).
+- Hydration reuses the existing §L5 list builders and one batch prefetch per kind —
+  no per-row queries, no new card-building logic.
+- `POST /me/watching/watch` deliberately does **not** gain `card` (clients invalidate the
+  watching query namespace after mutations).
+
+**Documentation corrections (long-shipped behavior, not behavior changes):**
+
+- **§4.5 `GET /bcc/v1/me/watching` rewritten to the shipped shape.** The block had
+  described the pre-implementation design: `cursor`/`limit`/`filter`/`tier` query params,
+  a per-item summary `card`, a `{next_cursor, has_more}` envelope, and
+  `Cache-Control: private, max-age=30`. None of that shipped. The endpoint has always
+  used **offset** pagination (`page`/`page_size` → `{page, page_size, total, total_pages}`),
+  identifier-only items (15 fields, now documented individually with their LOCKED
+  semantics: `follow_source`, `is_resolved`, `card_id`, `is_legacy`), and `no-store`.
+- **§4.7 pagination note corrected** — `/me/watching` was listed among the routes
+  reserving cursor pagination; it ships offset pagination.
 
 ### v1.75 — 2026-08-06 — docs-only — quality-sweep contract sync (activity `active_members_7d`, §4.30 envelope erratum, §2.5 vesting prose)
 
