@@ -27,6 +27,10 @@
           {
             "type": "command",
             "command": "bash .claude/hooks/eslint-frontend.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/color-token-check.sh"
           }
         ]
       }

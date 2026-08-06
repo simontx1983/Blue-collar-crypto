@@ -160,9 +160,24 @@ falls below them is a regression even if "working":
 - [ ] **Keyboard nav** — Tab through every interactive element in
   reading order. Esc closes modals + dropdowns. Enter activates the
   default action.
-- [ ] **Tap targets ≥ 44×44px** on every interactive element on
-  mobile. The Pull button on a card and the reaction row are the
-  usual offenders.
+- [ ] **Tap targets — contextual rule.** ~**44×44px** for primary
+  navigation, dialog controls, form controls, important actions and
+  standalone icon buttons. **36px is the sanctioned compact exception**
+  for established dense repeated controls — filter chips, tag chips,
+  pager chips (`min-h-[36px]`, canonically
+  [`FilterChipRow`](../../../bcc-frontend/src/components/ui/FilterChipRow.tsx)).
+  Do **not** flag those as undersized, and do **not** extend the 36px
+  exception to ordinary or primary buttons. The card action row is the
+  usual genuine offender.
+- [ ] **Visual conformance** — the change reads as the same design
+  language as the surfaces around it. The canonical description is
+  [bcc-frontend/docs/frontend-doctrine.md §5](../../../bcc-frontend/docs/frontend-doctrine.md);
+  the mechanical conformance checks (surface-family/text-palette match,
+  token-only color, mono/stencil/serif type roles, flat-and-bordered
+  structure, shared-primitive reuse) belong to the
+  [frontend-reviewer](../../agents/frontend-reviewer.md) agent — don't
+  duplicate that pass here. What this skill adds is the flow-level
+  judgment: does the surface *behave* like its siblings.
 
 ---
 
@@ -185,7 +200,11 @@ noise**. Use the smoke-test checklist to scope:
 
 ## Step 5 — Empty / error / loading states
 
-Every list, feed, and grid must define all three:
+Every list, feed, and grid must define all three. The canonical *shapes*
+(the centered `bcc-paper` empty sheet, `SKELETON_CLASS`, `LoadFailure`)
+are specified in
+[frontend-doctrine §5.11](../../../bcc-frontend/docs/frontend-doctrine.md) —
+a surface that hand-rolls its own instead of reusing them is a finding:
 
 - [ ] **Empty** with guidance copy (not blank). E.g. directory empty
   state: "No cards match these filters" + reset CTA.
@@ -215,9 +234,15 @@ Specific empty states to spot-check:
   prefix carry semantics for colorblind users
 - [ ] All images / icons have alt text or `aria-label`. Decorative
   flair (foil sheen, glow rings) marked `aria-hidden`.
-- [ ] Focus states visible on all interactive elements — Tailwind
-  `focus-visible:` rings, not just `focus:` (mouse users don't need
-  the ring; keyboard users do)
+- [ ] Focus states visible on all interactive elements. **The ring is
+  global** — `globals.css` sets
+  `:focus-visible { outline: 2px solid var(--bcc-accent); outline-offset: 2px }`
+  in the base layer, so every interactive element gets one for free.
+  Flag the two real failure modes: an element that **suppresses** the
+  global ring (`outline-none` with no replacement, or a ring clipped by
+  an `overflow: hidden` ancestor), and a control that isn't focusable at
+  all (a click handler on a `<div>`). A missing per-component
+  `focus-visible:` utility is **not** a finding.
 - [ ] Modal focus is **trapped** (Esc closes; Tab cycles inside).
   Focus returns to the triggering element on close.
 - [ ] Screen reader walks the Living Header coherently — streak
