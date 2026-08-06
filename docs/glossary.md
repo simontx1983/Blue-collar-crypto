@@ -249,4 +249,4 @@ they're the same person.
 
 > **Per-wallet detail is own-account only.** `MemberProfile.wallets` is `[]` for every other
 > viewer — never use its `.length` as a "has a wallet" signal; use `wallets_verified`. See
-> `bcc-frontend/docs/wallet-privacy-policy.md`.
+> `wallet-privacy-policy.md` (in this `docs/` folder).
