@@ -2645,7 +2645,11 @@ Returns the viewer's watchlist (§C2 — UI projection of PeepSo follows + `bcc_
   - `is_resolved` — page-backed (a peepso-page was found for the followed user), **regardless** of whether the page type maps to a contract kind. `{is_resolved: true, card_kind: "member"}` is a valid, intentional state (e.g. a `dao` page in V1) — frontend renders these as generic members.
   - `card_id` — always the followee **user_id** for `peepso` rows (stable React key anchored to the follow relationship, never a post id). Identifier rule: member kinds route by `card_handle`; validator/project/creator route by `card_slug`.
   - `is_legacy` — no `bcc_watch_meta` sidecar row (follow pre-dates the watch pipeline or came via PeepSo native UI); `watched_at` is `null`. Legacy items MUST NOT be surfaced as recent watches.
-  - `card` *(v1.76, additive)* — present **iff** the request carried `include=cards`; absent otherwise (the default response is byte-identical to pre-v1.76). Full §3.2 Card view-model built with the **watcher as viewer**, or `null` when the target is unhydratable (deleted user/page, page-type mismatch, unrecognized kind). Rows are **never dropped** for hydration reasons: `items` length, `total`, and `total_pages` are identical with and without `include=cards`.
+  - `card` *(v1.76, additive)* — present **iff** the request carried `include=cards`; absent otherwise (the default response is byte-identical to pre-v1.76). Full §3.2 Card view-model built with the **watcher as viewer**, or `null` when the target is unhydratable (deleted user/page, page-type mismatch, unrecognized kind).
+    - **Hydration never drops, filters, or reorders rows from a returned page.** An unhydratable target stays in place with `card: null` — clients must render or account for it, not assume the row vanished.
+    - `total` is identical with and without `include=cards` (it is computed independently of hydration).
+    - `items` length and `total_pages` are **not** guaranteed identical across the two modes: requesting `page_size` above the hydrated cap returns a smaller page (clamped to 24), which necessarily changes both. That is the clamp, not row dropping. Compare the two modes at the same *effective* `page_size` (≤ 24) if you need a like-for-like diff.
+- **Page-size caveat (pre-dates v1.76, applies to both modes):** page 1 prepends the viewer's pre-claim page-follows (`bcc_page_follows`, hard cap 100) **before** applying the PeepSo page budget, so **page 1 may return more than `page_size` items** — up to `min(100, N_page_follows) + page_size`. Clients must not assume `items.length <= page_size` on page 1. These rows drain as operators claim their pages.
 - **Errors:** `bcc_unauthorized`
 - **Rate limit:** 60/min/user
 - **Cache:** `Cache-Control: no-store` *(doc corrected v1.76 — was documented `private, max-age=30`, never shipped)*
@@ -6707,11 +6711,20 @@ the watchlist with the same card design as `/members` instead of identifier-only
   page-type mismatch, unrecognized kind).
 - When `include` is absent the `card` key is **absent entirely** — the default response
   is byte-identical to pre-v1.76, so every existing identifier-only consumer is untouched.
-- Rows are **never dropped** for hydration reasons: `items` length, `pagination.total`,
-  and `total_pages` are identical with and without `include=cards`.
+- Hydration **never drops, filters, or reorders rows from a returned page** — an
+  unhydratable target stays in place with `card: null`. `pagination.total` is likewise
+  identical across the two modes (computed independently of hydration). `items` length
+  and `total_pages` are **not** guaranteed identical, because the hydrated clamp below
+  can return a smaller page; compare at the same effective `page_size` for a like-for-like
+  diff. *(Corrected the same day: the first cut of this entry over-claimed parity on all
+  three, which the clamp makes impossible for `page_size` in 25..50.)*
 - `page_size` caps at **24** in hydrated mode (50 identifier-only) — silently clamped and
   echoed in `pagination.page_size`, matching the page grain of the sibling hydrated
   surfaces (`/users/:slug/followers|following`, `/cards`).
+- **Page-size caveat documented** (pre-dates v1.76, applies to both modes): page 1
+  prepends pre-claim page-follows before applying the PeepSo page budget, so page 1 may
+  return **more** than `page_size` items. Clients must not assume `items.length <= page_size`
+  on page 1.
 - Hydration reuses the existing §L5 list builders and one batch prefetch per kind —
   no per-row queries, no new card-building logic.
 - `POST /me/watching/watch` deliberately does **not** gain `card` (clients invalidate the
