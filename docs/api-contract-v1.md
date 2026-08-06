@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.73 · 2026-08-05 · Phase 1 deliverable
+**Status:** Draft v1.74 · 2026-08-06 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -5597,13 +5597,16 @@ Self-only settings surface for the signed-in viewer. Every route here is **Beare
 
 #### `PATCH /bcc/v1/me/profile`
 
-Update text profile fields. Registered as `WP_REST_Server::EDITABLE` (also accepts POST/PUT). Bio is the only supported field in V1.
+Update text profile fields. Registered as `WP_REST_Server::EDITABLE` (also accepts POST/PUT). Supported fields: `bio` and — v1.74 — `display_name`; at least one must be present.
 
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized 401`.
-- **Body (JSON):** `bio` (**required**, string) — `sanitize_textarea_field` (strips all tags), length-capped at **500**; stored to `wp_users.description`.
+- **Body (JSON):**
+  - `bio` (optional, string) — `sanitize_textarea_field` (strips all tags), length-capped at **500**; stored to `wp_users.description`.
+  - `display_name` (optional, string, v1.74) — `sanitize_text_field`, **1–60 chars**, stored to `wp_users.display_name`. **Hygiene gate:** values containing `@` (email-shaped) or starting with the reserved internal-login prefix `u_` (§B3) are rejected with 422 — a public display name must never carry non-public identity. Unlike the signup paths (which silently fall back to the handle), an explicit choice here fails loudly.
 - **Response 200:** the full updated **User view-model** (§3.1, own variant).
-- **Errors:** `bcc_unauthorized` (401) · `bcc_invalid_request` (422 — `bio` omitted / not a string / > 500) · `bcc_internal_error` (500)
+- **Errors:** `bcc_unauthorized` (401) · `bcc_invalid_request` (422 — both fields omitted / wrong type / `bio` > 500 / `display_name` empty, > 60, or hygiene-rejected) · `bcc_internal_error` (500)
 - **Mapping:** `MyProfileEndpoint::patch` (route `MyProfileEndpoint.php:92`, EDITABLE) → `UserViewService::getUser($userId, $userId)`. FE `profile-endpoints.ts:patchProfile`.
+- **Completeness interplay (v1.74):** `complete_profile` (§3.1 `verifications.profile_complete`, the same verdict Apprentice readiness reads) now **requires a chosen display name** before any completeness path can pass — empty, email-shaped, `u_`-shaped, and the backfill placeholder `Member <n>` all hold the gate closed. Fresh signups default `display_name` to the user-chosen handle, which counts as chosen. Signup inputs (§4.1 password / wallet / oauth) that fail the hygiene gate silently fall back to the handle rather than erroring.
 
 #### `POST /bcc/v1/me/profile/avatar`
 
@@ -6659,6 +6662,28 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.74 — 2026-08-06 — additive — display-name hygiene (leak-proof public names + choose-your-name requirement)
+
+Public display names carried two leak classes, neither produced by BCC
+signup code (which always falls back to the user-chosen handle):
+email-shaped values from WP/PeepSo-native account creation defaulting
+`display_name` to an email login, and the internal `u_<handle>` login
+(§B3) surfacing publicly.
+
+- **`PATCH /me/profile` gains `display_name`** (1–60 chars; hygiene
+  gate rejects `@` / `u_` shapes with 422). Bio behavior unchanged; at
+  least one field required.
+- **Signup hygiene (§4.1, all three paths):** a client-supplied or
+  provider-supplied `display_name` that fails the gate silently falls
+  back to the handle (closes the OAuth `user.name`=email vector).
+- **One-shot backfill:** existing leaky display names → the user's
+  `bcc_handle` when present, else the neutral `Member <ID>`
+  placeholder (denormalized `bcc_user_info` copy rewritten too).
+- **`complete_profile` (§3.1) now AND-gates on a chosen display name**
+  — placeholder / email-shaped / `u_`-shaped values hold it closed;
+  the handle default counts as chosen, so fresh signups and Apprentice
+  readiness are unaffected.
 
 ### v1.73 — 2026-08-05 — Hall `chain_profile` (chain identity + operator "About this chain")
 
