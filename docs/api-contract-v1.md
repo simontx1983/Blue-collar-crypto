@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.72 · 2026-08-05 · Phase 1 deliverable
+**Status:** Draft v1.73 · 2026-08-05 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2991,6 +2991,35 @@ Both are capped at **6** and ordered by stake (validators) / holder count
 `/validators?chain=` and `/cards` remain the full lists and the client links to them
 rather than paginating here. A Hall with no chain, or a chain with nothing indexed,
 returns `[]` for both (never `null`).
+
+**Chain identity — `chain_profile` (v1.73).** The detail response also carries a
+`chain_profile` block — the "meet this chain" identity assembled from the chain registry
+(`bcc_onchain_chains`), so a Hall conveys *what chain it is*, not just its indexed
+content. Shape:
+
+```json
+{
+  "chain_profile": {
+    "slug": "cosmos",
+    "name": "Cosmos Hub",
+    "native_token": "ATOM",
+    "chain_type": "cosmos",
+    "explorer_url": "https://www.mintscan.io/cosmos",
+    "icon_url": "https://…",
+    "color": "#6f7390",
+    "description": "The Cosmos Hub is the first blockchain launched in the Cosmos network…"
+  }
+}
+```
+
+`native_token`, `explorer_url`, `icon_url`, `color`, and `description` are **nullable** —
+the operator-authored `description` and operator-set `icon_url` / `color` may be empty
+until filled in **wp-admin ▸ Chains ▸ Identity**. The whole block is **`null`** when the
+Hall has no chain tag or the slug resolves to no active chain (degrades to the pre-v1.73
+shape). **Closed field set — privacy/infra:** only these identity fields are projected;
+the registry's internal `rpc_url` / `rest_url` are **never** emitted on this public read.
+Render `description` as text (operator content). `chain_profile` is **display-only** — a
+Hall's gates and membership are unaffected by it.
 
 ⚠️ **Closed field set — privacy.** `total_stake`, `uptime_30d` and `commission_rate`
 stay **strings**: they exceed float precision. More importantly, the validator row in
@@ -6629,6 +6658,19 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.73 — 2026-08-05 — Hall `chain_profile` (chain identity + operator "About this chain")
+
+- **`GET /halls/:slug` gains an additive `chain_profile` block** (§4.7) — the chain's
+  identity from the registry: `{slug, name, native_token, chain_type, explorer_url,
+  icon_url, color, description} | null`. Turns a Hall into the chain's community home
+  ("meet this chain") rather than a bare group. `description` is an operator-authored
+  "About this chain" writeup (new `bcc_onchain_chains.description` column, edited in
+  wp-admin ▸ Chains ▸ Identity); `icon_url` / `color` are operator-set branding. All
+  content-authored fields are nullable; the whole block is `null` for a chainless Hall.
+- **Closed field set:** internal `rpc_url` / `rest_url` are never projected. Display-only
+  — no gate/membership impact. The `/halls` directory rows are unchanged.
+- No token price / market data (deliberately out of scope — "community, not a bank").
 
 ### v1.72 — 2026-08-05 — New Member rank-chip (never empty) + member_state on author badges
 
