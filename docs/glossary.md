@@ -39,6 +39,11 @@ lives in `bcc-frontend/`.
 > A member holds one value on each. (A third **Foreman** role axis was scoped on
 > 2026-06-22 but never built and is retired for V1 — see api-contract-v1.md v1.36.)
 
+> **Dot vs. word, product-wide convention:** a dot on a chip means it's telling you
+> something about trust; no dot means it's stating a plain fact. `RankChip` renders
+> the rank as text and the trust tier as the accompanying dot — ranks carry no color
+> of their own. (`bcc-frontend/src/components/profile/RankChip.tsx`)
+
 ---
 
 ## 2. Entities & cards
@@ -49,7 +54,7 @@ lives in `bcc-frontend/`.
 | **Validator** | An on-chain validator entity page. Canonical page type `validator`. | `PeepSoPageRepository.php` (`validators → validator`). |
 | **Project** | A crypto project/protocol entity page. Canonical page type `project`. | `PeepSoPageRepository.php`. |
 | **NFT Creator** | An NFT-minting entity page. Canonical page type `nft`; rendered as `creator` card kind. | `PeepSoPageRepository.php` (`nft-creators → nft`); `CardKind` `creator`. |
-| **DAO** | A DAO entity page. Canonical page type `dao`. | `PeepSoPageRepository.php` (`daos → dao`). |
+| **DAO** | A DAO entity page. Canonical page type `dao`. **Orphaned on the frontend** — `CardKind` (`"validator" \| "project" \| "creator" \| "member" \| "community"`) has no `dao` value, so the badge on a member's dossier renders but there is no DAO card, directory filter, or page to link to. | `PeepSoPageRepository.php` (`daos → dao`); `CardKind` (`bcc-frontend/src/lib/api/types.ts`). |
 | **Builder** | **Not a distinct entity.** Builders are aliased to the `project` page type; there is no separate builder card or block. | `PeepSoPageRepository.php` (`builders → project`). |
 | **Community / Hall** | A PeepSo Group rendered as a `community` card. **Halls** are auto-provisioned one per active chain (system-created, open); a member can join multiple and designate one as **primary** (`primary_hall`), shown on their card. Browsable at `/halls`. | `CardKind` `community`; `primary_hall` + `PrimaryHallChip` (`bcc-frontend/src/components/cards/MemberDossier.tsx`); routes `bcc-frontend/src/app/(main)/(app)/halls/page.tsx`, `.../halls/[slug]/page.tsx`. |
 | **Piece** | A single NFT, served as a view-model. | `NftPieceViewModelBuilder` (`bcc-trust/app/Domain/Onchain/Services/`); `NftPieceEndpoint` (`bcc-trust/app/Domain/Onchain/REST/`). |
@@ -58,6 +63,13 @@ lives in `bcc-frontend/`.
 > **Removed:** *Edition* and *Series* — no table, field, or service exists for either. (The
 > prior claim that "Series = `bcc_onchain_collections.title`" was incorrect; `title` is just
 > the collection name.)
+
+> **Community gating.** `GroupDiscoveryType` is `nft \| hall \| system \| user` — nft-gated
+> holder groups, trade-hall communities, platform-created, and member-created respectively.
+> `trust_min` is `25 \| 50 \| 75 \| null`, a real reputation-score threshold to join, locked
+> at creation for `privacy="trust"` groups. Communities carry no trust axis of their own — no
+> rank, tier, or vouch — which is why their card's second action button is **Join**, not
+> **Vouch**. (`GroupDiscoveryType`, `trust_min` — `bcc-frontend/src/lib/api/types.ts`.)
 
 ---
 
@@ -69,6 +81,7 @@ lives in `bcc-frontend/`.
 | **Reputation tier** | A categorical key derived from the score: `elite` / `trusted` / `neutral` / `caution` / `risky`. | Stored as `reputation_tier` on `bcc_trust_page_scores`. |
 | **Trust Tier label** | The honest member-facing label for the reputation tier: **Risky / Caution / Neutral / Trusted / Elite** (`elite → "Elite"`). **Derived at read time**, not stored. | `ReputationTierMap.php` (`bcc-trust/app/Domain/Core/Support/`), emitted as `reputation_tier_label`. |
 | **Card-rarity tier** | ~~An entity card's rarity classification.~~ **RETIRED (contract v1.57).** The `legendary`/`rare`/`uncommon`/`common` vocabulary and its `card_tier`/`tier_label` fields are gone. Cards carry the Trust Tier above, on every surface, for all five bands. The retirement is documented in `ReputationTierMap.php`'s class docblock; the short version is that the ordinal was inverted (`neutral` is the *starting* tier, so by population it was the common one), the labels made a claim about a denominator we are deliberately moving, they were positive-coded on a warning band, and `risky` had no slot at all — so the most safety-relevant state in the system rendered as nothing. Do not reintroduce. | Retirement rationale: `ReputationTierMap.php`; [api-contract-v1.md](api-contract-v1.md) §10 v1.57. See also [reputation-tokenization-policy.md](reputation-tokenization-policy.md) on why scarcity language and earned tiers should not be mixed. |
+| **Divergence state** | A five-state synthesis classifier over an entity's attestation pattern: `untested`, `well_regarded`, `poorly_regarded`, `polarizing`, `disputed`. Mutually exclusive. **Mostly theoretical today** — `polarizing` needs a reliability cache that hasn't shipped, so it can never fire; `poorly_regarded` needs revocations to exceed active attestations by 1.5×. In practice it resolves to `untested` (new accounts) or `well_regarded` (everyone else); don't build UI assuming all five states occur. | `DivergenceState` (`bcc-frontend/src/lib/api/types.ts`), §J.2/§J.4/§J.5/§J.10. |
 | **Fraud score** | An anti-abuse signal from behavioral + device analysis. | `BehavioralAnalyzer.php`, `DeviceFingerprinter.php` (`bcc-trust/app/Domain/Core/Security/`). |
 | **Read model** | The denormalized fast-query table the API reads from. | `bcc_page_read_model`; `PageReadModelRepository` (`bcc-trust/app/Domain/Core/Repositories/`). |
 
@@ -83,6 +96,7 @@ lives in `bcc-frontend/`.
 | **Vouch** | A per-author credibility toggle (one vouch / one weight per person), rendered next to the author's name — **not** a post reaction. Writes an attestation with `kind=vouch`. | `AuthorVouchButton` (`bcc-frontend/`); `bcc_trust_attestations`. |
 | **Endorse** | **Legacy wire vocabulary only (v1.50).** An "endorsement" is a `kind=vouch` attestation on an entity page — the `/endorse` endpoint writes through the attestation layer, and all display labels say **Vouch** per the §J.7 label table. The name survives on the wire (`/endorse` routes, `endorsement_count`, `viewer_has_endorsed`) but in no user-facing copy. The legacy `bcc_trust_endorsements` table is **dropped** (`drop-endorsements-table.php`); rows were migrated to attestations (`kind=vouch`). | `EndorsementService` (vouch-aligned adapter), `TrustRestController::endorse`, `drop-endorsements-table.php` (`bcc-trust/includes/database/`). |
 | **Reactions** | BCC seeds exactly two reaction types: `solid` (trust grammar — "agree" / drives the solids-received stat) and `fire` (social grammar). Other social kinds (like/love/haha/wow) are PeepSo defaults, not BCC-seeded. | `ReactionTypeRegistry.php` (`KIND_SOLID`, `KIND_FIRE`; `TRUST_KINDS = [solid]`, `ALL_KINDS = [solid, fire]`); seeded into option `bcc_reaction_ids`. |
+| **Stoke** | The post-level reaction UI brand name for the seeded `fire` reaction kind — the flame. `heat_stage` (1–5, velocity-weighted + time-decayed) grades the flame's appearance; `viewer_has_stoked` drives its fill; `stoke_count` is the public count. All three fields are optional on the wire — absent means Stoke hasn't shipped yet for that surface. Comments carry a separate, simpler Stoke pair with no `heat_stage`. | `heat_stage`/`viewer_has_stoked`/`stoke_count` (`bcc-frontend/src/lib/api/types.ts`); rendered via `ReactionRail`. |
 
 **Reaction grammars** (`bcc-frontend/src/components/feed/ReactionRail.tsx`): `trust`
 (restrained, signs your name), `social` (expressive, emoji-forward, includes Fire), and
@@ -94,7 +108,8 @@ lives in `bcc-frontend/`.
 > 2026-07-28 and is now **"Back"** (the action) / **"Backing"** (the state) per the §J.7 label
 > table — but the wire name is deliberately frozen, because it is a stored `kind` enum value and
 > the root of four view-model field families, the notification type, and three persisted
-> preference keys. Do not "converge" it. Same precedent as **Endorse** above.
+> preference keys. Do not "converge" it. Same precedent as **Endorse** above. The people backing
+> something are labelled **Supporters** in the UI (`supporters_tab`, `bcc-frontend/src/lib/copy/trust-layer.ts`).
 
 ---
 
@@ -113,15 +128,24 @@ collection surface is labelled **"Watchlist"** (`bcc-frontend/src/components/onb
 > The legacy "Pull"/"Binder" vocabulary and the `/me/binder/*` routes were removed (routes
 > on 2026-06-10; physical table rename 2026-06-26). No `pull`/`binder` route or table remains.
 
+> **Wire inconsistency, patched client-side.** The server labels this audience count
+> "Followers" on entity cards and "Watchers" on member cards — same PeepSo graph, two words.
+> The frontend normalizes both to `FOLLOW_COPY.noun` so adjacent cards never show two words
+> for the same thing (`Nameplate` in `bcc-frontend/src/components/cards/CardFrontFace.tsx`);
+> the server itself hasn't converged the wire label yet.
+
 ---
 
 ## 6. Claim & wallet
 
 | Term | What it is in code | Backing code |
 |---|---|---|
-| **Claim** | The process by which a member proves ownership of an entity page via wallet signature, flipping the claim to `verified`. | `ClaimService`, `ClaimRepository`, `ClaimStatus` (`pending` / `verified` / `revoked`) — `bcc-trust/app/Domain/Onchain/`; `bcc_onchain_claims`. |
+| **Claim** | The process by which a member proves ownership of an entity page via wallet signature, flipping the claim to `verified`. **Only validators and NFT collections are claimable** (`CardClaimTarget.entity_type` is `"validator" \| "collection"`) — both have an on-chain record to prove against. Projects have no on-chain entity backing them, so they can never be unclaimed; they're user-created from the start. | `ClaimService`, `ClaimRepository`, `ClaimStatus` (`pending` / `verified` / `revoked`) — `bcc-trust/app/Domain/Onchain/`; `bcc_onchain_claims`; `CardClaimTarget` (`bcc-frontend/src/lib/api/types.ts`). |
 | **Sign** | The wallet challenge/response that authenticates a member or backs a claim. | `WalletAuthController` (`bcc-trust/app/Domain/Core/REST/Auth/`). |
 | **Wallet link** | A verified wallet ↔ user ↔ entity association. | `bcc_wallet_links` (`DB::table('wallet_links')`); `WalletRepository`. |
+
+> **"Claim" is overloaded.** A member's `unresolved_claims_count` counts open **disputes**,
+> not page claims — never render it as "claims" in the UI; say **open disputes**.
 
 ---
 
@@ -132,6 +156,12 @@ collection surface is labelled **"Watchlist"** (`bcc-frontend/src/components/onb
 | **Signal** | An indexed on-chain fact (rows carry `role`, `chain`, `score_contribution`, `trust_boost`, `fraud_reduction`, etc.). Surfaced in the feed as `post_kind: "signal"`. | `bcc_onchain_signals`; `SignalRepository` (`bcc-trust/app/Domain/Onchain/Repositories/`). |
 | **Fetcher** | A per-chain indexer class pulling data on a schedule. | `bcc-trust/app/Domain/Onchain/Fetchers/`: `EvmFetcher`, `SolanaFetcher`, `CosmosFetcher`, `ThorchainFetcher`, `PolkadotFetcher`, `NearFetcher`. |
 | **Chain registry** | Normalized lookup of supported chains (RPC/explorer/token metadata). | `bcc_chains` (`DB::table('chains')`); `ChainRepository`; seeded in `bcc-trust/includes/database/schema-chains.php`. |
+
+> **Validator stake vocabulary (card back face).** Fixed labels, not up for debate: **Total
+> Stake · Self Delegation · Delegators · Commission · Voting Rank**. The wire field is
+> `self_stake`; "self-delegation" and "self-stake" are the same number under two names from
+> two conventions. Delegators and stakers are the same people.
+> (`bcc-frontend/src/components/cards/CardOnchainSignals.tsx`)
 
 ---
 
@@ -200,3 +230,23 @@ Retired: **stargaze** (STARS) — the stargaze-1 L1 halted June 2026 after the
 Prop-1017 migration to the Cosmos Hub; its CW-721 collections now live on the
 `cosmos` chain as re-instantiated `cosmos1…` contracts
 (`bcc-trust/includes/database/retire-stargaze-chain.php` removed the row).
+
+---
+
+## 11. Verification
+
+Three identity-proof signals, all under `UserViewService::getProfile`.
+
+| Term | What it is in code | Backing code |
+|---|---|---|
+| **X verified** | `x_verified` (boolean) + `x_username`. True only when an active, verified row exists. | `bcc_trust_user_verifications`; `bcc-frontend/src/lib/api/types.ts`. |
+| **GitHub verified** | `github_verified` (boolean) + `github_username`, same verification table. | `bcc_trust_user_verifications`. |
+| **Wallets verified** | `wallets_verified` — a **count**, not a boolean, and the only wallet signal permitted to cross a member boundary. | `MemberProfile.verifications.wallets_verified` (`bcc-frontend/src/lib/api/types.ts`). |
+| **Profile completeness** | `profile_completeness` (0–100), the PeepSo profile-fields completeness percentage. On the wire but rendered nowhere on the card today; surfaced on `/me/progression`. | `bcc-frontend/src/lib/api/types.ts`. |
+
+There's a bonus when the X and GitHub accounts share an email address, since that's evidence
+they're the same person.
+
+> **Per-wallet detail is own-account only.** `MemberProfile.wallets` is `[]` for every other
+> viewer — never use its `.length` as a "has a wallet" signal; use `wallets_verified`. See
+> `bcc-frontend/docs/wallet-privacy-policy.md`.
