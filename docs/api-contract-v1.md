@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.74 · 2026-08-06 · Phase 1 deliverable
+**Status:** Draft v1.75 · 2026-08-06 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -590,10 +590,14 @@ profile shows a chip (New Member · Neutral tier), not a hole.
   `{qualifying, required, window, min_tier}` — qualifying days at
   `min_tier`-or-better within the trailing `window` days.
 - `vesting` is the §16.3 account-tenure maturity ramp: `maturity` ∈
-  (floor, 1.0], linear over `span_days` from the member's **signup date**
+  [floor, 1.0] — it equals the floor exactly on signup day (v1.75
+  prose fix; the previously documented open interval was wrong at day 0) —
+  linear over `span_days` from the member's **signup date**
   (`user_registered`) — anchoring on account tenure (not the Apprentice
   award moment) means onboarding time is not a vesting penalty;
-  `days_elapsed` counts from signup. `decay` reports inactivity decay
+  `days_elapsed` counts from signup, **clamped to `span_days`** (a member
+  past the ramp reports `days_elapsed = span_days`, not raw tenure —
+  v1.75 prose fix). `decay` reports inactivity decay
   (`{active, points}`).
 - `recovery` — **shape CHANGED at v1.63 (Rank Phase 8)**: `null` when
   the member is not in recovery, else
@@ -3046,7 +3050,7 @@ Server-authoritative copy. The frontend MUST render `label` verbatim — never a
 ```json
 {
   "posts_last_7d": 14,
-  "active_members_last_7d": 0,
+  "active_members_7d": 5,
   "last_activity_at": "2026-05-04T14:22:00+00:00",
   "heat": "warm",
   "heat_label": "Warm"
@@ -3055,7 +3059,12 @@ Server-authoritative copy. The frontend MUST render `label` verbatim — never a
 - `heat` ∈ `cold` | `warm` | `hot`. Server-bucketed (default thresholds: cold ≤ 2 posts/7d, warm 3–9, hot ≥ 10). Filterable via `bcc_group_heat_thresholds`.
 - `heat_label` is the server-authoritative display string for the bucket (defaults: `Hot` / `Warm` / `Quiet`). Frontend renders verbatim per §A2 — no client-side `heat === "hot" ? "Hot" : …` mapping. Filterable via `bcc_group_heat_label`.
 - `last_activity_at` is `null` when no posts in window or when the underlying timestamp is invalid.
-- `active_members_last_7d` is reserved for v2.5; emit `0` until then.
+- `active_members_7d` *(v1.75 — replaces the never-shipped reserved name
+  `active_members_last_7d`)* is the count of **distinct authors** who posted in
+  the group within the same trailing 7-day window (`COUNT(DISTINCT post_author)`
+  riding the heat aggregate — no extra query). `0` when the window is empty or
+  the block is built on a degraded/anon default path. Emitted in **every**
+  §4.7.1 `activity` block (holder groups, discovery, communities, halls).
 
 #### `GET /bcc/v1/me/holder-groups`
 
@@ -3080,7 +3089,7 @@ The user's holder-groups state — joined groups, eligible-to-join suggestions, 
         "verification": { "kind": "on_chain", "label": "On-Chain Verified" },
         "activity": {
           "posts_last_7d": 14,
-          "active_members_last_7d": 0,
+          "active_members_7d": 5,
           "last_activity_at": "2026-05-04T14:22:00+00:00",
           "heat": "warm"
         }
@@ -3303,7 +3312,7 @@ Cross-kind discovery list. Sort key: `verified DESC, heat_score DESC, member_cou
         },
         "activity": {
           "posts_last_7d": 14,
-          "active_members_last_7d": 0,
+          "active_members_7d": 5,
           "last_activity_at": "2026-05-04T14:22:00+00:00",
           "heat": "warm",
           "heat_label": "Warm"
@@ -3355,7 +3364,7 @@ Shape mirrors §4.7.1 exactly, with a `validator_stats` block replacing `collect
           "validator_page": "/v/coinbase01"
         },
         "verification": { "kind": "on_chain", "label": "On-Chain Verified" },
-        "activity": { "posts_last_7d": 3, "last_activity_at": "2026-07-20T10:00:00Z", "heat": "warm", "heat_label": "Warm" }
+        "activity": { "posts_last_7d": 3, "active_members_7d": 2, "last_activity_at": "2026-07-20T10:00:00Z", "heat": "warm", "heat_label": "Warm" }
       }
     ],
     "eligible_to_join": [],
@@ -6070,7 +6079,7 @@ Cross-kind single-group detail view-model (`nft`/`hall`/`system`/`user`). Powers
 - **Path:** `slug` — `[a-z0-9][a-z0-9-]{0,99}`, required.
 - **Response 200:**
   ```json
-  { "id": 4231, "slug": "holders-bored-apes", "name": "Holders: Bored Apes", "type": "nft", "privacy": "closed", "description": "…", "image_url": "https://…", "member_count": 87, "verification": { "kind": "on_chain", "label": "On-Chain Verified" }, "activity": { "posts_last_7d": 14, "last_activity_at": "2026-05-04T14:22:00Z", "heat": "warm", "heat_label": "Warm" }, "collection_stats": { "...": "§4.7.4 block, NFT-type only else null" }, "viewer_membership": { "is_member": true, "joined_at": "2026-01-12T00:00:00Z" }, "permissions": { "can_join": { "allowed": false, "unlock_hint": null, "reason_code": "already_member" }, "can_leave": { "allowed": true, "unlock_hint": null, "reason_code": null }, "can_read_feed": { "allowed": true, "unlock_hint": null, "reason_code": null } }, "feed_visible": true, "members_visible": true, "can_use_public_all": true, "can_manage_public_all_policy": false, "public_all_members_enabled": false, "chain_tag": "ethereum", "trust_min": null, "links": { "self": "/groups/holders-bored-apes" }, "card": { "...": "community Card view-model per §3.2.4 — card_kind: \"community\", community_dossier populated" } }
+  { "id": 4231, "slug": "holders-bored-apes", "name": "Holders: Bored Apes", "type": "nft", "privacy": "closed", "description": "…", "image_url": "https://…", "member_count": 87, "verification": { "kind": "on_chain", "label": "On-Chain Verified" }, "activity": { "posts_last_7d": 14, "active_members_7d": 5, "last_activity_at": "2026-05-04T14:22:00Z", "heat": "warm", "heat_label": "Warm" }, "collection_stats": { "...": "§4.7.4 block, NFT-type only else null" }, "viewer_membership": { "is_member": true, "joined_at": "2026-01-12T00:00:00Z" }, "permissions": { "can_join": { "allowed": false, "unlock_hint": null, "reason_code": "already_member" }, "can_leave": { "allowed": true, "unlock_hint": null, "reason_code": null }, "can_read_feed": { "allowed": true, "unlock_hint": null, "reason_code": null } }, "feed_visible": true, "members_visible": true, "can_use_public_all": true, "can_manage_public_all_policy": false, "public_all_members_enabled": false, "chain_tag": "ethereum", "trust_min": null, "links": { "self": "/groups/holders-bored-apes" }, "card": { "...": "community Card view-model per §3.2.4 — card_kind: \"community\", community_dossier populated" } }
   ```
   - `card` (v1.27, additive): the full §3.2.4 community Card, composed from the same data already resolved for the flat fields (zero extra queries). New consumers render `group.card` via the CardFactory; the flat fields remain during the migration window.
   - `type` ∈ `nft|validator|hall|system|user`; `privacy` ∈ `open|closed|secret`. `image_url`/`collection_stats` are NFT-type only (else `null`); `validator_stats` (v1.52, §4.7.4 block) is `validator`-type only (else `null`); `verification` is present for both on-chain-gated kinds (`nft`, `validator`) and `null` elsewhere. `can_join` for a `validator` group is always `{allowed: false, reason_code: "not_eligible", unlock_hint: "Delegate to this validator to join its community."}` — the join round-trip happens via §4.7.8. `activity` is the §4.7.1 heat tile (defaults `posts_last_7d: 0, heat: "cold", heat_label: "Quiet"`). `viewer_membership`: `null` (anon), `{is_member: false, joined_at: null}` (authed non-member), `{is_member: true, joined_at}` (member). `permissions.*` each `{allowed, unlock_hint, reason_code}` (render `unlock_hint` verbatim per §A2/§N7); `can_join.reason_code` ∈ `auth_required|already_member|not_eligible|trust_threshold|requires_approval|invite_only`; `can_leave.reason_code` ∈ `auth_required|not_member|owner_cannot_leave`; `can_read_feed.allowed` always `true` for a built view-model (per-post visibility teaser, v1.24 — secret-non-member never gets a view-model). `feed_visible` mirrors `can_read_feed.allowed`. `members_visible` true for open groups, else only for active members. `can_use_public_all` (bool) — whether **this viewer** may set `visibility=public_all` when posting here (drives the composer's "PUBLIC" option; `false` for anon/non-members and members not authorized to syndicate — see §4.14). `can_manage_public_all_policy` (bool) — whether **this viewer** may change the group-wide ordinary-member opt-in (drives the owner control; `true` for the group **owner / manager** or a **site admin (`manage_options`)**, `false` for moderators, ordinary members, and anon). Distinct from `can_use_public_all`: a moderator may *use* `public_all` on their own post but may **not** manage the group policy. `public_all_members_enabled` (bool) — the group's ordinary-member opt-in state. **Minimum exposure:** it reflects the real value only for viewers who can manage the policy (`can_manage_public_all_policy = true`); every other viewer sees `false` (the raw config is not disclosed to ordinary/anon viewers — they rely on `can_use_public_all`). Toggled via `POST /me/groups/:id/post-policy` (§4.7.3). `chain_tag` slug or `null`. `trust_min` ∈ `25|50|75|null`.
@@ -6202,7 +6211,7 @@ Paginated NFT collection gallery for a creator page (`/c/[slug]`). **Supersedes 
 
 The vote-dispute system (owner files a dispute against a downvote → an **open community vote** on the meaningful-voting poll engine decides it → the verdict resolves async), plus the endorsement read direction. Rank Phase 6 (owner decision D-7) retired the §D5 five-member peer panel: there is no panelist selection, no panel queue, and no participation credit. Any eligible member (Apprentice+ · Trust Neutral+ · not a party · not fraud-blocked) may vote `uphold`/`reject`; the poll closes on **dual quorum (10 counted voters AND 7.5 counted effective weight) + 60% effective-weight majority**, no earlier than day 7, or Inconclusive at day 90. Dispute endpoints live in `DisputeController`; the endorsement reads live in `UserEndorsementsEndpoint`.
 
-> **Envelope note (load-bearing asymmetry — do not "fix"):** dispute endpoints emit the canonical `{ data, _meta }` envelope via `ApiResponse::ok`/`error`. The legacy `DisputeController` routes use bare (non-`bcc_`-prefixed) error codes; the Phase 6 `/disputes/:id/vote` trio uses `bcc_dispute_vote_*` codes. The two `/endorsements/mine*` reads return **unenveloped, top-level JSON** via raw `rest_ensure_response([...])` (they predate the helper; shape matches the §4.22 public read), and their error bodies are non-standard bare `{message}`. Documented reality, not the §1.4 target. The admin-only `POST /disputes/:id/resolve` (force-resolve) and `GET /disputes/health` are **internal** and intentionally undocumented (allowlisted).
+> **Envelope note (corrected v1.75 — the v1.23 "unenveloped" claim was never true on the wire):** dispute endpoints emit the canonical `{ data, _meta }` envelope via `ApiResponse::ok`/`error`. The legacy `DisputeController` routes use bare (non-`bcc_`-prefixed) error codes; the Phase 6 `/disputes/:id/vote` trio uses `bcc_dispute_vote_*` codes. The two `/endorsements/mine*` reads build their payloads via raw `rest_ensure_response([...])`, but the global `Envelope` filter (`rest_post_dispatch`, priority 999) wraps every `/bcc/v1/` response lacking envelope markers — so the **wire** shape is the standard `{ data: { items, total }, _meta }` on success and `{ error: {...} }` on failure, same as every other route (wire-verified 2026-08-06). Residual quirk, fixed in the 2026-08-06 sweep: the throttle denial used to return a bare `{message}` body that the wrapper *success*-wrapped under HTTP 429; it now returns the canonical `bcc_rate_limited` error shape, so the 429 carries `{ error: {...} }` and the `retry_after_seconds` injection engages. The admin-only `POST /disputes/:id/resolve` (force-resolve) and `GET /disputes/health` are **internal** and intentionally undocumented (allowlisted).
 
 #### `POST /bcc/v1/disputes`
 
@@ -6662,6 +6671,32 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.75 — 2026-08-06 — docs-only — quality-sweep contract sync (activity `active_members_7d`, §4.30 envelope erratum, §2.5 vesting prose)
+
+Documentation reconciliation from the 2026-08-06 post-sprint quality sweep.
+No endpoint, field, or behavior changes beyond one error-shape fix already
+noted in place:
+
+- **§4.7.1 `activity` block — `active_members_7d` documented** (Tia-PR
+  contract sync for bcc-core #47): every activity block has carried
+  `active_members_7d` (distinct authors posting in the trailing 7-day
+  window, riding the heat aggregate) since 2026-08-04, but the contract
+  only listed a reserved `active_members_last_7d` ("emit 0 until v2.5")
+  that **no code ever emitted** under that name. The canonical block and
+  all samples now document the real field; the reserved name is retired.
+- **§4.30 envelope note corrected** (erratum to v1.23): the
+  `/endorsements/mine*` reads were documented as "unenveloped top-level
+  JSON," but the global `Envelope` filter has always wrapped them — the
+  wire shape is the standard `{data,_meta}`/`{error}` pair (wire-verified).
+  The one real quirk — a bare `{message}` throttle body that the wrapper
+  *success*-wrapped under HTTP 429 — is fixed in bcc-trust to the
+  canonical `bcc_rate_limited` error shape.
+- **§2.5 `vesting` prose fixed to match the implementation** (behavior
+  verified correct against the v1.71 constants): `maturity` spans
+  `[floor, 1.0]` (equals the floor exactly on signup day; the open
+  interval was wrong at day 0) and `days_elapsed` is clamped to
+  `span_days` for members past the ramp.
 
 ### v1.74 — 2026-08-06 — additive — display-name hygiene (leak-proof public names + choose-your-name requirement)
 
@@ -8103,6 +8138,9 @@ documented vs 233 registered in-scope routes; 128 undocumented). Full audit:
 - **Documented envelope realities (no code change):** the `bcc-trust/v1` namespace
   uses the legacy `{success,data}` envelope (§4.25 note); `GET /endorsements/mine`
   and `/endorsements/mine/stats` return unenveloped top-level JSON (§4.30 note).
+  *[Erratum v1.75: the `/endorsements/mine*` claim was never true on the wire —
+  the global `Envelope` filter (`rest_post_dispatch`, 999) wraps those routes
+  like any other; see the corrected §4.30 note.]*
   Known §3.4 `HighlightStrip` shape drift flagged in §4.27.
 
 ### v1.24 — 2026-06-06
