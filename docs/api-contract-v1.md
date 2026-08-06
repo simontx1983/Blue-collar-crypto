@@ -3704,14 +3704,13 @@ Direct bcc-search project search and trending mode — the upstream that `cards/
   ```
 - **`categories` scope (v1.46):** the full category list ships only on result-bearing responses. Empty-result short-circuits (query under 2 / over 100 chars, junk-gate rejection, unknown `type`) return `categories: []` — autocomplete fires these per keystroke and nothing reads categories off an empty response.
 - **Errors (legacy WP shape — not §L5 envelope):**
-  - `rate_limit_exceeded` (HTTP 429) — `10 req / 5s` per subnet
+  - `bcc_rate_limited` (HTTP 429) — `10 req / 5s` per subnet *(doc corrected 2026-08-05: the previously listed `rate_limit_exceeded` never existed in code)*
   - `dependency_unavailable` (HTTP 503) — PeepSo plugin not loaded
-  - `categories_unavailable` (HTTP 503) — reputation category fetch failed
-  - `rebuild_in_progress` (HTTP 503) — bcc-search FULLTEXT index rebuilding; `Retry-After: 5`. In trending mode the same code surfaces with a "Trending is warming up" message.
-  - `score_enrichment_failed` (HTTP 503) — trust-score enrichment pipeline down
-  - `temporarily_overloaded` (HTTP 503) — internal rate-limit ceiling reached
+  - `bcc_upstream_unavailable` (HTTP 503; `Retry-After: 5`) — covers category fetch failure, FULLTEXT rebuild in progress ("Trending is warming up" in trending mode), and enrichment-pipeline degradation *(supersedes the fictional `categories_unavailable` / `rebuild_in_progress` / `score_enrichment_failed` codes)*
+  - `bcc_internal` (HTTP 503) — internal rate-limit ceiling / unexpected failure *(supersedes `temporarily_overloaded`)*
+  - `rest_invalid_param` (HTTP 400) — WP arg validation (`q` over 100 chars)
 - **Cache:** server-side `60s` (per-query results) + LKG mirror for 503 fallback. Trending mode: `300s` (5 min) + LKG.
-- **Envelope note:** bcc-search predates §L5 — this endpoint returns raw `{ results, categories }` (or `{ results, meta }` for trending mode where `categories` is absent because they don't apply). The bcc-frontend client routes these through `bccSearchFetchAsClient` (not the envelope-strict `bccFetch`) and maps legacy WP errors (`{ code, message, data: { status } }`) into `BccApiError` so the UI's `err.code` branching contract per Phase γ stays uniform.
+- **Envelope note (doc corrected 2026-08-05 — the wire has been enveloped since 2026-05):** although bcc-search's handlers *emit* raw `{ results, categories }` (or `{ results, meta }` in trending mode), bcc-trust's §1.4 Envelope wraps every `/bcc/v1/*` response — so the wire carries `{ data: { results, … }, _meta }` on success and `{ error: { code, message, status } }` on failure. The shapes documented above are the **inner payload**. The bcc-frontend client (`bccSearchFetchAsClient`) is shape-tolerant: it unwraps the envelope when present and still maps a raw legacy body, so `err.code` branching per Phase γ stays uniform either way.
 
 #### `GET /bcc/v1/search/users`
 
@@ -3737,10 +3736,11 @@ Users vertical — separate cache + rate-limit bucket from project search so the
   }
   ```
 - **Errors (legacy WP shape):**
-  - `rate_limit_exceeded` (HTTP 429)
-  - `user_search_unavailable` (HTTP 503; `Retry-After: 5`)
+  - `bcc_rate_limited` (HTTP 429)
+  - `bcc_upstream_unavailable` (HTTP 503; `Retry-After: 5`)
+  *(doc corrected 2026-08-05: the previously listed `rate_limit_exceeded` / `user_search_unavailable` codes never existed in code)*
 - **Cache:** server-side `45s` per-query.
-- **Envelope note:** raw shape (no §L5 envelope) — same client routing as `GET /bcc/v1/search` above.
+- **Envelope note (doc corrected 2026-08-05):** §1.4-enveloped on the wire like every `/bcc/v1` route — the shape above is the inner payload; same client routing as `GET /bcc/v1/search` above.
 
 #### `GET /bcc/v1/search/groups`
 
@@ -3773,10 +3773,11 @@ Groups vertical — separate cache + rate-limit bucket. Returns PeepSo group row
 - **`kind_label` (v1.70)** — the pre-rendered §A2 display string, exactly the §3.2.4 kicker vocabulary (`CHAIN HALL`, `HOLDER COMMUNITY`, `DELEGATOR COMMUNITY`, `SYSTEM COMMUNITY`, `COMMUNITY`). Frontend renders it verbatim, never maps `kind` → words.
 - **`group_url`** is a **relative** Next.js route (rendered verbatim by the frontend; an absolute URL would navigate off the headless app) and — as of v1.70 — **kind-aware**: `hall` → `/halls/{slug}`, every other kind → `/communities/{slug}`, matching `CardUrlMap::groupUrl`'s canonical mapping (v1.68). *(Supersedes v1.68's "not hall-aware" caveat — that release fixed the absolute-URL drift but had no kind projected; now the vertical projects `kind`, halls route to their flavored surface. Non-hall kinds still resolve on the cross-kind `/communities/[slug]` page.)*
 - **Errors (legacy WP shape):**
-  - `rate_limit_exceeded` (HTTP 429)
-  - `group_search_unavailable` (HTTP 503; `Retry-After: 5`)
+  - `bcc_rate_limited` (HTTP 429)
+  - `bcc_upstream_unavailable` (HTTP 503; `Retry-After: 5`)
+  *(doc corrected 2026-08-05: the previously listed `rate_limit_exceeded` / `group_search_unavailable` codes never existed in code)*
 - **Cache:** server-side `45s` per-query.
-- **Envelope note:** raw shape (no §L5 envelope) — same client routing as `GET /bcc/v1/search` above.
+- **Envelope note (doc corrected 2026-08-05):** §1.4-enveloped on the wire like every `/bcc/v1` route — the shape above is the inner payload; same client routing as `GET /bcc/v1/search` above.
 
 ### 4.10 Notifications (§I1)
 
