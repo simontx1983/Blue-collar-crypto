@@ -187,14 +187,34 @@ These are the named visual tokens defined as CSS custom properties in
 recur in component class names; purely descriptive prototype "flavor" words with no token or
 class behind them are not included.
 
+The frontend has **two intentional surface families**, and this table covers the second one.
+Both are current:
+
+1. **Theme-aware application surfaces** — the app chrome (`.bcc-panel`, `bg-bcc-surface*`,
+   page background). These use the `--bcc-*` token set and the theme text scale
+   (`--bcc-text`, `-secondary`, `-muted`), and flip with `[data-theme]`.
+2. **Fixed cream/ink paper surfaces** — the "worksite paper" object (`.bcc-paper`,
+   `bg-cardstock*`, solid `--ink` blocks): empty states, record sheets, bio blocks, stream
+   boxes, cover/avatar editors. These use the tokens below and the fixed ink text scale, and
+   deliberately do **not** flip with theme.
+
+The binding rule is that the text palette must match its surface family. Fixed ink on a fixed
+cream surface is correct; fixed ink on a theme surface is a dark-mode bug. Full description:
+`bcc-frontend/docs/frontend-doctrine.md` §5.
+
 | Token | CSS var | Use |
 |---|---|---|
-| **Cardstock** | `--cardstock` (+ `-deep`, `-edge`) | Cream paper texture for card faces / sheets (`.bcc-card-face`, `.bcc-paper`). |
+| **Cardstock** | `--cardstock` (+ `-deep`, `-edge`) | Cream paper surface — the `.bcc-paper` sheet and cardstock-backed controls across app chrome (empty states, record sheets, editors), plus the trading-card crest. Not card-only. |
+| **Paper** | `--paper` (+ `-warm`, `-hi`, `-pale`, `-cream`) | Warmer/brighter cardstock variants; `--paper` backs `.bcc-paper`. |
 | **Concrete** | `--concrete` (+ `-hi`) | Near-black warehouse-floor background. |
-| **Safety** | `--safety` | Safety-orange accent (rails, active states, the `bcc-rail-dot`). |
+| **Safety** | `--safety` | Safety-orange. The established micro-eyebrow label (`bcc-mono text-safety`) above headings and empty states, inline validation/error text, rails, and the `bcc-rail-dot`. Used on both surface families. |
+| **Weld** | `--weld` | Arc-weld yellow — caution-tape and warning accents. |
+| **Blueprint** | `--blueprint` | Deep navy — dark inset blocks and blueprint-style chrome. |
 | **Phosphor** | `--phosphor` | CRT-green "live" / on-chain readout (`.bcc-phosphor-text`, `.bcc-phosphor-dot`). |
-| **Ink** | `--ink` (+ `-soft`) | Type color on cardstock. |
+| **Ink** | `--ink` (+ `-soft`, `-ghost`) | The fixed type scale for cream/paper surfaces, and a solid dark surface (`bg-ink`) in its own right. |
 | **Crest** | `.bcc-hex-*` classes | Hexagonal entity emblem (nested cardstock/chain-color rings). |
+| **Trust ramp** | `--bcc-trust-{risky,caution,neutral,trusted,proven}` | The **only** tier palette — RankChip dot/pill, card tier strip, avatar rings, search rows. Stable across themes. (`-elite` is a legacy alias for `proven`.) The rarity palette it replaced was retired in v1.57. |
+| **Kind** | `--kind-{member,validator,project,creator,community}` | Trading-card frame color. Data, not chrome — does not flip with theme. |
 
 ---
 
