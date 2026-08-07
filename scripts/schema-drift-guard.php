@@ -23,12 +23,26 @@
  *   - documented-Active tables missing from live.
  *
  * ── PHASE STATUS ──────────────────────────────────────────────────────
- * This guard is written in Phase 2 but is intentionally **NOT yet wired
- * into CI**. It is EXPECTED to report drift today (the known duplicate
- * indexes + the 17 orphan tables awaiting their guarded drop — 2 of which
- * (onchain_dao_stats / onchain_treasury) this guard itself surfaced). Phase 5
- * reconciles the live DB so that live == declared == documented, then
- * ARMS this guard as a blocking check. Until then it runs informationally.
+ * ARMED AND BLOCKING. Phase 5 reconciled live == declared == documented
+ * (Tier-3 sweep, 2026-07-23: parser fixes + drop-legacy-indexes v2 +
+ * database-schema.md regen), and this guard was wired into the umbrella
+ * `.github/workflows/ci.yml` on the same day as
+ * "Schema-drift parity (static)" — `run: php scripts/schema-drift-guard.php`
+ * with NO `continue-on-error`, so a non-zero exit fails the build.
+ *
+ * It is therefore NOT informational: any drift it reports is NEW drift.
+ * In particular, adding a table in code without adding its row to
+ * docs/database-schema.md turns CI red (CHECK 1b).
+ *
+ * The historical note this block used to carry — that the guard was
+ * expected to report the known duplicate indexes and the 17 orphan
+ * tables — describes pre-Phase-5 state and no longer applies; those were
+ * dropped, and the guard reported zero findings on a clean tree at arming
+ * time.
+ *
+ * CI runs STATIC MODE ONLY (no DB env vars), so the live-table and
+ * live-index checks below self-skip. The live half remains a manual /
+ * staging step.
  *
  * ── HOW TO RUN ────────────────────────────────────────────────────────
  *   # Static-only (DECLARED vs DOCUMENTED — no DB needed):

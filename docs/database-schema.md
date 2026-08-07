@@ -132,7 +132,9 @@ schema-install path in `tables.php` is itself routed through the same runner.
 | wp_bcc_trust_ballots | 0 | Per-voter poll ballots — one row per CAST (recast/withdraw close a row; §16.6 weight snapshot copied verbatim; close-time cluster-audit columns; one ACTIVE ballot per voter per poll via `active_lock`) | TableRegistry::ballots / schema-ballots.php / BallotRepository | Active |
 | wp_bcc_push_subscriptions | 3 | Web-push VAPID subscriptions per user/device | TableRegistry::pushSubscriptions | Active |
 | wp_bcc_chains | 21 | Supported chains registry (RPC/REST/explorer config) | schema-chains.php (Onchain) | Active |
-| wp_bcc_chain_checkpoints | 7 | Per-chain indexer checkpoint + CU budget | schema-chain-checkpoints.php | Active |
+| wp_bcc_chain_checkpoints | 7 | Per-chain indexer checkpoint + CU budget; also carries the `cw_*` CosmWasm-discovery state (backfill cursor, code-id watermark, pause, per-pass timestamps) added 2026-08 | schema-chain-checkpoints.php | Active |
+| wp_bcc_cosmwasm_code_families | 0 | CosmWasm code-family inventory: one row per (chain, code id) with its CW-721 classification, bounded probe evidence, retry/backoff state and contract-enumeration cursor (CosmWasm discovery 2026-08; `not_cw721` is terminal and never routinely re-classified) | schema-cosmwasm-code-families.php / CosmwasmCodeFamilyRepository | Active |
+| wp_bcc_cosmwasm_contracts | 0 | CosmWasm contract candidate ledger: one row per (chain, contract address) with classification, retry state, cached operator-deny flag and emit marker (CosmWasm discovery 2026-08; this durable row IS the memory that stops previously-inspected contracts being reprocessed) | schema-cosmwasm-contracts.php / CosmwasmContractRepository | Active |
 | wp_bcc_wallet_links | 9 | User↔wallet links per chain | schema-wallets.php / WalletRepository | Active |
 | wp_bcc_onchain_signals | 3 | Unified on-chain trust signals (wallet age/tx/role boost) | schema-core.php / OnchainSignalRepository | Active |
 | wp_bcc_onchain_claims | 0 | Entity claims (incl. page claims via entity_type='page') | schema-claims.php | Active |
@@ -843,7 +845,9 @@ Supported chains registry (RPC/REST/explorer config).
 - Indexes: PRIMARY (id) [uq]; slug [uq]; chain_type; is_active
 
 #### wp_bcc_chain_checkpoints
-Per-chain indexer checkpoint + compute-unit budget.
+Per-chain indexer checkpoint + compute-unit budget. Shared "where is each
+chain-walking worker up to" primitive — the CosmWasm scanner extends it with
+`cw_*` columns rather than growing a parallel twin table.
 - chain_id · bigint unsigned · NO · PK
 - last_processed_block / head_block · bigint unsigned · NO
 - state · varchar(20) · NO
@@ -851,7 +855,52 @@ Per-chain indexer checkpoint + compute-unit budget.
 - cu_budget_reset_at · date · NO
 - last_run_at · datetime · YES; last_error · varchar(255) · YES
 - block_progression_history · varchar(500) · YES
+- cw_discovery_state · varchar(20) · NO — idle | backfilling | backfilled | unsupported | paused. `unsupported` is durable (the chain has no wasm module); `paused` is the operator switch the worker honours.
+- cw_code_cursor · varchar(255) · YES — opaque `pagination.key` for the resumable code-listing walk; cleared on completion and whenever a stale key is rejected
+- cw_max_code_id · bigint unsigned · NO — CONTIGUOUS high-water mark ("every code id at or below this is inventoried"); only advanced when a reverse tail walk actually met it
+- cw_backfill_completed_at / cw_last_discovery_at / cw_metadata_refreshed_at · datetime · YES — the last of these is the ≥30-day elapsed guard that makes the "monthly" pass monthly on a daily hook
+- cw_last_error · varchar(255) · YES — sanitized excerpt; raw LCD bodies are never stored
 - Indexes: PRIMARY (chain_id) [uq]
+
+#### wp_bcc_cosmwasm_code_families
+CosmWasm code-family inventory + CW-721 classification + contract-enumeration
+state. One row per (chain, code id). A "code family" is a stored wasm binary;
+every contract instantiated from it shares that binary byte-for-byte, which is
+why an already-classified same-checksum twin can settle a family for zero
+requests.
+- id · bigint unsigned · NO · PK auto
+- chain_id / code_id · bigint unsigned · NO · UQ (uk_chain_code)
+- checksum · varchar(64) · YES · K — hex sha256 from the code LISTING (`data_hash`); the per-code endpoint is never fetched because it returns the whole binary
+- classification · varchar(24) · NO · K — confirmed_cw721 | probable_cw721 | not_cw721 | inconclusive | temporarily_unreachable
+- classification_reason · varchar(64) · YES; probes_ok / probes_failed · varchar(128) · YES — bounded structured evidence tokens
+- classifier_version · smallint unsigned · NO — a bump requeues only the explicitly-affected classifications, never settled negatives
+- sample_contract · varchar(128) · YES — the instance the family verdict was sampled from; also the migration-check subject
+- classified_at / last_attempted_at / next_attempt_at · datetime · YES — `next_attempt_at` is a PRECOMPUTED backoff target so retry selection is one indexed range scan
+- retry_count · smallint unsigned · NO; last_error · varchar(255) · YES
+- contracts_cursor · varchar(255) · YES; contracts_enumerated · int unsigned · NO (absolute high-water mark, written with GREATEST so it is monotonic); enumeration_complete · tinyint(1) · NO
+- last_enumerated_at / metadata_checked_at · datetime · YES
+- created_at · datetime · NO
+- Indexes: PRIMARY (id) [uq]; uk_chain_code (chain_id,code_id) [uq]; idx_chain_classification (chain_id,classification); idx_chain_checksum (chain_id,checksum); idx_retry (chain_id,classification,next_attempt_at); idx_enumeration (chain_id,classification,enumeration_complete,last_enumerated_at)
+
+#### wp_bcc_cosmwasm_contracts
+CosmWasm contract candidate ledger. One row per (chain, contract address) —
+including the ones that turn out NOT to be NFTs, because that negative
+knowledge is what stops a contract being re-inspected forever. Candidates are
+kept here rather than on `wp_bcc_onchain_collections`: not one reader of that
+table filters on an "is-NFT" predicate, so parking minters and factories there
+would pollute the gallery, the verify queue, enrichment's backlog and every
+count at once.
+- id · bigint unsigned · NO · PK auto
+- chain_id · bigint unsigned · NO; contract_address · varchar(128) · NO · UQ (uk_chain_contract) — lowercase; 128 because cosmos bech32 runs to 66 chars and the old varchar(64) truncated them
+- code_id · bigint unsigned · NO · K — re-pointed in place when a contract MIGRATES, so a migration never creates a second collection
+- classification · varchar(24) · NO · K — same five states as the family table
+- classification_reason · varchar(64) · YES; probes_ok / probes_failed · varchar(128) · YES
+- classifier_version · smallint unsigned · NO
+- classified_at / last_attempted_at / next_attempt_at · datetime · YES; retry_count · smallint unsigned · NO; last_error · varchar(255) · YES
+- denied · tinyint(1) · NO — CACHE of "an operator deny rule covered this". Source of truth stays `wp_bcc_nft_spam_contracts`; every emit path re-consults it
+- collection_row_written · tinyint(1) · NO — set once emitted toward `wp_bcc_onchain_collections`, so a later sweep cannot re-upsert over operator-curated name/artwork
+- migrated_at · datetime · YES; discovered_at · datetime · NO
+- Indexes: PRIMARY (id) [uq]; uk_chain_contract (chain_id,contract_address) [uq]; idx_chain_code (chain_id,code_id); idx_chain_classification (chain_id,classification); idx_pending (chain_id,classification,denied,next_attempt_at); idx_emit (chain_id,classification,denied,collection_row_written)
 
 #### wp_bcc_wallet_links
 User↔wallet links per chain.
