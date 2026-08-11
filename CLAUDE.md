@@ -128,9 +128,18 @@ background audits, worktree-based parallelism), see
   dead PHP files. **CI-wired and blocking** in the umbrella `ci.yml`
   alongside the three guards above.
 
+- `scripts/schema-drift-guard.php` — diffs the `CREATE TABLE`
+  declarations in the bcc-* plugins against the master inventory in
+  `docs/database-schema.md` (and, when DB env vars are present, against
+  the live schema). **CI-wired and blocking** in the umbrella `ci.yml`
+  as "Schema-drift parity (static)", armed 2026-07-23 with no
+  `continue-on-error`. Static mode needs no DB — the live-table and
+  live-index checks self-skip. **A new table without a
+  `| wp_bcc_… | ~rows | Purpose | Owning code | Status |` row in
+  `docs/database-schema.md` turns umbrella CI red.**
+
 Also present in `scripts/` but not documentation-load-bearing:
-`schema-drift-guard.php` (declared-vs-documented-vs-live schema diff —
-not yet armed in CI), `wallet-case-preservation-check.php` (throwaway
+`wallet-case-preservation-check.php` (throwaway
 live-DB check, deliberately excluded from CI), `bcc-query-floor-probe.php`
 (temporary boot-floor diagnostic), `auth-cache-isolation-probe.sh`
 (staging Authorization-cache probe; weekly via
