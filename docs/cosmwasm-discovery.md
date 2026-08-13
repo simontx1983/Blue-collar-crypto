@@ -206,6 +206,59 @@ All five are ANDed, in one function —
 four passes routes through, so a new pass inherits the policy by
 construction rather than by remembering to.
 
+#### Two locks, and both must be open
+
+Opting a chain in does **not** start scanning. There are two independent
+locks and a pass runs only when both are open:
+
+| Lock | Where it lives | Scope |
+|---|---|---|
+| `BCC_COSMWASM_DISCOVERY_ENABLED` | wp-config | the whole install |
+| `cosmwasm_nft_discovery_enabled = 1` | `wp_bcc_chains`, per chain | one chain |
+
+An operator can therefore prepare the chain selection on a live install
+with the global constant still undefined, and nothing will run. That is
+the intended sequence: choose the chains first, open the global lock
+second. It also means an accidental opt-in cannot start work by itself,
+and neither can defining the constant on an install where no chain has
+been selected.
+
+Historical backfill is a **third** lock on top of those two:
+`BCC_COSMWASM_BACKFILL_ENABLED` is checked separately and additionally
+requires discovery to be enabled, so backfill can never run on its own.
+
+The canary allowlist can only ever **narrow**. A chain named in
+`BCC_COSMWASM_CHAIN_ALLOWLIST` that is not otherwise eligible stays
+excluded — the allowlist removes chains from the eligible set and never
+adds one to it. Undefined means "no canary restriction", not "everything
+allowed": the four permanent conditions still apply in full. Defined but
+empty, malformed or naming no usable id means **no chain is eligible**,
+because a configured-but-unreadable restriction is treated as a
+restriction, not as an absence of one.
+
+#### Turning a chain on or off
+
+wp-admin → **BCC System → Verify Collections** → *CosmWasm collection
+scanner*, per chain row. The two actions are:
+
+| Action | Effect |
+|---|---|
+| `cw_discovery_on_<chain_id>` | sets `cosmwasm_nft_discovery_enabled = 1` |
+| `cw_discovery_off_<chain_id>` | sets it back to `0` |
+
+Both require `manage_options` **and** a valid nonce; the capability is
+re-checked inside the handler rather than relying on the page-level
+check, so the gate sits on the write itself. The write goes through
+`ChainRepository::setCosmwasmNftDiscoveryEnabled()`, which busts the chain
+cache as part of the write, and the flag is then **read back** — a
+disagreement is reported as an error rather than as success. Both the
+transition and any refusal are audit-logged.
+
+Turning a chain off touches **only** that column. The chain keeps working
+everywhere else on the platform — Halls, validators, wallet linking,
+holdings, holder-group gating — and nothing already discovered is removed
+or un-verified.
+
 `cosmwasm_nft_discovery_enabled` ships **DEFAULT 0 and is never
 backfilled**, so the migration that adds it enables discovery on zero
 chains: an install that updates the plugin keeps scanning nothing until
@@ -526,6 +579,30 @@ shows:
 - The exact constant that is missing, when it is off, and the start
   control renders inert rather than pretending to work.
 
+**Per-chain eligibility**
+
+Every listed chain carries a verdict and, when it is not eligible, the
+reason. Without this an operator sees chains listed that will never be
+scanned and no explanation — the same failure the `unsupported` case
+already avoided:
+
+| State | Meaning | What to do |
+|---|---|---|
+| **Eligible** | Nothing is blocking it. It is in the rotation whenever discovery runs. | — |
+| **Not opted in** | Discovery is switched off for this chain. | Enable it on the row |
+| **No wasm module** | The chain answered the code listing with HTTP 501, so it is permanently skipped. | Nothing — opting it in would change nothing |
+| **Outside canary scope** | Opted in and supported, but `BCC_COSMWASM_CHAIN_ALLOWLIST` names other chains. The only case with no other visible symptom. | Widen or remove the allowlist |
+| **Unknown** | The opt-in could not be read. Treated as **not** eligible. | Check the error log |
+
+The opt-in state is shown separately from the verdict, so a chain that is
+opted in but unsupported reports both facts rather than hiding one behind
+the other, and its toggle stays available in every state — an opted-in
+unsupported chain is never stranded.
+
+`Unknown` exists because the alternative is worse: a missing or
+unreadable status must never render as eligible. Green is reserved for
+`Eligible` and the colour map defaults to the unknown treatment.
+
 **Counts**
 - Code families known · classified CW-721 · classified non-NFT ·
   inconclusive · awaiting classification · contracts inspected ·
@@ -651,7 +728,49 @@ lives in its own tables and not in the collections table.
 
 ---
 
-## 17. Expected discovery delay
+## 17. The planned first live run (Dungeon-only canary)
+
+**Not yet run. Nothing below is a claim that it has been.** At the time of
+writing every chain is opted out, both CosmWasm constants are undefined,
+and both CosmWasm tables are empty on every environment.
+
+The first live exercise is scoped to **one chain: Dungeon Chain (id 17)**,
+on staging only. It was chosen on measured evidence rather than
+preference:
+
+- **179 code families.** The incremental reverse walk stops at the first
+  code id at or below the watermark, and a fresh install has a watermark
+  of 0, which nothing satisfies — so the walk runs until it exhausts its
+  page budget of 5 × 100 = 500 families. A chain **under** that ceiling
+  therefore reaches the bottom, the result is authoritative, and the
+  watermark advances. A chain over it ingests 500, correctly refuses to
+  advance, requests a backfill restart, and — with backfill disabled —
+  sits degraded indefinitely. That single number is what makes a chain a
+  viable discovery-only subject.
+- **It has real CW-721 collections**, so the run can prove the whole path
+  rather than only proving that nothing exploded: code 3 (*AshFall: Lost
+  Artifacts*) and code 6 (*BBL Test NFTs*, 55 minted tokens).
+- **Its probes answer.** Contract metadata resolves and smart queries
+  return well-formed CosmWasm variant errors, which is the evidence the
+  classifier records for `not_cw721`.
+
+Chains deliberately **not** chosen: Cosmos Hub (723 families) and
+Injective (2,082) both have real NFT populations but sit past the ceiling;
+Juno (5,149) and Osmosis (1,900) have no collection evidence at all;
+Jackal and Akash have 5 families each and no CW-721; Cronos POS has no
+wasm module (501); Kujira's endpoint returned 502 on two probes weeks
+apart, so its capability is unknown rather than absent.
+
+Historical backfill stays **disabled** throughout. The canary exercises
+ordinary incremental discovery only — on Dungeon, that is itself the
+bounded slice, which is why no `BCC_CW721_CODE_IDS` override is planned:
+pointing discovery at codes 3 and 6 would guarantee a candidate while
+masking whether unaided discovery finds them, and that is the question the
+run exists to answer.
+
+---
+
+## 18. Expected discovery delay
 
 **Historical backfill: days, not hours.** With one chain per five-minute
 tick and 50 requests per tick, a chain the size of juno (5,149 families)
