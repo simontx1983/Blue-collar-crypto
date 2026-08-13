@@ -172,12 +172,58 @@ rides the daily hook and is gated by
 | `BCC_COSMWASM_DISCOVERY_ENABLED` | **All** scheduled discovery, including the backfill. | OFF |
 | `BCC_COSMWASM_BACKFILL_ENABLED` | The historical backfill specifically, **in addition to** the gate above. | OFF |
 | `BCC_COSMWASM_REQUEST_BUDGET` | Requests per worker invocation. | The documented default of 50 (capped at 500). |
+| `BCC_COSMWASM_CHAIN_ALLOWLIST` | A temporary canary scope — comma-separated chain **ids**. It can only ever NARROW the scanned set. | No extra restriction. Note this one is not a gate, so "undefined" is not "enabled": which chains get scanned is still decided by the per-chain opt-in below. |
 
 A missing constant never means "enabled". There is no environment
 sniffing — no `WP_ENVIRONMENT_TYPE`, no host check, no "looks like
 staging" heuristic. The backfill gate is AND-ed with the discovery gate,
 so turning discovery off stops everything including a backfill in
 progress.
+
+A **defined but unusable** allowlist (empty string, `"cosmos,osmosis"`,
+`"0,0"`, a non-scalar) scans **nothing**. It does not fall through to
+"all chains" — that fall-through is the same fail-open shape as the
+retired gate below, and it would fire at exactly the moment an operator
+had just typo'd their config. An individual unparseable entry is dropped
+rather than promoted, because dropping can only ever make the set
+smaller: `"8,osmosis"` narrows to chain 8.
+
+### Which chains get scanned
+
+The environment gates answer "may this install scan at all". A separate,
+per-chain answer decides "which chains, on an install that may":
+
+| Condition | Source | Kind |
+|---|---|---|
+| `is_active = 1` | `wp_bcc_chains` | registry |
+| `chain_type = 'cosmos'` | `wp_bcc_chains` | registry |
+| `cosmwasm_nft_discovery_enabled = 1` | `wp_bcc_chains` | **operator intent** |
+| `cw_discovery_state != 'unsupported'` | `wp_bcc_chain_checkpoints` | **measured capability** |
+| id in `BCC_COSMWASM_CHAIN_ALLOWLIST` | wp-config | canary scope (optional) |
+
+All five are ANDed, in one function —
+`CosmwasmDiscoveryWorker::eligibleChainIds()` — which every one of the
+four passes routes through, so a new pass inherits the policy by
+construction rather than by remembering to.
+
+`cosmwasm_nft_discovery_enabled` ships **DEFAULT 0 and is never
+backfilled**, so the migration that adds it enables discovery on zero
+chains: an install that updates the plugin keeps scanning nothing until
+someone opts a chain in. Intent and capability are deliberately separate
+columns in separate tables: intent is a decision a human makes,
+capability is a fact the chain reported (the HTTP 501 that produces
+`unsupported`). One hand-maintained "supports CosmWasm" flag would let an
+operator assert a wasm module that does not exist, and would leave the
+501 the code already learns with nowhere to live.
+
+Every unsure branch answers with FEWER chains. If the column is missing
+because the migration has not run, no chain is eligible — never "the
+field is absent, so skip that filter". If the checkpoint read fails, no
+chain is eligible — a read that did not run is not evidence that a chain
+is supported. The one deliberate exception is a chain with **no
+checkpoint row yet**, which IS allowed through: the first pass is what
+creates the measurement, so refusing an unmeasured chain would be a
+permanent deadlock dressed up as caution.
 
 The retired `BCC_CW721_DISCOVERY_ENABLED` was fail-**open** (`if
 (!defined(...)) return true;`), so every environment ran discovery unless
@@ -615,9 +661,13 @@ for a first complete pass. Checksum reuse (12–20% of families) and the
 three-sample rule (a non-NFT family settles without enumerating its
 contracts) are what keep that number in days rather than weeks.
 
-Backfill duration scales with the number of chains sharing the rotation:
-pausing the chains you do not care about is the supported way to make one
-chain finish sooner.
+Backfill duration scales with the number of chains sharing the rotation,
+and the rotation only ever contains chains an operator has opted in
+(`wp_bcc_chains.cosmwasm_nft_discovery_enabled`). So the way to make one
+chain finish sooner is to keep the others out of the rotation: leave them
+un-opted-in, or pause a chain that is already in it. Pausing preserves
+progress and is reversible from the admin panel; the opt-in column is the
+durable statement of which chains this install scans at all.
 
 **After the backfill, steady state:**
 

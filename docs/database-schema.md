@@ -131,7 +131,7 @@ schema-install path in `tables.php` is itself routed through the same runner.
 | wp_bcc_trust_polls | 0 | Generic meaningful-voting poll engine — one row per poll over a subject (Rank Phase 6; `dispute` is the first poll_type; one OPEN poll per subject via STORED generated `open_lock` + unique index) | TableRegistry::polls / schema-polls.php / PollRepository | Active |
 | wp_bcc_trust_ballots | 0 | Per-voter poll ballots — one row per CAST (recast/withdraw close a row; §16.6 weight snapshot copied verbatim; close-time cluster-audit columns; one ACTIVE ballot per voter per poll via `active_lock`) | TableRegistry::ballots / schema-ballots.php / BallotRepository | Active |
 | wp_bcc_push_subscriptions | 3 | Web-push VAPID subscriptions per user/device | TableRegistry::pushSubscriptions | Active |
-| wp_bcc_chains | 21 | Supported chains registry (RPC/REST/explorer config) | schema-chains.php (Onchain) | Active |
+| wp_bcc_chains | 21 | Supported chains registry (RPC/REST/explorer config); also carries `cosmwasm_nft_discovery_enabled`, the per-chain CosmWasm-scanner opt-in added 2026-08 (DEFAULT 0 — no chain is opted in by installing) | schema-chains.php (Onchain) | Active |
 | wp_bcc_chain_checkpoints | 7 | Per-chain indexer checkpoint + CU budget; also carries the `cw_*` CosmWasm-discovery state (backfill cursor, code-id watermark, pause, per-pass timestamps) added 2026-08 | schema-chain-checkpoints.php | Active |
 | wp_bcc_cosmwasm_code_families | 0 | CosmWasm code-family inventory: one row per (chain, code id) with its CW-721 classification, bounded probe evidence, retry/backoff state and contract-enumeration cursor (CosmWasm discovery 2026-08; `not_cw721` is terminal and never routinely re-classified) | schema-cosmwasm-code-families.php / CosmwasmCodeFamilyRepository | Active |
 | wp_bcc_cosmwasm_contracts | 0 | CosmWasm contract candidate ledger: one row per (chain, contract address) with classification, retry state, cached operator-deny flag and emit marker (CosmWasm discovery 2026-08; this durable row IS the memory that stops previously-inspected contracts being reprocessed) | schema-cosmwasm-contracts.php / CosmwasmContractRepository | Active |
@@ -839,6 +839,7 @@ Supported chains registry (RPC/REST/explorer config).
 - native_token · varchar(20) · YES; color · char(7) · YES
 - is_testnet · tinyint(1) · NO
 - is_active · tinyint(1) · NO · K
+- cosmwasm_nft_discovery_enabled · tinyint(1) · NO — per-chain operator opt-in for the CosmWasm CW-721 scanner (added 2026-08, post-install migration). **DEFAULT 0 with no backfill**, so installing or updating the plugin opts in exactly zero chains; enabling a chain is an explicit operator act. Distinct from `wp_bcc_chain_checkpoints.cw_discovery_state = 'unsupported'`, which is a MEASURED fact (the chain answered the code listing with HTTP 501) rather than an intent — the scanner requires both, and an operator cannot assert a wasm module that is not there. Not a gate on anything else: wallet linking, holdings, validators and Halls all read this table without it.
 - created_at · datetime · NO
 - decimals · tinyint unsigned · NO; bech32_prefix · varchar(20) · YES
 - marketplace_template · text · YES
