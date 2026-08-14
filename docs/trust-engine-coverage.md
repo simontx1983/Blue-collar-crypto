@@ -133,7 +133,7 @@ attestation on an entity card synchronously re-folds that entity's trust score.
 |---|---|---|---|---|
 | `/bcc/v1/me/attestations` | POST | `attestations-endpoints.castAttestation` | ✅ | `AttestationActionCluster` (entity + author surfaces) |
 | `/bcc/v1/me/attestations/{id}` | DELETE | `revokeAttestation` | ✅ | soft-delete + score re-fold |
-| `/bcc/v1/me/attestations/{id}/reaffirm` | POST | `reaffirmAttestation` | ✅ | decay reaffirmation |
+| `/bcc/v1/me/attestations/{id}/reaffirm` | POST | — | ❌ | decay reaffirmation; wrapper + `useReaffirmAttestation` removed 2026-08-14 as dead code — no UI surface ever called them |
 | `/bcc/v1/entities/{kind}/{id}/attestations` | GET | `getAttestationRoster` | ✅ | `AttestationRoster` / `BackingPanel` |
 
 **Impact**: the per-author **Vouch** byline toggle (`AuthorVouchButton`) and the
@@ -306,8 +306,8 @@ The legacy `/me/binder/*` alias routes are removed; the frontend talks to
 |---|---|---|---|---|
 | `/bcc/v1/me/conversations` | GET, POST | `messages-endpoints.listConversations`, `startConversation` | ✅ | `/messages`, ConversationsPanel |
 | `/bcc/v1/me/conversations/{id}/messages` | GET, POST | `getConversation`, `replyInConversation` | ✅ | `/messages/[id]`, MessageComposer |
-| `/bcc/v1/me/conversations/{id}/read` | POST | `markConversationRead` | ✅ | |
-| `/bcc/v1/me/messages/unread-count` | GET | `getUnreadMessageCount` | ✅ | header badge |
+| `/bcc/v1/me/conversations/{id}/read` | POST | — | ❌ | wrapper removed 2026-08-14 as dead code — no UI surface called it |
+| `/bcc/v1/me/messages/unread-count` | GET | — | ❌ | header badge now reads the aggregate `/me/badges` payload; the dedicated wrapper was removed 2026-08-14 as dead code |
 | `/bcc/v1/me/messages-prefs` | GET, PATCH | `messages-prefs-endpoints` | ✅ | MessagesPrefsForm |
 
 ---
@@ -342,10 +342,10 @@ The legacy `/me/binder/*` alias routes are removed; the frontend talks to
 | Route | Method | Frontend wrapper | Status | Notes |
 |---|---|---|---|---|
 | `/bcc/v1/me/notifications` | GET | `notifications-endpoints.getNotifications` | ✅ | |
-| `/bcc/v1/me/notifications/unread-count` | GET | `getUnreadCount` | ✅ | |
+| `/bcc/v1/me/notifications/unread-count` | GET | — | ❌ | served by the aggregate `/me/badges` payload; the dedicated wrapper was removed 2026-08-14 as dead code |
 | `/bcc/v1/me/notifications/mark-read` | POST | `markNotificationsRead` | ✅ | (was `…/read` in the prior audit) |
 | `/bcc/v1/me/notification-prefs` | GET, PATCH | `notification-prefs-endpoints` | ✅ | |
-| `/bcc/v1/me/push-subscriptions` (+ `/vapid-public-key`, `/{id}`) | GET, POST, DELETE | `push-endpoints.getVapidPublicKey`, `registerPushSubscription`, `revokePushSubscription` | ✅ | V2 Phase 1 push |
+| `/bcc/v1/me/push-subscriptions` (+ `/vapid-public-key`, `/{id}`) | GET, POST, DELETE | `push-endpoints.getVapidPublicKey`, `registerPushSubscription` | 🚧 | V2 Phase 1 push; DELETE has no client — `revokePushSubscription` was removed 2026-08-14 as dead code |
 | `/bcc/v1/me/highlights` | GET | `highlights-endpoints.getHighlights` | ✅ | |
 | `/bcc/v1/me/highlights/{id}/dismiss` | POST | `dismissHighlight` | ✅ | |
 | `/bcc/v1/me/celebrations/pending` | GET | `celebrations-endpoints.getPendingCelebration` | ✅ | |
