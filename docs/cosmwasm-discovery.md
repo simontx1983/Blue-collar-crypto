@@ -573,11 +573,63 @@ combined** — not one query per chain, and never a per-row recompute. It
 shows:
 
 **Status and gates**
-- Overall RGB, or `DISABLED` when the gate is off. A switched-off scanner
-  reports `DISABLED`, not red — an operator who has not turned it on is
-  not looking at a broken system.
-- The exact constant that is missing, when it is off, and the start
-  control renders inert rather than pretending to work.
+
+The overall verdict is one of seven values, decided in a fixed order. The
+order matters more than the individual values: several of these states are
+simultaneously true in ordinary operation, and the one that wins is the one
+an operator can act on.
+
+| # | Status | When | Colour |
+|---|---|---|---|
+| 1 | `unavailable` | a required read failed | red |
+| 2 | `idle` | no chain is opted in | grey |
+| 3 | `blocked` | chains are opted in, but none can be scanned | amber |
+| 4 | `disabled` | `BCC_COSMWASM_DISCOVERY_ENABLED` is undefined | grey |
+| 5 | `red` | a scheduled pass is missing, or the registry is empty | red |
+| 6 | `yellow` | a chain errored, everything is stale, or a pass is overdue | amber |
+| 7 | `green` | scannable chains, scheduled passes, fresh runs | green |
+
+**`unavailable` outranks everything**, and is not decided with the others —
+a failed read returns before the verdict is computed at all. This is
+deliberate: the failure path carries an *empty* chain list, so "nobody
+opted a chain in" is trivially true of it, and a database outage reported
+as a calm "Idle — nothing to do" would be the green-with-zeroes lie in a
+quieter voice. Worse, because idle invites no action.
+
+**`idle` and `blocked` both outrank `disabled`** for the same reason. Each
+means the scanner has nowhere to go, so defining the environment constant
+would change nothing — leading with it sends an operator to edit
+`wp-config.php` for no effect. The constant is still named in both notices,
+so no fact is hidden; opt a scannable chain in and `disabled` returns.
+
+**Neither `idle` nor `blocked` is a fault.** They are configuration states,
+rendered informational and warning respectively, never as errors. An
+operator who has not turned something on is not looking at a broken system.
+An **empty registry**, by contrast, stays `red` — that is not somebody
+declining to scan, it is a registry with nothing in it.
+
+`blocked` has exactly three causes, and the panel names which applies to
+each chain:
+
+| Cause | Meaning |
+|---|---|
+| paused | an operator paused the chain; resume returns it |
+| no CosmWasm module | the chain answered the code listing with HTTP 501 |
+| outside the canary allowlist | opted in and supported, but `BCC_COSMWASM_CHAIN_ALLOWLIST` names other chains |
+
+The 501 case is durable in a specific sense worth stating precisely: no
+scheduled pass retries an `unsupported` chain, and no admin control clears
+the state — pause refuses on it and resume acts only on a paused chain. It
+is not metaphysically permanent (the row is a database row like any other),
+but nothing in the product will re-evaluate it.
+
+**The verdict and the per-chain eligibility column agree by construction.**
+The status arithmetic counts exactly the chains the worker's selector would
+walk, rather than re-deriving its own idea of "eligible" — a panel that
+counted differently from the worker is precisely the defect this section
+exists to describe. A chain excluded for any reason cannot make the scanner
+look healthy, and equally cannot make it look degraded: an error stamp on a
+chain the worker never touches is not a fact about the scanner.
 
 **Per-chain eligibility**
 
