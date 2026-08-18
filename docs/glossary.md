@@ -208,7 +208,7 @@ cream surface is correct; fixed ink on a theme surface is a dark-mode bug. Full 
 | **Paper** | `--paper` (+ `-warm`, `-hi`, `-pale`, `-cream`) | Warmer/brighter cardstock variants; `--paper` backs `.bcc-paper`. |
 | **Concrete** | `--concrete` (+ `-hi`) | Near-black warehouse-floor background. |
 | **Safety** | `--safety` | Safety-orange. The established micro-eyebrow label (`bcc-mono text-safety`) above headings and empty states, inline validation/error text, rails, and the `bcc-rail-dot`. Used on both surface families. |
-| **Weld** | `--weld` | Arc-weld yellow — caution-tape and warning accents. |
+| **Weld** | `--weld` | Arc-weld yellow — caution tape, stencil stamps, grade badges and `.bcc-paper-head` kickers. Fixed-dark only: 11.84:1 on `--ink`, 1.64:1 on white. **Not a warning colour** — warning states use `--bcc-warning` (theme-scoped). |
 | **Blueprint** | `--blueprint` | Deep navy — dark inset blocks and blueprint-style chrome. |
 | **Phosphor** | `--phosphor` | CRT-green "live" / on-chain readout (`.bcc-phosphor-text`, `.bcc-phosphor-dot`). |
 | **Ink** | `--ink` (+ `-soft`, `-ghost`) | The fixed type scale for cream/paper surfaces, and a solid dark surface (`bg-ink`) in its own right. |
