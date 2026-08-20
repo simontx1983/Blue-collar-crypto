@@ -31,6 +31,12 @@
 # not the team.
 /.claude/settings.local.json
 
+# Ephemeral per-agent git worktrees. These are real registered worktrees
+# (`git worktree list` shows them), so their contents are working copies
+# of the repo — committing them would nest the tree inside itself.
+# Machine-local scratch space; nothing here is shared.
+/.claude/worktrees/
+
 # k6 result artifacts (scripts/perf/load-test.js handleSummary output);
 # contents ignored rather than the directory itself so the .gitkeep
 # re-allow works (git never descends into fully-excluded directories).
