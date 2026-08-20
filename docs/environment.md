@@ -141,14 +141,45 @@ WordPress-host derivation — it boundary-checks the prefix, so
 
 | Concern | local | staging | production |
 |---|---|---|---|
-| Stack | Local by Flywheel — nginx, MySQL 8.0.35 | LiteSpeed on Hostinger | LiteSpeed on Hostinger |
-| PHP | **8.2.30** | **8.3.30** | **8.3.30** |
+| Stack | Local by Flywheel — nginx 1.26.1, MySQL 8.0.35 | LiteSpeed on Hostinger | LiteSpeed on Hostinger |
+| PHP | **8.3.29** | **8.3.30** | **8.3.30** |
 | Object cache | Redis drop-in present | — | — |
 | Redis | optional | recommended; mind the `WP_REDIS_TIMEOUT` gotcha | recommended; same gotcha |
 
-> **Local is a PHP minor version behind both remotes.** A behaviour that depends on
-> 8.3 semantics will not reproduce locally. Local by Flywheel must download 8.3
-> through its UI; it is not a config edit.
+> **PHP minor version now matches** (local was 8.2.30 until the 2026-08 parity audit;
+> the 8.2-vs-8.3 gap meant 8.3-only behaviour could not reproduce locally at all).
+> A patch gap remains — 8.3.29 local vs 8.3.30 remote — which is close enough for
+> language semantics but not for a bug traced to a specific patch release. Local by
+> Flywheel offers whichever 8.3 build it ships; matching the patch exactly requires
+> its UI, not a config edit.
+
+### ⚠️ Switching PHP version in Local silently resets the site's `php.ini`
+
+Local writes a **fresh** `conf/php-<version>/php.ini.hbs` from its stock template
+when you change PHP version. Per-site customisations are **not** carried across.
+The 8.2.30 → 8.3.29 switch dropped two of them, and the failure was silent:
+
+| Setting | Consequence when lost |
+|---|---|
+| `extension=php_gmp.dll` | **The entire BCC application layer goes inert.** `bcc-core` hard-requires GMP and `return`s early without it, so `BCC_CORE_VERSION` is never defined, `bcc-search` and `bcc-trust` gate on that constant and bail in turn. |
+| imagick left enabled | `php_imagick.dll` ships but cannot load (missing ImageMagick core DLLs), so every request writes a startup warning. `wp-content/debug.log` had reached **108 MB**. |
+
+The GMP failure mode is the dangerous one, because **nothing about it looks broken**:
+
+- `wp plugin list` reports all three bcc-* plugins **`active`**.
+- WordPress boots, PeepSo works, wp-admin is normal.
+- `/wp-json/` simply omits every `bcc/*` namespace, and bcc routes return
+  **`404`, not `500`** — indistinguishable from a routing or permalink problem.
+
+So after **any** Local PHP version change, re-check `conf/php-<version>/php.ini.hbs`
+and confirm the stack is actually present:
+
+```bash
+curl -s http://blue-collar-crypto-custom.local/wp-json/ \
+  | grep -o 'bcc[^"]*'          # must be non-empty
+```
+
+An empty result means the plugins are loaded-but-inert, not missing.
 
 ### Edge cache (LiteSpeed)
 
