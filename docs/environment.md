@@ -89,16 +89,111 @@ feature-gated and silent-degrades when absent — add only what you use.
   the active drop-in with `WP_REDIS_TIMEOUT=1` to a Redis-less host.
 - **SMTP** — no BCC constant; mail goes through `wp_mail()` (host SMTP; locally, Mailpit).
 
-## What changes per environment (local / stage / prod)
+## What changes per environment (local / staging / production)
 
-| Concern | local | stage / prod |
+> **Read this first: production is a headless split and the other two are not.**
+> This table used to have one merged "stage / prod" column, which made the most
+> consequential difference in the stack structurally undescribable. It is now three
+> columns for exactly that reason.
+
+### The split, and why it dominates everything below
+
+| | `WP_HOME` (front end) | `WP_SITEURL` (WordPress) | Split? |
+|---|---|---|---|
+| **local** | `blue-collar-crypto-custom.local` | same | **no** |
+| **staging** | `stage.bluecollarcrypto.io` | same | **no** |
+| **production** | `bluecollarcrypto.io` — Vercel / Next.js | `cms.bluecollarcrypto.io` — WordPress | **YES** |
+
+On production the apex serves the Next.js frontend and WordPress lives on `cms.`.
+`home_url()` therefore addresses a host that serves **no `/wp-json` and no
+`/wp-content`**. Anything deriving a URL from `home_url()` is wrong on production and
+right everywhere else.
+
+Consequences that have already cost real incidents:
+
+- avatar/media URLs 403ing, because PeepSo **freezes** absolute URLs into usermeta
+- `rest_url()` pointing at the frontend host
+- CORS origin authority, since the browser origin is no longer the WordPress origin
+
+Reuse `BCC\Core\Support\HeadlessOrigin` (bcc-core) for any origin comparison or
+WordPress-host derivation — it boundary-checks the prefix, so
+`example.com.evil.test` cannot pass as ours. Do not write another origin parser.
+`FrontendOrigin` (bcc-trust) is the sole parser of `BCC_FRONTEND_ORIGIN`.
+
+> ⚠️ **A staging pass does not validate anything split-sensitive.** Staging is not
+> split, so it cannot exercise that path at all. Until staging is split, treat
+> "works on staging" as silent on every behaviour in the list above. Note also that
+> `cms.stage.bluecollarcrypto.io` does not currently resolve — closing this gap is
+> DNS + host + `wp-config` work, not a toggle.
+
+### Configuration
+
+| Concern | local | staging | production |
+|---|---|---|---|
+| `BCC_FRONTEND_ORIGIN` | `http://localhost:3000` (1 exact entry) | the deployed frontend origin(s) | the deployed frontend origin(s); **no `regex:` entry** — so the regex path is untested in situ |
+| `BCC_ENV` | unset / `local` | `staging` | `production` (drives the admin banner) |
+| Secrets (A/B/D) | dev/test keys | real keys, separate from production | real keys, rotated out-of-band |
+| RPC URLs (C) | public defaults fine | paid/owned endpoints | paid/owned endpoints |
+| Cron | WP-cron OK | system cron + `DISABLE_WP_CRON` if wired | system cron + `DISABLE_WP_CRON` if wired |
+| `BCC_HIGHLIGHTS_DEMO`, `BCC_TRUST_TEST_MODE` | fine to enable | **never** | **never** |
+
+### Platform
+
+| Concern | local | staging | production |
+|---|---|---|---|
+| Stack | Local by Flywheel — nginx 1.26.1, MySQL 8.0.35 | LiteSpeed on Hostinger | LiteSpeed on Hostinger |
+| PHP | **8.3.29** | **8.3.30** | **8.3.30** |
+| Object cache | Redis drop-in present | — | — |
+| Redis | optional | recommended; mind the `WP_REDIS_TIMEOUT` gotcha | recommended; same gotcha |
+
+> **PHP minor version now matches** (local was 8.2.30 until the 2026-08 parity audit;
+> the 8.2-vs-8.3 gap meant 8.3-only behaviour could not reproduce locally at all).
+> A patch gap remains — 8.3.29 local vs 8.3.30 remote — which is close enough for
+> language semantics but not for a bug traced to a specific patch release. Local by
+> Flywheel offers whichever 8.3 build it ships; matching the patch exactly requires
+> its UI, not a config edit.
+
+### ⚠️ Switching PHP version in Local silently resets the site's `php.ini`
+
+Local writes a **fresh** `conf/php-<version>/php.ini.hbs` from its stock template
+when you change PHP version. Per-site customisations are **not** carried across.
+The 8.2.30 → 8.3.29 switch dropped two of them, and the failure was silent:
+
+| Setting | Consequence when lost |
+|---|---|
+| `extension=php_gmp.dll` | **The entire BCC application layer goes inert.** `bcc-core` hard-requires GMP and `return`s early without it, so `BCC_CORE_VERSION` is never defined, `bcc-search` and `bcc-trust` gate on that constant and bail in turn. |
+| imagick left enabled | `php_imagick.dll` ships but cannot load (missing ImageMagick core DLLs), so every request writes a startup warning. `wp-content/debug.log` had reached **108 MB**. |
+
+The GMP failure mode is the dangerous one, because **nothing about it looks broken**:
+
+- `wp plugin list` reports all three bcc-* plugins **`active`**.
+- WordPress boots, PeepSo works, wp-admin is normal.
+- `/wp-json/` simply omits every `bcc/*` namespace, and bcc routes return
+  **`404`, not `500`** — indistinguishable from a routing or permalink problem.
+
+So after **any** Local PHP version change, re-check `conf/php-<version>/php.ini.hbs`
+and confirm the stack is actually present:
+
+```bash
+curl -s http://blue-collar-crypto-custom.local/wp-json/ \
+  | grep -o 'bcc[^"]*'          # must be non-empty
+```
+
+An empty result means the plugins are loaded-but-inert, not missing.
+
+### Edge cache (LiteSpeed)
+
+| Path | staging | production |
 |---|---|---|
-| `BCC_FRONTEND_ORIGIN` | `http://localhost:3000` | the deployed frontend origin(s) |
-| `BCC_ENV` | unset / `local` | `staging` / `production` (drives the admin banner) |
-| Secrets (A/B/D) | dev/test keys | real provider keys + rotated secrets, out-of-band |
-| RPC URLs (C) | public defaults fine | paid/owned endpoints to avoid rate limits |
-| Redis | optional | recommended; mind the `WP_REDIS_TIMEOUT` gotcha |
-| Cron | WP-cron OK | system cron + `DISABLE_WP_CRON` if you wire one |
+| `/wp-json/` and other REST | `max-age=60` | `max-age=60` |
+| `/wp-json/bcc/v1/*` | `no-cache` | `no-cache` — panel exclusion `^/wp-json/bcc/v1/` **plus** the `EdgeCache` code guard, deliberately belt-and-braces |
+| Default Front Page | — | `604800` — **deliberate, do not "fix" for symmetry.** The `cms.` root only 302s to the apex landing page. |
+
+The 1-week REST TTL was the root cause of the July `/members` edge-cache incident.
+The fix (`ttl_rest=60`) reached staging at the time; production was frozen and did
+not receive it until the 2026-08 parity audit. **Do not let these drift again** — the
+edge cache keys REST entries by URL and does **not** vary on `Origin`, so a shared
+entry can serve one caller's negotiated headers to another.
 
 Test-only env vars (`BCC_TEST_DB_*` in `bcc-trust/tests/Integration/bootstrap.php`) are for the
 integration suite, not operator setup.
