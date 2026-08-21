@@ -89,12 +89,17 @@ feature-gated and silent-degrades when absent — add only what you use.
   the active drop-in with `WP_REDIS_TIMEOUT=1` to a Redis-less host.
 - **SMTP** — no BCC constant; mail goes through `wp_mail()` (host SMTP; locally, Mailpit).
 
-## What changes per environment (local / staging / production)
+## What changes per environment (local / CI / staging / production)
 
 > **Read this first: production is a headless split and the other two are not.**
 > This table used to have one merged "stage / prod" column, which made the most
-> consequential difference in the stack structurally undescribable. It is now three
-> columns for exactly that reason.
+> consequential difference in the stack structurally undescribable. It is now split
+> for exactly that reason.
+>
+> **CI counts as an environment.** It runs no site, so it is absent from the
+> configuration and split tables below — but it is the environment that certifies
+> work "production-ready", so it appears under [Platform](#platform), where it is
+> currently the *only* environment not matching production.
 
 ### The split, and why it dominates everything below
 
@@ -139,47 +144,181 @@ WordPress-host derivation — it boundary-checks the prefix, so
 
 ### Platform
 
-| Concern | local | staging | production |
-|---|---|---|---|
-| Stack | Local by Flywheel — nginx 1.26.1, MySQL 8.0.35 | LiteSpeed on Hostinger | LiteSpeed on Hostinger |
-| PHP | **8.3.29** | **8.3.30** | **8.3.30** |
-| Object cache | Redis drop-in present | — | — |
-| Redis | optional | recommended; mind the `WP_REDIS_TIMEOUT` gotcha | recommended; same gotcha |
+**CI is an environment too**, and it is the one that signs off "production-ready".
+It gets a column here for that reason.
 
-> **PHP minor version now matches** (local was 8.2.30 until the 2026-08 parity audit;
-> the 8.2-vs-8.3 gap meant 8.3-only behaviour could not reproduce locally at all).
-> A patch gap remains — 8.3.29 local vs 8.3.30 remote — which is close enough for
-> language semantics but not for a bug traced to a specific patch release. Local by
-> Flywheel offers whichever 8.3 build it ships; matching the patch exactly requires
-> its UI, not a config edit.
+| Concern | local | **CI** | staging | production |
+|---|---|---|---|---|
+| Stack | Local by Flywheel — nginx 1.26.1, MySQL 8.0.35 | `ubuntu-latest` + `shivammathur/setup-php` | LiteSpeed on Hostinger | LiteSpeed on Hostinger |
+| PHP | **8.3.29** | **8.2** (latest 8.2.x) | **8.3.30** | **8.3.30** |
+| Object cache | Redis drop-in present | none | — | — |
+| Redis | optional | none | recommended; mind the `WP_REDIS_TIMEOUT` gotcha | recommended; same gotcha |
+
+> **Local's PHP minor version now matches the remotes** (local was 8.2.30 until the
+> 2026-08 parity audit; the 8.2-vs-8.3 gap meant 8.3-only behaviour could not
+> reproduce locally at all). A patch gap remains — 8.3.29 local vs 8.3.30 remote —
+> close enough for language semantics but not for a bug traced to a specific patch
+> release. Local by Flywheel offers whichever 8.3 build it ships; matching the patch
+> exactly requires its UI, not a config edit.
+
+### ⚠️ CI runs PHP 8.2 while both remotes run 8.3.30
+
+Every plugin repo pins `php-version: '8.2'`:
+
+| Repo | Location |
+|---|---|
+| `bcc-trust` | `.github/workflows/ci.yml` **:39** and **:187** (two jobs) |
+| `bcc-core` | `.github/workflows/ci.yml` **:24** |
+| `bcc-search` | `.github/workflows/ci.yml` **:42** |
+
+Classified **ACCIDENTAL** — nothing depends on 8.2 and no comment defends the choice;
+it is a pin that was correct when written and never revisited.
+
+This is the drift that matters most, and it is not because the gap is large. Local
+drift produces *confusion* — a developer sees odd behaviour and investigates. **CI
+drift produces false confidence**: a green check is the artefact the team trusts to
+mean "this is safe for production", and it is issued by the only environment that
+does not match production. A behaviour that differs between 8.2 and 8.3 is, by
+construction, invisible to the gate designed to catch it.
+
+It also ranks high on cost: **one line per repo**, versus the DNS-plus-host project
+needed to close the staging split.
+
+**Nothing blocks the bump** (audited, not assumed):
+
+- `require.php` is `>=8.1` in `bcc-trust` and `bcc-search`, and unset in `bcc-core` —
+  all open-ended.
+- `config.platform.php` is unset in all three, so nothing pins the resolver to 8.2.
+- No locked dependency carries a PHP upper bound — 20+31, 0+30 and 0+30 packages
+  checked across the three lock files.
+- The dev toolchain is exact-pinned (`phpstan/phpstan 2.1.51`,
+  `phpunit/phpunit 11.5.55`), so a runner bump will not silently float it.
+
+**Two things to expect rather than assume**, both worth one trial run:
+
+1. **PHPStan's target version follows the runner.** `phpVersion` is unset in every
+   `phpstan.neon`, so PHPStan currently analyses *as 8.2*. Moving the runner to 8.3
+   moves the analysis target with it, and at level 8 that can surface new findings.
+   Setting `phpVersion` explicitly would decouple the two and is worth considering
+   alongside the bump.
+2. **`bcc-trust` runs `composer update`, not `composer install`** (`ci.yml:48`
+   and `:192`), so it re-resolves against the runner's PHP rather than the lock file.
+   `bcc-core` and `bcc-search` use `composer install`. Transitive versions can
+   therefore shift for `bcc-trust` alone.
+
+> GMP is a hard requirement, not a nicety — CI already installs it explicitly
+> (`extensions: gmp, mbstring, intl`) with the note that it *"is required by
+> simplito/elliptic-php (on-chain crypto)"*, and local Composer installs have always
+> needed `--ignore-platform-req=ext-gmp`. See the `php.ini` trap below for what
+> happens when it goes missing at runtime.
 
 ### ⚠️ Switching PHP version in Local silently resets the site's `php.ini`
 
-Local writes a **fresh** `conf/php-<version>/php.ini.hbs` from its stock template
-when you change PHP version. Per-site customisations are **not** carried across.
-The 8.2.30 → 8.3.29 switch dropped two of them, and the failure was silent:
+Local writes a fresh `php.ini` template from its stock defaults when you change PHP
+version, and per-site customisations are **not** carried across. The 8.2.30 → 8.3.29
+switch dropped `extension=php_gmp.dll`, and the failure was silent.
 
-| Setting | Consequence when lost |
-|---|---|
-| `extension=php_gmp.dll` | **The entire BCC application layer goes inert.** `bcc-core` hard-requires GMP and `return`s early without it, so `BCC_CORE_VERSION` is never defined, `bcc-search` and `bcc-trust` gate on that constant and bail in turn. |
-| imagick left enabled | `php_imagick.dll` ships but cannot load (missing ImageMagick core DLLs), so every request writes a startup warning. `wp-content/debug.log` had reached **108 MB**. |
+**Edit `conf/php/php.ini.hbs`. That is the active template.** The
+`conf/php-<version>/` directories look authoritative and are **inert** — editing them
+changes nothing. Verified by matching the rendered
+`…/Local/run/<siteid>/conf/php/php.ini` against each candidate: it matches
+`conf/php/php.ini.hbs` exactly, differing only in the three `{{else}}`-branch `.so`
+lines that handlebars strips on Windows. Against `conf/php-8.3.29/` it differs by
+six extension lines. The `extension=php_gmp.dll` that sat in `conf/php-8.2.30/` was
+never doing anything either.
 
-The GMP failure mode is the dangerous one, because **nothing about it looks broken**:
+**Why GMP is the one that matters:** `bcc-core` hard-requires it (it backs
+`simplito/elliptic-php`, the on-chain crypto path) and `return`s early without it, so
+`BCC_CORE_VERSION` is never defined — and `bcc-search` and `bcc-trust` both gate on
+that constant, so they bail in turn. One missing extension takes the whole
+application layer down.
+
+It is dangerous because **nothing about it looks broken**:
 
 - `wp plugin list` reports all three bcc-* plugins **`active`**.
 - WordPress boots, PeepSo works, wp-admin is normal.
 - `/wp-json/` simply omits every `bcc/*` namespace, and bcc routes return
   **`404`, not `500`** — indistinguishable from a routing or permalink problem.
 
-So after **any** Local PHP version change, re-check `conf/php-<version>/php.ini.hbs`
-and confirm the stack is actually present:
+**It also damages persistent state.** With `bcc-core` inert its `cron_schedules`
+filter never registers, so every custom BCC interval (`bcc_one_minute`,
+`bcc_five_minutes`, `bcc_thirty_minutes`, `bcc_weekly`, …) becomes unknown to
+WP-Cron. Within 15 seconds of one such boot, **15 recurring events failed to
+reschedule** with `invalid_schedule` — `bcc_trust_feed_hot_warm`,
+`bcc_nft_eth_indexer_tick`, `bcc_trust_process_recalculations`,
+`bcc_core_degradation_alert_check`, `bcc_disputes_reconcile_orphans` and others.
+They do not come back on their own. So this is not merely "the site is inert while
+misconfigured" — fixing the extension does not necessarily restore the schedule.
+
+### This trap recurs — it is not a one-time fix
+
+The repair lives in a Local by Flywheel config file **outside this repository**, so
+it is not version-controlled, not code-reviewed, and **not carried across the next
+PHP version bump**. Expect to redo it every time.
+
+After **any** Local PHP version change, re-check `conf/php/php.ini.hbs` and then
+confirm the stack is really up:
 
 ```bash
-curl -s http://blue-collar-crypto-custom.local/wp-json/ \
-  | grep -o 'bcc[^"]*'          # must be non-empty
+curl -s http://blue-collar-crypto-custom.local/wp-json/ | grep -o 'bcc[^"]*'
 ```
 
-An empty result means the plugins are loaded-but-inert, not missing.
+Empty output means the plugins are loaded-but-inert, not missing. If it is empty,
+also check `wp cron event list` for BCC hooks before assuming the fix is complete.
+
+> **Do not trust Local's registry for the current version.** `AppData/Roaming/Local/
+> sites.json` can be read mid-write and report a version that is neither the old nor
+> the new one — during this audit it returned `8.3.17`, a build that was never
+> installed. The authoritative source is the running process:
+>
+> ```powershell
+> Get-CimInstance Win32_Process -Filter "Name='php-cgi.exe'" |
+>   Select-Object -ExpandProperty ExecutablePath
+> ```
+>
+> The repo-root `local-site.json` is also stale — it describes a different site
+> (`blue-collar-crypto`, environment `flywheel`) than the live one
+> (`blue-collar-crypto-custom`, environment `custom`).
+
+### Local `wp-content/debug.log` grows unbounded
+
+`WP_DEBUG_LOG` is on locally with no rotation. It reached **113 MB / 354,276 lines**
+over roughly two months (18 Jun – 20 Aug 2026) before being truncated in place.
+
+Measured composition of that file — useful because it says which noise is worth
+silencing and which is a real defect:
+
+| Source | Lines | Share of bytes |
+|---|---:|---:|
+| LiteSpeed crawler `simplexml_load_string()` parse warnings (`crawler-map.cls.php:676`) | 257,796 | **64.9%** |
+| `_load_textdomain_just_in_time` too early — `peepso-core` domain | 26,759 | 15.7% |
+| `wpdb::prepare` placeholder-count notice — **14 placeholders, 13 arguments** | 24,624 | 11.1% |
+| `Duplicate entry` on `wp_bcc_onchain_collections.uq_chain_contract` | 5,556 | 5.3% |
+| other / db / stack traces | 39,524 | 3.1% |
+| **imagick startup warning** | **0** | **0%** |
+
+> **Correction to an earlier revision of this document**, which attributed the log's
+> size to the imagick startup warning. That was wrong: imagick does not appear in the
+> file at all. The warning reproduces on the **CLI** binary but the CGI/web SAPI never
+> wrote it. Disabling imagick remains correct — the extension genuinely cannot load —
+> but it was not the cause, and the LiteSpeed crawler is.
+
+Two of these are live BCC defects rather than noise, both still accruing at the time
+of writing (~1,200–2,400/day and ~60–124/day respectively):
+
+- the `wpdb::prepare` mismatch — exactly one placeholder more than arguments, the
+  signature of an unescaped literal `%` in a `LIKE`;
+- the repeated unique-key collision on `wp_bcc_onchain_collections`, which suggests
+  an insert path that should be upsert-shaped.
+
+Neither is an environment-parity issue; they are recorded here only because this is
+where the evidence surfaced. To truncate without breaking the open file handle, keep
+the inode:
+
+```bash
+tail -n 5000 wp-content/debug.log > ../logs/debug.log.keepsake-$(date +%F).txt
+: > wp-content/debug.log      # truncate in place; do NOT rm
+```
 
 ### Edge cache (LiteSpeed)
 
