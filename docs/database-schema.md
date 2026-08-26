@@ -873,7 +873,7 @@ backup restored from a build with a different driver set cannot grant anything.
 - id · bigint unsigned · NO · PK auto
 - chain_id · bigint unsigned · NO — `wp_bcc_chains.id`; no FK declared, matching the rest of the Onchain tables
 - operation · varchar(32) · NO — one of `enumeration`, `curated_feed`, `wallet_discovery`, `validation`, `metadata`, `ownership`
-- driver_key · varchar(32) · NO — e.g. `cosmwasm_enumeration`, `cw721_lcd`, `alchemy_nft`, `alchemy_transfers`, `evm_rpc`, `das`, `magiceden`, `talis_whitelist`, `stargaze_marketplace`
+- driver_key · varchar(32) · NO — e.g. `cosmwasm_enumeration`, `cw721_lcd`, `alchemy_nft`, `alchemy_transfers`, `evm_rpc`, `das_rpc`, `das_helius`, `magiceden`, `talis_whitelist`, `stargaze_marketplace`. Solana DAS support uses two drivers because the paths call different endpoints: `das_rpc` (wallet discovery and ownership) uses the chain row's `rpc_url`; `das_helius` (metadata) uses the Helius constants. A row naming a driver this build does not implement—including the retired plain das key—is silently discarded by the narrow-only registry, so an override must use an implemented key exactly.
 - enabled · tinyint(1) · NO — **DEFAULT 0.** Because an ABSENT row already means "registry default", a row that exists must default to the restrictive value; otherwise a blank row inserted by accident would silently re-enable something an operator had turned off
 - priority · int · NO · DEFAULT 0 — ascending; overrides the registry's default ordering within one operation
 - updated_at · datetime · NO · DEFAULT CURRENT_TIMESTAMP
