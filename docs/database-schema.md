@@ -882,8 +882,14 @@ backup restored from a build with a different driver set cannot grant anything.
 `uq_chain_op_driver` is load-bearing and is verified through
 `INFORMATION_SCHEMA` after `dbDelta` rather than trusted to it: without the
 unique key the override set would admit duplicates and stop being
-deterministic. Reads are bounded, and a read that comes back AT its ceiling is
-treated as unavailable rather than applied as a partial set.
+deterministic.
+
+Reads are bounded at 200 rows per chain and request one row beyond that
+ceiling: **201 returned rows make the result unavailable, while exactly 200
+remains a complete, valid result.** The extra row is what distinguishes a set
+that fits from one that was truncated — a truncated set would apply some of an
+operator's restrictions while silently dropping others, so it is never applied
+partially.
 
 #### wp_bcc_chain_checkpoints
 Per-chain indexer checkpoint + compute-unit budget. Shared "where is each
