@@ -131,7 +131,8 @@ schema-install path in `tables.php` is itself routed through the same runner.
 | wp_bcc_trust_polls | 0 | Generic meaningful-voting poll engine — one row per poll over a subject (Rank Phase 6; `dispute` is the first poll_type; one OPEN poll per subject via STORED generated `open_lock` + unique index) | TableRegistry::polls / schema-polls.php / PollRepository | Active |
 | wp_bcc_trust_ballots | 0 | Per-voter poll ballots — one row per CAST (recast/withdraw close a row; §16.6 weight snapshot copied verbatim; close-time cluster-audit columns; one ACTIVE ballot per voter per poll via `active_lock`) | TableRegistry::ballots / schema-ballots.php / BallotRepository | Active |
 | wp_bcc_push_subscriptions | 3 | Web-push VAPID subscriptions per user/device | TableRegistry::pushSubscriptions | Active |
-| wp_bcc_chains | 21 | Supported chains registry (RPC/REST/explorer config); also carries `cosmwasm_nft_discovery_enabled`, the per-chain CosmWasm-scanner opt-in added 2026-08 (DEFAULT 0 — no chain is opted in by installing) | schema-chains.php (Onchain) | Active |
+| wp_bcc_chains | 21 | Supported chains registry (RPC/REST/explorer config); also carries the three per-chain NFT flags — `cosmwasm_nft_discovery_enabled` (CosmWasm-scanner opt-in, 2026-08), plus `bcc_supports_nft_collections` and `manual_collection_discovery_enabled` (per-chain NFT capability model, 2026-08). All three are DEFAULT 0 with no backfill — installing or updating opts in exactly zero chains | schema-chains.php (Onchain) | Active |
+| wp_bcc_chain_nft_capabilities | 0 | Per-chain NFT driver OVERRIDES: one row per (chain, operation, driver) that DISABLES or REORDERS a driver the code registry already offers. Narrow-only — a row can never grant a driver operation the code does not implement, and an absent row means "registry default applies". Empty on every install | schema-chain-nft-capabilities.php / ChainNftCapabilityRepository | Active |
 | wp_bcc_chain_checkpoints | 7 | Per-chain indexer checkpoint + CU budget; also carries the `cw_*` CosmWasm-discovery state (backfill cursor, code-id watermark, pause, per-pass timestamps) added 2026-08 | schema-chain-checkpoints.php | Active |
 | wp_bcc_cosmwasm_code_families | 0 | CosmWasm code-family inventory: one row per (chain, code id) with its CW-721 classification, bounded probe evidence, retry/backoff state and contract-enumeration cursor (CosmWasm discovery 2026-08; `not_cw721` is terminal and never routinely re-classified) | schema-cosmwasm-code-families.php / CosmwasmCodeFamilyRepository | Active |
 | wp_bcc_cosmwasm_contracts | 0 | CosmWasm contract candidate ledger: one row per (chain, contract address) with classification, retry state, cached operator-deny flag and emit marker (CosmWasm discovery 2026-08; this durable row IS the memory that stops previously-inspected contracts being reprocessed) | schema-cosmwasm-contracts.php / CosmwasmContractRepository | Active |
@@ -840,10 +841,49 @@ Supported chains registry (RPC/REST/explorer config).
 - is_testnet · tinyint(1) · NO
 - is_active · tinyint(1) · NO · K
 - cosmwasm_nft_discovery_enabled · tinyint(1) · NO — per-chain operator opt-in for the CosmWasm CW-721 scanner (added 2026-08, post-install migration). **DEFAULT 0 with no backfill**, so installing or updating the plugin opts in exactly zero chains; enabling a chain is an explicit operator act. Distinct from `wp_bcc_chain_checkpoints.cw_discovery_state = 'unsupported'`, which is a MEASURED fact (the chain answered the code listing with HTTP 501) rather than an intent — the scanner requires both, and an operator cannot assert a wasm module that is not there. Not a gate on anything else: wallet linking, holdings, validators and Halls all read this table without it.
+- bcc_supports_nft_collections · tinyint(1) · NO — **BCC's PRODUCT decision**: "we support NFT collections on this chain." Never a claim about the blockchain; a chain can be perfectly CW-721 capable and still sit at 0 because BCC has not taken it on. Added 2026-08 with the per-chain NFT capability model. **DEFAULT 0 with no backfill**, so no chain gains NFT product support by installing or updating.
+- manual_collection_discovery_enabled · tinyint(1) · NO — **PERMISSION** for an administrator to start a chain-wide NFT collection discovery. **No cron reads it**: every recurring discovery hook was retired in 2026-08 and cannot re-arm, so this column can only ever be consulted by a human-initiated action. **DEFAULT 0 with no backfill.** Kept separate from `bcc_supports_nft_collections` because the two answer to different people — fusing them would mean an operator granting permission implicitly asserted product support, and a product decision implicitly armed a button.
 - created_at · datetime · NO
 - decimals · tinyint unsigned · NO; bech32_prefix · varchar(20) · YES
 - marketplace_template · text · YES
 - Indexes: PRIMARY (id) [uq]; slug [uq]; chain_type; is_active
+
+> **Authored vs measured vs derived.** These three tinyint flags are the only
+> AUTHORED part of the NFT capability model. Technical capability is never
+> authored: it is either MEASURED
+> (`wp_bcc_chain_checkpoints.cw_discovery_state = 'unsupported'`, an observed
+> HTTP 501 — meaningful on Cosmos rows only) or DERIVED at read time (the
+> code-owned driver registry, and per-driver provider readiness, which is
+> deliberately NOT stored because a column would be stale the moment a key
+> rotated). Collapsing them into one hand-maintained column would let an
+> operator assert a wasm module that is not there.
+
+#### wp_bcc_chain_nft_capabilities
+Per-chain NFT driver overrides — one row per (chain, operation, driver).
+
+**This table can only take capability away.** Rows exist solely to DISABLE or
+REORDER a driver that the code-owned registry already offers for that chain and
+operation. An absent row means "registry default applies", which is why the
+table is empty on every install and everything still works. A row naming a
+driver, operation or chain the build does not implement is inert: the read
+intersects these rows against the code registry and discards the rest, so a row
+written by a future admin screen, a manual `INSERT`, a botched migration or a
+backup restored from a build with a different driver set cannot grant anything.
+
+- id · bigint unsigned · NO · PK auto
+- chain_id · bigint unsigned · NO — `wp_bcc_chains.id`; no FK declared, matching the rest of the Onchain tables
+- operation · varchar(32) · NO — one of `enumeration`, `curated_feed`, `wallet_discovery`, `validation`, `metadata`, `ownership`
+- driver_key · varchar(32) · NO — e.g. `cosmwasm_enumeration`, `cw721_lcd`, `alchemy_nft`, `alchemy_transfers`, `evm_rpc`, `das`, `magiceden`, `talis_whitelist`, `stargaze_marketplace`
+- enabled · tinyint(1) · NO — **DEFAULT 0.** Because an ABSENT row already means "registry default", a row that exists must default to the restrictive value; otherwise a blank row inserted by accident would silently re-enable something an operator had turned off
+- priority · int · NO · DEFAULT 0 — ascending; overrides the registry's default ordering within one operation
+- updated_at · datetime · NO · DEFAULT CURRENT_TIMESTAMP
+- Indexes: PRIMARY (id) [uq]; uq_chain_op_driver (chain_id, operation, driver_key) [uq]; idx_chain_op (chain_id, operation)
+
+`uq_chain_op_driver` is load-bearing and is verified through
+`INFORMATION_SCHEMA` after `dbDelta` rather than trusted to it: without the
+unique key the override set would admit duplicates and stop being
+deterministic. Reads are bounded, and a read that comes back AT its ceiling is
+treated as unavailable rather than applied as a partial set.
 
 #### wp_bcc_chain_checkpoints
 Per-chain indexer checkpoint + compute-unit budget. Shared "where is each
