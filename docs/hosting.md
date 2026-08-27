@@ -103,10 +103,47 @@ Database users are strictly per-database — production's user gets `#1044 Acces
 denied` against the staging database — so each environment needs its own
 credentials.
 
-> **Transport is not yet decided.** Running this from a GitHub-hosted runner
-> would require enabling Remote MySQL and allowlisting runner IPs (in practice
-> `%`), exposing the production database to the internet, with credentials in a
-> **public** repository's Actions secrets, to read two rows. That trade has been
-> rejected. The candidates are an on-host Hostinger cron, or a token-guarded
-> internal REST endpoint that returns the rows. Until one is chosen this script
-> is run on-host or by hand, and no CI workflow invokes it.
+### Two transports, two files — on purpose
+
+Running the mysqli guard from a GitHub-hosted runner would require enabling
+Remote MySQL and allowlisting runner IPs (in practice `%`), exposing the
+production database to the internet, with credentials in a **public**
+repository's Actions secrets, to read two rows. That trade is rejected.
+
+| File | Transport | Where it runs |
+|---|---|---|
+| `scripts/site-url-guard.php` | direct mysqli | **on-host** (Hostinger cron, or by hand) |
+| `scripts/site-url-probe.sh` | HTTPS + shared secret | **CI** (`.github/workflows/site-url-guard.yml`, daily) |
+
+They are deliberately separate files so nobody wires mysqli into Actions later
+and reopens that door.
+
+### `GET /bcc/v1/internal/identity`
+
+Registered by `bcc-core` (`src/Rest/IdentityEndpoint.php`) and gated by the
+`X-Bcc-Internal` header against `BCC_INTERNAL_CRON_SECRET` — the same scheme the
+Vercel cron relay already uses. Exists on **both** production and staging.
+
+```json
+{
+  "env": "production",
+  "rows":      { "siteurl": "...", "home": "..." },
+  "constants": { "siteurl": "...", "home": "..." },
+  "options_table_count": 1
+}
+```
+
+- **Rows and constants both**, because the drift IS the delta between them.
+- Rows are read with `$wpdb->get_var()`, never `get_option()` — `get_option`
+  runs through `pre_option_siteurl`, which is how WordPress returns `WP_SITEURL`
+  when the constant is defined, so it would return the constant and compare a
+  value to itself.
+- **`env` lets the caller cross-check the host it believes it reached**, which
+  defangs every misrouting failure: the host states its own identity rather than
+  the caller assuming it.
+- **No table prefix is returned.** `options_table_count` gives callers enough to
+  detect ambiguity (>1 ⇒ investigate on-host) without handing out the schema
+  knowledge most SQL-injection payloads need.
+- Caching is refused twice — `Cache-Control: no-store` *and* the LiteSpeed
+  exclusion, because LSCWP caches REST on this site and a cached identity
+  response would report healthy long after the rows changed.

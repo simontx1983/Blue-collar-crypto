@@ -116,6 +116,7 @@ const EXEMPT_INTERNAL = [
     'GET /bcc-trust/v1/x/callback'              => 'machine: X OAuth redirect (CSRF state)',
     'POST /bcc/v1/onchain/helius/webhook'       => 'machine: Helius webhook (hash_equals secret)',
     'POST /bcc/v1/internal/indexer/tick'        => 'machine: Vercel cron (hash_equals secret)',
+    'GET /bcc/v1/internal/identity'             => 'machine: env-identity probe for the site-URL guard (X-Bcc-Internal, hash_equals, fail-closed). Returns wp_options ROWS + wp-config CONSTANTS so drift between them is visible; deliberately never the table prefix.',
     'POST /bcc/v1/auth/oauth'                   => 'machine: NextAuth SSO bridge (X-Bcc-Oauth-Secret, hash_equals, fail-closed)',
 ];
 
