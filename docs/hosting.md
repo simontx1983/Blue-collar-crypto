@@ -60,6 +60,18 @@ reads it via `defined('BCC_ENV')`. It is never an OS environment variable, so
 there is nothing to read from the environment and nothing for a cloned config to
 inherit if a variable goes missing.
 
+`BCC_ENV` takes an **exact, case-sensitive** token from the closed vocabulary in
+[environment.md](environment.md#bcc_env--the-canonical-tokens): `production`,
+`staging`, `local`, `dev`. The blocks below are the canonical values — copy them
+verbatim.
+
+> **`prod` is a legacy banner alias and must not be used for deployed
+> production.** The banner still renders it identically, but
+> `IdentityEndpoint` reports it verbatim and `scripts/site-url-probe.sh`
+> compares against the literal `production` — so a host on `prod` turns the
+> daily `site-url-guard` red. Anything outside the vocabulary (`Live Site`,
+> `Production`, `testnet`) reads as `ENV UNKNOWN` and also fails the guard.
+
 ```php
 // ---- PRODUCTION (cms.bluecollarcrypto.io) --------------------------------
 // ASYMMETRIC ON PURPOSE. WP_HOME is the Vercel apex, not this host.

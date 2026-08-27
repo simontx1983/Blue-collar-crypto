@@ -61,7 +61,7 @@ feature-gated and silent-degrades when absent — add only what you use.
 
 | Constant | Purpose | Default |
 |---|---|---|
-| `BCC_ENV` | Env label for the wp-admin banner. | `''` (no banner) |
+| `BCC_ENV` | Env label for the wp-admin banner **and** the value this host reports to the daily `site-url-guard`. Closed, **case-sensitive** vocabulary — see below. | unset (banner reads `ENV UNKNOWN`) |
 | `BCC_LOG_DIR` | Log directory override. | `dirname(ABSPATH)/bcc-logs` |
 | `BCC_ETH_RPC_URL` / `BCC_SOL_RPC_URL` / `BCC_SOLANA_RPC_URL` / `BCC_HELIUS_RPC_URL` | RPC endpoint overrides. | public defaults (llamarpc / mainnet-beta) |
 | `BCC_ETH_DAILY_RPC_BUDGET` / `BCC_ONCHAIN_MAX_API_CALLS` / `BCC_ONCHAIN_CACHE_HOURS` | On-chain indexer/test caps + cache TTL. | code defaults (e.g. 200 / 24h) |
@@ -70,6 +70,42 @@ feature-gated and silent-degrades when absent — add only what you use.
 | `BCC_TRUSTED_PROXY_IPS` / `BCC_BEHIND_CLOUDFLARE` | Trust `X-Forwarded-For` from declared proxies / `CF-Connecting-IP` from CF ranges. | `''` / off |
 | `BCC_DEGRADATION_ALERT_THRESHOLD` / `_EMAIL` / `_WEBHOOK` | DegradationMetric alerting threshold + sinks. | `1` / `''` / `''` |
 | `BCC_TRUST_TEST_MODE`, `BCC_HIGHLIGHTS_DEMO` | Test/demo bypasses — **never enable in prod.** | off |
+
+### `BCC_ENV` — the canonical tokens
+
+Exact, lower-case, **case-sensitive** string literals. `define()` in
+`wp-config.php`; it is a PHP constant, never an OS environment variable.
+
+| Token | Use | Banner |
+|---|---|---|
+| `production` | **canonical** for deployed production | red `PROD` |
+| `staging` | deployed staging (including testnet-flavoured deployments) | yellow `STAGING` |
+| `local` | a developer machine | blue `LOCAL` |
+| `dev` | a shared development box | blue `DEV` |
+| `prod` | **legacy alias — do not use for new configuration** | red `PROD` |
+
+Two components read this constant and they must agree:
+
+- `bcc-core/src/Admin/EnvBanner.php` renders the wp-admin banner.
+- `bcc-core/src/Rest/IdentityEndpoint.php` reports it **verbatim** to
+  `scripts/site-url-probe.sh`, which the daily `site-url-guard` workflow runs
+  against both hosts and which compares it to the literal `production` /
+  `staging`.
+
+> **Why `prod` must not be used on a deployed host.** The banner accepts it,
+> but the guard does not: a production host configured `prod` reports `prod`,
+> the probe expects `production`, and the daily 05:23 UTC job fails — with no
+> `continue-on-error` to soften it. The alias exists **only** so an
+> un-migrated `wp-config.php` does not regress to `ENV UNKNOWN` mid-rollout.
+> The endpoint deliberately does not canonicalise it: the guard's whole job is
+> to notice a host whose configuration disagrees with what the caller
+> believes, and a value normalised on the way out is that disagreement made
+> invisible.
+
+Anything else — `Production`, `Live Site`, `testnet`, a padded `' production '`,
+an empty string — is **unknown**: the banner says
+`ENV UNKNOWN — set BCC_ENV in wp-config.php` and the guard fails its identity
+cross-check. Nothing guesses; nothing is rewritten at runtime.
 
 ## (D) Secrets (consolidated — wp-config / env / secret storage only)
 
@@ -136,7 +172,7 @@ WordPress-host derivation — it boundary-checks the prefix, so
 | Concern | local | staging | production |
 |---|---|---|---|
 | `BCC_FRONTEND_ORIGIN` | `http://localhost:3000` (1 exact entry) | the deployed frontend origin(s) | the deployed frontend origin(s); **no `regex:` entry** — so the regex path is untested in situ |
-| `BCC_ENV` | unset / `local` | `staging` | `production` (drives the admin banner) |
+| `BCC_ENV` | `local` | `staging` | `production` (banner + `site-url-guard` identity) |
 | Secrets (A/B/D) | dev/test keys | real keys, separate from production | real keys, rotated out-of-band |
 | RPC URLs (C) | public defaults fine | paid/owned endpoints | paid/owned endpoints |
 | Cron | WP-cron OK | system cron + `DISABLE_WP_CRON` if wired | system cron + `DISABLE_WP_CRON` if wired |
