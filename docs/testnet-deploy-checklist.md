@@ -53,13 +53,24 @@ Optional RPC overrides if not using provider defaults:
 
 | Constant | Local dev | Testnet |
 |---|---|---|
-| `BCC_ENV` | `'local'` | `'testnet'` (drives the env banner) |
+| `BCC_ENV` | `'local'` | `'staging'` (drives the env banner — see note below) |
 | `WP_ENVIRONMENT_TYPE` | `'local'` | `'staging'` |
 | `BCC_FRONTEND_ORIGIN` | `http://localhost:3000` | The Vercel deployment URL (no trailing slash) — drives CORS + redirects |
 | `BCC_HIGHLIGHTS_DEMO` | `true` | **remove / `false`** — demo data must not render on testnet |
 | `BCC_REPAIR_ENABLED` | `true` | **`false`** — repair surface is dev-only |
 | `BCC_TRUST_TEST_MODE` | unset | **must be unset** — relaxes trust-engine gates when on |
 | `BCC_DEGRADATION_ALERT_EMAIL` | unset (falls back to `admin_email`) | A monitored operator inbox — the DegradationAlerter push sink (proven end-to-end on Local 2026-07-02). Optional: `BCC_DEGRADATION_ALERT_WEBHOOK` (out-of-band channel; carries P1 ahead of mail), `BCC_DEGRADATION_ALERT_THRESHOLD` (default 5 summed events across current+previous hour) |
+
+> **`BCC_ENV` is a closed vocabulary — `'testnet'` is not in it.**
+> This row used to read `'testnet'`, which no component accepts: the banner
+> would have rendered *"ENV UNKNOWN — set BCC_ENV in wp-config.php"* on every
+> wp-admin page of the very environment this checklist provisions.
+>
+> `BCC_ENV` is the **website environment label**, not the blockchain network.
+> A testnet-flavoured deployment is, to WordPress, a staging environment —
+> which is exactly what the `WP_ENVIRONMENT_TYPE` row directly above already
+> says. Name the chain elsewhere; this constant only ever takes one of the
+> canonical tokens in [environment.md](environment.md).
 
 > **Remove the demo seeder from the deploy artifact.**
 > `wp-content/mu-plugins/bcc-demo-seeder.php` auto-loads and, on the
