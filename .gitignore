@@ -21,6 +21,11 @@
 # Allow only these top-level paths
 !/.gitignore
 !/CLAUDE.md
+# README.md was tracked without ever being negated (force-added, like the
+# workflows below). Harmless while it exists — ignore rules don't affect
+# already-tracked files — but it would silently fail to re-add if ever deleted
+# and recreated, and the allowlist should honestly name everything it tracks.
+!/README.md
 !/docs/
 !/bcc-global-library/
 !/.claude/
