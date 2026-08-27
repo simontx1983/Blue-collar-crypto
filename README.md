@@ -14,8 +14,29 @@ trust engine + REST API, a headless **Next.js** frontend, and on-chain signal in
 ➡️ **[docs/dev-setup.md](docs/dev-setup.md)** — repository model, clone → install → run,
 minimum config, first-request verification, and the full doc map.
 
+## Hosts (three, and they are not interchangeable)
+
+| Host | Serves | Runs on |
+|---|---|---|
+| `bluecollarcrypto.io` (apex) | Public site | **Vercel** — not Hostinger |
+| `cms.bluecollarcrypto.io` | WordPress core, `wp-admin`, REST | Hostinger |
+| `stage.bluecollarcrypto.io` | Staging WordPress | Hostinger |
+
+Production is **deliberately asymmetric** — `WP_SITEURL` is `cms.` while
+`WP_HOME` is the apex, because the public site is the Vercel frontend, not
+WordPress. It looks like an inconsistency worth tidying; it is not.
+
+⚠️ Because `wp-config.php` defines those constants, WordPress **ignores**
+`wp_options.siteurl` / `.home` — so a restored database can carry another
+environment's URLs indefinitely while every page serves correctly.
+`scripts/site-url-guard.php` (read-only) is how you see past that.
+
+➡️ **[docs/hosting.md](docs/hosting.md)** — full topology, the wp-config blocks
+per host, and the drift story.
+
 ## Quick links
 
+- [docs/hosting.md](docs/hosting.md) — three-host topology & site-URL drift
 - [docs/environment.md](docs/environment.md) — `wp-config.php` constants & env vars
 - [docs/ci-topology.md](docs/ci-topology.md) — what CI runs and where
 - [docs/GOLDEN_PATHS.md](docs/GOLDEN_PATHS.md) — operational verification runbook
