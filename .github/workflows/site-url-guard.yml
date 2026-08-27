@@ -1,0 +1,74 @@
+# Daily site-URL identity probe — PRODUCTION and STAGING.
+#
+# Catches the failure mode that hid a staging-flavoured restore inside
+# production: wp-config.php constants make WordPress ignore
+# wp_options.siteurl/home, so the rows can name another environment
+# indefinitely while every page serves correctly.
+#
+# HTTP transport only. This workflow deliberately holds NO database
+# credentials — reaching Hostinger MySQL from a GitHub runner would mean
+# enabling Remote MySQL and allowlisting runner IPs (in practice '%'),
+# exposing the production database to the internet to read two rows.
+# scripts/site-url-guard.php is the on-host mysqli tool; this is the CI one.
+#
+# NO continue-on-error anywhere. Exit 2 ("cannot check") fails the job on
+# purpose — a guard that silently stops checking is indistinguishable from a
+# guard that passes.
+name: site-url-guard
+
+on:
+  schedule:
+    - cron: "23 5 * * *" # daily 05:23 UTC
+  workflow_dispatch:
+
+jobs:
+  # Two separate jobs rather than one matrix with a ternary base URL.
+  # `A && x || y` in Actions is truthiness-based: an empty PROD_HEALTH_BASE
+  # would silently fall through to the staging URL, and the probe would then
+  # compare production's expectations against staging's rows and report
+  # "production DRIFT" — sending someone hunting a production problem that
+  # does not exist. Explicit env per job, no expression fallback.
+  production:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Site-URL identity (production)
+        env:
+          BCC_ENV: production
+          BCC_IDENTITY_BASE: ${{ vars.PROD_HEALTH_BASE }}
+          BCC_INTERNAL_SECRET: ${{ secrets.PROD_BCC_INTERNAL_SECRET }}
+        run: |
+          # `set +e` around the probe: this step runs under `bash -e`, so a
+          # non-zero exit would kill it before `rc=$?` is read and the case
+          # block below would be dead code.
+          set +e
+          bash scripts/site-url-probe.sh
+          rc=$?
+          set -e
+          case "$rc" in
+            0) echo "::notice::production identity OK" ;;
+            1) echo "::error::production SITE-URL DRIFT"; exit 1 ;;
+            *) echo "::error::production probe COULD NOT CHECK (exit $rc) — failing by design"; exit 1 ;;
+          esac
+
+  staging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Site-URL identity (staging)
+        env:
+          BCC_ENV: staging
+          BCC_IDENTITY_BASE: ${{ vars.STAGE_HEALTH_BASE }}
+          BCC_INTERNAL_SECRET: ${{ secrets.STAGE_BCC_INTERNAL_SECRET }}
+        run: |
+          set +e
+          bash scripts/site-url-probe.sh
+          rc=$?
+          set -e
+          case "$rc" in
+            0) echo "::notice::staging identity OK" ;;
+            1) echo "::error::staging SITE-URL DRIFT"; exit 1 ;;
+            *) echo "::error::staging probe COULD NOT CHECK (exit $rc) — failing by design"; exit 1 ;;
+          esac

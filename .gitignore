@@ -21,11 +21,22 @@
 # Allow only these top-level paths
 !/.gitignore
 !/CLAUDE.md
+# README.md was tracked without ever being negated (force-added, like the
+# workflows below). Harmless while it exists — ignore rules don't affect
+# already-tracked files — but it would silently fail to re-add if ever deleted
+# and recreated, and the allowlist should honestly name everything it tracks.
+!/README.md
 !/docs/
 !/bcc-global-library/
 !/.claude/
 !/.mcp.json
 !/scripts/
+# .github was missing here until 2026-08-27: ci.yml and staging-cache-probe.yml
+# had been force-added, so every NEW workflow file was silently invisible to
+# `git status`. Someone could write a workflow, commit "everything", push, and
+# never learn it had not landed — the workflow simply never runs. Workflows are
+# CI's source of truth; they must not need `git add -f` to exist.
+!/.github/
 
 # Inside .claude/, drop user-local overrides — they belong to the dev,
 # not the team.
