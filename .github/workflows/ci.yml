@@ -77,6 +77,18 @@ jobs:
       - name: Schema-drift parity (static)
         run: php scripts/schema-drift-guard.php
 
+      # Parser regression tests for scripts/site-url-probe.sh. Runs here, in
+      # the already-required guards job, rather than in site-url-guard.yml:
+      # that workflow only runs daily and on dispatch, so a broken parser
+      # would not be caught until after it merged — which is exactly how the
+      # envelope defect reached main.
+      #
+      # No network and no secret. `curl` is shadowed by a fake on PATH, so
+      # every case is a fixed byte string; the fixture secret is a literal
+      # that matches nothing.
+      - name: site-url probe parser regressions
+        run: bash scripts/tests/site-url-probe.test.sh
+
       # wallet-case-preservation-check.php is intentionally NOT run here — it
       # boots WordPress (needs mysqli + a DB), so it's a live-site check, not a
       # static gate. Run it against a running site, not in CI.
