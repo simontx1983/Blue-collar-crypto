@@ -1003,7 +1003,8 @@ Entity claims (incl. page claims via entity_type='page' — absorbed bcc_page_cl
 NFT collection metadata cache (TTL via expires_at). Distinct from the dropped legacy bcc_collections.
 - id · bigint unsigned · NO · PK auto
 - wallet_link_id · bigint unsigned · YES · K
-- contract_address · varchar(128) · NO · K
+- contract_address · varchar(128) · NO · K — the ORIGINAL/display identifier, preserved byte-for-byte as supplied
+- canonical_identifier · varchar(128) COLLATE utf8mb4_bin · YES · K — chain-aware canonical identity (PR 5a)
 - chain_id · bigint unsigned · NO · K
 - collection_name · varchar(200) · YES
 - token_standard · varchar(20) · YES
@@ -1019,7 +1020,61 @@ NFT collection metadata cache (TTL via expires_at). Distinct from the dropped le
 - image_url · varchar(500) · YES
 - is_verified · tinyint(1) · NO · K
 - source · varchar(20) · NO
-- Indexes: PRIMARY (id) [uq]; uq_chain_contract (chain_id,contract_address) [uq]; chain_id; contract_address; wallet_link_id; expires_at; idx_floor; idx_volume; idx_verified. The redundant pre-"collections are global" UNIQUE `wallet_chain_contract` was dropped by drop-legacy-indexes v2 (2026-07-23) — uq_chain_contract is strictly tighter, so it could never be the deciding upsert collision.
+- Indexes: PRIMARY (id) [uq]; uq_chain_contract (chain_id,contract_address) [uq]; uq_chain_canonical (chain_id,canonical_identifier) [uq]; chain_id; contract_address; wallet_link_id; expires_at; idx_floor; idx_volume; idx_verified. The redundant pre-"collections are global" UNIQUE `wallet_chain_contract` was dropped by drop-legacy-indexes v2 (2026-07-23) — uq_chain_contract is strictly tighter, so it could never be the deciding upsert collision.
+
+##### Collection identity (PR 5a — TRANSITIONAL)
+
+A collection's identity is its contract or mint — never its name, symbol or
+marketplace alias. Comparison is chain-aware, so one shared service
+(`app/Domain/Onchain/Support/NftCollectionIdentifier.php`) owns the rule and
+every reader and writer goes through it:
+
+| chain_type | canonical form |
+|---|---|
+| `evm` | strict `0x` + 40 hex, lowercased (EIP-55 case is a checksum, not identity) |
+| `cosmos` | full bech32 checksum verified via `Support/Bech32.php`, lowercased |
+| `solana` | base58 **decoding to exactly 32 bytes**, encoded text preserved byte-for-byte — **never folded** |
+| `near`, `thorchain`, `polkadot`, `utxo`, unknown | **refused** — no identity rule, fail closed |
+
+`canonical_identifier` is `utf8mb4_bin` (case-SENSITIVE) so two Solana mints
+differing only by letter case are two different collections. The collation is
+declared explicitly, never inherited: the table default is
+`utf8mb4_unicode_520_ci`, which would silently fold case.
+
+A Solana identifier is **decoded**, not pattern-matched: a 32–44 character
+base58 string is not necessarily a key (`str_repeat('a',32)` decodes to 24
+bytes, `str_repeat('a',44)` to 33). The decoder is
+`app/Domain/Onchain/Support/Base58.php` — pure PHP, no extension dependency.
+An Ed25519 on-curve check is deliberately **not** applied, because
+program-derived addresses are chosen to be off-curve.
+
+**`NULL` means "legacy identity unresolved", NOT "safe canonical identity."**
+Rows predating PR 5a may hold a Magic Eden `symbol` (e.g. `mad_lads`) rather
+than a mint. The service cannot canonicalise a symbol, so those rows keep
+`canonical_identifier = NULL` and are quarantined for PR 5b. They remain
+present, verified and community-linked, reachable only through the explicitly
+named `CollectionRepository::findLegacyByChainContractInsensitive()`; strict
+canonical lookup refuses them and never silently falls back.
+
+> The **inspected local dataset** (2026-08-31 audit) contains 99 such Solana
+> alias rows, 24 of them verified and community-linked. **Staging and
+> production prevalence was not inspected.** Environment-specific counts are
+> recorded in the PR 5a handoff rather than maintained here.
+
+**Both unique keys are present on purpose, and this is the transitional state.**
+`uq_chain_contract` is case-INSENSITIVE and therefore strictly stronger than
+`uq_chain_canonical` for every family, so it remains the binding constraint:
+**the schema does not yet permit case-distinct Solana rows in this table.**
+It is kept because (a) MySQL exempts NULLs from a unique key, so
+`uq_chain_canonical` alone would leave every NULL-canonical legacy row with no
+uniqueness constraint at all, and (b) all four `INSERT … ON DUPLICATE KEY UPDATE` writers
+in `CollectionRepository` resolve their conflict against it. PR 5b resolves the
+legacy aliases, then drops `uq_chain_contract` and makes the column `NOT NULL`.
+
+The migration lives in `includes/database/schema-collections.php` beside the
+`CREATE TABLE` it amends — deliberately, because `scripts/schema-drift-guard.php`
+treats the first file declaring a table as the authority on its index set, and a
+separate `schema-collections-canonical.php` sorts earlier in the glob.
 
 #### wp_bcc_onchain_collection_pieces
 Individual NFT pieces within a collection (TTL).
