@@ -454,6 +454,7 @@ Recent trust-action log (rate-limit + fraud signal); archive holds aged-out rows
 - target_id · bigint unsigned · NO
 - ip_address · varbinary(16) · YES · K
 - created_at · datetime · NO · K
+- meta · longtext · YES — redacted JSON context, or NULL when the caller passed none (added 2026-09-01). Written only through `AuditMeta::encode()`; NULL and `'[]'` are deliberately not interchangeable. **Added to BOTH tables by an explicit ALTER** — the archive is created `LIKE` the live table, so it does not inherit later columns, and `archiveBatch()`'s explicit column list would otherwise drop meta at the 90-day boundary.
 - Indexes (activity): PRIMARY (id) [uq]; idx_user (user_id); idx_action (action); idx_action_created (action,created_at); idx_user_action_date (user_id,action,created_at); idx_target (target_type,target_id); idx_ip_lookup (ip_address,created_at); idx_created (created_at). Dup `idx_ip_created` dropped by drop-legacy-indexes v2 (2026-07-23).
 - Indexes (archive): PRIMARY (id); idx_user; idx_action; idx_target; idx_ip_lookup (ip_address,created_at); idx_created (created_at); idx_archive_created (created_at).
 
