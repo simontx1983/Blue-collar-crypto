@@ -1021,7 +1021,99 @@ NFT collection metadata cache (TTL via expires_at). Distinct from the dropped le
 - image_url · varchar(500) · YES
 - is_verified · tinyint(1) · NO · K
 - source · varchar(20) · NO
-- Indexes: PRIMARY (id) [uq]; uq_chain_contract (chain_id,contract_address) [uq]; uq_chain_canonical (chain_id,canonical_identifier) [uq]; chain_id; contract_address; wallet_link_id; expires_at; idx_floor; idx_volume; idx_verified. The redundant pre-"collections are global" UNIQUE `wallet_chain_contract` was dropped by drop-legacy-indexes v2 (2026-07-23) — uq_chain_contract is strictly tighter, so it could never be the deciding upsert collision.
+- provisioning_state · varchar(20) · NO · K — `none` | `requested` | `provisioned` | `failed` (PR 6)
+- provisioning_requested_at · datetime · YES — when an administrator asked (PR 6)
+- provisioning_requested_by · bigint unsigned · YES — WHICH administrator asked (PR 6)
+- provisioning_failure_code · varchar(32) · YES — bounded code from a closed set; never free text (PR 6)
+- Indexes: PRIMARY (id) [uq]; uq_chain_contract (chain_id,contract_address) [uq]; uq_chain_canonical (chain_id,canonical_identifier) [uq]; chain_id; contract_address; wallet_link_id; expires_at; idx_floor; idx_volume; idx_verified; idx_provisioning_state_id (provisioning_state,id). The redundant pre-"collections are global" UNIQUE `wallet_chain_contract` was dropped by drop-legacy-indexes v2 (2026-07-23) — uq_chain_contract is strictly tighter, so it could never be the deciding upsert collision.
+
+##### Community provisioning (PR 6)
+
+**Verification is necessary for a holder community, and never sufficient.**
+
+Before PR 6, `is_verified = 1` did double duty: it was both the eligibility
+predicate for a community and the authorization to create one. The daily
+`bcc_gated_group_provision` sweep enumerated
+`CollectionRepository::listVerified()`, and that enumeration *was* the
+decision — so ticking Verify produced a live PeepSo community within ~24h with
+no second approval (bcc-trust#215). The four columns above separate the two.
+
+`provisioning_state` — a closed set with a closed transition table
+(`app/Domain/Onchain/ValueObjects/ProvisioningState.php`):
+
+| State | Meaning | May become |
+|---|---|---|
+| `none` | nobody has asked | `requested` |
+| `requested` | an administrator explicitly asked | `provisioned`, `failed`, `requested` (idempotent), `none` (verification removed) |
+| `provisioned` | a live, gated community exists | `provisioned` only |
+| `failed` | an attempt was refused or failed; retryable and visible | `requested` (retry), `none` (verification removed) |
+
+Two asymmetries are deliberate and enforced at the SQL level, not by
+convention:
+
+- **`provisioned` is terminal.** Removing verification withdraws a *pending*
+  request and never touches an existing community — the community, its
+  members and its gate metadata all survive. `withdrawPendingProvisioning()`
+  names only `requested` and `failed` in its `WHERE` clause, so `provisioned`
+  is unreachable from that path whatever a caller passes.
+- **A retry always goes through `requested`.** There is no `failed →
+  provisioned` edge, so a second attempt is always preceded by recorded
+  intent.
+
+`provisioning_requested_by` exists because the cron reads the ROW, not the
+audit log. Without it, "authorized by administrator N" could only reach
+provision time through a query back into `wp_bcc_trust_activity`. It is also
+what replaces the previous lowest-user-id guess: the community's PeepSo owner
+is now the administrator who requested it, and provisioning fails closed if
+that account no longer resolves or no longer holds `manage_options`.
+
+`provisioning_failure_code` is a bounded vocabulary
+(`ProvisioningFailureCode`), NOT a message: `peepso_absent`, `no_admin_owner`,
+`group_create_failed`, `gate_write_refused`, `identity_unresolved`,
+`awaiting_metadata`, `not_verified`, `owner_unresolved`. bcc-trust#215
+proposed `provisioning_last_error VARCHAR(255)`; that was rejected because a
+durable free-text column is where provider prose and exception messages
+eventually land — the channel the PR 5b audit work removed. Exception detail
+stays in the short-retention file log, correlated by the audit row.
+
+The first three codes mirror bcc-core's canonical `gated_group_provision`
+DegradationMetrics events exactly. **PR 6 adds no fourth event**: a new one
+would require bcc-core, `pattern-registry.md` and `GOLDEN_PATHS.md` to change
+together, and `subsystem-count-guard.php` would hold umbrella CI red until all
+three landed. The new failure modes are carried by this column instead.
+
+`idx_provisioning_state_id (provisioning_state, id)` serves the queue query
+`WHERE provisioning_state = ? AND id > ? ORDER BY id ASC LIMIT ?` — equality,
+cursor range and ordering from one index, with no filesort. A state-only index
+would satisfy the equality and then sort.
+
+###### Migration and backfill
+
+Additive, idempotent, fail-closed, probe-driven, and resumable after every
+step. It drops nothing, does not touch `canonical_identifier` or
+`is_verified`, creates no community and enables no capability.
+
+- Collections that ALREADY have a live community (a published `peepso-group`
+  post carrying `_bcc_group_kind = 'holders'` and `_bcc_gate_collection_id`)
+  are marked `provisioned`. A draft or trashed group is not a community and
+  does not count.
+- **Everything else stays `none`, including every already-verified row.**
+  Pre-existing verification must not be retro-read as authorization; that is
+  the entire point of the change. The accepted consequence, stated rather than
+  hidden: a verified-but-unprovisioned collection simply stops being
+  auto-provisioned until an operator asks. Production had zero such rows when
+  PR 6 was written.
+- Backfilled rows keep `provisioning_requested_by = NULL`, because those
+  communities predate the concept of a request and no administrator authorized
+  them. Inventing a plausible one would fabricate an authorization that never
+  happened. This is the only state that accepts a missing requester.
+- The postcondition is a RELATIONSHIP, not a census: every row marked
+  `provisioned` must have a live community. Asserting a fixed count would stop
+  being true the first time anyone adds one.
+
+**Rollback is code-only.** Reverting the sweep to `listVerified()` restores the
+previous behaviour with the four columns simply unread; dropping them is safe
+but unnecessary, and no data is destroyed at any point.
 
 ##### Collection identity (PR 5a — TRANSITIONAL)
 
