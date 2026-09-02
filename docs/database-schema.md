@@ -1111,6 +1111,71 @@ step. It drops nothing, does not touch `canonical_identifier` or
   `provisioned` must have a live community. Asserting a fixed count would stop
   being true the first time anyone adds one.
 
+###### What makes "resumable" true
+
+Resumability is not a property of the migration on its own. `bcc-trust` runs
+its installers behind a single option, `bcc_trust_schema_version`:
+
+```
+stored === computed  ->  do nothing
+otherwise            ->  run every installer, then stamp
+```
+
+and `computed` is a content hash of the schema files. So if that stamp is
+written after a migration that did **not** finish, nothing will ever bump the
+version again — the files have not changed — and the "resumable" migration is
+never retried. It would have been resumable only in the case where something
+else happened to bump the version, which is not the case resumability is for.
+
+The provisioning migration therefore **reports completion**, and the stamp is
+conditional on it (`includes/database/schema-completion.php`). Declining to
+stamp costs one extra installer pass per request until the underlying problem
+clears; because every step is probe-guarded and idempotent, that pass is cheap
+and safe, and it is the entire mechanism by which a partial migration heals
+itself. Stamping a version the schema has not reached is the expensive
+mistake: silent, permanent, and visible later only as a column that should
+exist and does not.
+
+Two consequences worth knowing before reading the code:
+
+- **An unreadable probe is not an absent column.** `bcc_onchain_probe_count()`
+  returns `null` — never `0` — when a `COUNT(*)` fails, because a `0` here
+  means "the column is missing" and would send the migration to ALTER
+  something that is already there, or report a schema complete that is not.
+- **The stamp is re-read after it is written.** A stale persistent object
+  cache makes `update_option()` succeed while `get_option()` keeps serving the
+  old value; without the re-read the gate would report the version advanced,
+  every request would keep finding `stored !== computed`, and the installer
+  would run forever with nothing saying so.
+
+Scope is deliberately narrow: only this migration reports completion. Every
+historical installer keeps its existing void semantics and is unchanged.
+
+###### A failure is durable, or it did not happen
+
+A `failed` row is a statement about a person's request and is the state an
+operator is most likely to have to explain, so the state transition and its
+audit row commit **in one transaction** via `AuditLogger::logChecked()` — not
+the unchecked `log()`, which returns `void` and still writes a row when its
+`$meta` could not be encoded. If the record cannot be committed, the
+transition rolls back and the collection stays `requested`: as far as anything
+durable is concerned the attempt never happened, and the queue will try again.
+
+Callers are told which of three things occurred — the failure is on the record,
+the record could not be committed, or there was nothing to record — because
+the middle one is a data-loss window and the other two are ordinary outcomes.
+A boolean would collapse them.
+
+The same rule governs reads. `wpdb::get_results()` hands back an empty array
+for a **failed** query exactly as it does for a genuine no-rows result, so the
+provisioning reads return an explicit availability flag alongside their data.
+An unreadable queue is never reported as a drained one, and an unreadable row
+is never reported as a missing collection: no community is created, no state
+is written and no audit row is logged on the strength of an answer that was
+never received. These are operational faults, not facts about a collection, so
+they never reach `provisioning_failure_code` — marking a healthy row `failed`
+because the database hiccupped would need a human to notice and undo it.
+
 **Rollback is code-only.** Reverting the sweep to `listVerified()` restores the
 previous behaviour with the four columns simply unread; dropping them is safe
 but unnecessary, and no data is destroyed at any point.
