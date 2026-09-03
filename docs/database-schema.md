@@ -1121,13 +1121,18 @@ NFT collection metadata cache (TTL via expires_at). Distinct from the dropped le
 - canonical_identifier · varchar(128) COLLATE utf8mb4_bin · YES · K — chain-aware canonical identity (PR 5a)
 - chain_id · bigint unsigned · NO · K
 - collection_name · varchar(200) · YES
+- collection_symbol · varchar(32) · YES — display only (PR 7). ⚠ NEVER an identity: a symbol can never verify a collection, select a gate or approve a marketplace link. Absence is normal.
 - token_standard · varchar(20) · YES
-- total_supply · int unsigned · YES
-- floor_price · decimal(20,8) · YES · K
-- floor_currency · varchar(20) · YES
-- unique_holders · int unsigned · YES
-- total_volume · decimal(20,8) · YES · K
-- listed_percentage / royalty_percentage · decimal(5,2) · YES
+- total_supply · int unsigned · YES — CURRENT collection size, i.e. how many items exist. Not maximum supply, not items sold, not listed items. ⚠ Deliberately NOT widened by PR 7: a value above the `INT UNSIGNED` ceiling is REFUSED and stored as NULL rather than clamped, because a clamped 4,294,967,295 is a number nobody measured. NULL on Solana and Cosmos — see the PR 7 note below.
+- chain_description · text · YES — the BLOCKCHAIN COLLECTION description (PR 7), imported from chain metadata. Untrusted evidence; never publicly serialized until approved.
+- chain_description_state · varchar(16) · NO · default `none` — `none` \| `pending` \| `approved` \| `rejected` (PR 7)
+- chain_description_source · varchar(32) · YES — which provider claimed it (PR 7)
+- marketplace_url · varchar(500) · YES — ONE administrator-approved research link (PR 7). ⚠ NULL for every row today: the host allowlist is empty pending owner ratification.
+- ~~floor_price~~ · decimal(20,8) · YES · K — ⚠ RETIRED (PR 7). No writer populates it; the migration NULLs existing values. Column kept only until a caller-safe DROP is proven.
+- ~~floor_currency~~ · varchar(20) · YES — ⚠ RETIRED (PR 7). Solana wrote a hardcoded `'SOL'` here; it was a constant, not an observation.
+- ~~unique_holders~~ · int unsigned · YES — ⚠ RETIRED (PR 7). Never populated; `getOwnersForContract` is deliberately not called.
+- ~~total_volume~~ · decimal(20,8) · YES · K — ⚠ RETIRED (PR 7)
+- ~~listed_percentage~~ / ~~royalty_percentage~~ · decimal(5,2) · YES — ⚠ RETIRED (PR 7)
 - metadata_storage · varchar(30) · YES
 - fetched_at · datetime · NO; expires_at · datetime · NO · K
 - show_on_profile · tinyint(1) · NO
@@ -1139,6 +1144,169 @@ NFT collection metadata cache (TTL via expires_at). Distinct from the dropped le
 - provisioning_requested_by · bigint unsigned · YES — WHICH administrator asked (PR 6)
 - provisioning_failure_code · varchar(32) · YES — bounded code from a closed set; never free text (PR 6)
 - Indexes: PRIMARY (id) [uq]; uq_chain_contract (chain_id,contract_address) [uq]; uq_chain_canonical (chain_id,canonical_identifier) [uq]; chain_id; contract_address; wallet_link_id; expires_at; idx_floor; idx_volume; idx_verified; idx_provisioning_state_id (provisioning_state,id). The redundant pre-"collections are global" UNIQUE `wallet_chain_contract` was dropped by drop-legacy-indexes v2 (2026-07-23) — uq_chain_contract is strictly tighter, so it could never be the deciding upsert collision.
+
+##### Community-focused collection metadata (PR 7)
+
+**BCC is a community and trust platform, not a marketplace analytics
+platform.** PR 7 makes that physical rather than aspirational.
+
+⚠ **The market columns are retired, not merely unused.** No fetcher, service
+or writer populates `floor_price`, `floor_currency`, `unique_holders`,
+`total_volume`, `listed_percentage` or `royalty_percentage` any more;
+`CollectionRepository::applyEnrichment()` no longer even READS a caller's
+`floor_price`, and a bounded idempotent migration NULLs the values already
+stored. The columns stay physically present ONLY because callers outside this
+repository still select them and a caller-safe `DROP` has not been proven —
+see the frontend-coordination note below. A realistic marketplace payload is
+stripped at the PARSER boundary by
+`CollectionMetadataRules::stripMarketFields()`, so a price is gone before any
+writer could see it, and the suite asserts exactly that with a positive
+control.
+
+**Collection SIZE is allowed** because it describes the collection rather than
+its market performance. That is the whole distinction: how many items exist is
+a fact about the thing; what they sell for is not BCC's business.
+
+###### What is captured, per chain — and what is NOT
+
+| | name | symbol | size | description | image |
+|---|---|---|---|---|---|
+| Cosmos / CW-721 | yes | yes | **no** | yes¹ | yes¹ |
+| EVM | yes | yes | yes | no | yes |
+| Solana | yes² | yes² | **no** | no | no |
+
+¹ From `get_collection_info_and_extension` only, which many CW-721s do not
+implement. Absence is normal and is never a reason to ask again.
+
+² From the COLLECTION-level grouping metadata only — never from an arbitrary
+member token, a name similarity or a marketplace symbol.
+
+⚠ **`total_supply` is NULL on both Cosmos and Solana. This is an
+owner-accepted outcome (2026-09-03), and it CORRECTS AN EARLIER ASSUMPTION.**
+
+* **Solana** would require paginating every asset in the collection — an
+  unbounded provider loop.
+* **Cosmos** looked free, because `num_tokens` is part of the CW-721 base
+  spec. It is not. `CosmwasmClassifier` probes `num_tokens` during
+  CLASSIFICATION, **discards the count**, and runs per CODE FAMILY — a
+  different pass from the per-contract emission where a collection row is
+  written. Reading a size at emission would therefore mean a NEW request per
+  contract, and PR 7 adds none.
+
+The earlier design note claimed the Cosmos count was free at the
+collection-emission boundary. **That was wrong**, and it is recorded here so it
+is not re-derived: filling it would mean adding a provider request per
+contract, and PR 7 adds none.
+
+An unknown count stays unknown. It never becomes 0, it never becomes a guess,
+and no request is added to go and find it. EVM captures a validated
+`totalSupply` only when it is already present in the metadata response — with
+strict overflow and malformed-value rejection either way, so an out-of-range
+count is refused rather than clamped.
+
+###### Zero additional provider requests
+
+Everything captured comes out of a response the discovery path already
+fetched. `fetchContractInfo()` was already calling
+`contract_info` → `get_collection_info_and_extension` and throwing the
+description and image away; EVM's `getContractMetadata` already carried symbol
+and `totalSupply`. Call-count tests pin this.
+
+⚠ The `wp_cache` key for the CW-721 contract-info response was bumped to
+`cw721_contract_info_v2_`. The old entry stored only `name` and `symbol`, and
+the cache guard tested only those two keys — so a pre-PR-7 entry would satisfy
+it and return a shape with no description, which reads as "this collection has
+none" rather than "not fetched yet".
+
+###### Two descriptions, deliberately
+
+`chain_description` describes the NFT COLLECTION. It is imported from metadata
+a contract author controls, so it is **untrusted evidence**: it lands as
+`pending`, is never publicly serialized, and becomes public only when an
+administrator approves it (POST + nonce + explicit administrator identity +
+`manage_options` + a checked audit). If a later scan finds DIFFERENT text the
+state resets to `pending`, because new text must not inherit the approval of
+text nobody read. Re-importing IDENTICAL text is a no-op, so a rejected
+description is not re-queued on every scan.
+
+**Community About** is something else entirely: the PeepSo community
+biography, written by community managers, whose provisioning default is
+`On-chain verified holders of {name}. Auto-managed.` A scan may never write
+it. The separation is structural — the collection description lives on this
+row and the biography on the PeepSo group — and the suite proves it with a
+whole-row fingerprint plus a structural assertion that the importer has no
+path to a post, a group or PeepSo at all.
+
+###### The empty-image normalization
+
+`COALESCE(image_url, %s)` replaces NULL and leaves `''` exactly as it was, so
+the 119 production Cosmos rows holding an empty string could never receive an
+image no matter how often anything ran. A bounded idempotent migration
+normalizes `image_url = ''` to SQL NULL, and every writer now treats `''` and
+NULL as the SAME absence. This is what makes the column fillable again; it is
+not cosmetic.
+
+⚠ **The five-minute enrichment query was NOT broadened.**
+`findPendingEnrichment()` still selects only `collection_name IS NULL`.
+Widening it to "name OR image OR description missing" would turn a cron into a
+permanent provider loop against every row that legitimately has no image. New
+metadata capture is tied to the explicit administrator-requested scan instead.
+
+###### Marketplace research link — owner-approved policy
+
+`marketplace_url` holds ONE administrator-approved research link. The host
+allowlist is an explicit **security policy ratified by the product owner on
+2026-09-03**, keyed by CHAIN FAMILY:
+
+| chain family | approved hosts |
+|---|---|
+| `evm` | `opensea.io` |
+| `cosmos` | `stargaze.zone` |
+| `solana` | `magiceden.io`, `magiceden.us` |
+
+⚠ **This is a policy, not an inference.** An earlier draft shipped the list
+EMPTY on purpose, because no ratification existed and an allowlist nobody
+approved is not a control. The hosts appearing in `GroupsDiscoveryEndpoint`'s
+per-chain TEMPLATE map serve a different, pre-existing link BUILDER and were
+deliberately not promoted.
+
+⚠ **The pairing is per family, and the gaps are deliberate.** Magic Eden is
+NOT approved for EVM and OpenSea is NOT approved for Solana in this first
+version, even though both marketplaces operate on those chains. Validation
+therefore takes the chain family as an argument — there is no signature that
+validates a URL without naming the chain, because validating against the union
+of all approved hosts would grant exactly the pairings the owner withheld.
+
+⚠ **`www.stargaze.zone` is not an approved hostname.** The canonical host is
+`stargaze.zone`; a `www.` variant is a different hostname under exact matching,
+and admitting it starts the subdomain erosion the list exists to prevent. An
+administrator-facing CANDIDATE is normalized to the canonical host instead, and
+that normalization only folds `www.` when the remainder is already approved —
+`www.evil.com` is returned untouched and still refused.
+
+Everything else the boundary enforces: HTTPS only; parsed scheme and host,
+never a substring test; exact case-folded hostname membership; trailing dot
+folded (same host) but percent-encoded and non-`[a-z0-9.-]` hosts refused
+outright rather than decoded; credentials and explicit ports refused;
+fragment and tracking/affiliate parameters stripped by REBUILDING the URL from
+parsed components. No API hosts, help centres, creator or studio portals. No
+search-results fallback and no name- or symbol-derived construction — the
+link is omitted when an exact destination is unavailable.
+
+Nothing becomes public until an administrator confirms the exact destination
+(POST + nonce + explicit administrator identity + `manage_options` + checked
+audit). Public presentation, for the separate frontend agent: label
+`Research on marketplace`, a DYOR notice, `rel="noopener noreferrer nofollow"`,
+never `Buy now`, and never any price, sale or market figure beside it.
+
+###### Discovery still decides nothing
+
+A scan discovers candidates. It does not verify a collection, mark a scam,
+provision a community, change a gate, admit a member, enable a capability,
+alter trust or ranking, or resolve an unresolved alias. Discovered rows land
+on the schema default `is_verified = 0` and stay in the existing administrator
+review workflow.
+
 
 ##### Community provisioning (PR 6)
 
