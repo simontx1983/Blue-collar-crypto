@@ -860,8 +860,13 @@ returns 501 Not Implemented as of 2026-05-07).
 - **NFT enrichment scheduler** →
   `BCC\Trust\Onchain\Services\NftEnrichmentService`
   ([app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Services/NftEnrichmentService.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Onchain/Services/NftEnrichmentService.php)).
-  Cron-driven (`bcc_nft_enrichment_tick`, every 5min). Per-chain
-  dispatch via `FetcherFactory`. Per-row failures retry next tick.
+  ⚠ **NO LONGER CRON-DRIVEN — the `bcc_nft_enrichment_tick` schedule was
+  retired 2026-09-03 (PR 7.1).** Per-chain dispatch via `FetcherFactory`
+  is unchanged and `runForChain()` is still callable, but only from an
+  explicit administrator action or an administrator-created discovery run.
+  The five-minute loop selected every active chain and contacted providers
+  with nobody behind it; see `docs/cron-registry.md` for the full entry.
+  Future metadata retry belongs to an operator action, not a new cron.
 - **Per-chain metadata fetchers** →
   `EvmFetcher::fetchMetadataForToken` (Alchemy `getNFTMetadata`),
   `SolanaFetcher::fetchMetadataForMint` (Helius `getAsset` DAS).
