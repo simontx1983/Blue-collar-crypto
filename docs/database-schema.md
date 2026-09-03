@@ -134,6 +134,7 @@ schema-install path in `tables.php` is itself routed through the same runner.
 | wp_bcc_chains | 21 | Supported chains registry (RPC/REST/explorer config); also carries the three per-chain NFT flags — `cosmwasm_nft_discovery_enabled` (CosmWasm-scanner opt-in, 2026-08), plus `bcc_supports_nft_collections` and `manual_collection_discovery_enabled` (per-chain NFT capability model, 2026-08). All three are DEFAULT 0 with no backfill — installing or updating opts in exactly zero chains | schema-chains.php (Onchain) | Active |
 | wp_bcc_chain_nft_capabilities | 0 | Per-chain NFT driver OVERRIDES: one row per (chain, operation, driver) that DISABLES or REORDERS a driver the code registry already offers. Narrow-only — a row can never grant a driver operation the code does not implement, and an absent row means "registry default applies". Empty on every install | schema-chain-nft-capabilities.php / ChainNftCapabilityRepository | Active |
 | wp_bcc_chain_checkpoints | 7 | Per-chain indexer checkpoint + CU budget; also carries the `cw_*` CosmWasm-discovery state (backfill cursor, code-id watermark, pause, per-pass timestamps) added 2026-08 | schema-chain-checkpoints.php | Active |
+| wp_bcc_discovery_runs | 0 | PR 7A durable run ledger for administrator-requested discovery scans (status, lease, attempts, bounded stop reason, work counts). Execution HISTORY only — it holds no cursor, so it is not a second progress table | schema-discovery-runs.php | Active |
 | wp_bcc_cosmwasm_code_families | 0 | CosmWasm code-family inventory: one row per (chain, code id) with its CW-721 classification, bounded probe evidence, retry/backoff state and contract-enumeration cursor (CosmWasm discovery 2026-08; `not_cw721` is terminal and never routinely re-classified) | schema-cosmwasm-code-families.php / CosmwasmCodeFamilyRepository | Active |
 | wp_bcc_cosmwasm_contracts | 0 | CosmWasm contract candidate ledger: one row per (chain, contract address) with classification, retry state, cached operator-deny flag and emit marker (CosmWasm discovery 2026-08; this durable row IS the memory that stops previously-inspected contracts being reprocessed) | schema-cosmwasm-contracts.php / CosmwasmContractRepository | Active |
 | wp_bcc_wallet_links | 9 | User↔wallet links per chain | schema-wallets.php / WalletRepository | Active |
@@ -909,6 +910,118 @@ chain-walking worker up to" primitive — the CosmWasm scanner extends it with
 - cw_backfill_completed_at / cw_last_discovery_at / cw_metadata_refreshed_at · datetime · YES — the last of these is the ≥30-day elapsed guard that makes the "monthly" pass monthly on a daily hook
 - cw_last_error · varchar(255) · YES — sanitized excerpt; raw LCD bodies are never stored
 - Indexes: PRIMARY (chain_id) [uq]
+
+#### wp_bcc_discovery_runs
+
+Durable execution history for administrator-requested discovery scans (PR 7A).
+
+**This is not a second checkpoint table.** `schema-chain-checkpoints.php` warns
+that a second per-chain PROGRESS table "would be exactly the parallel
+implementation §11 forbids", and that rule is respected here: a checkpoint
+answers *where does the worker resume?* and is keyed by chain; a run answers
+*what happened when an administrator started a scan?* and is keyed by run. The
+line that keeps them apart is that this table stores **counts of work done**
+and **never a cursor or resumable position**. The moment a column here could
+tell a worker where to restart, it has become the table §11 forbids.
+
+It mirrors `wp_bcc_validator_msg_queue`, which already solves the same problem
+in production: closed status vocabulary, lease token and expiry, attempt count
+with backoff, a bounded reason code, an atomic compare-and-swap claim, and a
+reaper that returns an expired lease *without* bumping the attempt counter.
+
+⚠ **No market data, ever.** BCC is never a price or trading platform. There is
+no floor price, volume, listing or sale column here and none may be added; the
+counts describe WORK, not worth. A mutation control adds one and requires the
+suite to fail.
+
+- id · bigint unsigned · NO · PK
+- run_uuid · char(36) · NO · UQ — opaque public handle; the id is internal
+- job_kind · varchar(32) · NO — closed: `cosmwasm_discovery` | `evm_indexer`
+- scan_mode · varchar(16) · NO — closed: `historical` | `incremental`. **Chosen by the server**, resolved once at request time from `cw_backfill_completed_at` and frozen onto the row, so a checkpoint that completes mid-flight cannot rewrite what a run did. The administrator sees one Scan button and never picks a mode.
+- chain_id · bigint unsigned · NO
+- status · varchar(16) · NO · default `queued` — closed: `queued` `running` `succeeded` `failed` `cancelled`
+- active_marker · tinyint unsigned · YES — `1` while queued or running, `NULL` once terminal
+- requested_by · bigint unsigned · NO — a real WP user id; **0 is never valid**
+- requested_at / started_at / finished_at · datetime
+- lease_token · char(36) · YES — a capability, never exposed in a read model
+- lease_expires_at / heartbeat_at · datetime
+- attempt_count · smallint unsigned · NO · default 0 — max 3
+- next_retry_at · datetime · YES — backoff 60 / 300 / 900 s
+- retry_of_run_id · bigint unsigned · YES — a manual retry is a NEW row pointing at the original, so history is never rewritten
+- stop_reason · varchar(40) · YES — the existing `CosmwasmPassStopReason` vocabulary
+- error_code · varchar(40) · YES — bounded operational fault; **never free text**
+- partial · tinyint(1) · NO · default 0
+- audit_degraded · tinyint(1) · NO · default 0 — the terminal result stood but its secondary audit could not be written
+- requests_used / pages_fetched · smallint unsigned · NO · default 0
+- families_seen / contracts_seen / collections_emitted / collections_denied · int unsigned · NO · default 0
+- updated_at · datetime · NO
+- Indexes: PRIMARY (id); uq_run_uuid (run_uuid) [uq]; **uq_active (job_kind, chain_id, active_marker) [uq]**; idx_claimable (status, next_retry_at, id); idx_lease_reap (status, lease_expires_at); idx_chain_history (job_kind, chain_id, finished_at)
+
+##### How two active runs become impossible
+
+`uq_active` with `active_marker` set to `1` while active and `NULL` on every
+terminal transition. MySQL treats NULLs as distinct in a unique index, so
+terminal history is unlimited while **at most one active run per (job kind,
+chain) can exist**. A second concurrent request fails on a duplicate key at
+`INSERT` — before any lock, any provider call, any work. The button being
+disabled in the UI is a courtesy; this is the guarantee.
+
+`scan_mode` is deliberately **absent** from that key. Historical and
+incremental write the same `cw_*` checkpoint columns, so they must exclude each
+other on a chain.
+
+The race has two halves, and both are handled. If the insert loses and an
+active run is found, the caller is refused with that run's id. If the insert
+loses and **no** active run is found — the winner terminalized in between — a
+bounded three-attempt loop retries rather than reporting a run that no longer
+exists. A nonexistent or stale active run is never returned.
+
+##### Age is not a failure
+
+There is deliberately **no `queued → failed` transition**. On an installation
+whose WP-Cron is disabled or externally driven, a queued run is *waiting*, not
+broken. Age only derives a read-time `pickup_overdue` flag; the status read
+model computes it from `requested_at` and **writes nothing** to report it.
+
+If cron is not driven at all, the recovery sweep cannot run either — it is
+itself a cron job — so the run simply stays `queued` until cron returns, and
+is then re-dispatched. Nothing is lost and nothing is invented.
+
+##### Attempts, leases and recovery
+
+An **attempt is a successful database claim**. It does not prove a provider was
+contacted: a run claimed and killed before its first request has still consumed
+one, which is correct, because the alternative is an infinite claim loop.
+
+A **lease expiry is not an attempt**. The reaper returns `running → queued`
+without bumping the counter — a dead worker is not the run's fault, and
+counting it twice would burn all three attempts on a healthy run inside fifteen
+minutes. Only when a run has already consumed every attempt does an expired
+lease become terminal `failed` / `max_attempts_exhausted`.
+
+The executor's claim admits `queued` only; reclaiming an expired lease belongs
+to the reaper. Keeping them apart is what makes `attempt_count` mean one thing.
+
+##### Terminal writes are confirmed, or nothing is claimed
+
+Every post-claim write carries `AND lease_token = … AND status = 'running'`, so
+a revived process cannot overwrite a re-leased row. A terminal write that is
+**not confirmed** is never reported as success: the lease is left to expire and
+the reaper returns the run, which is the only honest response to *we do not
+know whether the result landed*.
+
+A time- or item-budget stop is `succeeded` + `partial = 1` + the exact stop
+reason. **It is not a failure** — the pass did real work and stopped at a
+ceiling it was told to respect.
+
+##### Retention
+
+Terminal runs are kept 90 days and pruned in bounded batches of 200. Pruning
+never touches a row with `active_marker IS NOT NULL`, and always keeps the
+newest `succeeded` and newest `failed` per (job kind, chain) so the status read
+model's last-success and last-failure can never go blank. The keeper is
+resolved with the *same* ordering the read model uses (`finished_at DESC, id
+DESC`), or pruning could delete exactly the run about to be displayed.
 
 #### wp_bcc_cosmwasm_code_families
 CosmWasm code-family inventory + CW-721 classification + contract-enumeration
