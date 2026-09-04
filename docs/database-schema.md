@@ -1307,6 +1307,78 @@ alter trust or ranking, or resolve an unresolved alias. Discovered rows land
 on the schema default `is_verified = 0` and stay in the existing administrator
 review workflow.
 
+###### Which chains get an NFT Scan control (PR 7.1)
+
+**`wp_bcc_chains.bcc_supports_nft_collections` is the owner-controlled
+statement that BCC currently offers NFT discovery on a chain**, and it is the
+FIRST question the eligibility decision asks — before the per-chain opt-in and
+before the environment allowlist. Chains without it get no Scan control at
+all, not a disabled one: a validator-only chain is not a chain waiting for a
+toggle, and a greyed-out button invites a support ticket asking why it cannot
+be enabled. A forged POST for such a chain is refused server-side.
+
+Because support is asked first, **no capability row and no allowlist entry can
+make an unsupported chain scannable** — those inputs are never reached. The
+allowlist can only ever NARROW.
+
+Current product intent, as data rather than code:
+
+| chain | NFT support | why |
+|---|---|---|
+| Cosmos Hub | on | the migrated Stargaze collections live here; Stargaze remains the MARKETPLACE, Cosmos Hub is the on-chain identity |
+| Injective | on | supported |
+| every other Cosmos chain | off | Osmosis, Akash, Juno, Jackal and Cronos POS are validator-only in BCC today |
+
+⚠ **Nothing about that table is hardcoded.** It is the state of one column, so
+enabling a chain when it develops an NFT ecosystem is an administrator toggle,
+not a deploy — and a test forbids any chain id, slug or name appearing in the
+eligibility logic. A healthy CosmWasm endpoint is NOT evidence of support:
+Jackal answers `/cosmwasm/wasm/v1/code` with a real code list and is still off.
+
+###### The environment switches are separate gates, and mode-scoped
+
+`BCC_COSMWASM_DISCOVERY_ENABLED` arms the SCHEDULED engine;
+`BCC_COSMWASM_BACKFILL_ENABLED` arms the HISTORICAL walk. Undefined means
+disabled for both. They are NOT the same thing as the per-chain opt-in, and
+they are consulted **by scan mode**: only the historical pass reads them, so a
+supervised incremental run is not withheld by a switch its executor never
+reads. A chain that has never been walked always resolves to historical, so on
+a fresh chain the backfill switch is the one that decides.
+
+###### An unexecuted scan is not a successful zero
+
+Two outcomes must never look alike:
+
+- **Nothing ran** — product support off, the engine disabled, the chain not
+  opted in, or the configuration changed between queueing and execution. The
+  run is terminal `failed` with a bounded code NAMING the blocker, zero
+  provider calls, and no collection counts.
+- **A genuine empty result** — a provider was asked a valid
+  collection-discovery question and returned nothing. That is `succeeded` with
+  zero discoveries.
+
+⚠ The historical failure was not that a disabled engine reported success — the
+PR 7A status split already refused to call a non-running pass a success. It was
+that the refusal could not be ATTRIBUTED: `chain_refused_to_prepare` is also
+what a pause, an open circuit breaker and a missing driver produce, so an
+operator who had just enabled a chain had no way to learn a global switch was
+off, and "this chain has no NFTs" was the cheapest wrong conclusion available.
+
+Readiness is re-asked immediately before provider work, because configuration
+is not frozen onto a queued run — and it is re-judged against the mode FROZEN
+on the run row, so a backfill completing mid-wait cannot re-classify a run onto
+a path whose switch was never consulted for it.
+
+###### Discovery runs are administrator-created, always
+
+Cron may claim, continue, retry or recover a run an administrator created. It
+may never choose a chain and invent one. `bcc_discovery_run_maintenance` acts
+only on existing ledger rows; `bcc_discovery_run_execute` is a single event
+dispatched per administrator-created run and is never scheduled. The five
+former automatic discovery hooks are retired with no handler, and as of
+2026-09-03 so is `bcc_nft_enrichment_tick` — the last recurring hook that could
+reach an NFT provider with nobody behind it.
+
 
 ##### Community provisioning (PR 6)
 
