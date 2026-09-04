@@ -1345,6 +1345,61 @@ supervised incremental run is not withheld by a switch its executor never
 reads. A chain that has never been walked always resolves to historical, so on
 a fresh chain the backfill switch is the one that decides.
 
+###### A successful pass is not a completed chain scan (PR 7.2)
+
+⚠ **THIS IS A THIRD OUTCOME, AND THE 2026-09-04 COSMOS HUB CANARY IS THE
+WORKED EXAMPLE.** That run was `succeeded`, `partial = 0`, stop reason
+`pass_completed`, 48 of 50 requests in 17 seconds, 0 collections emitted.
+Every value is true of the pass. Read together they say the scan finished
+and found nothing. It had classified **5 of 737** contract families.
+
+Two different questions, two answers, never conflated:
+
+| | question | owner | canary answer |
+|---|---|---|---|
+| **pass outcome** | did this one bounded run execute? | the run row — `status`, `partial`, `stop_reason` | **yes** |
+| **scan completeness** | is every discovered family classified? | derived from `wp_bcc_cosmwasm_code_families` + the checkpoint | **no** |
+
+`partial` is unchanged and remains a property of ONE executor pass. It was
+not overloaded with a second meaning; completeness is a separate derived
+read (`DiscoveryScanProgress`), because a field with two conflicting
+meanings is how this became confusing in the first place.
+
+**A chain scan is complete only when BOTH hold:**
+
+1. code enumeration is complete, AND
+2. no unvisited or requeueable classification work remains.
+
+It must **never** become true merely because the code cursor reached the
+end, `cw_backfill_completed_at` is populated, the checkpoint says
+`backfilled`, one bounded pass succeeded, zero collections were emitted, or
+the run's `partial` is zero. Each of those was true on 2026-09-04 while 732
+families had never been looked at.
+
+⚠ **`inconclusive` with a NULL `classification_reason` and a NULL
+`classified_at` is the creation-time DEFAULT — "not looked at yet", not a
+verdict.** Enumeration writes it. Treating it as settled is the single
+mistake that turns an unexamined chain into a finished one. Only
+`not_cw721` is a terminal negative.
+
+**Remaining work is derived, never stored.** There is no progress table and
+no counter column — either would be a second copy of a number the families
+table already holds. The count uses the same predicate
+`findPendingClassification()` uses, so the figure an operator sees is the
+figure the next pass will claim.
+
+**Progress reads fail CLOSED.** If a count cannot run the answer is
+`unknown` — never zero-remaining, never complete, and never an SQL error on
+screen. The worker's own count deliberately still fails open (an exception
+mid-tick is worse than a skipped tick there); the operator surface uses
+`…OrThrow` siblings sharing one prepared-SQL builder.
+
+**Resuming.** After a bounded pass the administrator sees `Continue scan`,
+not `Start over`: the next request resumes from the pending queue and does
+not restart enumeration. Each click runs one more bounded pass. Nothing
+continues automatically — the maintenance cron may recover or dispatch a
+run an administrator already created, never create the next one.
+
 ###### An unexecuted scan is not a successful zero
 
 Two outcomes must never look alike:
