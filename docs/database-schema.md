@@ -134,7 +134,7 @@ schema-install path in `tables.php` is itself routed through the same runner.
 | wp_bcc_chains | 21 | Supported chains registry (RPC/REST/explorer config); also carries the three per-chain NFT flags — `cosmwasm_nft_discovery_enabled` (CosmWasm-scanner opt-in, 2026-08), plus `bcc_supports_nft_collections` and `manual_collection_discovery_enabled` (per-chain NFT capability model, 2026-08). All three are DEFAULT 0 with no backfill — installing or updating opts in exactly zero chains | schema-chains.php (Onchain) | Active |
 | wp_bcc_chain_nft_capabilities | 0 | Per-chain NFT driver OVERRIDES: one row per (chain, operation, driver) that DISABLES or REORDERS a driver the code registry already offers. Narrow-only — a row can never grant a driver operation the code does not implement, and an absent row means "registry default applies". Empty on every install | schema-chain-nft-capabilities.php / ChainNftCapabilityRepository | Active |
 | wp_bcc_chain_checkpoints | 7 | Per-chain indexer checkpoint + CU budget; also carries the `cw_*` CosmWasm-discovery state (backfill cursor, code-id watermark, pause, per-pass timestamps) added 2026-08 | schema-chain-checkpoints.php | Active |
-| wp_bcc_discovery_runs | 0 | PR 7A durable run ledger for administrator-requested discovery scans (status, lease, attempts, bounded stop reason, work counts). Execution HISTORY only — it holds no cursor, so it is not a second progress table | schema-discovery-runs.php | Active |
+| wp_bcc_discovery_runs | 0 | PR 7A durable run ledger for administrator-requested discovery scans (status, lease, attempts, bounded stop reason, work counts). PR 7.3 adds `chunks_used`, bounding one authorized multi-chunk session. Execution HISTORY only — it holds no cursor, so it is not a second progress table | schema-discovery-runs.php | Active |
 | wp_bcc_cosmwasm_code_families | 0 | CosmWasm code-family inventory: one row per (chain, code id) with its CW-721 classification, bounded probe evidence, retry/backoff state and contract-enumeration cursor (CosmWasm discovery 2026-08; `not_cw721` is terminal and never routinely re-classified) | schema-cosmwasm-code-families.php / CosmwasmCodeFamilyRepository | Active |
 | wp_bcc_cosmwasm_contracts | 0 | CosmWasm contract candidate ledger: one row per (chain, contract address) with classification, retry state, cached operator-deny flag and emit marker (CosmWasm discovery 2026-08; this durable row IS the memory that stops previously-inspected contracts being reprocessed) | schema-cosmwasm-contracts.php / CosmwasmContractRepository | Active |
 | wp_bcc_wallet_links | 9 | User↔wallet links per chain | schema-wallets.php / WalletRepository | Active |
@@ -945,8 +945,9 @@ suite to fail.
 - requested_at / started_at / finished_at · datetime
 - lease_token · char(36) · YES — a capability, never exposed in a read model
 - lease_expires_at / heartbeat_at · datetime
-- attempt_count · smallint unsigned · NO · default 0 — max 3
-- next_retry_at · datetime · YES — backoff 60 / 300 / 900 s
+- attempt_count · smallint unsigned · NO · default 0 — max 3, **per CHUNK, not per session** (PR 7.3 resets it when a chunk succeeds)
+- chunks_used · smallint unsigned · NO · default 0 — **PR 7.3**; bounded chunks already spent by one administrator-authorized session, ceiling `DiscoveryScanSession::MAX_CHUNKS` (25). Monotonic, never decremented
+- next_retry_at · datetime · YES — backoff 60 / 300 / 900 s; **also the inter-chunk delay gate** (15 s)
 - retry_of_run_id · bigint unsigned · YES — a manual retry is a NEW row pointing at the original, so history is never rewritten
 - stop_reason · varchar(40) · YES — the existing `CosmwasmPassStopReason` vocabulary
 - error_code · varchar(40) · YES — bounded operational fault; **never free text**
@@ -1001,6 +1002,57 @@ lease become terminal `failed` / `max_attempts_exhausted`.
 
 The executor's claim admits `queued` only; reclaiming an expired lease belongs
 to the reaper. Keeping them apart is what makes `attempt_count` mean one thing.
+
+##### One administrator action, many chunks (PR 7.3)
+
+The 2026-09-04 Cosmos Hub canaries measured a chunk at 48 requests and ~16 s,
+settling about **seven families**. With 730 remaining that is roughly **104
+administrator clicks** to finish one chain. So one click now authorizes a
+bounded **session**: up to `MAX_CHUNKS` chunks of the *same run*.
+
+**Automatic scan CREATION stays forbidden. Bounded CONTINUATION of an already
+authorized run is permitted.** The distinction is structural, not a policy
+note:
+
+- `insertQueued()` has exactly one caller, `DiscoveryRunService::createRun()`,
+  reached only from the administrator request and retry actions;
+- `DiscoveryRunMaintenance` never calls it, and `findDispatchable()` contains
+  no chain-selection logic of any kind;
+- a continuation calls `releaseForNextChunk()` — which updates *this* row — and
+  schedules the *same run id*. It cannot name a chain.
+
+`releaseForNextChunk()` does `running → queued` and deliberately **leaves
+`active_marker` set**, so `uq_active` keeps refusing a second session for the
+chain while chunks are still coming. It resets `attempt_count`, because a
+completed chunk proves the worker is alive and the three-attempt protection is
+about one chunk's execution; the session's own bound is `chunks_used`, which
+nothing ever decrements.
+
+Counts **accumulate** (`col = col + n`) rather than overwrite, so the row
+carries the session total. For a single-chunk run the result is identical to
+the old assignment — every counter starts at zero and a retry creates a new row.
+
+The ceilings, all conservative and all derived from the canary:
+
+| bound | value | enforced by |
+|---|---|---|
+| chunks per session | 25 | `chunks_used` |
+| cumulative requests | 1250 | accumulated `requests_used` |
+| wall-clock age | 3600 s | `requested_at` |
+| cumulative execution | 500 s | transitive: 25 × the 20 s per-chunk deadline |
+| gap between chunks | 15 s | `next_retry_at` |
+| provider-error chunks | 1 | ends the session |
+
+When a ceiling is reached with work remaining the run finishes **honestly**:
+`succeeded`, a `session_*` stop reason, `active_marker` released, nothing
+scheduled, and the panel shows `Continue scan`. Another session needs another
+explicit administrator action.
+
+⚠ **Delayed work is never completion.** The classifier's minimum backoff is
+six hours and a session's whole window is one, so work waiting on
+`next_attempt_at` can never become eligible inside a session. The session ends
+with `session_delayed_work` and the counts are reported separately — as is
+retry **exhaustion**, which is *unresolved*, never a negative verdict.
 
 ##### Terminal writes are confirmed, or nothing is claimed
 
