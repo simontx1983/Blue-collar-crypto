@@ -1051,8 +1051,50 @@ explicit administrator action.
 ⚠ **Delayed work is never completion.** The classifier's minimum backoff is
 six hours and a session's whole window is one, so work waiting on
 `next_attempt_at` can never become eligible inside a session. The session ends
-with `session_delayed_work` and the counts are reported separately — as is
-retry **exhaustion**, which is *unresolved*, never a negative verdict.
+with `session_delayed_work` and the counts are reported separately.
+
+##### An unresolved family is not a completed scan
+
+`remaining_families` counts what a pass could **claim**, and its predicate
+excludes `retry_count >= MAX_RETRIES`. A family that gave up after six attempts
+therefore leaves the queue **without ever being resolved**, and with only such
+families left `remaining` reads 0. Completion consequently needs **three**
+proven conditions, not two:
+
+1. enumeration complete;
+2. nothing claimable;
+3. **nothing unresolved**.
+
+Without the third, the panel said *"Scan complete. All 10 contract families
+were checked. No supported NFT collections were confirmed"* over a family
+nobody ever resolved — measured on real MySQL. It was checked six times and we
+still do not know, which is not the same as knowing there is nothing there.
+
+The honest third state is stated outright, and is neither of the other two:
+
+> Scan session finished. Checked 10 of 10 contract families. 1 family could not
+> be resolved and is still unknown — that is not a result of "no NFT
+> collection".
+
+`more_work_available` stays **no**, so no `Continue scan` is offered — there is
+genuinely nothing to claim.
+
+##### Five outcomes, five separate numbers
+
+`not_cw721` and a six-times-unreachable family differ **only** by
+`retry_count`, so the read model is the only place the distinction can survive:
+
+| outcome | field |
+|---|---|
+| confirmed / probable CW-721 | `collection_families` |
+| confirmed **negative** (terminal) | `negative_families` |
+| temporarily **delayed** (backoff) | `delayed_families` |
+| retry-**exhausted**, unresolved | `exhausted_families` |
+| unreadable | `ok = false` · every count `null`, never `0` |
+
+⚠ Delayed and exhausted must not collapse into one another: delayed work comes
+back on its own, exhausted work needs an operator or a classifier-version bump.
+Reporting either as the other misleads in opposite directions.
 
 ##### Terminal writes are confirmed, or nothing is claimed
 
