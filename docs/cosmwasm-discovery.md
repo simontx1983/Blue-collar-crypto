@@ -304,7 +304,7 @@ and **the wall clock always wins**.
 | Limit | Value | Why |
 |---|---|---|
 | Wall-clock deadline per invocation | 20 s | Hostinger Business shared caps PHP `max_execution_time` at 30 s; 20 leaves headroom for teardown. Being killed mid-write is the failure mode that actually costs progress, so a tick with requests left but no clock left stops anyway. |
-| Request budget per invocation | 50 (override up to 500) | A fast node must not turn a 20-second window into hundreds of LCD calls. |
+| Request budget per invocation | 25 (override up to 500) | A fast node must not turn a 20-second window into hundreds of LCD calls. **Halved from 50 in PR 7.5**: run 5 on 2026-09-07 spent 772 requests in 970 s against the free public Cosmos Hub LCD and opened its circuit breaker. Within a session the override is further clamped to what the 625-request session ceiling has left. |
 | Chains per backfill tick | 1 | Least-recently-worked first, so a chain that keeps failing cannot monopolise the ticks or starve the others. |
 | Code-listing page size | 100 | |
 | Contracts sampled per family | 3 | Enough to survive a couple of dead instantiations without turning family classification into a per-contract sweep. |
@@ -825,7 +825,7 @@ run exists to answer.
 ## 18. Expected discovery delay
 
 **Historical backfill: days, not hours.** With one chain per five-minute
-tick and 50 requests per tick, a chain the size of juno (5,149 families)
+tick and 25 requests per tick (halved in PR 7.5), a chain the size of juno (5,149 families)
 takes on the order of a day of its share of the ticks to classify, and
 the full set of supported chains takes several days of wall-clock time
 for a first complete pass. Checksum reuse (12–20% of families) and the
