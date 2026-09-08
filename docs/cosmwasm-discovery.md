@@ -64,7 +64,32 @@ states.
 | `probable_cw721` | Half the evidence, with the other half a **definite refusal** from the contract: counts tokens but refuses both collection-info variants, or names itself but definitively cannot count tokens. | No. Surfaced to the admin queue with lower confidence. |
 | `not_cw721` | **Every** probe was decisively refused by the contract. | **Never.** Terminal. This is the state that makes the whole scheme affordable, and the state a node hiccup must never be allowed to produce. |
 | `inconclusive` | No answer either way: nothing has been deployed from the code yet, no contract exists at the address, or a reply could not be read. | Yes, under the retry cap and backoff. |
-| `temporarily_unreachable` | The **node** failed — VM error, panic, 5xx, timeout, transport. Says nothing about the contract. | Yes, under the retry cap and backoff. |
+| `temporarily_unreachable` | The evidence is incomplete. Says nothing about the contract. | Yes, under the retry cap and backoff. |
+
+`temporarily_unreachable` carries a **reason** that names who is responsible,
+and the two are not interchangeable:
+
+| Reason | Meaning |
+|---|---|
+| `node_unreachable` | The **node** failed — VM error, panic, `rpc error`, timeout, transport. Only these blame the provider. |
+| `partial_evidence_node_unreachable` | Part of the check succeeded and the rest failed on the node. |
+| `mixed_evidence_probe_ambiguous` | Every probe the contract answered **decisively refused** the query, and the remaining probe merely could not be read (a 4xx, or a body that would not parse). The node answered. |
+| `partial_evidence_probe_ambiguous` | Part of the check succeeded and one reply could not be read. |
+
+⚠ **PR 7.6 (2026-09-08) split the last two out of `node_unreachable`.** Before
+that, a single unreadable probe outvoted two decisive refusals, and 82 Cosmos
+Hub contracts across 65 families were recorded as unreachable nodes while the
+node had answered every time — in 473 rows carrying probe telemetry there was
+not one `node_error` and not one `transport`. Re-querying one of them returned
+a clean `unknown variant` rejection on the configured endpoint *and* on an
+independent one. It was an ordinary minter.
+
+The **verdict is unchanged** by that split: still `temporarily_unreachable`,
+still retryable, and **never** promoted to `not_cw721`. The unread probe is
+precisely the one that could have said yes, so ambiguity may not be converted
+into a terminal negative. Only the attribution changed — because
+`node_unreachable` sends an operator to investigate a provider, and that
+sentence has to be true.
 
 ### The probe set
 
