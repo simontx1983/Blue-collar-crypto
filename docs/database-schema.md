@@ -947,7 +947,7 @@ suite to fail.
 - lease_expires_at / heartbeat_at · datetime
 - attempt_count · smallint unsigned · NO · default 0 — max 3, **per CHUNK, not per session** (PR 7.3 resets it when a chunk succeeds)
 - chunks_used · smallint unsigned · NO · default 0 — **PR 7.3**; bounded chunks already spent by one administrator-authorized session, ceiling `DiscoveryScanSession::MAX_CHUNKS` (25). Monotonic, never decremented
-- next_retry_at · datetime · YES — backoff 60 / 300 / 900 s; **also the inter-chunk delay gate** (15 s)
+- next_retry_at · datetime · YES — backoff 60 / 300 / 900 s; **also the inter-chunk delay gate** (60 s since PR 7.5, was 15 s)
 - retry_of_run_id · bigint unsigned · YES — a manual retry is a NEW row pointing at the original, so history is never rewritten
 - stop_reason · varchar(40) · YES — the existing `CosmwasmPassStopReason` vocabulary
 - error_code · varchar(40) · YES — bounded operational fault; **never free text**
@@ -1032,16 +1032,30 @@ Counts **accumulate** (`col = col + n`) rather than overwrite, so the row
 carries the session total. For a single-chunk run the result is identical to
 the old assignment — every counter starts at zero and a retry creates a new row.
 
-The ceilings, all conservative and all derived from the canary:
+The ceilings, all conservative and — since PR 7.5 — all derived from a live
+circuit-breaker trip rather than from the canaries:
 
 | bound | value | enforced by |
 |---|---|---|
 | chunks per session | 25 | `chunks_used` |
-| cumulative requests | 1250 | accumulated `requests_used` |
+| requests per chunk | 25 | `CosmwasmDiscoveryGate::DEFAULT_REQUEST_BUDGET` |
+| cumulative requests | 625 | accumulated `requests_used`, plus `DiscoveryScanSession::chunkRequestAllowance()` |
 | wall-clock age | 3600 s | `requested_at` |
 | cumulative execution | 500 s | transitive: 25 × the 20 s per-chunk deadline |
-| gap between chunks | 15 s | `next_retry_at` |
+| gap between chunks | 60 s | `next_retry_at` |
 | provider-error chunks | 1 | ends the session |
+
+⚠ **The pacing halved on 2026-09-07 because a provider said so.** Run 5
+(`b04efa96-…`) spent **772 requests in 970 s** against the free public Cosmos
+Hub LCD and the circuit breaker **opened**; `prepareChain()` refused and the
+run ended honestly as `chain_not_ready` / `chain_refused_to_prepare`. The
+breaker behaved correctly — the pace did not. 25 × 25 = 625 is deliberately
+below the 772 that provoked the trip.
+
+⚠ **The per-chunk override cannot uncap a session.**
+`BCC_COSMWASM_REQUEST_BUDGET` still overrides the chunk budget within 1..500,
+but `chunkRequestAllowance()` hands each chunk only `min(budget, 625 − spent)`,
+so 25 chunks at 500 authorize 625 requests, not 12,500.
 
 When a ceiling is reached with work remaining the run finishes **honestly**:
 `succeeded`, a `session_*` stop reason, `active_marker` released, nothing
@@ -1086,11 +1100,28 @@ genuinely nothing to claim.
 
 | outcome | field |
 |---|---|
-| confirmed / probable CW-721 | `collection_families` |
+| **confirmed** CW-721 | `confirmed_families` |
+| **probable** CW-721 — needs administrator review | `probable_families` |
 | confirmed **negative** (terminal) | `negative_families` |
 | temporarily **delayed** (backoff) | `delayed_families` |
 | retry-**exhausted**, unresolved | `exhausted_families` |
 | unreadable | `ok = false` · every count `null`, never `0` |
+
+⚠ **`collection_families` is gone (PR 7.5), not renamed.** It counted
+`confirmed_cw721` **and** `probable_cw721`, and the panel printed the sum under
+the word "confirmed": on 2026-09-07 Cosmos Hub's **12 confirmed + 1 probable**
+was rendered as **"13 NFT collection families are confirmed so far"**. A
+probable family is evidence, not a verdict — it is reported in its own clause
+("1 possible NFT collection family needs administrator review") and never added
+to the confirmed count. The combined method was deleted rather than kept, so no
+future caller can print a candidate total as confirmed.
+
+⚠ **Probable is settled for the SCANNER and unsettled for a HUMAN.** The
+pending predicate excludes it, so it is not rescanned routinely — a chain can
+therefore reach *scanning complete* while probable candidates still await
+review. The final "no supported NFT collections were confirmed" sentence now
+requires **six** conditions: enumeration complete, zero remaining, zero
+delayed, zero exhausted, **zero confirmed and zero probable**.
 
 ⚠ Delayed and exhausted must not collapse into one another: delayed work comes
 back on its own, exhausted work needs an operator or a classifier-version bump.
@@ -1443,7 +1474,8 @@ a fresh chain the backfill switch is the one that decides.
 
 ⚠ **THIS IS A THIRD OUTCOME, AND THE 2026-09-04 COSMOS HUB CANARY IS THE
 WORKED EXAMPLE.** That run was `succeeded`, `partial = 0`, stop reason
-`pass_completed`, 48 of 50 requests in 17 seconds, 0 collections emitted.
+`pass_completed`, 48 of 50 requests in 17 seconds (the budget was 50 then;
+PR 7.5 halved it to 25), 0 collections emitted.
 Every value is true of the pass. Read together they say the scan finished
 and found nothing. It had classified **5 of 737** contract families.
 
