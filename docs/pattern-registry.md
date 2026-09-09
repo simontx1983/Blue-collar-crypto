@@ -306,8 +306,7 @@ prefix from product copy, and (c) a second surface branching on
 "is this one?" at runtime.
 
 **Why it's resolved.** The v1.55 Hall rename fired those triggers at
-once. Halls are now **auto-provisioned one per active chain** by a
-daily `bcc_hall_provision` cron (the automated second creator), and the
+once, and the
 provisioner **meta-writes the discriminator**: a group is a Hall iff it
 carries `_bcc_group_kind = 'hall'`, with its chain in a `_bcc_chain_tag`
 meta FK. There is no `Local NNN` title prefix any more, and no
@@ -315,6 +314,35 @@ title-`LIKE` scan — reads filter on `_bcc_group_kind` meta. The
 discriminator is a single source of truth written on provision, so the
 old failure mode (an admin renaming a group off-prefix and silently
 dropping it from the listing) no longer exists.
+
+> **⚠ The "automated second creator" is GONE — the resolution is not.**
+> This section used to say Halls were *"auto-provisioned one per active
+> chain by a daily `bcc_hall_provision` cron (the automated second
+> creator)"*. That sweep is **retired**: it made REGISTERING A CHAIN
+> publish a public group within ~24h, with nobody deciding the space
+> should exist. A Hall is now an official, **administrator-created**,
+> chain-connected public group — created one named chain at a time from
+> **Chains ▸ Halls** (`ChainsPage::ACTION_HALL_CREATE`), behind
+> `manage_options` + a per-chain nonce + a POST check. Adding a chain
+> creates nothing; no cron, activation hook or self-heal can.
+>
+> The discriminator argument is **unaffected**. Trigger (a) is now
+> "an admin action distinct from PeepSo's own group-create UI" rather
+> than a cron, and triggers (b) and (c) still hold, so `_bcc_group_kind`
+> remains the right answer and the `bcc_locals` / `is_local` question
+> stays closed. What changed is WHO creates a Hall, not how one is
+> recognised.
+>
+> Ownership is deterministic and does **not** follow whoever clicked:
+> PeepSo's `create()` joins and `member_owner`s `get_current_user_id()`
+> regardless of the `owner_id` passed, so the service moves ownership to
+> the canonical first administrator through `PeepSoGroupWriter` and
+> **proves the membership ledger** before reporting success. A Hall whose
+> ownership cannot be reconciled is marked `_bcc_hall_owner_incomplete`,
+> audited, and reported as `incomplete` — never as created. This
+> deliberately differs from holder groups, where PR 6 made the owner the
+> administrator who *requested* the community: that space is about
+> someone's collection, a Hall belongs to the platform.
 
 **Consequently the `bcc_locals` / `is_local` question is closed.** No
 sidecar table was needed: `_bcc_group_kind` meta already serves as the
