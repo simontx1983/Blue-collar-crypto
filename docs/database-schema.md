@@ -908,7 +908,7 @@ chain-walking worker up to" primitive — the CosmWasm scanner extends it with
 - cw_code_cursor · varchar(255) · YES — opaque `pagination.key` for the resumable code-listing walk; cleared on completion and whenever a stale key is rejected
 - cw_max_code_id · bigint unsigned · NO — CONTIGUOUS high-water mark ("every code id at or below this is inventoried"); only advanced when a reverse tail walk actually met it
 - cw_backfill_completed_at / cw_last_discovery_at / cw_metadata_refreshed_at · datetime · YES — the last of these is the ≥30-day elapsed guard that makes the "monthly" pass monthly on a daily hook
-- cw_last_error · varchar(255) · YES — sanitized excerpt; raw LCD bodies are never stored
+- cw_last_error · varchar(255) · YES — the LAST enumeration outcome, last-writer-wins. Holds either a bounded token from `CosmwasmEnumerationFailure::codes()` (every enumeration failure, code listing and contract listing alike) or a BCC-authored state sentence from `setCwDiscoveryState()` / `requestCwBackfillRestart()`. **Never a provider-chosen string** — not a response body, header, URL or exception message; the token writer validates against the vocabulary and the mapper only ever reads an error kind and an HTTP status. Cleared by the next successful enumeration read of either kind
 - Indexes: PRIMARY (chain_id) [uq]
 
 #### wp_bcc_discovery_runs
@@ -1591,6 +1591,63 @@ exception message or any contract-chosen prose, and it is still cleared by the
 next successful enumeration. `timeout` and `dns` exist in the vocabulary but
 are never emitted: WordPress collapses both into one `WP_Error`, and guessing
 between them would be exactly the fabricated diagnosis this replaces.
+
+⚠⚠ **PR 7.6 INSTRUMENTED THE CODE LISTING AND MISSED THE CONTRACT LISTING —
+PR 7.7 CLOSES IT.** The paragraph above was written from the code walk, and a
+staging canary on 2026-09-09 proved it incomplete: one authorized Cosmos Hub
+session opened chain 8's breaker again after **eight failures in a ten-second
+window**, and `cw_last_error` was **NULL a second time**. The failing requests
+were on `/cosmwasm/wasm/v1/code/{id}/contracts`, which has three call sites —
+the classification sample, the forward walk and the reverse tail — and had a
+telemetry hook on none of them while charging the same chain-wide breaker.
+They could only be identified by elimination, and the HTTP status had to be
+reported as **unknown**. All three now read through one seam that records on a
+provider fault and clears on a confirmed success.
+
+**Which outcomes are recorded, and which are answers.** `ApiRetry` charges the
+breaker on exactly three things: **429**, **HTTP ≥ 500** where no
+`application_error` opt-in claims it, and a **`WP_Error`**. The recording gate
+is a deliberate SUPERSET of that rule, so **every outcome that charges the
+breaker leaves a token**:
+
+| outcome | token | charges the breaker |
+|---|---|---|
+| HTTP 429 | `rate_limited` | yes |
+| HTTP ≥ 500, including 501 | `http_5xx` | yes |
+| wire failure (`WP_Error`) | `transport` | yes |
+| HTTP 200, unreadable body | `malformed_json` | no — `ApiRetry` saw a 2xx |
+
+⚠ **A NON-429 4xx IS AN ANSWER, NOT A FAULT, AND IS NOT RECORDED.** `ApiRetry`
+neither retries nor charges for it — "code bug, not provider load", a rule
+written after the Stargaze unpadded-base64 regression burned fifty calls in
+seconds. Nor is the local invalid-code-id guard, which returns a failure
+without contacting anyone; nor `query_unsupported`, which is a contract's own
+refusal and belongs to classification. **`unexpected_response` is therefore
+never emitted by the contract-listing path** — every outcome that would name it
+is one of those exclusions. That is a decision, and a test fails if a future
+change makes the token reachable without it being revisited.
+
+⚠ **501 is NOT excluded on the contract path, though it is on the code path.**
+There `isUnsupportedChainError()` turns "this chain has no wasm module" into
+the durable `unsupported` state and a token would fight that state machine.
+The contract path has no state machine to fight, and a 501 is a 5xx that
+charges four times — excluding it would leave a breaker-charging failure with
+`cw_last_error` NULL, which is this defect's exact shape.
+
+⚠ **THIS IS TELEMETRY, NOT A SECOND CHARGE.** No breaker charge is added
+anywhere: `ApiRetry` already charges from inside the transport, and a second
+one would silently make a failing contract page cost more than it costs today
+on a breaker keyed by chain id alone and shared by discovery, enrichment,
+chain refresh and the EVM indexer. Retry accounting is **measured** by PR 7.7
+and unchanged — one failing request still charges **four** times, so **two**
+still open a threshold-five breaker. `CosmwasmClassifier::VERSION` stays at
+**2**, and no schema changes: the same column and the same value object.
+
+⚠ **`fetchContractCodeId()` REMAINS UNINSTRUMENTED, DELIBERATELY.** It is the
+monthly migration check — a point lookup, not an enumeration — and it charges
+the breaker but returns `?int` with no error shape, so recording from it means
+changing its signature. Recorded here as a known gap rather than left for the
+next canary to rediscover.
 
 Readiness is re-asked immediately before provider work, because configuration
 is not frozen onto a queued run — and it is re-judged against the mode FROZEN
