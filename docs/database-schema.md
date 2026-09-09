@@ -1052,6 +1052,32 @@ run ended honestly as `chain_not_ready` / `chain_refused_to_prepare`. The
 breaker behaved correctly — the pace did not. 25 × 25 = 625 is deliberately
 below the 772 that provoked the trip.
 
+⚠ **PR 7.6 (2026-09-08) found that the pace was not the whole story, and gave
+the breaker its own stop reason.** Run 6 tripped the same breaker after only
+50 requests, so volume was not the controlling variable. An open circuit now
+ends a session as **`provider_circuit_open`**, not `chain_refused_to_prepare`
+— see the attribution note further down. The pacing numbers above are
+UNCHANGED by that PR; lowering them again is explicitly not the response.
+
+⚠ **The breaker counter and its open-state now share one lifecycle.** The
+failure count lives in an option with no expiry and `opened_at` in a 6-hour
+transient, so an expired transient used to leave a surviving count that
+described a window that no longer existed — production held
+`_bcc_cb_counter_18 = 3022` beside a transient that expired four days earlier,
+and the next single failure would have re-opened the breaker instantly on ONE
+request. `recordFailure()` now reconciles: no state means the window is gone,
+so counting restarts at the failure in hand. An intact open breaker is never
+touched, and nothing resets a live counter out of band.
+
+⚠ **Retry accounting is PER ATTEMPT, and that is deliberate.** One failing
+request charges the breaker up to four times (the attempt plus three retries)
+against a threshold of five, so two failing requests open it — chain 8 opened
+on a counter of exactly 8. One-failure-per-exhausted-operation is the better
+semantic, but this breaker is keyed by chain id alone and is shared by
+discovery, enrichment, chain refresh and the EVM indexer; changing it would
+quadruple how long three unmeasured services hammer a failing provider. It is
+pinned by tests and carried as a separately scoped follow-up.
+
 ⚠ **The per-chunk override cannot uncap a session.**
 `BCC_COSMWASM_REQUEST_BUDGET` still overrides the chunk budget within 1..500,
 but `chunkRequestAllowance()` hands each chunk only `min(budget, 625 − spent)`,
@@ -1540,10 +1566,31 @@ Two outcomes must never look alike:
 
 ⚠ The historical failure was not that a disabled engine reported success — the
 PR 7A status split already refused to call a non-running pass a success. It was
-that the refusal could not be ATTRIBUTED: `chain_refused_to_prepare` is also
-what a pause, an open circuit breaker and a missing driver produce, so an
+that the refusal could not be ATTRIBUTED: `chain_refused_to_prepare` was also
+what a pause, an open circuit breaker and a missing driver produced, so an
 operator who had just enabled a chain had no way to learn a global switch was
 off, and "this chain has no NFTs" was the cheapest wrong conclusion available.
+
+⚠ **PR 7.6 removed the breaker from that list.** An open provider circuit now
+stops a session as **`provider_circuit_open`**, and the operator is told three
+things: the connection was paused for safety, **no unresolved family was
+declared negative because of it**, and to wait rather than press Continue
+again — which only spends a chunk against a pause that has to elapse on its
+own. `chain_refused_to_prepare` now means pause, unsupported or no driver, and
+nothing else. The CLI exit code is deliberately unchanged (6): those codes are
+a scripting contract, and the distinction is carried in the stop reason.
+
+⚠ **An enumeration failure now leaves a bounded trace.** The code-tail path
+incremented the breaker and recorded nothing at all, so when chain 8's circuit
+opened after eight consecutive failures in 23 seconds, `cw_last_error` was
+NULL and the audit could not establish what had failed. That column now holds
+one token from a fixed vocabulary — `rate_limited`, `http_5xx`, `transport`,
+`malformed_json`, `unexpected_response` — derived from the classifier's error
+kind and the HTTP status. It never holds a response body, a header, a URL, an
+exception message or any contract-chosen prose, and it is still cleared by the
+next successful enumeration. `timeout` and `dns` exist in the vocabulary but
+are never emitted: WordPress collapses both into one `WP_Error`, and guessing
+between them would be exactly the fabricated diagnosis this replaces.
 
 Readiness is re-asked immediately before provider work, because configuration
 is not frozen onto a queued run — and it is re-judged against the mode FROZEN
