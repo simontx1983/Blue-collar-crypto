@@ -1083,6 +1083,96 @@ pinned by tests and carried as a separately scoped follow-up.
 but `chunkRequestAllowance()` hands each chunk only `min(budget, 625 − spent)`,
 so 25 chunks at 500 authorize 625 requests, not 12,500.
 
+##### Why a breaker charged: attribution at the shared boundary (PR 7.8)
+
+⚠⚠ **PER-PATH TELEMETRY COULD NOT ANSWER THIS, AND RUN 8 PROVED IT.** The
+half-open canary on 2026-09-09 re-opened chain 8's breaker with eight charges
+and left no durable explanation. `cw_last_error` was **correctly NULL** —
+every CosmWasm enumeration read had succeeded — so the charges came from a
+request class with no telemetry hook of its own. That is not a missing hook;
+it is the shape of the approach. The breaker is keyed by chain id alone and is
+shared by nine chains and five subsystems, so **any caller without its own
+hook charges invisibly**, and adding hooks one path at a time can never close
+a set that is open by construction.
+
+Attribution therefore now lives where the charge happens.
+`OnchainCircuitBreaker::recordFailure()` accepts an optional bounded failure
+kind and request class, validates both against closed vocabularies, and stores
+them beside `failures` / `opened_at`.
+
+**Twelve executable call sites charge this breaker.** Four are inside
+`ApiRetry`, where a wire outcome exists and can be named. The other eight are
+DOMAIN JUDGEMENTS — an empty validator index, a caught exception,
+`eth_blockNumber` returning 0 — with no HTTP status and no transport error.
+⚠ **They pass nothing and read back as null, deliberately.** Forcing one of
+the three tokens onto them would be the fabricated diagnosis this whole effort
+exists to remove; `null` is the honest answer to "which wire outcome was
+this?" when there was no wire outcome. A surface must render a null as **"not
+recorded"**, never as "no failure".
+
+**The vocabulary is exactly as wide as the charging rule** — measured by
+driving the real retry loop against a scripted wire, not asserted:
+
+| outcome | charges | charges per logical request | token |
+|---|---|---|---|
+| HTTP 429 | yes | **1** — returned immediately, never retried | `rate_limited` |
+| HTTP ≥ 500, including 501 | yes | **4** — the attempt plus three retries | `http_5xx` |
+| wire failure (`WP_Error`) | yes | **4** | `transport` |
+| HTTP 4xx other than 429 | no | 0 | — nothing recorded |
+| HTTP 3xx | no | 0 | — nothing recorded |
+| HTTP 2xx | no | 0 | records a SUCCESS |
+| 5xx claimed by `application_error` | no | 0 | — a contract ANSWER, not a fault |
+
+⚠ **A 429 COSTS ONE CHARGE AND A 5xx COSTS FOUR.** Five rate-limit responses
+are needed to open a threshold-five breaker, but only two server errors. The
+threshold therefore means materially different things depending on failure
+type — worth knowing before anyone tunes it.
+
+An optional **request class** is stored alongside: `smart_query`,
+`standard_request` or `batch_request`. ⚠ **It is derived from the retry
+OPTIONS, never from the URL** — the only signal read is whether the caller
+supplied the `application_error` opt-in, which already distinguishes a
+question addressed to a CONTRACT from one addressed to a NODE. No host, path,
+query, provider name or contract address is involved, so nothing identifying
+can reach durable state through it.
+
+⚠ **NO SCHEMA CHANGE.** Breaker state is a `wp_cache` entry with a transient
+fallback, not a table. `getState()` re-validates both new keys **on the way
+out** as well as in, because that store is writable by other code; a value
+outside the closed vocabulary is dropped rather than handed to a renderer.
+
+⚠ **OLD RECORDS REMAIN READABLE AND BEHAVE IDENTICALLY.** A record written
+before PR 7.8 has neither key, reads back as null for both, and drives exactly
+the phase it drove before — the phase calculation never consults them. A
+confirmed success clears the counter, the open state and the attribution in
+one write, so a recovered chain cannot keep displaying the reason it was last
+broken.
+
+**Thresholds, retry counts, request budgets, pacing and half-open behaviour
+are untouched**, and a test pins attempt and backoff counts per outcome so the
+attribution work cannot smuggle in accounting drift.
+
+###### Two findings recorded rather than fixed
+
+⚠ **`phase()` has ZERO executable callers in production code.** It was added
+in PR 7.6 precisely so that LOOKING at a breaker does not consume the
+half-open probe slot, but every production reader still uses `isOpen()`.
+Notably `SettingsPage` calls `isOpen()` once per chain per render, so **an
+administrator opening the breaker tab can consume the probe slot for every
+chain at once** — turning away the real worker that was waiting for it.
+Fixing that changes half-open behaviour, which PR 7.8 was explicitly scoped
+not to do, so it is recorded here and left for a scoped follow-up. Surfacing
+the new bounded reason on that page should land with it, so the page stops
+stealing probes in the same change that starts reading them.
+
+⚠ **Per-attempt accounting: recommendation, not a change.** One failure per
+EXHAUSTED LOGICAL REQUEST remains the more defensible semantic, and PR 7.8
+does not adopt it for the same reason PR 7.6 did not: the breaker is shared by
+four independent callers and dividing the effective count by four would
+quadruple how long each keeps hammering a failing provider before backing off.
+The entry price is per-service failure-profile evidence, which nobody has
+gathered. It is pinned by tests so it cannot drift silently.
+
 When a ceiling is reached with work remaining the run finishes **honestly**:
 `succeeded`, a `session_*` stop reason, `active_marker` released, nothing
 scheduled, and the panel shows `Continue scan`. Another session needs another
