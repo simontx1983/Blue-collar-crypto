@@ -1152,18 +1152,51 @@ broken.
 are untouched**, and a test pins attempt and backoff counts per outcome so the
 attribution work cannot smuggle in accounting drift.
 
-###### Two findings recorded rather than fixed
+###### ⚠⚠ A STATUS PAGE MUST NOT CONSUME THE THING IT REPORTS ON
 
-⚠ **`phase()` has ZERO executable callers in production code.** It was added
-in PR 7.6 precisely so that LOOKING at a breaker does not consume the
-half-open probe slot, but every production reader still uses `isOpen()`.
-Notably `SettingsPage` calls `isOpen()` once per chain per render, so **an
-administrator opening the breaker tab can consume the probe slot for every
-chain at once** — turning away the real worker that was waiting for it.
-Fixing that changes half-open behaviour, which PR 7.8 was explicitly scoped
-not to do, so it is recorded here and left for a scoped follow-up. Surfacing
-the new bounded reason on that page should land with it, so the page stops
-stealing probes in the same change that starts reading them.
+`isOpen()` HAS A SIDE EFFECT: in the HALF-OPEN window it atomically claims a
+cluster-wide advisory lock, and whoever wins it is expected to go and make a
+request. The breaker admin tab called it **once per chain per render**, so an
+administrator opening that tab could claim the single probe slot for EVERY
+chain at once — turning away the worker that had waited out the cooldown, and
+doing it invisibly, because a dashboard is the last thing anyone suspects of
+causing an outage. `phase()` was added in PR 7.6 exactly so that observing is
+not probing, and until this change **nothing in production used it**.
+
+**All seven executable `isOpen()` call sites are now classified, and the
+classification is enforced by a test** that fails when a new one appears:
+
+| caller | classification | may claim the probe? |
+|---|---|---|
+| `ApiRetry` (request + batch) | operational admission — the transport itself | yes |
+| `ChainRefreshService` | operational admission — gates a validator-index fetch | yes |
+| `EnrichmentScheduler` | operational admission — gates an enrichment call | yes |
+| `CosmwasmDiscoveryWorker` | operational admission — gates a discovery pass | yes |
+| `NftEthIndexerWorker` | operational admission — gates an indexer tick | yes |
+| **`SettingsPage`** | **read-only observation** | **no — now uses `getAllStatus()`** |
+
+The six operational callers are unchanged: each gates work that immediately
+contacts a provider, so each is entitled to the probe. The admin tab now takes
+**one** `getAllStatus()` call for all chains — the same shared phase
+calculation, one clock for the whole sweep so two chains cannot straddle the
+cooldown boundary mid-render, no lock, no write, no provider request. The
+previous shape made the damage proportional to the number of chains.
+
+**The tab also surfaces the attribution, as wording rather than tokens:**
+`rate_limited` → “Provider rate limit”, `http_5xx` → “Provider server error”,
+`transport` → “Network connection failure”, with the request class alongside
+(“Smart contract query”, “Standard provider request”, “Batch provider
+request”). ⚠ A pre-PR-7.8 record and a domain-level charge both render as
+**“Not recorded”** — not a success, and not provider blame. An unrecognised or
+hostile stored value takes the same path, so nothing can be echoed into an
+admin page.
+
+⚠ **HALF-OPEN now reads “cooldown complete; one cautious probe may be
+attempted.”** It previously implied a probe was already in flight, and it must
+never imply the provider has recovered: Run 8 sat half-open for roughly a
+hundred minutes having recovered from nothing.
+
+###### One finding recorded rather than fixed
 
 ⚠ **Per-attempt accounting: recommendation, not a change.** One failure per
 EXHAUSTED LOGICAL REQUEST remains the more defensible semantic, and PR 7.8
