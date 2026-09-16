@@ -6364,7 +6364,7 @@ Endpoints live in `CollectionStancesEndpoint`. The join action is NOT here — t
 
 #### `GET /bcc/v1/me/collection-stances/panel`
 
-Every collection the viewer's linked wallets hold, with the state that picks the button pair. Sources mirror discovery (EVM/SOL holdings index; Cosmos Hub marketplace rollup, 6h-cached) — no fresh RPC walks. Collections the operator hid (DENY rule) or the community soft-hid never appear (a viewer who flagged a soft-hidden collection still sees their own row so they can retract).
+Every collection the viewer's linked wallets hold, with the state that picks the button pair. Sources are the stored holdings index for EVM/Solana and, for Cosmos, a bounded LCD `tokens{owner}` walk over **verified collections only** — no marketplace and no third-party indexer (the undocumented Stargaze marketplace rollup this line used to describe was removed in bcc-trust #257). Collections the operator hid (DENY rule) or the community soft-hid never appear (a viewer who flagged a soft-hidden collection still sees their own row so they can retract).
 
 - **Auth:** required.
 - **Response 200 data shape:**
@@ -6377,9 +6377,22 @@ Every collection the viewer's linked wallets hold, with the state that picks the
       "group_id": null,
       "waitlist_count": 1,
       "viewer_stance": "waitlist"
-  }] }
+  }],
+    "holdings_status": "complete" }
   ```
   `state` ∈ {`live`, `waitlist`} — `live` means verified + community provisioned (`group_id` non-null → feed it to §4.7.1 join). `waitlist_count` is public social proof. Rows sort live-first, then by waitlist momentum; capped at 60.
+
+  **`holdings_status`** (additive, v1.77) ∈ {`complete`, `partial`, `unavailable`} — whether every holdings source finished, so an empty `items` stops answering two different questions with the same silence:
+
+  | value | meaning |
+  |---|---|
+  | `complete` | every required source finished; an empty `items` **is** trustworthy |
+  | `partial` | at least one source did not finish; absence proves nothing |
+  | `unavailable` | no trustworthy determination was possible at all |
+
+  **Only `complete` + `items: []` may be read as "this member holds no detected verified collections."** `partial` and `unavailable` with an empty `items` must NOT be rendered as zero holdings, and positive `items` are still returned and displayed when the overall result is `partial` (a walk can fail *after* resolving real rows). An unavailable Cosmos lookup never erases EVM/Solana results.
+
+  The field is **optional and never null** — `null` would reintroduce the ambiguity it exists to remove. Its **absence** means only that an older backend is deployed (a deployment fact, not a holdings state), so either deployment order is safe. `items` is unchanged field-for-field.
 - **Errors:** `bcc_unauthorized` 401 · `bcc_rate_limited` 429.
 - **Rate limit:** 20 / 60s / user (`collection_stance_panel`).
 - **Cache:** `no-store` (viewer-scoped). React Query `staleTime: 60_000`.
@@ -6697,6 +6710,22 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.77 — 2026-09-16 — additive — `holdings_status` on the collection-stance panel (+ retraction of the marketplace rollup)
+
+Documents the additive field added by **bcc-trust [#257](https://github.com/simontx1983/bcc-trust/pull/257)** and consumed by **bcc-frontend [#166](https://github.com/simontx1983/bcc-frontend/pull/166)**, and retracts a source description that is no longer true.
+
+**Retraction (§4.31 `GET /me/collection-stances/panel`):**
+
+- The panel's sources were documented as "EVM/SOL holdings index; **Cosmos Hub marketplace rollup, 6h-cached**". That rollup was an undocumented third-party marketplace API which received a member's **wallet address**, and it has been removed. Cosmos now resolves through a bounded LCD `tokens{owner}` walk over verified collections only. Nothing replaced the removed discovery capability: `wasmd` exposes no owner→contracts index, so Cosmos withdraws the broad `collection` capability rather than advertising one it cannot honour.
+
+**Addition (§4.31 `GET /me/collection-stances/panel`):**
+
+- New optional response field **`holdings_status`** ∈ {`complete`, `partial`, `unavailable`}, reporting whether every holdings source finished.
+- Only **`complete` + `items: []`** may be interpreted as "no detected verified collections". `partial`/`unavailable` with an empty `items` must not be read as zero, and positive `items` survive a `partial` result.
+- The field is **optional and never null**; absence indicates only an older backend mid-deployment, so backend-first and frontend-first are both safe. `items` is unchanged field-for-field.
+
+**Unchanged:** `POST /me/collection-stances` still answers `bcc_unavailable` **503** when holdings cannot be verified (it must not become a 200 body field, which a client would render as success) and `bcc_nft_not_owned` **403**.
 
 ### v1.76 — 2026-08-06 — additive — `/me/watching` full-card hydration (`include=cards`) + §4.5 doc truthing
 
