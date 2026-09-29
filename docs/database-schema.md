@@ -1069,14 +1069,35 @@ request. `recordFailure()` now reconciles: no state means the window is gone,
 so counting restarts at the failure in hand. An intact open breaker is never
 touched, and nothing resets a live counter out of band.
 
-⚠ **Retry accounting is PER ATTEMPT, and that is deliberate.** One failing
-request charges the breaker up to four times (the attempt plus three retries)
-against a threshold of five, so two failing requests open it — chain 8 opened
-on a counter of exactly 8. One-failure-per-exhausted-operation is the better
-semantic, but this breaker is keyed by chain id alone and is shared by
-discovery, enrichment, chain refresh and the EVM indexer; changing it would
-quadruple how long three unmeasured services hammer a failing provider. It is
-pinned by tests and carried as a separately scoped follow-up.
+⚠ **Retry accounting is PER LOGICAL REQUEST (bcc-trust #263).** One endpoint,
+one subject, one operation — **including every retry of that operation** —
+finishes with **at most one** breaker outcome, decided after semantic
+validation. Intermediate retries are local retry state and charge nothing. So
+with `FAILURE_THRESHOLD = 5`, **five consecutive failed logical requests** are
+required to open the breaker, absent an intervening success (a success clears
+the counter).
+
+> **Superseded — historical only.** Before #263 accounting was **per attempt**:
+> one failing request charged up to four times (the attempt plus three
+> retries), so **two** failing requests opened a threshold-five breaker, and
+> chain 8 opened on a counter of exactly 8. That is the behaviour the
+> paragraphs written for PR 7.6/7.7/7.8 describe, and it is **no longer how
+> production behaves**. #263 is in production as `2cb7efc`. The measured
+> before/after on chain 14: 2 requests / 8–9 attempts / counter 8 → 5 requests
+> / 20–21 attempts / counter 5.
+
+⚠ The trade #263 accepted, stated plainly: provider traffic on a persistently
+failing chain rises roughly 2.3×, because it now takes five failing requests
+rather than two to back off. That was the intended cost of not letting a
+single failing head poll open a chain-wide breaker on its own.
+
+⚠ The breaker is still keyed by **chain id alone** and shared by discovery,
+enrichment, chain refresh and the EVM indexer. Re-keying it by
+`(chain, request class)` is **not** done: the existing `ProviderRequestClass`
+vocabulary (`smart_query`, `standard_request`, `batch_request`) describes
+transport shape, not foreground/background workload, so keying on it would not
+reliably stop a validator or enrichment failure from blocking an interactive
+ownership request. That needs a design audit before any code.
 
 ⚠ **The per-chunk override cannot uncap a session.**
 `BCC_COSMWASM_REQUEST_BUDGET` still overrides the chunk budget within 1..500,
@@ -1100,10 +1121,41 @@ Attribution therefore now lives where the charge happens.
 kind and request class, validates both against closed vocabularies, and stores
 them beside `failures` / `opened_at`.
 
-**Twelve executable call sites charge this breaker.** Four are inside
-`ApiRetry`, where a wire outcome exists and can be named. The other eight are
-DOMAIN JUDGEMENTS — an empty validator index, a caught exception,
-`eth_blockNumber` returning 0 — with no HTTP status and no transport error.
+**Ten executable call sites charge this breaker** — re-counted at bcc-trust
+`8c027ca4` by a `token_get_all()` walk over 552 files under `app/`, filtered to
+`OnchainCircuitBreaker::recordFailure()`. (A raw grep returns 25, because
+`PushMetrics`, `V1FetchFailureTracker`, `ChainCheckpointRepository` and the
+separate `Core\Support\CircuitBreaker` all have a method of the same name. The
+figures below count only this breaker.)
+
+| owner | sites | kind |
+|---|---|---|
+| `ApiRetry` — `settleFailure()` `:674`, `getBatchSameHost()` `:632` | **2** | transport, a nameable wire outcome |
+| `ChainRefreshService` `:259` `:275` `:432` | 3 | domain judgement |
+| `CosmwasmDiscoveryWorker` `:384` `:608` `:870` | 3 | domain judgement (frozen paths) |
+| `NftEthIndexerWorker` `:245` `:466` | 2 | domain judgement |
+
+⚠ It was **twelve sites, four inside `ApiRetry`** before #263. `ApiRetry`'s
+four charge points (429, 5xx, transport, batch) were funnelled into **one**
+settlement helper plus the batch wave, which is what makes "at most one charge
+per logical request" structural rather than a convention. The matching credit
+side is six `recordSuccess()` sites, two of them in `ApiRetry`
+(`settleSuccess()` `:692`, `getBatchSameHost()` `:620`).
+
+The eight domain sites are DOMAIN JUDGEMENTS — an empty validator index, a
+caught exception, `eth_blockNumber` returning 0 — with no HTTP status and no
+transport error.
+
+⚠ **A domain verdict and a transport charge must not both fire for one
+request.** That is what `ProviderOutcomeReceipt` is for: the caller passes one
+in, `ApiRetry` records what it already charged, and `domainMayCharge()` returns
+false when transport has charged (the verdict would be a second charge) or when
+an open breaker refused the call (nothing was observed). It returns true when
+transport charged nothing, and when transport credited a SUCCESS — a provider
+answering 200 with an unusable payload has genuinely failed, and that failure
+duplicates nothing. Before this, four transport charges plus one domain verdict
+made **five** — the entire threshold — so a single failing head poll opened the
+chain-wide breaker by itself.
 ⚠ **They pass nothing and read back as null, deliberately.** Forcing one of
 the three tokens onto them would be the fabricated diagnosis this whole effort
 exists to remove; `null` is the honest answer to "which wire outcome was
@@ -1113,20 +1165,39 @@ recorded"**, never as "no failure".
 **The vocabulary is exactly as wide as the charging rule** — measured by
 driving the real retry loop against a scripted wire, not asserted:
 
-| outcome | charges | charges per logical request | token |
-|---|---|---|---|
-| HTTP 429 | yes | **1** — returned immediately, never retried | `rate_limited` |
-| HTTP ≥ 500, including 501 | yes | **4** — the attempt plus three retries | `http_5xx` |
-| wire failure (`WP_Error`) | yes | **4** | `transport` |
-| HTTP 4xx other than 429 | no | 0 | — nothing recorded |
-| HTTP 3xx | no | 0 | — nothing recorded |
-| HTTP 2xx | no | 0 | records a SUCCESS |
-| 5xx claimed by `application_error` | no | 0 | — a contract ANSWER, not a fault |
+Outcomes as of #263, per **logical request** (`ApiRetry.php`, line numbers at
+bcc-trust `8c027ca4`):
 
-⚠ **A 429 COSTS ONE CHARGE AND A 5xx COSTS FOUR.** Five rate-limit responses
-are needed to open a threshold-five breaker, but only two server errors. The
-threshold therefore means materially different things depending on failure
-type — worth knowing before anyone tunes it.
+| outcome | charges | per logical request | token |
+|---|---|---|---|
+| HTTP 429 | yes | **1** — terminal, never retried (`:346`) | `rate_limited` |
+| HTTP ≥ 500, including 501 — retries exhausted | yes | **1** for the whole sequence (`:404`) | `http_5xx` |
+| wire failure (`WP_Error`) — retries exhausted | yes | **1** for the whole sequence (`:451`) | `transport` |
+| **intermediate retry of either** | no | **0** — local retry state only (`continue` at `:399`, `:446`) | — |
+| HTTP 2xx, payload usable | no | 0 | records a SUCCESS (`:332`) |
+| HTTP 2xx rejected by `validate_success` | yes | **1** logical failure, not retried (`:323`) | null — no wire fault to name |
+| HTTP 4xx other than 429 | no | 0 (`:420`) | — nothing recorded |
+| HTTP 3xx and other codes | no | 0 (`:424`) | — nothing recorded |
+| 5xx claimed by `application_error` | no | 0 (`:373`) | — a contract ANSWER, not a fault |
+| breaker already open | no | 0 — refused before any request | receipt reads `BLOCKED` |
+
+**Every charging outcome now costs exactly one.** A 429 and an exhausted 5xx
+sequence cost the same, so the threshold means the same thing for every
+failure type — which was not true before #263.
+
+⚠ **A 2xx is not automatically a success.** `validate_success` is an opt-in
+predicate; where a caller supplies one, a 200 carrying an unusable payload is
+one logical **failure**, charged once and deliberately not retried (the host
+answered; a payload-level refusal is deterministic). Before this, a 2xx was
+credited *before* semantic validation, which made 200-level failures
+untrippable — the counter oscillated 0→1→0→1 — and accepted a failed half-open
+probe as recovery.
+
+⚠ **Batch requests settle once for the whole wave.** `getBatchSameHost()`
+issues one batch, never retries, and records exactly one outcome for it: a
+SUCCESS if **any** URL answered (`:620`), or a single `transport` /
+`batch_request` failure if **every** URL errored at transport (`:632`) —
+**not** one charge per URL.
 
 An optional **request class** is stored alongside: `smart_query`,
 `standard_request` or `batch_request`. ⚠ **It is derived from the retry
@@ -1212,13 +1283,37 @@ is a pure phase question, and `isResting()` answers it. **HALF-OPEN is
 deliberately *not* "resting"**, so the preflight lets callers through and
 `ApiRetry` decides who probes.
 
-`ApiRetry` owns the claim because it owns the request: it makes the call,
-settles the outcome, and releases the probe on **every** exit path via a
-`finally` calling `OnchainCircuitBreaker::releaseProbe()` — in both
-`request()` and `getBatchSameHost()`. `recordSuccess()`/`recordFailure()`
-release too; `releaseProbe()` is idempotent, so the overlap is harmless. A
-caller that loses the race is refused with `circuit_breaker_open` and charges
-nothing.
+`ApiRetry` owns the claim because it owns the request: it makes the call and
+settles the outcome.
+
+**Release, precisely.** Both entry points wrap their work in `try … finally`,
+and the `finally` calls `OnchainCircuitBreaker::releaseProbe()`
+(`ApiRetry.php:472`, `:647`). That guarantees cleanup for **an admitted request
+that entered the protected block** — including the exits that settle nothing at
+all (`application_error` 5xx, non-429 4xx, 3xx, or a throw), which would
+otherwise hold the lock until the PHP worker exits.
+
+⚠ **A refused request never reaches that `finally`, and does not need to.** The
+`isOpen()` check and its `return` sit **before** the `try` (`:200–204`,
+`:599–604`), so a caller turned away by an open breaker — or one that lost the
+half-open race — returns without entering the protected block. It neither won
+nor owns a probe, so there is nothing to release. It is refused with
+`circuit_breaker_open`, its receipt reads `BLOCKED`, and it charges nothing.
+
+The two recording paths release on different terms, and the difference matters:
+
+- **`recordSuccess()` releases unconditionally** (`OnchainCircuitBreaker.php:345`) —
+  a recovered chain must not stay blocked waiting for MySQL to drop the lock on
+  session close.
+- **`recordFailure()` releases only when it opens or re-opens the breaker**
+  (`:550`) — inside `if ($failures >= FAILURE_THRESHOLD)` **and**
+  `if ($openedAt === 0 || $cooldownElapsed)`. That is the failed-probe case,
+  where the release exists so a *future* half-open window can claim a fresh
+  probe. An ordinary `recordFailure()` that merely increments the counter
+  releases nothing.
+
+`releaseProbe()` is idempotent, so where the `finally` and a recording path
+both fire, the second release is a harmless no-op.
 
 ###### What PR 7.8 fixed on the admin tab (unchanged by #265)
 
@@ -1242,15 +1337,24 @@ attempted.”** It previously implied a probe was already in flight, and it must
 never imply the provider has recovered: Run 8 sat half-open for roughly a
 hundred minutes having recovered from nothing.
 
-###### One finding recorded rather than fixed
+###### One finding recorded rather than fixed — SINCE FIXED by #263
 
-⚠ **Per-attempt accounting: recommendation, not a change.** One failure per
-EXHAUSTED LOGICAL REQUEST remains the more defensible semantic, and PR 7.8
-does not adopt it for the same reason PR 7.6 did not: the breaker is shared by
-four independent callers and dividing the effective count by four would
-quadruple how long each keeps hammering a failing provider before backing off.
-The entry price is per-service failure-profile evidence, which nobody has
-gathered. It is pinned by tests so it cannot drift silently.
+> **Superseded — historical only.** PR 7.8 recorded per-attempt accounting as
+> "recommendation, not a change": one failure per exhausted logical request was
+> the more defensible semantic, but PR 7.8 and PR 7.6 both declined it, because
+> the breaker is shared by four independent callers and dividing the effective
+> count by four would lengthen how long each keeps hammering a failing provider
+> before backing off. The stated entry price was per-service failure-profile
+> evidence that nobody had gathered.
+
+**That recommendation was adopted in bcc-trust #263 and is in production as
+`2cb7efc`.** One logical request now finishes with one effective breaker
+outcome, decided after semantic validation. The cost the earlier PRs feared was
+measured rather than assumed: roughly 2.3× provider traffic on a persistently
+failing chain, accepted deliberately because the alternative was a single
+failing head poll opening a chain-wide breaker on its own. The accounting is
+pinned by `BreakerChargePerLogicalRequestTest` and by a mutation-control suite,
+so it cannot drift back silently.
 
 When a ceiling is reached with work remaining the run finishes **honestly**:
 `succeeded`, a `session_*` stop reason, `active_marker` released, nothing
@@ -1808,16 +1912,22 @@ change makes the token reachable without it being revisited.
 There `isUnsupportedChainError()` turns "this chain has no wasm module" into
 the durable `unsupported` state and a token would fight that state machine.
 The contract path has no state machine to fight, and a 501 is a 5xx that
-charges four times — excluding it would leave a breaker-charging failure with
-`cw_last_error` NULL, which is this defect's exact shape.
+charges the breaker — excluding it would leave a breaker-charging failure with
+`cw_last_error` NULL, which is this defect's exact shape. (It charged **four**
+times when this was written; since #263 an exhausted 5xx sequence charges
+**once**. The reasoning is unaffected — what matters is that it charges at
+all.)
 
 ⚠ **THIS IS TELEMETRY, NOT A SECOND CHARGE.** No breaker charge is added
 anywhere: `ApiRetry` already charges from inside the transport, and a second
 one would silently make a failing contract page cost more than it costs today
 on a breaker keyed by chain id alone and shared by discovery, enrichment,
 chain refresh and the EVM indexer. Retry accounting is **measured** by PR 7.7
-and unchanged — one failing request still charges **four** times, so **two**
-still open a threshold-five breaker. `CosmwasmClassifier::VERSION` stays at
+and unchanged *by PR 7.7* — at that time one failing request charged **four**
+times, so **two** opened a threshold-five breaker. ⚠ **That is no longer
+current**: since #263 one failing request charges **once**, so **five** are
+needed. The point this paragraph makes — that telemetry must not add a second
+charge — holds under either rule. `CosmwasmClassifier::VERSION` stays at
 **2**, and no schema changes: the same column and the same value object.
 
 ⚠ **`fetchContractCodeId()` REMAINS UNINSTRUMENTED, DELIBERATELY.** It is the
