@@ -669,13 +669,21 @@ effect of noticing the move.
 
 ## 13. Metadata refresh
 
-⛔ **No metadata refresh runs.** Its hook (`bcc_cosmwasm_metadata_refresh`) was
-retired in 2026-08 and the scanner that would carry the pass is frozen, so
-nothing re-reads a collection's metadata on any cadence. The only metadata
-retrieval left anywhere in production is the bounded Cosmos CW-721
-`contract_info` probe inside manual Add Collection — one submitted contract,
-at most two LCD queries, no EVM or Solana equivalent. Read this section in
-the past tense.
+⛔ **The retired CosmWasm metadata-refresh job no longer runs.** Its hook
+(`bcc_cosmwasm_metadata_refresh`) was retired in 2026-08 and the scanner that
+would carry the pass is frozen, so nothing re-reads a CosmWasm collection's
+metadata on any cadence. Within manual Add Collection, the only metadata
+retrieval is the bounded Cosmos CW-721 `contract_info` probe — one submitted
+contract, at most two LCD queries; manual EVM and Solana intake performs no
+metadata retrieval. Read this section in the past tense.
+
+⚠ **That is a statement about this job and about manual intake, not about the
+platform.** EVM and Solana metadata retrieval still exists elsewhere in
+bcc-trust and is not frozen: `EvmFetcher::fetchMetadataForToken` and
+`SolanaFetcher::fetchMetadataForMint` are called both by
+`NftPieceViewModelBuilder` (serving the piece REST endpoint) and by the
+retained enrichment path in `NftEnrichmentService`. Neither is a scanner
+entry point.
 
 Mutable collection metadata (name, and whatever the enrichment path
 maintained) was refreshed on the same monthly cadence as the migration
@@ -977,9 +985,16 @@ run exists to answer.
 ## 18. Expected discovery delay
 
 ⛔ **No discovery is scheduled, so none of these delays applies.** Nothing new
-reaches the admin queue by discovery at any cadence; the only route a
-collection takes into the system today is manual Add Collection. The figures
-below are the historical cadence model, retained for reference.
+reaches the admin queue **by CosmWasm discovery** at any cadence, and manual
+Add Collection is the only route by which an administrator *names* a new
+collection. The figures below are the historical cadence model, retained for
+reference.
+
+⚠ That is not a claim that nothing else ever writes a collection row.
+`CollectionPersistBatch::persist()` still persists fetched collections for a
+wallet from two unfrozen callers — `WalletSeedService` (wallet seeding) and
+`ChainRefreshService` (the refresh cron). Those paths record what a wallet
+already holds; they are not discovery and not a scanner entry point.
 
 **Historical backfill: days, not hours.** With one chain per five-minute
 tick and 25 requests per tick (halved in PR 7.5), a chain the size of juno (5,149 families)
