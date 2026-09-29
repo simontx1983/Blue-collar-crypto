@@ -902,6 +902,10 @@ returns 501 Not Implemented as of 2026-05-07).
 - **Per-chain metadata fetchers** →
   `EvmFetcher::fetchMetadataForToken` (Alchemy `getNFTMetadata`),
   `SolanaFetcher::fetchMetadataForMint` (Helius `getAsset` DAS).
+  ⚠ **These are the enrichment path's fetchers — they are NOT wired into
+  manual Add Collection.** Manual intake does no provider validation and no
+  metadata retrieval on EVM or Solana; those rows are accepted as entered.
+  Only Cosmos probes, via the bounded CW-721 `contract_info` query.
 - **Generation-counter cache invalidation** →
   `NftHoldingsRepository::bumpWalletGeneration` /
   `getWalletGeneration`. Every write path

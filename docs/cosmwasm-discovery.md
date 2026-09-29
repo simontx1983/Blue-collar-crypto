@@ -23,14 +23,36 @@
 >
 > **What is NOT frozen and still works normally:**
 >
-> - **Manual Add Collection** — an administrator enters a chain and a contract
->   address by hand (`NftDiscoveryPage::ACTION_ADD_COLLECTION`, registered
->   unconditionally). Targeted validation and metadata retrieval for that one
->   contract remain active.
+> - **Manual Add Collection** — an administrator enters ONE chain and ONE
+>   contract address by hand (`NftDiscoveryPage::ACTION_ADD_COLLECTION`,
+>   registered unconditionally). It takes a single submitted contract; it never
+>   enumerates a chain.
+>
+>   ⚠ **What "validation" means here is family-specific, and it is not
+>   uniform.** At `8c027ca4`:
+>
+>   | family | provider work during manual intake |
+>   |---|---|
+>   | **Cosmos** | ONE bounded CW-721 `contract_info` probe — **up to two** LCD queries, because `testCw721ContractInfo()` falls back to `get_collection_info_and_extension` for SG721-shaped contracts. A contract that answers neither is refused. May store `collection_name` from the reply. |
+>   | **EVM** | **None.** `evm_rpc` registers ownership only; the `supportsInterface` check is explicitly still to build. The row is accepted as entered. |
+>   | **Solana** | **None.** The driver registry does not claim validation. The row is accepted as entered. |
+>
+>   So there is **no EVM or Solana metadata retrieval in manual intake** — that
+>   is unbuilt work, not frozen work. Richer per-family validators and metadata
+>   belong to a later unit of the retirement programme and are **not
+>   implemented**. Every manual row lands `is_verified = 0`, `source = 'manual'`.
 > - **The manual chain-capability controls** —
 >   `bcc_supports_nft_collections` and `manual_collection_discovery_enabled`
 >   are separate columns with their own unfrozen routes. Only the scanner
 >   opt-in (`cosmwasm_nft_discovery_enabled`) is frozen.
+>
+>   ⚠ **`manual_collection_discovery_enabled` is misleadingly named.** Despite
+>   the word "discovery" it does **not** authorize, start, resume or unfreeze
+>   chain-wide discovery. It is read through
+>   `NftChainCapability::manualDiscoveryState()` by exactly one consumer,
+>   `ManualCollectionIntakeService`, where it gates operator-initiated intake of
+>   **one submitted chain + contract**. No cron reads it. The column is not
+>   renamed here — this is a documentation PR.
 > - **NFT ownership verification, holder-gated join and revocation, the EVM
 >   NFT indexer tick and holder-group reconciliation.** None of these is a
 >   scanner entry point; none of them reads the scanner's opt-in column.
@@ -647,8 +669,16 @@ effect of noticing the move.
 
 ## 13. Metadata refresh
 
+⛔ **No metadata refresh runs.** Its hook (`bcc_cosmwasm_metadata_refresh`) was
+retired in 2026-08 and the scanner that would carry the pass is frozen, so
+nothing re-reads a collection's metadata on any cadence. The only metadata
+retrieval left anywhere in production is the bounded Cosmos CW-721
+`contract_info` probe inside manual Add Collection — one submitted contract,
+at most two LCD queries, no EVM or Solana equivalent. Read this section in
+the past tense.
+
 Mutable collection metadata (name, and whatever the enrichment path
-maintains) is refreshed on the same monthly cadence as the migration
+maintained) was refreshed on the same monthly cadence as the migration
 check, guarded by `cw_metadata_refreshed_at`.
 
 Immutable facts are not re-fetched. In particular the code binary itself
