@@ -891,7 +891,11 @@ returns 501 Not Implemented as of 2026-05-07).
   ⚠ **NO LONGER CRON-DRIVEN — the `bcc_nft_enrichment_tick` schedule was
   retired 2026-09-03 (PR 7.1).** Per-chain dispatch via `FetcherFactory`
   is unchanged and `runForChain()` is still callable, but only from an
-  explicit administrator action or an administrator-created discovery run.
+  explicit administrator action. ⛔ **The "or an administrator-created
+  discovery run" half of that sentence no longer applies**: since the
+  2026-09-18 scanner freeze (bcc-trust #261) no discovery run can be created
+  or executed, so nothing reaches `runForChain()` that way. `runAllChains()`
+  has no caller at all. The remaining live route is an explicit admin action.
   The five-minute loop selected every active chain and contacted providers
   with nobody behind it; see `docs/cron-registry.md` for the full entry.
   Future metadata retry belongs to an operator action, not a new cron.

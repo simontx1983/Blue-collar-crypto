@@ -1,22 +1,75 @@
 # CosmWasm CW-721 collection discovery
 
-Blue Collar Crypto performs one resumable historical CosmWasm discovery
-backfill per supported chain. Afterward, it incrementally checks for new
-code IDs and new contracts under confirmed CW-721 code families. Settled
-historical contracts are not routinely rescanned. Every probable NFT
-collection enters an unverified admin queue, and only an administrator
-can approve it for community provisioning.
+> ## ⛔ FROZEN — this subsystem does not run
+>
+> **Automated CosmWasm / full-chain NFT collection discovery is frozen in
+> production.** No administrator and no cron job can start, resume, retry or
+> re-enable a discovery scan. `ScannerFreeze::frozen()` returns a **hard-coded
+> `true`** — it is not a filter, an option, an environment switch or an
+> operator setting, and there is no supported way to turn it back on. It is
+> retirement scaffolding that holds the surface shut until the deletion
+> programme removes it.
+>
+> Frozen since bcc-trust **#261** (in production 2026-09-18); the state
+> described here is bcc-trust `main` at
+> `8c027ca4a09a6e7d4b4df2e92ee50603060cebd1`, which runs on staging and
+> production.
+>
+> **All 13 entry points in `ScannerFreeze::FROZEN_ENTRY_POINTS` are refused**
+> — the three scan-request admin-post routes, the run-status AJAX call, the
+> four `cw_*` chain controls, the two per-chain scanner opt-in routes, the
+> five-minute maintenance cron, the async run executor, and the
+> `bcc-trust cosmwasm` CLI command.
+>
+> **What is NOT frozen and still works normally:**
+>
+> - **Manual Add Collection** — an administrator enters a chain and a contract
+>   address by hand (`NftDiscoveryPage::ACTION_ADD_COLLECTION`, registered
+>   unconditionally). Targeted validation and metadata retrieval for that one
+>   contract remain active.
+> - **The manual chain-capability controls** —
+>   `bcc_supports_nft_collections` and `manual_collection_discovery_enabled`
+>   are separate columns with their own unfrozen routes. Only the scanner
+>   opt-in (`cosmwasm_nft_discovery_enabled`) is frozen.
+> - **NFT ownership verification, holder-gated join and revocation, the EVM
+>   NFT indexer tick and holder-group reconciliation.** None of these is a
+>   scanner entry point; none of them reads the scanner's opt-in column.
+>
+> **Scanner implementation code and the historical tables are still here on
+> purpose.** `wp_bcc_discovery_runs`, `wp_bcc_cosmwasm_code_families` and
+> `wp_bcc_cosmwasm_contracts` remain declared, created and guarded — dormant,
+> not orphaned — and run history is deliberately *not* pruned while the
+> surface is frozen. Table deletion was never authorized, and the deletion
+> programme has **not** been carried out. Do not read this freeze as evidence
+> that any later removal work is complete.
+>
+> **The rest of this document describes how the scanner worked**, retained as
+> the reference for that deletion programme and for reading the retained code.
+> Read every operating instruction below in the past tense.
 
-That paragraph is the whole design. The rest of this document is what it
-means in practice, what it deliberately does not promise, and how to
-operate it.
+Blue Collar Crypto **performed** one resumable historical CosmWasm discovery
+backfill per supported chain. Afterward, it incrementally checked for new
+code IDs and new contracts under confirmed CW-721 code families. Settled
+historical contracts were not routinely rescanned. Every probable NFT
+collection entered an unverified admin queue, and only an administrator
+could approve it for community provisioning.
+
+That paragraph was the whole design. The rest of this document is what it
+meant in practice, what it deliberately did not promise, and how it was
+operated — all of it now frozen, per the banner above.
 
 **Owning code:** `bcc-trust` — `app/Domain/Onchain/{Services,Workers,Repositories,Support}`
 **Tables:** `wp_bcc_cosmwasm_code_families`, `wp_bcc_cosmwasm_contracts`,
 plus the `cw_*` columns on `wp_bcc_chain_checkpoints`
 (see [database-schema.md](database-schema.md)).
 **Operator surface:** wp-admin → BCC System → **Verify Collections** →
-the *CosmWasm collection scanner* panel.
+the *CosmWasm collection scanner* panel. ⛔ **Frozen.** `CosmwasmScannerPanel`
+and `DiscoveryScanPanel` render **nothing at all** (the entry point returns
+before the markup, which is kept private so its DOM tests still cover it), and
+the per-chain opt-in cell on the NFT Discovery page shows a plain
+`Scanner frozen` label where the enable/disable button used to be. Every
+underlying route is refused server-side as well, so a forged POST achieves
+nothing either.
 
 ---
 
@@ -169,7 +222,24 @@ spread.
 
 ## 4. The schedule
 
-| Pass | Hook | Cadence | What it does |
+⛔ **None of this runs. Two separate retirements apply, and they are not the
+same event:**
+
+1. **The four hooks in the table below were retired in 2026-08**, before the
+   freeze. They have had no handler and no registration since; they sit in
+   `cleanup_only` in `includes/cron-hooks.php` and are cleared from live
+   installs by the `unschedule-automatic-nft-discovery.php` migration. They
+   were replaced by the administrator-created discovery run — one named chain
+   at a time, never a timer choosing chains. See the retired-hooks section of
+   [cron-registry.md](cron-registry.md).
+2. **That replacement is itself frozen** as of bcc-trust #261 (2026-09-18).
+   `bcc_discovery_run_maintenance` is still scheduled every five minutes but
+   its tick is a no-op, and `bcc_discovery_run_execute` is still bound but
+   refuses before claiming a run. Neither can be re-armed.
+
+The table is retained as the historical record of what the cadence was.
+
+| Pass | Hook (all four RETIRED 2026-08) | Cadence, while it ran | What it did |
 |---|---|---|---|
 | Historical backfill | `bcc_cosmwasm_backfill_tick` | every 5 minutes, **on demand / while enabled** | One chain slice: drain more of the code listing, then classify and enumerate with whatever budget is left. |
 | New code IDs + new contracts | `bcc_cosmwasm_daily_discovery` | **daily** | (a) reverse-walk the code listing for newly-uploaded code IDs; (b) reverse-walk the contract listing of drained CW-721 families for newly-instantiated contracts; (c) classify whatever is queued; (d) emit classified CW-721s to the admin queue. |
@@ -590,6 +660,12 @@ entire wasm binary base64-encoded in its `data` field.
 
 ## 14. Inspecting scanner health
 
+⛔ **The panel is not rendered while the scanner is frozen** —
+`CosmwasmScannerPanel::render()` returns before emitting any markup, so none
+of what follows is visible in wp-admin today. The snapshot builder and the
+markup are both retained and still tested; only the way to reach them is
+withdrawn. Read this section as a description of the retained code.
+
 wp-admin → **BCC System → Verify Collections** → *CosmWasm collection
 scanner*.
 
@@ -722,6 +798,15 @@ The scanner also appears in the plugin's structured logs under
 
 ## 15. Safe pause and resume
 
+⛔ **All four controls described here are frozen.**
+`admin_post_bcc_chain_cw_pause`, `_resume`, `_backfill` and `_retry` are
+`ScannerFreeze` entry points: their handlers are not registered and the
+buttons are not rendered. `BCC_COSMWASM_DISCOVERY_ENABLED` is no longer "the
+global stop" in any meaningful sense — the freeze stops everything ahead of
+it, and turning the constant on would not start a scan. Nothing below is an
+action an operator can take today; the durable `cw_discovery_state` values it
+describes are still on the retained checkpoint rows, untouched.
+
 Pause is **durable state the worker honours**, not a UI flag:
 `wp_bcc_chain_checkpoints.cw_discovery_state = 'paused'`. There is
 deliberately no second switch — a parallel flag is how "paused in the UI,
@@ -807,9 +892,21 @@ lives in its own tables and not in the collections table.
 
 ## 17. The planned first live run (Dungeon-only canary)
 
-**Not yet run. Nothing below is a claim that it has been.** At the time of
-writing every chain is opted out, both CosmWasm constants are undefined,
-and both CosmWasm tables are empty on every environment.
+⛔ **Cancelled by the freeze — this run will not happen.** The plan is kept
+because the measurements in it (family counts, probe behaviour, ceiling
+arithmetic) are the evidence the deletion programme may need to read; it is
+not outstanding work.
+
+**Never run. Nothing below is a claim that it has been.**
+
+⚠ The original note here — "every chain is opted out, both CosmWasm constants
+are undefined, and both CosmWasm tables are empty on every environment" — was
+true **when it was written** and is no longer a safe statement of current
+state. Supervised Cosmos Hub canaries were run on staging afterwards
+(bcc-trust PR 7.5–7.11), so the retained CosmWasm tables may hold rows on that
+environment. This document does not assert current row counts for them; query
+the environment, or see [database-schema.md](database-schema.md) for the
+inventory. The Dungeon-only canary itself was never run, and now cannot be.
 
 The first live exercise is scoped to **one chain: Dungeon Chain (id 17)**,
 on staging only. It was chosen on measured evidence rather than
@@ -849,6 +946,11 @@ run exists to answer.
 
 ## 18. Expected discovery delay
 
+⛔ **No discovery is scheduled, so none of these delays applies.** Nothing new
+reaches the admin queue by discovery at any cadence; the only route a
+collection takes into the system today is manual Add Collection. The figures
+below are the historical cadence model, retained for reference.
+
 **Historical backfill: days, not hours.** With one chain per five-minute
 tick and 25 requests per tick (halved in PR 7.5), a chain the size of juno (5,149 families)
 takes on the order of a day of its share of the ticks to classify, and
@@ -885,6 +987,11 @@ recorded error rather than as silence.
 
 - [database-schema.md](database-schema.md) — the two new tables and the
   `cw_*` checkpoint columns.
-- [cron-registry.md](cron-registry.md) — the four hooks in the
-  ecosystem-wide cron inventory.
+- [cron-registry.md](cron-registry.md) — the ecosystem-wide cron inventory.
+  The four hooks in §4 are listed there under the retired automatic
+  NFT-discovery hooks; the two retained discovery hooks
+  (`bcc_discovery_run_maintenance`, `bcc_discovery_run_execute`) are listed as
+  registered-but-frozen. ⚠ This line previously claimed the registry held
+  entries for the four §4 hooks; it did not, and the rows were added with this
+  freeze documentation.
 - [pattern-registry.md](pattern-registry.md) — canonical implementations.
