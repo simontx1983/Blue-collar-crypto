@@ -1163,24 +1163,70 @@ doing it invisibly, because a dashboard is the last thing anyone suspects of
 causing an outage. `phase()` was added in PR 7.6 exactly so that observing is
 not probing, and until this change **nothing in production used it**.
 
-**All seven executable `isOpen()` call sites are now classified, and the
-classification is enforced by a test** that fails when a new one appears:
+⚠ **The caller table that stood here was stale.** It listed five operational
+callers as entitled to claim the probe and said "the six operational callers
+are unchanged". That stopped being true with bcc-trust **#265** (issue #264,
+in production 2026-09-29). PR 7.8 had removed the *status page* from the
+claiming path; #265 finished the job by removing the four outer preflights as
+well. The corrected model is below.
 
-| caller | classification | may claim the probe? |
+###### Half-open probe ownership belongs to `ApiRetry` alone (#265)
+
+`isOpen()` is the **mutating** reader: in the HALF-OPEN window it claims the
+cluster-wide probe. **Only `ApiRetry` may use that path.** The outer preflight
+callers use the **non-mutating** `isResting()`, which returns true only for a
+fully OPEN (still-in-cooldown) chain and takes no lock.
+
+Executable call sites at bcc-trust `8c027ca4a09a6e7d4b4df2e92ee50603060cebd1`,
+by `token_get_all()` walk over 552 files under `app/` — prose mentions and
+`{@see}` references excluded, which is why a grep of this codebase overcounts:
+
+| call site | method | claims the probe? |
 |---|---|---|
-| `ApiRetry` (request + batch) | operational admission — the transport itself | yes |
-| `ChainRefreshService` | operational admission — gates a validator-index fetch | yes |
-| `EnrichmentScheduler` | operational admission — gates an enrichment call | yes |
-| `CosmwasmDiscoveryWorker` | operational admission — gates a discovery pass | yes |
-| `NftEthIndexerWorker` | operational admission — gates an indexer tick | yes |
-| **`SettingsPage`** | **read-only observation** | **no — now uses `getAllStatus()`** |
+| `ApiRetry::request()` — `ApiRetry.php:200` | `isOpen()` | **yes** |
+| `ApiRetry::getBatchSameHost()` — `ApiRetry.php:599` | `isOpen()` | **yes** |
+| `ChainRefreshService.php:170` | `isResting()` | no |
+| `EnrichmentScheduler.php:158` | `isResting()` | no |
+| `CosmwasmDiscoveryWorker.php:999` | `isResting()` | no |
+| `NftEthIndexerWorker.php:197` | `isResting()` | no |
 
-The six operational callers are unchanged: each gates work that immediately
-contacts a provider, so each is entitled to the probe. The admin tab now takes
-**one** `getAllStatus()` call for all chains — the same shared phase
-calculation, one clock for the whole sweep so two chains cannot straddle the
-cooldown boundary mid-render, no lock, no write, no provider request. The
-previous shape made the damage proportional to the number of chains.
+**Two** executable `isOpen()` sites, both inside `ApiRetry`; **four**
+`isResting()` sites, all outer preflights. No other executable caller of
+either exists. `SettingsPage` is not in this table at all — it observes
+through `getAllStatus()` and calls neither.
+
+The inventory is enforced in code, not only documented:
+`BreakerAdminObservationTest` walks the plugin tree for executable
+`OnchainCircuitBreaker::isOpen(` call sites and fails when one appears outside
+its allow-list, which is now the single entry `Domain/Onchain/Support/ApiRetry.php`.
+(That test strips comments before matching, for the same reason the figures
+above come from a token walk: this tree carries far more `{@see …::isOpen()}`
+references than real calls.)
+
+**Why the split.** An outer preflight runs before the caller knows it will
+contact a provider, so letting it claim was wrong in both directions: it could
+take the single probe slot and then exit early without ever making a request,
+stranding the lock; and it granted the probe to a caller that does not
+coordinate the request. Skipping a **fully OPEN** chain needs no lock — that
+is a pure phase question, and `isResting()` answers it. **HALF-OPEN is
+deliberately *not* "resting"**, so the preflight lets callers through and
+`ApiRetry` decides who probes.
+
+`ApiRetry` owns the claim because it owns the request: it makes the call,
+settles the outcome, and releases the probe on **every** exit path via a
+`finally` calling `OnchainCircuitBreaker::releaseProbe()` — in both
+`request()` and `getBatchSameHost()`. `recordSuccess()`/`recordFailure()`
+release too; `releaseProbe()` is idempotent, so the overlap is harmless. A
+caller that loses the race is refused with `circuit_breaker_open` and charges
+nothing.
+
+###### What PR 7.8 fixed on the admin tab (unchanged by #265)
+
+The admin tab takes **one** `getAllStatus()` call for all chains — the same
+shared phase calculation, one clock for the whole sweep so two chains cannot
+straddle the cooldown boundary mid-render, no lock, no write, no provider
+request. The previous shape made the damage proportional to the number of
+chains.
 
 **The tab also surfaces the attribution, as wording rather than tokens:**
 `rate_limited` → “Provider rate limit”, `http_5xx` → “Provider server error”,
