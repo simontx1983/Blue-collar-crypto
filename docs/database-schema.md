@@ -1548,9 +1548,11 @@ NFT collection metadata cache (TTL via expires_at). Distinct from the dropped le
 - collection_symbol · varchar(32) · YES — display only (PR 7). ⚠ NEVER an identity: a symbol can never verify a collection, select a gate or approve a marketplace link. Absence is normal.
 - token_standard · varchar(20) · YES
 - total_supply · int unsigned · YES — CURRENT collection size, i.e. how many items exist. Not maximum supply, not items sold, not listed items. ⚠ Deliberately NOT widened by PR 7: a value above the `INT UNSIGNED` ceiling is REFUSED and stored as NULL rather than clamped, because a clamped 4,294,967,295 is a number nobody measured. NULL on Solana and Cosmos — see the PR 7 note below.
-- chain_description · text · YES — the BLOCKCHAIN COLLECTION description (PR 7), imported from chain metadata. Untrusted evidence; never publicly serialized until approved.
-- chain_description_state · varchar(16) · NO · default `none` — `none` \| `pending` \| `approved` \| `rejected` (PR 7)
+- chain_description · text · YES — the BLOCKCHAIN COLLECTION description (PR 7), imported from chain metadata. Untrusted evidence. ⚠ **Never publicly serialized AT ALL during scanner retirement** — not even once approved; see the PR E note below.
+- chain_description_state · varchar(16) · NO · default `none` — `none` \| `pending` \| `approved` \| `rejected` (PR 7). ⚠ `approved` is an **administrative review state, not publication** (DECISION 17).
 - chain_description_source · varchar(32) · YES — which provider claimed it (PR 7)
+- metadata_state · varchar(16) · NO · default `unavailable` — `complete` \| `partial` \| `unavailable` (PR E). How much of the metadata read SUCCEEDED, rolled up from per-field states. ⚠ COMPUTED, never accepted from a caller: a caller that could set it could describe a failed read as `complete`. ⚠ Scoped PER FAMILY — a field the family never fetches is `not_applicable` and is not a shortfall, which is why a fully successful EVM or Solana read reaches `complete` despite fetching fewer fields than Cosmos.
+- metadata_checked_at · datetime · YES · default NULL — when metadata was **ATTEMPTED** (PR E), not when it succeeded. ⚠ Deliberately separate from `fetched_at`: any holdings write bumps `fetched_at`, so a row can carry a recent `fetched_at` and metadata nobody ever read. NULL means never attempted.
 - marketplace_url · varchar(500) · YES — ONE administrator-approved research link (PR 7). ⚠ NULL for every row today: the host allowlist is empty pending owner ratification.
 - ~~floor_price~~ · decimal(20,8) · YES · K — ⚠ RETIRED (PR 7). No writer populates it; the migration NULLs existing values. Column kept only until a caller-safe DROP is proven.
 - ~~floor_currency~~ · varchar(20) · YES — ⚠ RETIRED (PR 7). Solana wrote a hardcoded `'SOL'` here; it was a constant, not an observation.
@@ -1568,6 +1570,54 @@ NFT collection metadata cache (TTL via expires_at). Distinct from the dropped le
 - provisioning_requested_by · bigint unsigned · YES — WHICH administrator asked (PR 6)
 - provisioning_failure_code · varchar(32) · YES — bounded code from a closed set; never free text (PR 6)
 - Indexes: PRIMARY (id) [uq]; uq_chain_contract (chain_id,contract_address) [uq]; uq_chain_canonical (chain_id,canonical_identifier) [uq]; chain_id; contract_address; wallet_link_id; expires_at; idx_floor; idx_volume; idx_verified; idx_provisioning_state_id (provisioning_state,id). The redundant pre-"collections are global" UNIQUE `wallet_chain_contract` was dropped by drop-legacy-indexes v2 (2026-07-23) — uq_chain_contract is strictly tighter, so it could never be the deciding upsert collision.
+
+##### Metadata state (PR E) — and why CI cannot catch this row drifting
+
+`metadata_state` and `metadata_checked_at` were added by PR E (bcc-trust
+`513d998e`, deployed to staging 2026-09-30, **not yet in production**) through
+an idempotent `ALTER`, not a `CREATE TABLE` change.
+
+⚠⚠⚠ **`scripts/schema-drift-guard.php` IS BLIND TO THESE TWO COLUMNS.** Its
+static mode diffs `CREATE TABLE` declarations and index tuples against this
+document. PR E adds no table and no index, so the guard has nothing to compare
+and **passes whether or not this row is correct**. That is not a false green in
+the guard's own terms — it is outside what the guard checks — but it does mean
+this inventory row is maintained by hand and by review only. Treat an edit to
+`bcc_onchain_metadata_state_columns()` in
+`includes/database/schema-collections.php` as requiring a matching edit here,
+because nothing automated will say so.
+
+The rejected alternative was inferring state from NULLs plus `fetched_at`. That
+conflates "this collection has no image" with "we could not read it", and
+`fetched_at` cannot rescue the distinction because any holdings write bumps it.
+
+**Migration properties**, all verified on staging 2026-09-30: its own advisory
+lock; an `INFORMATION_SCHEMA` probe per column that **aborts rather than
+`ALTER`s** when unreadable; `=== false` checked on `wpdb::query()` because a
+successful DDL returns `0`; a re-verify after each `ALTER`; idempotent across
+repeated loads (proven — four invocations, byte-identical column and index
+signatures each time); existing rows and legacy `source` values untouched.
+
+**Staging evidence (2026-09-30):** 214 collection rows, row digest
+`427b891d1daa1ee0af57bcbd4d528c7a` before and after; column count 30 → 32 with
+the digest of the other 30 unchanged (`a0dbb9e704d075881430e121d702fffd`); index
+digest unchanged (`0ccc67394f2a85a202f379f5214ae70e`); all 214 rows at
+`metadata_state = unavailable` with `metadata_checked_at` NULL — the intended
+defaults and nothing else. Recomputed and stored schema hashes agree at
+`fb8cdbad21` (was `918ae44a81`). Production remains at `918ae44a81` with 30
+columns.
+
+##### The description is not published, even when approved (DECISION 17)
+
+PR E added the admin review interface on Verify Collections — the text, its
+provider, its state, and Approve/Reject controls while `pending`. **That screen
+is the only reader.** There is no public REST field, no view-model field and no
+serializer that carries `chain_description`, and
+`CollectionRepository::findApprovedChainDescription()` has **no production
+caller at all**, which is the design rather than an oversight. `approved`
+records that an administrator read that exact text and accepted it; it confers
+no right to display it. A public reader requires an explicitly authorized
+contract change and is not to be built merely to stop the field looking unused.
 
 ##### Community-focused collection metadata (PR 7)
 
