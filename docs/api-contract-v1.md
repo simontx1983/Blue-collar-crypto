@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.76 · 2026-08-06 · Phase 1 deliverable
+**Status:** Draft v1.78 · 2026-09-30 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -6420,6 +6420,220 @@ Retract the viewer's stance (back to neutral). NOT holder-gated — you can alwa
 - **Rate limit:** shared `collection_stance_set` bucket (10 / 60s / user).
 - **Mapping:** `CollectionStancesEndpoint::deleteStance` → `CollectionStanceService::clearStance`.
 
+### 4.32 Validator announcements — v1.78 (PLANNED, not implemented)
+
+> **Status: contract-first. No implementation exists.** This section is the lock point agreed
+> before any code is written; it lands ahead of the backend deliberately. Until the
+> `bcc_announcements_enabled` switch is ON, **every route below returns `404`**.
+>
+> This section reinstates *Announcement* and *Pin* as BCC concepts. See
+> [glossary.md](glossary.md) §8 for the supersession note.
+
+An **announcement** is an operator-authored post on a claimed validator page. Storage is a
+private `bcc_announcement` CPT (`public:false`, `publicly_queryable:false`, **`show_in_rest:false`**,
+hidden from wp-admin). Published announcements are publicly readable and project exactly **one**
+feed activity.
+
+#### 4.32.1 Visibility — three predicates, not two
+
+A published announcement is public **only** when all three hold:
+
+1. `post_status = 'publish'`
+2. `post_date_gmt <= ` current UTC server time
+3. a valid **publication-authorization marker** — `_bcc_announcement_publish_authorized_at`
+   present and not future, **and** `_bcc_announcement_publish_authorized_user_id === post_author`
+
+Predicate 3 exists because status + due time are not sufficient: a row moved to `publish` early
+(by hand, by a plugin, by a bad migration) would otherwise become public the moment its date
+arrived **without ever passing the ownership recheck**. The marker is written only after
+authoritative ownership resolution succeeds. **All four read paths — list, detail, comments and
+feed hydration — enforce all three predicates.**
+
+#### 4.32.2 Authorization
+
+The sole authority is a `RESOLVED` verified-operator resolution for the page whose `user_id`
+equals the viewer. `AMBIGUOUS` and `UNCLAIMED` **fail closed** to a single generic `403` that
+leaks neither operator identity nor claim count.
+
+Page `post_author`, mirror claim rows, page metadata, PeepSo membership and denormalized read
+models are **forbidden** as authorization inputs.
+
+**Administrators hold read-only recovery rights only** — inspect drafts, inspect removed
+comments, restore removed comments. They may not create, edit, schedule, publish, pin or
+archive, and may not act as the operator. An administrator who is *independently* the resolved
+operator gets operator rights through the normal path, never through an override.
+
+#### 4.32.3 `Announcement` view-model
+
+```json
+{
+  "id":               "ann_4471",
+  "title":            "Upgrade to v18 complete",
+  "summary":          "Operator-written one-liner. REQUIRED. Never derived from the body.",
+  "published_at":     "2026-09-30T14:00:00Z",
+  "updated_at":       "2026-10-02T09:12:00Z",
+  "is_pinned":        true,
+  "is_archived":      false,
+  "archived_at":      null,
+  "comment_count":    12,
+  "comments_enabled": true,
+  "links":            { "self": "/v/blacksmith-node/a/4471" }
+}
+```
+
+**Field rules:**
+
+- `summary` is **required and first-class**, stored in `post_excerpt`, plain text, 1–300 chars.
+  It is **never inferred from the body** and is present on list, rotator, detail **and
+  feed-card hydration**.
+- `title` plain text, 1–200 chars. `body` (detail only) is **Markdown source**, 1–20 000 chars.
+- `published_at` / `updated_at` / `archived_at` are ISO-8601 UTC. ⚠ **Announcement dates are
+  formatted client-side.** This is a deliberate divergence from `posted_at_label` (§3.3) —
+  recorded here so it reads as intentional, not as drift.
+- `updated_at` is surfaced on detail **only when it differs materially from `published_at`**.
+
+#### 4.32.4 Endpoints
+
+| Route | Method | Auth | Notes |
+|---|---|---|---|
+| `/bcc/v1/validators/:pageId/announcements` | GET | optional | `?state=active` (default) \| `archived`; `?limit` (20/50) · `?cursor` |
+| `/bcc/v1/validators/:pageId/announcements/rotator` | GET | optional | **max 5**: pinned first + 4 newest non-pinned, else 5 newest active |
+| `/bcc/v1/validators/:pageId/announcements/:id` | GET | optional | detail (+ `body`, capabilities). Not-yet-public → **404 to non-owners, never 403** |
+| `/bcc/v1/validators/:pageId/announcements` | POST | operator | `{title, summary, body, status, publish_at?, comments_enabled?}` |
+| `/bcc/v1/validators/:pageId/announcements/:id` | PATCH | operator | optional fields; no backdating; `409` if archived |
+| `/bcc/v1/validators/:pageId/announcements/:id/archive` | POST | operator | **one-way**; unpins; withdraws the feed activity |
+| `/bcc/v1/validators/:pageId/announcements/:id/pin` | POST / DELETE | operator | one pinned per validator; `409` if archived |
+| `/bcc/v1/me/validators/:pageId/announcements` | GET | operator | `?status=draft\|scheduled\|blocked` — the **only** route returning unpublished |
+| `/bcc/v1/announcements/:id/comments` | GET | optional | flat, **oldest-first** cursor; tombstones in position |
+| `/bcc/v1/announcements/:id/comments` | POST | member | good standing; `403` if disabled or archived |
+| `/bcc/v1/announcements/:id/comments/:commentId` | DELETE | author **or** operator | soft removal → tombstone |
+| `/bcc/v1/admin/announcement-comments/:commentId` | GET | admin | the private original |
+| `/bcc/v1/admin/announcement-comments/:commentId/restore` | POST | admin | restore + audit |
+
+**Never on the wire:** claimant email, wallet address, `rpc_url`, removal reasons, private
+removal metadata, publication-authorization metadata, removed-comment bodies or authors, or any
+draft/scheduled announcement to a non-owner.
+
+> ⚠ **Handoff note — why this is a table and not `#### \`METHOD /path\`` headers.**
+> `scripts/contract-parity-guard.php` parses §4 for `` #### `METHOD /path` `` headers and
+> **FAILs on any endpoint the contract declares but PHP does not register**. Since none of
+> these routes exists yet, declaring them in the guard's header format would turn umbrella CI
+> red for every commit until A2 lands. The table keeps the contract honest and CI green while
+> the section is PLANNED.
+>
+> **When the implementing PR (A2) registers these routes, convert this table into individual
+> `` #### `METHOD /path` `` subsections** so the guard starts policing them. That conversion is
+> part of A2's definition of done, not an optional follow-up — until it happens, these routes
+> are invisible to the parity guard in *both* directions, and the 2026-07-24 ratchet means a
+> registered-but-undocumented route is itself a CI failure.
+
+#### 4.32.5 Publication dates
+
+Immediate publication uses **authoritative server time**; any client-supplied timestamp is
+ignored. Scheduling accepts a **strictly future** UTC instant only. **Backdating is rejected on
+every path**, including update. All logic reads `post_date_gmt`; site-local `post_date` is never
+read for logic.
+
+#### 4.32.6 Archival — a public record, not a deletion
+
+Archiving **never** trashes the post. It sets a private `_bcc_announcement_archived_at` and is
+**one-way in v1**. An archived announcement:
+
+- keeps its canonical public permalink and its original `published_at`;
+- exposes `is_archived: true` + `archived_at`;
+- appears in the validator's **Archived** section (`?state=archived`);
+- is excluded from the rotator and from active lists;
+- is **removed from the general feed**;
+- is **automatically unpinned**;
+- **cannot be edited, republished or rescheduled** → `409 announcement_archived`.
+
+To correct or renew an archived announcement, the validator publishes a new one.
+
+#### 4.32.7 Comments — flat and plain text in v1
+
+**"Thread" here means the canonical chronological discussion, not nested replies.**
+
+- **Flat.** Replies and nesting are **deferred**; sending `parent_id` → `400 replies_not_supported`.
+- **Plain text**, required, 1–2 000 chars after normalization, valid UTF-8, normalized line
+  endings. **No executable HTML and no Markdown rendering.**
+- Cursor-paginated in **stable oldest-first** order.
+- **No editing, no reactions, no inline feed commenting** in v1.
+- Signed-in members in good standing only. **No anonymous comments.**
+
+**Removal (soft) and tombstones.** A removed comment stays in position as a public tombstone:
+
+```json
+{ "id": "acmt_9912", "is_removed": true,
+  "removed_at": "2026-09-30T15:02:11Z",
+  "label": "Comment removed by author" }
+```
+
+`label` is **server-authored**, one of exactly two strings:
+*"Comment removed by author"* · *"Comment removed by validator"*.
+The tombstone carries **no** `body`, `author`, `avatar_url`, `user_id`, actor type, reason or
+other private metadata, and counts toward `comment_count` so the rendered count matches.
+
+| Actor | May remove | Recorded actor type |
+|---|---|---|
+| Comment author | their own comment | `author` |
+| Resolved operator | any comment on their announcement | `validator` |
+| Administrator | — (restore only) | — |
+
+An operator removing **their own** comment is recorded as `author` — the actor's relationship to
+the comment wins over their role. **Comment authors cannot restore**; restoration is
+administrator-only. Author removal, validator removal and administrator restoration each write a
+**distinct** audit action.
+
+**An archived announcement keeps its discussion visible and read-only**: existing comments and
+tombstones are still returned, creation returns a non-retryable `announcement_archived`, and
+operator moderation plus administrator recovery remain available.
+
+#### 4.32.8 Feed projection
+
+`FeedItem` kind **`announcement`**, activity module id **205**. The card carries `title`,
+`summary`, `published_at` and `links.self`, and **links to the canonical announcement page — it
+never hosts a discussion** (`peepso_disable_comments` is set on the backing post).
+
+- **Exactly one activity per announcement**, created only once the announcement is due **and
+  authorized**. Early projection is refused.
+- **Edits do not bump the feed.** An edit updates hydrated `title`/`summary`/`body` in place and
+  retains the original `published_at`, feed position and activity identity.
+- **Pinning promotes on the validator page only** and never reorders the general feed. A
+  validator wanting fresh feed placement publishes a new announcement.
+- Archival withdraws the activity.
+
+#### 4.32.9 Error codes
+
+Adds to §1.4.6 (same semantics):
+
+| Code | HTTP | Class | Meaning |
+|---|---|---|---|
+| `announcement_archived` | 403 / 409 | Client error | Archived: read-only. **Non-retryable** — archive is one-way, so a retry can never succeed. |
+| `replies_not_supported` | 400 | Client error | `parent_id` sent; v1 comments are flat. |
+| `publish_at_not_future` | 400 | Client error | Scheduled time is not strictly in the future. |
+| `backdating_not_allowed` | 400 | Client error | Attempt to move a publication date earlier. |
+| `summary_required` | 400 | Client error | Summary is first-class and must be authored. |
+
+Also used, with existing meanings: `bcc_forbidden` (`reason_code` ∈ `not_claimer` ·
+`claim_ambiguous` · `claim_absent` · `comments_disabled` · `announcement_archived` ·
+`not_comment_author` · `announcement_not_published` · `feature_disabled`), `bcc_conflict`,
+`bcc_rate_limited`, `bcc_not_found`.
+
+**Rate limits**, applied **before** any ownership gate: list 20/60s/viewer · write
+`announcement_write` 10/60s/user · comment create `announcement_comment` 20/300s/user.
+
+#### 4.32.10 Feature switch
+
+`bcc_announcements_enabled` (option, default **OFF**). While OFF: every route returns **404**;
+no bar, tab or detail surface renders; creation, projection and reconciliation stop; **the feed
+hydrator suppresses existing module-205 activities** so no published card links to a 404 route;
+and stored announcements, comments and activity rows are **untouched**. Re-enabling restores
+visibility **without rebuilding or duplicating** activity rows — suppression is a read-time
+filter, not a delete.
+
+⚠ The CPT registration and the comment-bypass guards stay active even when the switch is OFF.
+Turning the feature off must never *open* the bypass surface.
+
 ## 5. Encoded rules — quick reference
 
 ### 5.1 §N7 — gated actions always visible
@@ -6710,6 +6924,46 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.78 — 2026-09-30 — additive, **contract-first** — §4.32 Validator announcements (PLANNED)
+
+Locks the shape of Validator Announcements **before** any code is written. **Nothing in §4.32 is
+implemented.** No bcc-trust, bcc-core or bcc-frontend change accompanies this entry, and the
+feature ships behind `bcc_announcements_enabled` (default **OFF**), under which every route
+returns 404.
+
+**Vocabulary reversal.** [glossary.md](glossary.md) §8 previously recorded *"Removed:
+Announcement, Post-mortem, Pin — no BCC `post_kind`, table, or service."* **Announcement and Pin
+are reinstated** as first-class BCC concepts; **Post-mortem remains removed.** The glossary entry
+is superseded in the same change so the repository does not carry two contradictory statements of
+intent.
+
+**Additions:**
+
+- **§4.32** — the full announcement contract: view-model, 13 endpoints, publication dates,
+  archival, comments, feed projection, error codes and the feature switch.
+- New `FeedItem` kind **`announcement`**, activity module id **205** (verified unused against
+  both the PeepSo module inventory and `MODULE_ID_BY_NAME` at time of writing; **re-verify before
+  enablement**).
+- New reason codes: `announcement_archived` (non-retryable), `replies_not_supported`,
+  `publish_at_not_future`, `backdating_not_allowed`, `summary_required`.
+
+**Three decisions worth flagging to implementers:**
+
+1. **Visibility takes three predicates, not two** (§4.32.1). `post_status='publish'` plus a due
+   timestamp is insufficient — a row forced to `publish` early would go public the moment its
+   date arrived without ever passing the ownership recheck. A publication-authorization marker
+   bound to `post_author` is the third predicate, enforced on **all four** read paths.
+2. **Archiving is not deletion** (§4.32.6). It never trashes the post: the permalink, the
+   original publication date and the whole discussion survive. One-way in v1.
+3. **`show_in_rest: false` on the CPT is a security control, not a preference.** WordPress's
+   comment controller resolves post readability through the posts controller, which rejects
+   non-REST-exposed types **before** checking post status — so this single arg closes the core
+   single-comment routes, post-scoped collections and comment creation for **every** role,
+   administrators included. Flipping it to `true` opens all three at once.
+
+**Deliberate divergence:** announcement dates are formatted **client-side**, unlike
+`posted_at_label` (§3.3). Recorded so it reads as intentional rather than drift.
 
 ### v1.77 — 2026-09-16 — additive — `holdings_status` on the collection-stance panel (+ retraction of the marketplace rollup)
 

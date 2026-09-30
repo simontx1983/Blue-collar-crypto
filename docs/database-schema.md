@@ -2328,6 +2328,78 @@ Web-push VAPID subscriptions per user/device.
 
 ---
 
+## Core-table storage — no `wp_bcc_*` table (post types, post meta, comments)
+
+Some BCC features store in WordPress's own tables rather than a `wp_bcc_*` table. They are
+recorded here because **nothing else records them**: the master inventory above only tracks
+`wp_bcc_*` tables, and `schema-drift-guard.php` is column-blind
+([umbrella #132](https://github.com/simontx1983/Blue-collar-crypto/issues/132)) and does not see
+post types, post meta or comment types at all. **This section is the only durable record — a
+change here is a manual review item, not a guarded one.**
+
+### Validator announcements — PLANNED, not implemented (2026-09-30)
+
+Contract: [api-contract-v1.md](api-contract-v1.md) §4.32. Ships behind
+`bcc_announcements_enabled` (option, default **OFF**). **No `wp_bcc_*` table is added**, so the
+master inventory count is unchanged.
+
+**Post type `bcc_announcement`** (`wp_posts`) — 16 chars, safely under the `post_type`
+`varchar(20)` limit that a 22-char slug once silently blew.
+
+| Arg | Value | Note |
+|---|---|---|
+| `public` / `publicly_queryable` | `false` | no WP front-end route; canonical URL is the Next.js page |
+| `show_ui` / `show_in_menu` | `false` | hidden from wp-admin editing |
+| `show_in_rest` | **`false`** | 🔒 **security control, not a preference** — WP's comment controller resolves post readability via the posts controller, which rejects non-REST-exposed types *before* checking post status. This one arg closes the core single-comment routes, post-scoped collections and comment creation for every role, administrators included. |
+| `exclude_from_search` | `true` | |
+| `supports` | `title`, `editor`, `excerpt`, `author`, `revisions` | **`comments` deliberately omitted** |
+| `capability_type` / `map_meta_cap` | custom caps, `map_meta_cap => true` | generic `edit_posts` must never satisfy `edit_post` here |
+| `rewrite` | `false` | |
+
+Native column use: `post_title` = title (≤200) · `post_excerpt` = **required** operator-written
+summary (≤300, plain text, never derived from the body) · `post_content` = Markdown source
+(≤20 000) · `post_author` = the resolved validator operator · `post_date_gmt` = actual or
+scheduled publication time (UTC; `post_date` is never read for logic). Statuses: `draft`,
+`future`, `publish`, plus a non-public blocked state for rows that fail the publication
+authorization recheck.
+
+**Post meta on `bcc_announcement`** (`wp_postmeta`):
+
+| Meta key | Meaning |
+|---|---|
+| `_bcc_announcement_page_id` | the `peepso-page` post id this announcement belongs to |
+| `_bcc_announcement_pinned` | `1` when pinned; **one per validator page**, advisory-locked; cleared on archive |
+| `_bcc_announcement_comments_enabled` | gates **only** the custom BCC comment-create endpoint. **Never an input to `comments_open()`**, which is unconditionally `false` for this post type. |
+| `_bcc_announcement_archived_at` | UTC timestamp; presence = archived. **Archive never uses `wp_trash_post()`** — the permalink, publication date and discussion all survive. One-way in v1. |
+| `_bcc_announcement_publish_authorized_at` | UTC; written **only** after authoritative operator resolution succeeds |
+| `_bcc_announcement_publish_authorized_user_id` | the resolved operator at authorization time; must equal `post_author` for the marker to be valid |
+
+⚠ The last two are the **publication-authorization marker**. Public visibility requires
+**three** predicates — `post_status='publish'` **and** `post_date_gmt <= ` now (UTC) **and** a
+valid marker — because a row forced to `publish` early would otherwise become public the moment
+its date arrived, having never passed the ownership recheck. These meta keys are never exposed
+on the wire.
+
+**Comment type `bcc_announcement_comment`** (`wp_comments`) — `comment_post_ID` is the
+announcement id. This is BCC's **first** use of `wp_comments`; every other BCC comment is a
+PeepSo activity. v1 comments are **flat** (no `comment_parent` use) and **plain text**
+(1–2 000 chars). Validator/author removal is a soft removal via comment status plus private
+comment meta (`removed_at`, `removed_by_actor_type` ∈ `author`|`validator`, `removed_by_user_id`);
+the row is never deleted, and administrators can restore it.
+
+Four narrowly scoped guards keep these rows out of core WordPress surfaces without removing
+`/wp/v2/comments` or affecting any other comment type: `comments_open` → always `false` for this
+post type; a `comments_clauses` filter excluding this comment type from every `WP_Comment_Query`;
+`show_in_rest => false` (above); and `map_meta_cap` denying `edit_comment` on this type.
+
+**Feed projection** writes one `peepso_activities` row per published announcement with
+`act_module_id = 205` and `act_external_id` = the announcement post id. `205` was verified unused
+against both the PeepSo module inventory (`0,1,3,4,6,7,8,9,10,30,111,6661`) and
+`PeepSoActivityWriter::MODULE_ID_BY_NAME` (`200–204`); the column is `SMALLINT(5) UNSIGNED`.
+**Re-verify before enablement** — PeepSo is third-party.
+
+---
+
 ## Orphan tables — DROPPED 2026-07-09 (historical record)
 
 All 17 had **zero reads/writes in current plugin code**. `drop-legacy-orphans.php`
