@@ -155,6 +155,47 @@ the administrator-created discovery run — is itself now frozen; see the
 
 ---
 
+## Deliberate non-registrations
+
+Features that need periodic work but **intentionally add no hook**. Recorded here so the
+`bcc_expected_cron_hooks` drift detector's expectations stay explainable, and so a future
+reader does not "fix" a missing entry by registering one.
+
+### Validator announcements — PLANNED, no new hook (2026-09-30)
+
+Contract: [api-contract-v1.md](api-contract-v1.md) §4.32. Announcements need a bounded
+reconciler for scheduled publication. It **rides the existing
+`bcc_trust_process_recalculations` event** (`bcc_five_minutes`) rather than registering its
+own, so:
+
+- **no new hook**, **no new interval**, and **no new per-minute polling loop**;
+- `includes/cron-hooks.php` is unchanged, and the drift detector's expected set is unchanged.
+
+Scheduled publication itself rides WordPress's native `publish_future_post` single event, which
+is core behaviour and is likewise not registered here.
+
+The reconciler is a bounded sweep (50 rows/tick, deterministic order, advisory-locked per
+announcement) with three arms:
+
+| Arm | Repairs |
+|---|---|
+| A | overdue `future` announcements that need publication |
+| B | due, authorized, published announcements whose feed activity is missing |
+| C | due `publish` rows with **no valid publication-authorization marker** — re-resolves ownership, authorizes and projects if valid, otherwise moves the row to a non-public blocked state and writes a queryable audit event |
+
+⚠ Arm C exists because **WordPress core has no missed-schedule recovery**: a lost
+`publish_future_post` event strands a post in `future` indefinitely, and conversely a row forced
+to `publish` by hand would go public the moment its date passed. Arm C is what makes "a forced
+status change never becomes public merely because time passed" enforceable.
+
+🚨 **Publication must not run under WP-CLI.** PeepSo disables itself when
+`php_sapi_name() === 'cli' && WP_CLI`, and publication triggers the feed projection. This is the
+same constraint that governs validator-messaging delivery — see
+[validator-messaging-rollout.md](validator-messaging-rollout.md) ▸ "Delivery requires an HTTP
+context". Do **not** wire `wp cron event run` as the runner.
+
+---
+
 ## Phase A V-19 scoping note (2026-05-09)
 
 The Stabilization Cleanup Plan §1.1 + §5.5 listed ~25 V-19 "legacy"
