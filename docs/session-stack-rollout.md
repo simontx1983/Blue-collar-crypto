@@ -16,20 +16,32 @@ change has been performed or is approved. This document is the plan only.
 
 | Item | Value |
 |---|---|
-| Integration commit | `3eed76b4880d4230107452829c089831190e73c5` |
-| Integration tree | `c0034fdf148784168ec94aedbc9a5f104f368b80` |
-| #173 session isolation | `cc4dc4736606d4001667ed6ebe25bc2a6f006a8d` (base `main`) |
-| #174 password continuity | `1b4b0fd0858168fdd1902dc373cb434bd25e5920` (base `fix/session-isolation`) |
-| #175 viewer-scoped storage | `c7c4205bd6551c7c4d8fdee217e5a1e8bcf7f9c3` (base `fix/session-isolation`) |
+| **Release head** (`fix/session-isolation`) | **`81807de644a31e10c97a57abfacd2a739533c201`** |
+| **Release tree** | **`88a2e40af1672e20072f692bd4549a55c04eeb6f`** |
+| Superseded integration commit | `3eed76b4880d4230107452829c089831190e73c5` (tree `c0034fdf…`) — kept on `tmp/integration-173-174-175` for audit |
+| #173 session isolation | base `main`; head is now the release head above |
+| #174 password continuity | `1b4b0fd0858168fdd1902dc373cb434bd25e5920` — **MERGED** into `fix/session-isolation` |
+| #175 viewer-scoped storage | `c7c4205bd6551c7c4d8fdee217e5a1e8bcf7f9c3` — **MERGED** |
+| #176 pre-revocation bearer + notice deadline | `86d6d6b1ef9c7b241ff048dd1a9c8a2d2a64f830` — **MERGED** |
+| #177 preserve legacy drafts (Q1) | `97d8c48f54fc434c0b96dd482561b81a883c0047` — **MERGED** |
+| #178 deadline on every read | `d182a992747eb076931538219328392ce0604acb` — **MERGED** |
 | Temporary integration branch | `tmp/integration-173-174-175` (keep until release; delete after) |
 | Its Preview deployment | GitHub deployment `6860774038`, `environment=Preview`, `production_environment=false`, state `success` |
 
-**Check provenance for `3eed76b4`: local plus Vercel Preview only.** `tsc --noEmit` clean ·
-`vitest` **108 files / 2631 passing** (1 expected fail) · `next lint` 0 errors — all run
-locally on that exact commit — plus the Vercel Preview build success above.
-**No GitHub Actions run exists for `3eed76b4`**, because `ci.yml` triggers only on
-`push: [main]` and `pull_request`, and no PR was opened for the integration branch.
-Step 4 below is what produces that missing run before anything reaches production.
+**Check provenance.**
+
+For the **release head `81807de`** the checks are complete and include GitHub
+Actions, because it is #173's head and therefore runs as a `pull_request`:
+`Frontend — tsc · lint · vitest` **pass (2m41s)** · Vercel **pass**,
+`environment=Preview`, `production_environment=false`. Locally on the same tree:
+`tsc` clean · `vitest` **110 files / 2680 passing** (1 expected fail) ·
+`knip --include files` exit 0 · `next lint` 0 errors · cadence-pressure guard PASS ·
+**53 mutation controls, all RED**.
+
+For the **superseded `3eed76b4`** the record stands as it was: local plus Vercel
+Preview only, with **no GitHub Actions run**, because `ci.yml` triggers on
+`push: [main]` and `pull_request` only and no PR was opened for the integration
+branch. That gap is now closed by the release head above.
 
 ---
 
@@ -63,10 +75,12 @@ Production is then entered once, with all three PRs in it.
 
 | Step | Action | Deploys to | Gate before proceeding |
 |---|---|---|---|
-| **1** | Merge **#174** into `fix/session-isolation`. Use a **merge commit** (not squash, not rebase). | Preview | #174's checks green |
-| **2** | Merge **#175** into `fix/session-isolation`. Merge commit. | Preview | #175's checks green |
-| **3** | **Tree-identity gate.** In a clean checkout of `fix/session-isolation`:<br>`git fetch origin && git rev-parse origin/fix/session-isolation^{tree}`<br>must print **`c0034fdf148784168ec94aedbc9a5f104f368b80`**. | — | **Exact match required.** Any other value means the branch is not the accepted artifact — stop and report. |
-| **4** | **CI + Preview gate.** #173's PR now contains all three. Wait for its `pull_request` CI run (tsc · lint · knip · vitest) **and** its Vercel Preview to pass. This is the GitHub Actions run the integration branch could not produce. | Preview | Both green |
+| ~~1~~ | ✅ **DONE** — #174 merged into `fix/session-isolation` (`a10540a`). | Preview | passed |
+| ~~1b~~ | ✅ **DONE** — follow-ups #176, #177, #178 merged in (see §0). | Preview | each passed |
+| ~~2~~ | ✅ **DONE** — #175 merged (`b712457`). | Preview | passed |
+| ~~3~~ | ✅ **DONE** — the tree matched `c0034fdf…` exactly at that point. After the three follow-ups it is **`88a2e40af1672e20072f692bd4549a55c04eeb6f`**, which is the value to re-verify before step 5. | — | matched |
+| ~~4~~ | ✅ **DONE** — #173's CI **pass (2m41s)** and its Vercel Preview **pass** on the release head `81807de`, `environment=Preview`, `production_environment=false`. This is the GitHub Actions run the integration branch could not produce. | Preview | both green |
+| **3′** | **Re-verify before release:** `git fetch origin && git rev-parse origin/fix/session-isolation^{tree}` must print **`88a2e40af1672e20072f692bd4549a55c04eeb6f`**. | — | **Exact match required**, else stop and report. |
 | **5** | Merge **#173** → `main`. **This is the production release.** | **Production, once** | — |
 | **6** | Post-release verification (§4), then delete `tmp/integration-173-174-175`. Its Preview deployment record remains for audit. | — | — |
 
@@ -151,7 +165,7 @@ and three browser runs against controlled fixtures, and that is the honest limit
 
 ---
 
-## 5. The irreversible storage migration — exactly what is deleted
+## 5. The storage migration — exactly what is deleted, and what is now PRESERVED
 
 On the **first load of the new build in each browser**, `purgeLegacyUnscopedKeys()`
 deletes the following from **both** `localStorage` and `sessionStorage`. This runs once
@@ -166,7 +180,7 @@ per document, for signed-in and anonymous visitors alike.
 | `bcc-onboarding-progress` | how far the setup wizard got | **No, and there is no server mirror.** A half-finished wizard's resume point is irrecoverable. |
 | `bcc-onboarding-resume-dismissed` | "don't offer to resume setup" | **No.** The resume prompt may re-appear once. |
 | `bcc.communities.dismissed` | "not now" on the NFT-community activation prompt | **No.** The prompt may re-show once. |
-| `bcc.blog.draft.<handle>` and `bcc.blog.draft.anon` (every key with the prefix `bcc.blog.draft.`) | **the autosaved body of an UNPUBLISHED blog post** | **No. This is the costliest item.** |
+| ~~`bcc.blog.draft.<handle>` / `bcc.blog.draft.anon`~~ | the autosaved body of an UNPUBLISHED blog post | **NOT DELETED any more — decision Q1, #177.** Preserved in place: nothing reads it, nothing adopts or displays it, and sign-out still clears the prefix so its lifetime is unchanged. ⚠ Preserving it is not protecting it: it sits in plain `localStorage` and anyone with devtools on that browser profile can read it. Manual recovery requires establishing ownership out of band, since the key names no dependable owner. |
 
 **Unpublished drafts, stated plainly.** Only drafts whose last autosave came from the
 *pre-release* build are affected — nothing a writer has open on screen is lost, because
@@ -224,6 +238,18 @@ no one is shown someone else's words.
 **Before step 5, open the Vercel dashboard and record which of Promote / Instant
 Rollback this project actually offers.** Do not plan around an instant restore that may
 not exist.
+
+⚠ **OUTSTANDING — dashboard verification not done.** It could not be done from here:
+there are **no Vercel CLI auth artifacts on this machine, no `VERCEL_TOKEN`, and no
+Vercel MCP connection**, and no account was connected and no token requested. So
+**which rollback operation this project supports is UNVERIFIED**, and that is a release
+prerequisite, not a detail.
+
+⚠ **A 302 from the old deployment does not prove it can be promoted.** The probe below
+shows the deployment still *exists and is served* — it answers Vercel's
+deployment-protection gate rather than a `DEPLOYMENT_NOT_FOUND` — and that is all it
+shows. Whether the production alias can be moved back to it is a dashboard question.
+**Treat `git revert` (§6c) as the operation you actually have.**
 
 ### 6b. The rollback target, exactly
 
@@ -299,6 +325,27 @@ bearer", reads that as a concurrent write replacing its own, and reports success
   withdrew the parked `password-changed` notice, so the teardown a moment later shows
   the generic "your session ended" instead of "use your new password". A viewer may then
   try their **old** password, fail, and conclude the change did not work — when it did.
+
+### ✅ RESOLVED 2026-10-06 in #176 + #178 — but read the limits below
+
+Both halves are now implemented, frontend-only:
+
+- **the notice survives the race.** `password-changed` is parked with a
+  **120s deadline** and no longer withdrawn on a reported success, because that
+  report includes the outcome that can be wrong. Browser-verified: after a
+  reported success, a generic teardown landed on `/?authNotice=password-changed`
+  and rendered "…sign in again using your NEW password", not "your session
+  ended".
+- **a pre-revocation bearer is refused.** Browser-verified: with the echo
+  present but the confirm reading a `tv`-6 bearer against a `tv`-7 mint, the
+  flow reports failure and shows "Password changed … sign in again" instead of
+  "Saved". A `tv`-7 concurrent bearer still reports success.
+
+⚠ **What it is not.** The check is a consistency test over an **unverified**
+payload, so it may only ever refuse; the echo remains the only thing that can
+accept a foreign bearer. Malformed, missing, out-of-range or
+subject-mismatched claims count as refusals. An absent `tv` is treated as
+malformed, not as a comparable 0.
 
 ### The discriminator — CORRECTED 2026-10-06: it is available client-side
 
