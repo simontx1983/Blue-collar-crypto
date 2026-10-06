@@ -174,7 +174,25 @@ the composer holds its text in memory and the new build autosaves to the new key
 five seconds. The loss lands on someone who closed the tab with an unfinished post and
 returns after the release.
 
-**Why safe migration cannot preserve any of this.**
+### Quarantine instead of deletion — open decision (2026-10-06)
+
+Deleting unpublished writing is the one loss in this list that is not cheap, and it is
+avoidable. **After #175 nothing in the app reads a legacy draft key**: the composer
+resolves `bcc.blog.draft::<viewer id>` and nothing else. So the drafts can simply be
+**left in place** rather than deleted — preserving the writing without adopting or
+displaying it to anyone.
+
+| Option | Effect | Verdict |
+|---|---|---|
+| **Q1 — stop deleting the `bcc.blog.draft.` prefix** (keep deleting the seven exact keys) | The legacy value stays exactly where it already is, readable by nobody the app routes to it, and the existing sign-out sweep still clears the prefix — so its lifetime is unchanged from today's. **Access-neutral: no new exposure.** | **Recommended.** One-line change; preserves the writing. |
+| Q2 — rename to an opaque `bcc.quarantine.draft.<n>` key | Same access profile as Q1 but more code, and it *extends* the data's lifetime past sign-out unless the new prefix is added to the departure sweep too. | Not worth it over Q1. |
+| Q3 — offer a click-gated "recover a pre-update draft" affordance | Would actually return the writing to a person — but it **displays** unattributable content to whoever is signed in, which is the cross-account display defect behind a button. | **Not recommended.** |
+
+Under Q1 the preserved value is recoverable only by hand (devtools) or with operator
+help; nothing in the UI surfaces it. That is the honest trade: the writing survives, and
+no one is shown someone else's words.
+
+**Why safe migration cannot preserve the other seven, or re-attribute drafts.**
 
 - The seven exact keys are **unscoped: they name no owner.** Neither the key nor the
   value records who wrote it. Renaming them into whoever signs in next is precisely the
@@ -282,17 +300,35 @@ bearer", reads that as a concurrent write replacing its own, and reports success
   the generic "your session ended" instead of "use your new password". A viewer may then
   try their **old** password, fail, and conclude the change did not work — when it did.
 
-### The missing discriminator
+### The discriminator — CORRECTED 2026-10-06: it is available client-side
 
-Nothing in the session body separates "a concurrent refresh replaced my write" from "a
-pre-revocation refresh wrote a dead token". The only candidate, `bccTokenExpiresAt`, is
-stamped `Date.now() + expiresIn` by whichever client built the write, and both endpoints
-report the same TTL — so it orders **writers**, not **validity**.
+An earlier revision of this document said no discriminator existed in the session body
+and that closing residual B required a bcc-trust change. **That was wrong**, and the
+correction matters for the acceptance decision.
 
-**What would close it:** have `POST /auth/refresh` (and the password-change response)
-return the **token version** it minted, so the frontend can compare the bearer it finds
-against the version it expects and refuse a stale one. That is a **bcc-trust** change.
-It is **not authorized** and is **not** part of this release.
+What is true: `bccTokenExpiresAt` cannot discriminate — it is stamped
+`Date.now() + expiresIn` by whichever client built the write, and both endpoints report
+the same TTL, so it orders **writers**, not **validity**.
+
+What was missed: the bearer itself carries the counter. `JwtToken::encode()` puts
+`'tv' => currentTokenVersion($userId)` into the payload of a plain HS256 JWT, and the
+password-change response hands the frontend the freshly minted token. So the frontend
+can base64url-decode the `tv` claim of the token it was given, decode the `tv` of
+whatever bearer it later finds in the session, and compare:
+
+| Found bearer's `tv` | Meaning | Correct report |
+|---|---|---|
+| `>=` the minted `tv` | minted at or after the revocation bump — a genuine concurrent write | success |
+| `<` the minted `tv` (including absent, i.e. 0) | minted **before** the bump — already revoked | failure: "sign in again" |
+
+This is a **frontend-only** fix, needs no new endpoint and no backend change, and it
+closes residual B itself rather than only its symptom. Reading claims without verifying
+the signature is sound here because the comparison is between two of our own tokens and
+is not a trust decision: a garbled payload decodes to no `tv`, which compares as stale
+and errs toward the safe answer.
+
+**Not implemented.** It changes #175 and therefore supersedes the accepted artifact
+(§0), so it is a release-approval decision, not a silent edit.
 
 **Likelihood:** requires a refresh minted inside the sub-second window before the
 revocation bump, whose session write also lands after the confirming read, and only on a
