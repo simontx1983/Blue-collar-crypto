@@ -134,9 +134,9 @@ schema-install path in `tables.php` is itself routed through the same runner.
 | wp_bcc_chains | 21 | Supported chains registry (RPC/REST/explorer config); also carries the three per-chain NFT flags — `cosmwasm_nft_discovery_enabled` (CosmWasm-scanner opt-in, 2026-08), plus `bcc_supports_nft_collections` and `manual_collection_discovery_enabled` (per-chain NFT capability model, 2026-08 — the latter is misleadingly named and gates ONE-contract manual intake, not chain-wide discovery; see its column entry). All three are DEFAULT 0 with no backfill — installing or updating opts in exactly zero chains | schema-chains.php (Onchain) | Active |
 | wp_bcc_chain_nft_capabilities | 0 | Per-chain NFT driver OVERRIDES: one row per (chain, operation, driver) that DISABLES or REORDERS a driver the code registry already offers. Narrow-only — a row can never grant a driver operation the code does not implement, and an absent row means "registry default applies". Empty on every install | schema-chain-nft-capabilities.php / ChainNftCapabilityRepository | Active |
 | wp_bcc_chain_checkpoints | 8 | Per-chain indexer checkpoint + CU budget; also carries the `cw_*` CosmWasm-discovery state (backfill cursor, code-id watermark, pause, per-pass timestamps) added 2026-08 | schema-chain-checkpoints.php | Active |
-| wp_bcc_discovery_runs | 0 prod · 10 stage | PR 7A durable run ledger for administrator-requested discovery scans (status, lease, attempts, bounded stop reason, work counts). PR 7.3 adds `chunks_used`, bounding one authorized multi-chunk session. Execution HISTORY only — it holds no cursor, so it is not a second progress table. ⛔ **DORMANT since the 2026-09-18 scanner freeze (bcc-trust #261)**: no new run can be created, claimed or executed, and `bcc_discovery_run_maintenance` no longer prunes, so existing history is retained rather than aged out. Still declared, still created by dbDelta, still guarded — retained pending the deletion programme, which has not been carried out. Not orphaned | schema-discovery-runs.php | Active |
-| wp_bcc_cosmwasm_code_families | 102 prod · 742 stage | CosmWasm code-family inventory: one row per (chain, code id) with its CW-721 classification, bounded probe evidence, retry/backoff state and contract-enumeration cursor (CosmWasm discovery 2026-08; `not_cw721` is terminal and never routinely re-classified). ⛔ **DORMANT since the 2026-09-18 scanner freeze (bcc-trust #261)** — the scanner that discovers, classifies and enumerates is frozen, so **no new row can be created**. ⚠ Not write-inert, though: the **unfrozen** Cosmos endpoint switch (`ChainsPage::ACTION_ENDPOINT_SWITCH` → `CosmosEndpointTransition::execute()`) still calls `CosmwasmCodeFamilyRepository::clearContractCursors()` on EXISTING rows, so the table is maintained, not abandoned. Still declared, still created by dbDelta, still guarded — retained pending the deletion programme, which has not been carried out. Not orphaned | schema-cosmwasm-code-families.php / CosmwasmCodeFamilyRepository | Active |
-| wp_bcc_cosmwasm_contracts | 36 prod · 3762 stage | CosmWasm contract candidate ledger: one row per (chain, contract address) with classification, retry state, cached operator-deny flag and emit marker (CosmWasm discovery 2026-08; this durable row IS the memory that stops previously-inspected contracts being reprocessed). ⛔ **DORMANT since the 2026-09-18 scanner freeze (bcc-trust #261)** — the scanner is the only thing that discovers contracts, so **no new row can be created**. Manual Add Collection does not touch this table at all: `ManualCollectionIntakeService` uses `ChainRepository` and `CollectionRepository::addManual()` only. ⚠ Not write-inert, though: the **unfrozen** Hide/Unhide stance actions (`VerifyCollectionsPage::ACTION_HIDE` / `ACTION_UNHIDE` → `CosmwasmDiscoveryService::syncDenyFlags()` → `CosmwasmContractRepository::setDenied()`) still UPDATE the `denied` column on an EXISTING row. That path inserts nothing — `syncDenyFlags()` skips an address with no row. Still declared, still created by dbDelta, still guarded — retained pending the deletion programme, which has not been carried out. Not orphaned | schema-cosmwasm-contracts.php / CosmwasmContractRepository | Active |
+| wp_bcc_discovery_runs | 0 prod · 10 stage | PR 7A durable run ledger for administrator-requested discovery scans (status, lease, attempts, bounded stop reason, work counts). PR 7.3 adds `chunks_used`, bounding one authorized multi-chunk session. Execution HISTORY only — it holds no cursor, so it is not a second progress table. ⛔ **DORMANT since the 2026-09-18 scanner freeze (bcc-trust #261)**: no new run can be created, claimed or executed, and `bcc_discovery_run_maintenance` no longer prunes, so existing history is retained rather than aged out. Still declared, still created by dbDelta, still guarded — retained pending the deletion programme, which has not been carried out. Not orphaned | schema-discovery-runs.php | RETIRED |
+| wp_bcc_cosmwasm_code_families | 102 prod · 742 stage | CosmWasm code-family inventory: one row per (chain, code id) with its CW-721 classification, bounded probe evidence, retry/backoff state and contract-enumeration cursor (CosmWasm discovery 2026-08; `not_cw721` is terminal and never routinely re-classified). ⛔ **DORMANT since the 2026-09-18 scanner freeze (bcc-trust #261)** — the scanner that discovers, classifies and enumerates is frozen, so **no new row can be created**. ⚠ Not write-inert, though: the **unfrozen** Cosmos endpoint switch (`ChainsPage::ACTION_ENDPOINT_SWITCH` → `CosmosEndpointTransition::execute()`) still calls `CosmwasmCodeFamilyRepository::clearContractCursors()` on EXISTING rows, so the table is maintained, not abandoned. Still declared, still created by dbDelta, still guarded — retained pending the deletion programme, which has not been carried out. Not orphaned | schema-cosmwasm-code-families.php / CosmwasmCodeFamilyRepository | RETIRED |
+| wp_bcc_cosmwasm_contracts | 36 prod · 3762 stage | CosmWasm contract candidate ledger: one row per (chain, contract address) with classification, retry state, cached operator-deny flag and emit marker (CosmWasm discovery 2026-08; this durable row IS the memory that stops previously-inspected contracts being reprocessed). ⛔ **DORMANT since the 2026-09-18 scanner freeze (bcc-trust #261)** — the scanner is the only thing that discovers contracts, so **no new row can be created**. Manual Add Collection does not touch this table at all: `ManualCollectionIntakeService` uses `ChainRepository` and `CollectionRepository::addManual()` only. ⚠ Not write-inert, though: the **unfrozen** Hide/Unhide stance actions (`VerifyCollectionsPage::ACTION_HIDE` / `ACTION_UNHIDE` → `CosmwasmDiscoveryService::syncDenyFlags()` → `CosmwasmContractRepository::setDenied()`) still UPDATE the `denied` column on an EXISTING row. That path inserts nothing — `syncDenyFlags()` skips an address with no row. Still declared, still created by dbDelta, still guarded — retained pending the deletion programme, which has not been carried out. Not orphaned | schema-cosmwasm-contracts.php / CosmwasmContractRepository | RETIRED |
 | wp_bcc_wallet_links | 9 | User↔wallet links per chain | schema-wallets.php / WalletRepository | Active |
 | wp_bcc_onchain_signals | 3 | Unified on-chain trust signals (wallet age/tx/role boost) | schema-core.php / OnchainSignalRepository | Active |
 | wp_bcc_onchain_claims | 0 | Entity claims (incl. page claims via entity_type='page') | schema-claims.php | Active |
@@ -185,9 +185,37 @@ schema-install path in `tables.php` is itself routed through the same runner.
 > `schema-*.php` installer stays exactly as it is.**
 >
 > **S9b — the drop, behind a verified backup.** Removes the three
-> `schema-*.php` files and their registry accessors, drops the three tables and
-> the eight columns, and flips these inventory rows to `Status = RETIRED` in
-> the same commit as the `CREATE TABLE` removal.
+> `schema-*.php` files and their registry accessors, and drops the three
+> tables and the eight columns.
+>
+> **⚠⚠ THESE INVENTORY ROWS FLIP TO `Status = RETIRED` IN A PRECEDING
+> UMBRELLA PR, NOT "in the same commit".** An earlier version of this note
+> said the same commit, which is impossible — the rows live in THIS repo and
+> the `CREATE TABLE` lives in bcc-trust — and it is also the wrong order.
+> Measured against a local replica of this repo's CI, all four combinations:
+>
+> | docs Status | bcc-trust | declared | documented | guard |
+> |---|---|---|---|---|
+> | Active | main (pre-S9b) | 65 | 65 Active, 1 ORPHAN | PASS, exit 0 |
+> | **RETIRED** | **main (pre-S9b)** | 65 | 62 Active, 4 ORPHAN | **PASS, exit 0, 0 info** |
+> | Active | S9b head | 62 | 65 Active, 1 ORPHAN | **FAIL, exit 1, 3 drift** |
+> | RETIRED | S9b head | 62 | 62 Active, 4 ORPHAN | PASS, exit 0 |
+>
+> Check 1a is *every documented-Active table must be declared in code*, and
+> `RETIRED` is treated as `ORPHAN` — expected absent from code, INFO-only —
+> so a RETIRED row whose table is still declared is not flagged at all. The
+> reverse order fails from the moment bcc-trust `main` loses the declarations.
+>
+> ⚠ And it cannot be dodged by timing: `.github/workflows/ci.yml` checks the
+> plugin out with no `ref:`, so `actions/checkout` takes bcc-trust's **default
+> branch**. This repo's CI always compares its docs against bcc-trust `main`,
+> never against a PR head.
+>
+> So during the window between the two merges the `Status` column reads
+> `RETIRED` while the prose below still says "still declared, still created by
+> dbDelta". That is accurate for the window and deliberate: the Status cell is
+> what the guard reads, and it has to move first. The prose is corrected when
+> S9b lands.
 >
 > **Why not one deploy.** A `SELECT` that names a dropped column does not
 > degrade — it fails outright. `ChainRepository` caches an `ERROR_SENTINEL`, so
@@ -204,7 +232,14 @@ schema-install path in `tables.php` is itself routed through the same runner.
 > 2. Removing the three `schema-*.php` files changes
 >    `BCC_TRUST_SCHEMA_VERSION`, which is a content hash over
 >    `glob(includes/database/schema-*.php)` plus two named self-installers:
->    **`1a0bf150b1` → `6e7f3a39e6`**. dbDelta therefore fires on the very next
+>    **`1a0bf150b1` → `db054e2c71`** (55 inputs → 52). An earlier version of
+>    this note said `6e7f3a39e6`, which was wrong twice over: the stamp hashes
+>    file BYTES, and this repo's working copies are CRLF while its blobs and
+>    the deployed files are LF; and it had been computed over a tree that still
+>    held the three deleted files. Recomputed two independent ways — from a
+>    `core.eol=lf` archive, and straight out of the object database with
+>    `git cat-file blob` — with `c1ecd1d9` as a control, which must reproduce
+>    `1a0bf150b1 (55 inputs)` and does. dbDelta therefore fires on the very next
 >    request after an S9b deploy, and a files-only rsync is enough to trigger
 >    it — there is no separate "run migrations" step.
 >
