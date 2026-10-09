@@ -66,11 +66,24 @@ Removing chain-wide discovery was never meant to remove per-contract work. All
 of the following are **live and unfrozen**:
 
 - **Manual Add Collection** — an administrator submits ONE chain and ONE
-  contract. It never enumerates. ⚠ What "validation" means is family-specific:
-  **Cosmos** runs one bounded CW-721 `contract_info` probe (up to two LCD
-  queries, falling back to `get_collection_info_and_extension` for SG721-shaped
-  contracts) and refuses a contract that answers neither; **EVM** and
-  **Solana** perform no provider validation and accept the row as entered.
+  contract. It never enumerates. ⚠⚠ **ALL THREE FAMILIES ARE VALIDATED, and all
+  three can call a provider.** `ContractValidator::validate()` dispatches a
+  probe per family — `CosmosContractProbe`, `EvmContractProbe`,
+  `SolanaContractProbe` — and `ManualCollectionIntakeService` persists nothing
+  unless the verdict is persistable.
+  - **Cosmos** — one bounded CW-721 `contract_info` probe (up to two LCD
+    queries, falling back to `get_collection_info_and_extension` for
+    SG721-shaped contracts); a contract answering neither is refused.
+  - **EVM** — probed, but ⚠ only on a chain inside `NftLaunchChains`. A chain
+    outside that scope is refused **without asking it anything**, so that
+    refusal is about scope, not about evidence.
+  - **Solana** — probed.
+
+  ⚠ An earlier revision of this file said **EVM** and **Solana** "perform no
+  provider validation and accept the row as entered". That was accurate when
+  written for the #161 freeze documentation and was superseded by PR E, which
+  built both validators; it was carried forward here without re-verification.
+  Corrected 2026-10-09.
 - **Targeted validation** — `CosmosContractProbe` still calls
   `CosmwasmClassifier::classify()`. The classification vocabulary and its
   error discrimination survive here, and only here.
