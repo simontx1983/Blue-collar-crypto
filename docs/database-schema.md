@@ -133,10 +133,10 @@ schema-install path in `tables.php` is itself routed through the same runner.
 | wp_bcc_push_subscriptions | 3 | Web-push VAPID subscriptions per user/device | TableRegistry::pushSubscriptions | Active |
 | wp_bcc_chains | 21 | Supported chains registry (RPC/REST/explorer config); also carries the three per-chain NFT flags — `cosmwasm_nft_discovery_enabled` (CosmWasm-scanner opt-in, 2026-08), plus `bcc_supports_nft_collections` and `manual_collection_discovery_enabled` (per-chain NFT capability model, 2026-08). All three are DEFAULT 0 with no backfill — installing or updating opts in exactly zero chains | schema-chains.php (Onchain) | Active |
 | wp_bcc_chain_nft_capabilities | 0 | Per-chain NFT driver OVERRIDES: one row per (chain, operation, driver) that DISABLES or REORDERS a driver the code registry already offers. Narrow-only — a row can never grant a driver operation the code does not implement, and an absent row means "registry default applies". Empty on every install | schema-chain-nft-capabilities.php / ChainNftCapabilityRepository | Active |
-| wp_bcc_chain_checkpoints | 7 | Per-chain indexer checkpoint + CU budget; also carries the `cw_*` CosmWasm-discovery state (backfill cursor, code-id watermark, pause, per-pass timestamps) added 2026-08 | schema-chain-checkpoints.php | Active |
-| wp_bcc_discovery_runs | 0 | PR 7A durable run ledger for administrator-requested discovery scans (status, lease, attempts, bounded stop reason, work counts). PR 7.3 adds `chunks_used`, bounding one authorized multi-chunk session. Execution HISTORY only — it holds no cursor, so it is not a second progress table | schema-discovery-runs.php | Active |
-| wp_bcc_cosmwasm_code_families | 0 | CosmWasm code-family inventory: one row per (chain, code id) with its CW-721 classification, bounded probe evidence, retry/backoff state and contract-enumeration cursor (CosmWasm discovery 2026-08; `not_cw721` is terminal and never routinely re-classified) | schema-cosmwasm-code-families.php / CosmwasmCodeFamilyRepository | Active |
-| wp_bcc_cosmwasm_contracts | 0 | CosmWasm contract candidate ledger: one row per (chain, contract address) with classification, retry state, cached operator-deny flag and emit marker (CosmWasm discovery 2026-08; this durable row IS the memory that stops previously-inspected contracts being reprocessed) | schema-cosmwasm-contracts.php / CosmwasmContractRepository | Active |
+| wp_bcc_chain_checkpoints | 8 | Per-chain indexer checkpoint + CU budget; also carries the `cw_*` CosmWasm-discovery state (backfill cursor, code-id watermark, pause, per-pass timestamps) added 2026-08 | schema-chain-checkpoints.php | Active |
+| wp_bcc_discovery_runs | 0 prod · 10 stage | PR 7A durable run ledger for administrator-requested discovery scans (status, lease, attempts, bounded stop reason, work counts). PR 7.3 adds `chunks_used`, bounding one authorized multi-chunk session. Execution HISTORY only — it holds no cursor, so it is not a second progress table | schema-discovery-runs.php | Active |
+| wp_bcc_cosmwasm_code_families | 102 prod · 742 stage | CosmWasm code-family inventory: one row per (chain, code id) with its CW-721 classification, bounded probe evidence, retry/backoff state and contract-enumeration cursor (CosmWasm discovery 2026-08; `not_cw721` is terminal and never routinely re-classified) | schema-cosmwasm-code-families.php / CosmwasmCodeFamilyRepository | Active |
+| wp_bcc_cosmwasm_contracts | 36 prod · 3762 stage | CosmWasm contract candidate ledger: one row per (chain, contract address) with classification, retry state, cached operator-deny flag and emit marker (CosmWasm discovery 2026-08; this durable row IS the memory that stops previously-inspected contracts being reprocessed) | schema-cosmwasm-contracts.php / CosmwasmContractRepository | Active |
 | wp_bcc_wallet_links | 9 | User↔wallet links per chain | schema-wallets.php / WalletRepository | Active |
 | wp_bcc_onchain_signals | 3 | Unified on-chain trust signals (wallet age/tx/role boost) | schema-core.php / OnchainSignalRepository | Active |
 | wp_bcc_onchain_claims | 0 | Entity claims (incl. page claims via entity_type='page') | schema-claims.php | Active |
@@ -152,6 +152,70 @@ schema-install path in `tables.php` is itself routed through the same runner.
 | wp_bcc_user_nft_selections | 2 | User-curated NFT showcase selections | schema-nft-selections.php | Active |
 | wp_bcc_helius_seen_signatures | 0 | Solana Helius webhook dedup (seen signatures) | schema-helius-seen-signatures.php | Active |
 | wp_bcc_search_terms | 5 | Search-analytics aggregate per (norm_term, vertical, day); self-heal installed, daily-pruned (bcc-search) | SearchTermsRepository (bcc-search) | Active |
+
+> ### ⚠ Scanner retirement: the three CosmWasm tables and the `cw_*` columns
+>
+> **They are NOT empty, and this inventory said they were.** The three rows
+> above carried `0` until 2026-10-09. Measured read-only on both environments
+> that day:
+>
+> | | production | staging |
+> |---|---|---|
+> | `wp_bcc_cosmwasm_code_families` | 102 rows / 128 KB | 742 rows / 528 KB |
+> | `wp_bcc_cosmwasm_contracts` | 36 rows / 96 KB | 3,762 rows / 2,832 KB |
+> | `wp_bcc_discovery_runs` | 0 rows / 112 KB | 10 rows / 112 KB |
+> | **total** | **138 rows / 336 KB** | **4,514 rows / 3,472 KB** |
+>
+> `wp_bcc_chain_checkpoints.cw_discovery_state` is also non-empty on **every**
+> one of its 8 rows on both environments. So dropping these is a
+> data-destroying operation that needs a verified backup, not a formality —
+> which is the opposite of what a `0` in this table implied.
+>
+> (The neighbouring `wp_bcc_chain_nft_capabilities` row's "Empty on every
+> install" claim was re-measured at the same time and **is** correct: 0 rows on
+> both environments.)
+>
+> ### The retirement is a TWO-DEPLOY sequence, and the order is load-bearing
+>
+> **S9a — code only, already prepared, no schema change.**
+> `ChainCheckpointRepository::COLUMNS` stops naming the seven `cw_*` columns
+> and `ChainRepository::COLUMNS` stops naming `cosmwasm_nft_discovery_enabled`;
+> the twelve `cw_*` repository writers that went callerless when the scanner
+> was deleted are removed. **Every table, every column and every
+> `schema-*.php` installer stays exactly as it is.**
+>
+> **S9b — the drop, behind a verified backup.** Removes the three
+> `schema-*.php` files and their registry accessors, drops the three tables and
+> the eight columns, and flips these inventory rows to `Status = RETIRED` in
+> the same commit as the `CREATE TABLE` removal.
+>
+> **Why not one deploy.** A `SELECT` that names a dropped column does not
+> degrade — it fails outright. `ChainRepository` caches an `ERROR_SENTINEL`, so
+> the operator-visible symptom of getting this backwards is **every chain
+> reporting UNKNOWN**, cached, with nothing in the log. Removing the columns
+> from the projection first means the drop cannot produce that.
+>
+> **⚠ Two traps in S9b specifically.**
+>
+> 1. `bcc_onchain_add_chains_cosmwasm_discovery_column()` must be deleted in
+>    the *same commit* as the column drop. It is retained by S9a and still
+>    re-adds the column on a schema pass, so a drop without it is undone by
+>    the next request.
+> 2. Removing the three `schema-*.php` files changes
+>    `BCC_TRUST_SCHEMA_VERSION`, which is a content hash over
+>    `glob(includes/database/schema-*.php)` plus two named self-installers:
+>    **`1a0bf150b1` → `6e7f3a39e6`**. dbDelta therefore fires on the very next
+>    request after an S9b deploy, and a files-only rsync is enough to trigger
+>    it — there is no separate "run migrations" step.
+>
+> **⚠ CI cannot police the columns.** `scripts/schema-drift-guard.php` compares
+> table names and index tuples and has no column-level parity at all, so the
+> `cw_*` drop is invisible to it in both directions. The checks that do cover
+> it are integration tests on real engines —
+> `ChainCheckpointRetiredColumnsIntegrationTest` and
+> `ChainsCapabilityColumnAnchorIntegrationTest`, both of which run the
+> projection with the retired columns present *and* dropped, on MySQL and
+> MariaDB.
 
 > The 17 legacy orphan tables previously listed here (`onchain_dao_stats`,
 > `onchain_treasury`, `user_locals`, `page_claims`, `wallet_signals`,
