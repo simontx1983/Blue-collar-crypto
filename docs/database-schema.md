@@ -1910,13 +1910,15 @@ Jackal answers `/cosmwasm/wasm/v1/code` with a real code list and is still off.
 
 ###### The environment switches are separate gates, and mode-scoped
 
-⛔ **Neither switch arms anything today.** Since the 2026-09-18 scanner freeze
-(bcc-trust #261) `ScannerFreeze::frozen()` is a hard-coded `true` that refuses
-every discovery entry point ahead of these constants, so defining either one
-starts nothing. They are described here as retained mechanism, not as an
-available control. The "SCHEDULED engine" referred to below is also gone in
-its own right: the four `bcc_cosmwasm_*` hooks were retired in 2026-08, before
-the freeze — see [cron-registry.md](cron-registry.md).
+**Neither switch arms anything, and there is no longer anything to arm.** The
+2026-09-18 scanner freeze (bcc-trust #261) made `ScannerFreeze::frozen()` a
+hard-coded `true` that refused every discovery entry point ahead of these
+constants. S4 then withdrew those entry points and **S8 deleted the class**, so
+there is no flag left to consult and no engine for either constant to start.
+They are described here as retained mechanism, not as an available control.
+The "SCHEDULED engine" referred to below is gone in its own right: the four
+`bcc_cosmwasm_*` hooks were retired in 2026-08, before the freeze — see
+[cron-registry.md](cron-registry.md).
 
 `BCC_COSMWASM_DISCOVERY_ENABLED` armed the SCHEDULED engine;
 `BCC_COSMWASM_BACKFILL_ENABLED` arms the HISTORICAL walk. Undefined means
