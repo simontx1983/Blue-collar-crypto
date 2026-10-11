@@ -1,4 +1,4 @@
-# Open findings handoff — six items, none fixed
+# Open findings handoff — seven items
 
 **Status: NOTHING HERE HAS BEEN FIXED.** Each item was observed while doing
 other work and is recorded here so it can be scheduled on its own terms.
@@ -279,6 +279,72 @@ modified 2026-10-06, untouched by this session.
 
 ## Summary
 
+---
+
+## 7. ⚠⚠ My earlier admin-page health probes proved nothing — a correction
+
+**Severity: the finding is low; the fact that I reported it as evidence is
+not.** Nothing is broken. What was wrong is what I claimed to have checked.
+
+### Observed
+
+Across the S8, S9b and post-S9b verification rounds I reported, for both
+staging and production, a line of the form:
+
+> admin pages load with zero fatal shapes — `/wp-admin/admin.php?page=bcc-onchain-verify-collections` HTTP 200
+
+Two things were wrong with it at once:
+
+1. **The slug does not exist.** The page is registered as
+   `bcc-verify-collections` (`VerifyCollectionsPage::PAGE_SLUG`), not
+   `bcc-onchain-verify-collections`. I never verified the slug against the
+   source; I inferred it from the sibling `bcc-onchain-*` pages.
+2. **The 200 came from following a login redirect.** The probes used
+   `curl -sL`, so they followed the 302 to `wp-login.php` and reported that
+   page's 200 as the admin page's.
+
+Measured on staging 2026-10-11, with `-L` removed so the redirect is visible:
+
+```
+HTTP 302  /wp-admin/admin.php?page=bcc-verify-collections        -> wp-login.php
+HTTP 302  /wp-admin/admin.php?page=bcc-onchain-verify-collections -> wp-login.php
+body bytes: 0        review table present: 0        search input present: 0
+```
+
+**The real slug and a slug that does not exist are byte-for-byte
+indistinguishable to an unauthenticated probe.** Both 302 to the same place
+with an empty body. So the probe could not have detected a broken page, a
+missing page, or a typo in its own URL — and the "zero fatal shapes" figure
+was a regex run over an empty string.
+
+### Impact
+
+No deployment decision rested on it alone: identity manifests, schema stamps,
+migration markers, acceptance checks, retained-data digests and application
+logs were measured properly and independently, and those are what the releases
+were judged on. The releases themselves stand.
+
+What does not stand is any sentence of mine claiming an admin page *rendered*
+on staging or production. **No authenticated admin rendering has ever been
+verified on either environment.** It has only been verified in the disposable
+container.
+
+⚠ The completed release evidence has deliberately NOT been rewritten to imply
+otherwise. The S9b production record says what was actually measured.
+
+### Proposed next action
+
+1. When an unauthenticated probe is used, assert the **302 and the Location**,
+   not a followed 200 — and never run a fatal-shape regex over a body that is
+   empty by construction. A probe that cannot fail is not a check.
+2. For authenticated rendering, use the disposable environment. It is now
+   reproducible: WordPress 6.7 + MariaDB 11.8.9 + bcc-core + bcc-trust, with
+   **a custom image carrying the GMP extension** — bcc-core returns before
+   defining `BCC_CORE_VERSION` without it, so bcc-trust silently installs no
+   schema on the stock WordPress images.
+3. Treat the slug as something to look up, not infer. `PAGE_SLUG` is the only
+   authority.
+
 | # | Item | Severity | Blocks S9b? | Fixed? |
 |---|---|---|---|---|
 | 1 | Stale deployed `.git` (#286) | low — 403, not disclosure | no | no |
@@ -287,7 +353,9 @@ modified 2026-10-06, untouched by this session.
 | 4 | `pr77-mutation-controls.sh` broken | informational | no | no |
 | 5 | Dirty vendor worktrees | ⚠ medium — a careless commit ships unreviewed deps | no | no |
 | 6 | Memory index has no recovery path | ⚠ medium — one bad write loses the map | no | no |
+| 7 | My admin-page probes proved nothing | ⚠ the probe, not the code | no | corrected |
 
-None of the six blocks S9b. Items 3 and 5 are the two worth scheduling
+None of the seven blocks S9b, and item 7 is a correction to my own reporting
+rather than a defect in the product. Items 3 and 5 are the two worth scheduling
 soonest: 3 because a false log line is worse than a noisy one, and 5 because
 the failure mode is a commit nobody meant to make.
