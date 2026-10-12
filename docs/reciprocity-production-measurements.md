@@ -8,7 +8,7 @@
 
 | | |
 |---|---|
-| `wp_users` | **24** — internal/operator accounts |
+| `wp_users` | **24** — ⚠ no ownership claim made; see the uncertainty note |
 | `bcc_trust_user_info` | **24**, 1:1 with `wp_users`, **0 orphaned** |
 | ⭐ `votes_cast > 0` | **0 of 24** |
 | ⭐ `endorsements_given > 0` | **0 of 24** |
@@ -21,11 +21,19 @@
 | `bcc_wallet_links` | 2 |
 | ring transients / pattern rows | **0 / 0** |
 
-**So the 24 and the 98 are internal accounts and repeated analysis of three of them, not a
-member population.** ⚠ And because `votes_cast` and `endorsements_given` are zero across the
-board, **no reciprocity or fan-in rule has ever had an input** — which is the direct
-explanation for the zero transients, zero patterns and zero attestations, rather than merely an
-observation alongside them.
+**So the 98 rows are repeated analysis of three accounts, not a member population.** ⚠ And
+because `votes_cast` and `endorsements_given` are zero across the board, **no reciprocity or
+fan-in rule has ever had an input** — which is the direct explanation for the zero transients,
+zero patterns and zero attestations, rather than merely an observation alongside them.
+
+⚠⚠ **What is NOT claimed: that these are internal accounts.** An earlier draft of this
+section called them "internal/operator accounts". **That was an inference from email domains
+and login presence, and an email domain is not proof of who owns an account.** It is dropped.
+
+The load-bearing fact needs no such claim and is directly measured: **none of the 24 has cast a
+vote or an endorsement.** Whoever they belong to, **none of them can have been affected by any
+of these mechanisms**, because none of the mechanisms has had an input. That is sufficient for
+every decision in these documents, and it does not require identifying anyone.
 
 ⭐ A useful side-effect: those 3 `behavior_ultra_fast_sessions` rows all score **0**, which is
 live confirmation of a #314 assertion — `behavior_<flag>` triggers add no points.
@@ -39,13 +47,13 @@ proposed or needed.
 
 ### Uncertainty, stated rather than smoothed over
 
-- Accounts were classified by **email domain and login presence, not identity**: 17 `@gmail.com`,
-  2 `@stage.bluecollarcrypto.io`, 1 `@bluecollarcrypto.io`, 1 `@gelotto.io`, plus 3 others; 9
-  have never logged in; **1** matches a test/fixture email pattern. Registrations span **21
-  distinct days**, so this is not a seeded burst.
-- ⚠ I therefore **cannot** separate "internal tester" from "early real signup" from the database
-  alone. What makes that not matter for this decision: **none of the 24 has cast a vote or an
-  endorsement**, so none of them can have been affected by any of these mechanisms.
+- ⚠⚠ **Account ownership is NOT established and is not needed.** Registrations span **21
+  distinct days** (so not a seeded burst) and **9 of 24 have never logged in** — both facts
+  about *rows*, carrying no claim about *people*. The only conclusion drawn is the measured one:
+  **0 votes and 0 endorsements**, therefore no exposure to any of these mechanisms.
+- ⚠ Specifically **not** relied on: email-domain composition. It was in an earlier draft as a
+  classification signal and has been removed, because a domain cannot establish who owns an
+  account and nothing here needs it to.
 - `bcc_trust_tier_days` holds **1435** rows against 24 users (~60 each), which suggests a
   backfill or long accrual. Unrelated to scoring; noted so it is not mistaken for member
   activity.
