@@ -1,6 +1,10 @@
 # Proposal — `CohortOverlapDampener` (the ×0.80 attestation dampener)
 
-**Status: PROPOSAL. Nothing implemented. No `weight_at_time` rewrite, no score reset.**
+**Status: PROPOSAL. ⛔ DELIBERATELY UNCHANGED — presented, not altered.**
+
+> Left as-is on purpose. §4 now records its interaction with reciprocity **after**
+> bcc-trust #315, which removes the compounding this document originally led with.
+> Concrete alternatives are in §5. No `weight_at_time` rewrite, no score reset.
 
 Found during the A1/A2/B/C scoring-separation work (bcc-trust #314), which did not touch it —
 it adds no fraud points. Like its sibling it produces an **adverse ranking effect from
@@ -101,11 +105,39 @@ reading it.
 - 20% off the cast's contribution to **the target's** score. Again the cost lands on the
   person vouched for.
 - **No fraud score, no risk level, no restriction, no allegation, no operator-visible flag.**
-- ⚠ **It compounds with the reciprocity dampener**: a mutual pair inside a dense local
-  community gets `0.50 × 0.80 = 0.40` — **a 60% reduction**, which is the normal shape of a
-  long-standing trade relationship in one town. Neither mechanism knows the other fired.
-  **This is the strongest argument for deciding them together even though they are proposed
-  separately.**
+### ⚠ Interaction with reciprocity — CORRECTED, because bcc-trust #315 changes it
+
+An earlier draft of this document argued that the strongest reason to act here was the
+compounding: `0.50 × 0.80 = 0.40`, a 60% reduction for a mutual pair inside a dense local
+community. **bcc-trust #315 removes that**, by restoring the reciprocity multiplier to
+baseline. The compounding argument was real but is now spent, and it would be wrong to keep
+citing it.
+
+| Scenario | Before #315 | After #315 |
+|---|---|---|
+| independent attestor, low overlap | 1.00 | **1.00** |
+| independent attestor, overlap ≥50% | 0.80 | **0.80** — unchanged |
+| mutual pair, low overlap | 0.50 | **1.00** |
+| ⚠ mutual pair, overlap ≥50% | **0.40** | **0.80** |
+
+So after #315 this dampener becomes a **standalone ×0.80**, and the two mechanisms no longer
+multiply. Wallet age still multiplies in independently, so the floor is lower than 0.80 for a
+new wallet — that is unchanged and is a separate mechanism again.
+
+**What this does to the case for changing it:** it weakens the urgency considerably. The
+remaining objections stand on their own merits and are narrower:
+
+1. the **small-denominator** unfairness (§3) — an honest second-ever vouch trips at one shared
+   backer;
+2. the **cliff** — 49.9% is ×1.00 and 50.0% is ×0.80, where the spec asked for graduated;
+3. the rule **penalises community density**, which is what a real local trade network is.
+
+⚠ (1) is a defect on any reading. (2) is a documented deviation from the spec whose own
+justification — pending calibration — never happened. (3) is the actual policy question, and it
+is the one the direction reaches.
+
+**No change is proposed here.** This section exists so the interaction is on record before any
+decision, as asked.
 - With wallet age also multiplying in, the floor is lower still.
 - ⭐ Recorded per cast as `cohort_overlap_mult` in the audit log, so the history is
   retrievable.
@@ -179,8 +211,12 @@ FROM (
 GROUP BY cohort_size ORDER BY cohort_size LIMIT 20;
 ```
 
-⚠ `at_exactly_0_40_both_fired` is the compounding case from §4 and is the single number most
-worth seeing.
+⚠ `at_exactly_0_40_both_fired` was the compounding case. **After bcc-trust #315 no NEW row can
+reach 0.40 by that route**, so a non-zero count there is now a count of rows cast *before* that
+change — useful as a historical marker, no longer a live exposure.
+
+⚠ Staging reconciliation found **0 attestation rows**, so on current data every one of these
+returns zero. They are written for whenever there is something to measure.
 
 ## 8. Decisions needed
 
@@ -190,6 +226,10 @@ worth seeing.
    reading and does not pre-empt (1).
 3. **Graduated (B) or observation-only (E)?** E is the separation architecture; it needs the
    Tier 2 queue first.
-4. ⚠ **Accept the compounding with the reciprocity dampener (0.40 for an ordinary
-   long-standing local relationship), or cap the combined reduction?**
+4. ⚠ **Superseded by bcc-trust #315.** This asked whether to accept the `0.40` compounding or
+   cap it. #315 restores reciprocity to baseline, so the combined case becomes `0.80` and the
+   two mechanisms no longer multiply. No decision is needed on the compounding itself — only
+   on whether a standalone ×0.80 for community density is wanted.
 5. Confirm forward-only, and accept that past overlap ratios are **not recomputable**.
+   ⚠ Lower stakes than first written: staging reconciliation found **0 attestation rows**, so
+   there is no historical population here to reason about yet.

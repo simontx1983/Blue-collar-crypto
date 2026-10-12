@@ -1,6 +1,13 @@
 # Proposal — `ReciprocityPenaltyResolver` (the ×0.50 attestation dampener)
 
-**Status: PROPOSAL. Nothing implemented. No `weight_at_time` rewrite, no score reset.**
+**Status: ⭐ OPTION A IMPLEMENTED IN bcc-trust #315 (unmerged). No `weight_at_time` rewrite, no score reset.**
+
+> #315 restores `RECIPROCITY_MULTIPLIER` to **1.00** — §5 option A — and retains the
+> detection, auditing it as `reciprocity_detected` so the observation survives the
+> multiplier going to baseline. It deliberately does **not** take option B (gating the
+> diversity bonus): that would lower some scores, and the old spec is design evidence, not
+> standing authorization. Current diversity behaviour is characterised by tests instead.
+> Options B–C below remain open.
 
 Found during the A1/A2/B/C scoring-separation work (bcc-trust #314). That change removed the
 four reciprocity contributions to `fraud_score`. **This mechanism was not in its scope and was

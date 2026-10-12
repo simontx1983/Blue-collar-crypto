@@ -2,9 +2,62 @@
 
 **Status: PREPARED FOR REVIEW. ⛔ NOT EXECUTED. Awaiting explicit scoped authorization.**
 
-These establish how many real accounts carry a reciprocity-only fraud record and what it has
-cost them. They exist because bcc-trust #314 stopped **new** reciprocity penalties but could
-not repair **old** ones, and deciding whether anything further is warranted needs a count.
+## ⚠⚠ Read this first — the staging reconciliation reframes why these exist
+
+**There are no real users yet.** Measured read-only on staging, 2026-10-12:
+
+| | |
+|---|---|
+| `wp_users` | **24** — internal/operator accounts |
+| `bcc_trust_user_info` | **24**, 1:1 with `wp_users`, **0 orphaned** |
+| ⭐ `votes_cast > 0` | **0 of 24** |
+| ⭐ `endorsements_given > 0` | **0 of 24** |
+| `fraud_score > 0` | **0 of 24**; max score 0, max peak 0 |
+| `is_suspended` | **0** |
+| `bcc_trust_fraud_analysis` | **98 rows — but only 3 distinct users**, across 39 days, **every row scoring 0** |
+| its trigger sets | **95 × `[]`**, 3 × `["behavior_ultra_fast_sessions"]` — no reciprocity, no fan-in |
+| `bcc_trust_attestations` | **0** |
+| `bcc_nft_holdings` | **0** |
+| `bcc_wallet_links` | 2 |
+| ring transients / pattern rows | **0 / 0** |
+
+**So the 24 and the 98 are internal accounts and repeated analysis of three of them, not a
+member population.** ⚠ And because `votes_cast` and `endorsements_given` are zero across the
+board, **no reciprocity or fan-in rule has ever had an input** — which is the direct
+explanation for the zero transients, zero patterns and zero attestations, rather than merely an
+observation alongside them.
+
+⭐ A useful side-effect: those 3 `behavior_ultra_fast_sessions` rows all score **0**, which is
+live confirmation of a #314 assertion — `behavior_<flag>` triggers add no points.
+
+**What this changes about these measurements.** Their purpose is **not** to size a remediation
+programme; there is nothing to remediate. They are a **pre-launch correctness check**: run them
+once there is real activity, to confirm the forward fixes behave as intended on real data. The
+"historical limitations" sections in the sibling proposals remain accurate as analysis but are
+**not prerequisites** for any fix, and no reversal ledger, appeal path or ledger migration is
+proposed or needed.
+
+### Uncertainty, stated rather than smoothed over
+
+- Accounts were classified by **email domain and login presence, not identity**: 17 `@gmail.com`,
+  2 `@stage.bluecollarcrypto.io`, 1 `@bluecollarcrypto.io`, 1 `@gelotto.io`, plus 3 others; 9
+  have never logged in; **1** matches a test/fixture email pattern. Registrations span **21
+  distinct days**, so this is not a seeded burst.
+- ⚠ I therefore **cannot** separate "internal tester" from "early real signup" from the database
+  alone. What makes that not matter for this decision: **none of the 24 has cast a vote or an
+  endorsement**, so none of them can have been affected by any of these mechanisms.
+- `bcc_trust_tier_days` holds **1435** rows against 24 users (~60 each), which suggests a
+  backfill or long accrual. Unrelated to scoring; noted so it is not mistaken for member
+  activity.
+- ⚠ My first probe named `bcc_onchain_holdings` and reported it ABSENT. That was **my naming
+  error** — the real table is **`bcc_nft_holdings`**, which exists and is empty.
+
+---
+
+## The measurements themselves
+
+These establish how many accounts carry a reciprocity-only fraud record and what it has cost
+them, for whenever that question becomes live.
 
 **Properties, all deliberate:**
 

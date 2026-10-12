@@ -1,6 +1,15 @@
 # Proposal — `fan_in_coordination` (+15 per voter, and a ≥65 risk record)
 
-**Status: PROPOSAL. Nothing implemented. No score reset, no historical repair.**
+**Status: ⭐ OPTIONS A AND B IMPLEMENTED IN bcc-trust #316 (unmerged). No score reset, no historical repair.**
+
+> #316 removes the `+15` per voter (option A) and stops writing any record against the page
+> owner (option B), replacing it with a system-level pattern row at `user_id = 0` carrying
+> `punitive => false` and `corroborated => false`. Detection, all three thresholds, the audit
+> row and the dedup transient are unchanged. ⚠ Measured first: **zero** `fan_in_coordination`
+> rows exist on staging, so this has no historical footprint at all.
+>
+> Options C–E below remain open; D (promoting the three hard-coded literals to config) is
+> still worth doing.
 
 Found during the A1/A2/B/C scoring-separation work (bcc-trust #314), which did **not** change
 it. ⚠⚠ **Unlike the two attestation dampeners, this mechanism DOES add fraud points** — it was
