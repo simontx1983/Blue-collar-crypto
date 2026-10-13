@@ -6627,6 +6627,8 @@ never hosts a discussion** (`peepso_disable_comments` is set on the backing post
 - **Pinning promotes on the validator page only** and never reorders the general feed. A
   validator wanting fresh feed placement publishes a new announcement.
 - Archival withdraws the activity.
+- **No reactions, no stoke, no helpful mark** — see §4.32.15. An announcement is an official
+  notice, not a post competing for engagement.
 
 #### 4.32.9 Error codes
 
@@ -6965,6 +6967,92 @@ POST /wp-json/bcc/v1/validators/4471/announcements
 
 Identical whether the page is unclaimed, claimed by somebody else, or contested. The internal
 distinction is written to the audit log and never to the response (§4.32.2).
+
+#### 4.32.15 No reactions — and why naming a grammar cannot express it
+
+**Product decision.** An announcement is an **official information billboard** on a validator
+page — the thing that removes the need to pin ordinary posts. It is **not** a post competing for
+engagement. So:
+
+**Announcements carry no reactions, no stoke and no helpful mark, and they contribute nothing
+to trust, reputation, fraud scoring or feed ranking.**
+
+The discussion, the permalink and the announcement bar are **unaffected** — the billboard has a
+comment thread (§4.32.7) and a canonical detail page, and only the *engagement signals* are
+absent.
+
+##### ⚠ The decision cannot be implemented by assigning a reaction grammar
+
+It would be natural to register `announcement` in the post-kind → grammar map and be done.
+**That would be a false fix**, for a reason the frontend documents against itself: the
+`kind_grammar` / `counts` / `viewer_reaction` trio is **still hydrated on the wire but is unread
+by the client** — the per-kind reaction rail was replaced by a single **Stoke** control, which
+reads `heat_stage` / `viewer_has_stoked` / `stoke_count` and **never consults the grammar at
+all**. A `trust`, `social` or even an empty grammar therefore changes nothing a reader can see.
+
+Two further traps make a grammar-only change actively misleading:
+
+1. **The reaction block is never omitted.** The normalizer emits
+   `reactions ?? emptyReactionsFor($postKind)`, and an unregistered kind defaults to the
+   **social** grammar — so doing nothing produces a zero-filled `{like, love, haha, wow, fire}`
+   dict on an operator's official notice.
+2. **The client's fallback is fail-OPEN by design.** When the stoke fields are absent — the
+   state a not-yet-shipped backend produces — the rail deliberately *still renders* a flame
+   ("never throws, never blanks the rail"), lighting it from any non-zero legacy count. And the
+   read-only variant only **disables** the control; it still renders it.
+
+So the absence of reactions has to be stated **explicitly, in three places**, and each half must
+hold on its own.
+
+##### What "no reactions" requires
+
+| Layer | Change | Why it is not optional |
+|---|---|---|
+| **Shared vocabulary** (bcc-core) | A new, explicitly-named grammar meaning *no reactions exist*, exposing an **empty kind set**, with `announcement` mapped to it | Makes the intent legible instead of inferred, empties `counts` so no legacy-count fallback can light, and makes the set-reaction validator reject **every** kind — so the reactions write path fails closed with no new code |
+| **Write paths** (bcc-trust) | The **stoke** and **helpful-mark** endpoints refuse an announcement activity | These two ignore the grammar entirely. Without this, a client regression or a direct request records real engagement |
+| **Client** (bcc-frontend) | The shared action bar renders **no** stoke and **no** helpful control for this kind, keyed on the item's own kind | The server-side fix is not enough on its own: the client's documented fallback renders the control precisely when the server sends nothing |
+
+**The two halves are deliberately redundant.** The server refuses the write even if the client
+renders a control; the client renders nothing even if the server regresses and sends a social
+grammar with counts. Neither depends on the other being correct.
+
+⚠ **Nothing above changes any other content kind.** The grammar value is additive, the endpoint
+refusals are scoped to module 205, and the client guard is a closed inventory of kinds that
+currently contains one entry. A reviewer should be able to confirm that every other kind's
+reaction behaviour is byte-identical.
+
+##### What this removes, stated precisely
+
+- **Reactions** (`solid` / `like` / `love` / `haha` / `wow` / `fire`): no counts, no viewer
+  reaction, and the set-reaction request is rejected.
+- **Stoke**: no control, no write. ⚠ Stoke is **cosmetic for trust** — it writes no score — but
+  it **is** a feed-ranking input via aggregate heat. Removing it therefore also keeps
+  announcements out of heat-based ranking, which is the intended behaviour for a billboard and
+  is recorded here so it is not discovered later as a surprise.
+- **Mark helpful**: no control, no write. ⚠ **This is the reputation-bearing one.** A helpful
+  mark mints rank evidence crediting the *content author*, so leaving it available would let
+  announcements move the operator's own standing — exactly what this decision rules out. It is
+  removed on that ground, not because it is a "reaction".
+
+**Kept:** the comment thread, the comment count, Share, the permalink, the detail page and the
+announcement bar.
+
+##### Reporting is a separate question
+
+**Reporting is not a reaction** and is not decided here. A reaction is a reader expressing
+approval; a report is a reader escalating to moderation. Whether an announcement is reportable
+remains an **open proposal** — it needs a moderation queue-kind registration that this section
+deliberately does not make, and the answer does not follow from the no-reactions decision in
+either direction.
+
+##### The one hydration mismatch this exposes
+
+⚠ `peepso_disable_comments` is set on the backing post (§4.32.8), and announcement comments live
+in their own comment type rather than as activity comments. The feed card's `comment_count` is
+hydrated from the **activity** comment count, so it would read **0** while the detail page shows
+the real total. The feed hydrator must either source the announcement's own count or the card
+must show no count. Recorded here because it is the kind of inconsistency that reads as a bug
+report rather than a design gap.
 
 ## 5. Encoded rules — quick reference
 
@@ -7322,6 +7410,11 @@ assumptions had nothing here to verify against.**
   four cases.
 - **§4.32.14 Worked examples** for create-scheduled, the active list, the rotator, comments with
   the page-level gate, and an ownership denial.
+- **§4.32.15 No reactions** — the product decision, why a reaction grammar cannot express it,
+  the three layers that can, and the precise list of what is removed versus kept. Also records
+  the `comment_count` hydration mismatch the decision exposes: the feed card's count comes from
+  the *activity* comment count, which is zero for an announcement because
+  `peepso_disable_comments` is set, while the detail page shows the real total.
 
 **Corrected:**
 
@@ -7339,20 +7432,27 @@ assumptions had nothing here to verify against.**
 claims are a separate question, neither accepted here nor affected by this section, and
 existing collection-creator permissions on page bio and image are unchanged.
 
-**Still open, and deliberately not decided here** — both are product calls, and both are
-cross-repo:
+**Reactions — DECIDED, and recorded as §4.32.15.** An announcement is an official information
+billboard, not a post competing for engagement: **no reactions, no stoke, no helpful mark, and
+no contribution to trust, reputation, fraud scoring or feed ranking.** The discussion,
+permalink, detail page and announcement bar are unaffected.
 
-1. **Reaction grammar for the `announcement` feed kind.** `ReactionGrammarMap::grammarFor()`
-   defaults an unregistered kind to **social** (like/love/haha/wow/fire) rather than **trust**
-   (`solid`), by design — the map's own note says defaulting to trust would be the worse error.
-   So an unregistered `announcement` kind silently gets emoji on an operator's official notice.
-   Registering it either way is a one-line bcc-core change that must land with §2.11.
-2. **Reportability.** `ContentReportRepository`'s queue-kind map covers `review` and `blog`
-   only. Whether an announcement is reportable content decides whether module 205 joins that
-   map; leaving it out means announcements cannot be reported at all, which may be correct for
-   an operator-authored notice and is not obviously so.
+⚠ The decision deliberately **does not** take the obvious route of registering `announcement` in
+the post-kind → grammar map. That would be a false fix: the `kind_grammar` trio is still
+hydrated on the wire but is **unread by the client**, which replaced the per-kind reaction rail
+with a single Stoke control that never consults the grammar. Assigning a grammar — social,
+trust, or empty — changes nothing a reader can see, while the client's documented fail-open
+fallback renders a stoke control precisely when the server sends nothing. §4.32.15 states what
+is actually required, in three layers, with the server and client halves deliberately redundant
+so neither depends on the other being correct. Nothing in it changes any other content kind.
 
-Neither map is touched by this entry.
+**Still open — one item, and it is NOT the same question as reactions.**
+
+**Reportability.** A reaction is a reader expressing approval; a report is a reader escalating to
+moderation. The moderation queue-kind map covers `review` and `blog` only, and whether an
+announcement is reportable needs its own registration. It stays an **open proposal**: the
+answer does not follow from the no-reactions decision in either direction, and this entry makes
+no moderation change.
 
 ### v1.77 — 2026-09-16 — additive — `holdings_status` on the collection-stance panel (+ retraction of the marketplace rollup)
 
