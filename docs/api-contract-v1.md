@@ -812,8 +812,15 @@ Appears on Feed item view-models and on Card view-models that support reactions.
 | `"trust"`  | `review`, `dispute_signed`, `page_claim`, `project_drop`, `nft_drop`, `signal` | `solid` | restrained, intentional |
 | `"social"` | `status`, `watch_batch` (legacy `watch_batch`), `blog_excerpt` | `like`, `love`, `haha`, `wow`, `fire` | expressive, emoji-forward |
 | `"tribal"` | _(reserved — V2)_ | _(reserved — e.g. `same_wallet`, `onchain_confirm`)_ | identity-forward |
+| `"none"` (v1.78) | `announcement` | **none — the kind set is empty** | no reaction affordance at all |
 
-`counts` always carries all kinds for the active grammar with zero-fill. The frontend never derives the kind set from `post_kind` — it reads `kind_grammar`.
+`counts` always carries all kinds for the active grammar with zero-fill — so under `"none"` it is an **empty object**, and `viewer_reaction` is always `null`.
+
+**`"none"` is a statement that reactions do not apply, and it is deliberately NOT `"tribal"`.** `tribal` is reserved for a V2 grammar that *will* carry kinds (`same_wallet`, `onchain_confirm`); borrowing it for "no reactions" would mean reclaiming it later and would read as "identity-forward reactions are coming" on content that is never getting any. An empty kind set also makes the set-reaction validator reject every kind, so a write under this grammar fails closed with no additional code.
+
+⚠ **`"none"` alone does not remove a reaction control from the client, and must not be relied on to.** See §4.32.15: the per-kind reaction rail was replaced by a single Stoke control that reads `heat_stage`/`viewer_has_stoked`/`stoke_count` and does not consult `kind_grammar`. The grammar states intent and closes the reactions *write* path; suppressing the rendered affordance is a separate, additional change.
+
+⚠ **Correction (v1.78).** This section previously said *"The frontend never derives the kind set from `post_kind` — it reads `kind_grammar`."* That is no longer true, and the staleness is load-bearing rather than cosmetic: the frontend reads **neither**. The `kind_grammar`/`counts`/`viewer_reaction` trio is still hydrated on the wire but is unread by the client, which is precisely why "name a grammar" looked like a sufficient fix for §4.32.15 and is not. The trio remains contract for wire fidelity and for the reactions endpoint's own validation.
 
 **`solid` is the only trust reaction; `vouch`/`stand_behind` are attestations, not reactions.** `solid` is a lightweight ack (powers the "solids" stat) and confers no trust on its own. Vouching for a person/entity is **not a post reaction** — it moved to the trust-attestation layer (§J): the byline **Vouch** toggle and the §J.6 profile actions cast a `vouch` (or `stand_behind`) *attestation* against the target's self-page via `POST /me/attestations`, and those move the trust score through `AttestationScoreSynthesis`. The `vouch` and `stand_behind` **reaction** kinds were retired when vouch relocated to the attestation layer — a `vouch` reaction on `POST /reactions` is now rejected with `bcc_invalid_request`. Do not confuse the retired reaction with the live §J attestation of the same name.
 
