@@ -6744,11 +6744,52 @@ and rows in an owner-scoped list. Never by the Card.
 | `can_manage_comments` | may remove any comment on this announcement |
 | `can_comment` | may post a comment on this announcement |
 
-`Announcement.capabilities` is **optional**: attached for a viewer who may manage, absent for
-public readers. **Absence and malformation both fail closed.** On an archived announcement
-`can_edit`, `can_pin` and `can_comment` are `false` with `reason_code: announcement_archived`,
-while `can_manage_comments` stays `true` for the operator (§4.32.7 keeps archived discussions
-moderatable).
+`Announcement.capabilities` is **optional**. **Absence and malformation both fail closed.** On an
+archived announcement `can_edit`, `can_pin` and `can_comment` are `false` with
+`reason_code: announcement_archived`, while `can_manage_comments` stays `true` for the operator
+(§4.32.7 keeps archived discussions moderatable).
+
+##### ⚠⚠ Which responses may carry `capabilities` — and the public list may not
+
+Resolved explicitly, because "attached for a viewer who may manage" was open enough to permit it
+on **any** response carrying an `Announcement`, the public list included.
+
+| Response | `capabilities` | Why |
+|---|---|---|
+| `GET /validators/:pageId/announcements` (public list) | **never** | published public data only |
+| `GET /validators/:pageId/announcements/rotator` | **never** | same data, same rule |
+| `GET /validators/:pageId/announcements/:id` (detail) | **yes**, row-scoped | the surface that acts on one row |
+| `GET /me/validators/:pageId/announcements` (owner list) | **yes**, row-scoped | owner-only by definition |
+| `GET /announcements/:id/comments` | `can_comment` only | the comment gate, per page |
+| validator `Card.announcements` | owner-level only (`can_create`, `can_manage`) | the feature gate |
+
+**The public list and the rotator are PUBLISHED PUBLIC DATA ONLY.** No `capabilities`, no
+`status`, no `body`, and no draft, scheduled or `blocked` row — ever, for any viewer, **including
+the operator**. An operator reading the public list sees exactly what an anonymous reader sees;
+their own drafts are on `/me/...` and nowhere else.
+
+Three things follow, and each is a property worth having rather than a restriction:
+
+1. **The public list is viewer-independent.** Two readers of the same page and cursor get
+   byte-identical responses, so it is safely cacheable and its cache key needs no viewer
+   component. ⚠ A consumer that scopes its list cache per viewer **on the grounds that the list
+   is viewer-dependent** no longer has that reason. Scoping stays harmless — and is still
+   correct for detail and comments — but the justification for the list changes.
+2. **Private state cannot leak through the public collection**, because the collection carries no
+   field that could express it. That is stronger than filtering: there is no field to filter.
+3. **Owner surfaces are the only place permission is expressed**, so there is exactly one place
+   to audit.
+
+⚠ **Owner-scoped permission is determined SERVER-SIDE and never inferred by the client.** The
+owner list, the detail response and the comments response each carry the capabilities their own
+surface needs, resolved from the authoritative operator resolution (§4.32.2) at request time. A
+client must not derive a permission from the presence of a row, from page authorship, from a
+`can_manage` it saw elsewhere, or from having been able to read something at all.
+
+⚠ **Ownership denial is generic on the wire.** Every ownership refusal is `bcc_forbidden` with
+`reason_code: not_claimer`, whatever the underlying cause (§4.32.2) — and a denial must not
+differ between "no such announcement" and "not yours": an unauthorized read of a non-public row
+is **404**, never 403 (§4.32.4).
 
 `can_comment` is the **only** comment gate the client may read, and the server resolves it from
 every condition bearing on this one announcement: authentication, member standing,
@@ -6784,7 +6825,7 @@ rather than assumed. References are to the accepted frontend handoff branches.
 | `announcements` (presence) | Card | the validator profile (tab + bar mount), and the canonical detail route, which returns "not found" when the block is absent |
 | `announcements.capabilities.can_create` | owner | the composer's entry point |
 | `announcements.capabilities.can_manage` | owner | the management surface's entry point |
-| `capabilities.can_pin` | row | the owner row actions (both the gate and its denial copy) |
+| `capabilities.can_pin` | row — **detail / owner list only** | the owner row actions (both the gate and its denial copy) |
 | `capabilities.can_comment` | row, on the **comments response** | the comment composer's gate |
 | `capabilities.can_edit` | row | **declared, not yet read** — the edit surface is a later slice |
 | `capabilities.can_archive` | row | **declared, not yet read** — as above |
@@ -6917,8 +6958,39 @@ GET /wp-json/bcc/v1/validators/4471/announcements?state=active&limit=20
   "_meta": { "version": "1.0" } }
 ```
 
-Pinned first, then newest first. No `capabilities` on these rows — this is a public read. No
-`status` either, per §4.32.13.
+Pinned first, then newest first. **No `capabilities` on these rows, and none for
+any viewer** — a public read is published public data only, so the operator gets this
+same response (§4.32.11).
+No `status` and no `body` either, per §4.32.13 and §4.32.3.
+
+**Owner list — the only route that returns unpublished rows, and the only list that carries
+capabilities.**
+
+```http
+GET /wp-json/bcc/v1/me/validators/4471/announcements?status=draft
+```
+```json
+{ "data": {
+    "items": [
+      { "id": "ann_4492", "title": "Maintenance window",
+        "summary": "Draft — not yet published.",
+        "published_at": null, "updated_at": "2026-10-12T11:04:00Z",
+        "is_pinned": false, "is_archived": false, "archived_at": null,
+        "comment_count": 0, "comments_enabled": true,
+        "links": { "self": "/v/blacksmith-node/a/4492" },
+        "capabilities": {
+          "can_edit":            { "allowed": true,  "unlock_hint": null, "reason_code": null },
+          "can_pin":             { "allowed": false, "unlock_hint": null, "reason_code": "announcement_not_published" },
+          "can_archive":         { "allowed": true,  "unlock_hint": null, "reason_code": null },
+          "can_manage_comments": { "allowed": true,  "unlock_hint": null, "reason_code": null },
+          "can_comment":         { "allowed": false, "unlock_hint": null, "reason_code": "announcement_unavailable" } } }
+    ],
+    "pagination": { "next_cursor": null, "has_more": false } },
+  "_meta": { "version": "1.0" } }
+```
+
+A non-operator calling this route gets `bcc_forbidden` / `not_claimer` — the same body as any
+other ownership denial, revealing nothing about who holds the page or whether it is contested.
 
 **Rotator.** Same envelope, bounded to 5, `pagination` present and **inert** — the client never
 reads it. Reusing the list envelope is deliberate: a second response shape would add contract
