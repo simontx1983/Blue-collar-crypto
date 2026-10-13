@@ -7042,6 +7042,23 @@ hold on its own.
 renders a control; the client renders nothing even if the server regresses and sends a social
 grammar with counts. Neither depends on the other being correct.
 
+##### Cross-repo order
+
+| # | Repo | What | Why it is in this position |
+|---|---|---|---|
+| 1 | **bcc-core** | the no-reactions grammar + the `announcement` mapping + module 205 normalization | Safe alone: it admits a kind and a module for which **no writer exists**, so no row can carry either. Everything downstream asks it for the policy, so it cannot go second. |
+| 2 | **bcc-trust** | the write refusals + the hydration omissions | Depends on (1) for the grammar value. Inert until a module-205 row exists, which needs A3-trust. |
+| 3 | **bcc-frontend** | the action-bar suppression | Independent of both — it keys on the item kind, not on a server field. Can land at any point; inert while no announcement cards exist. |
+
+⚠ (1) → (2) is a **hard** dependency, not a preference: bcc-trust's static analysis resolves
+bcc-core from its **default branch**, so a bcc-trust change that referenced the new grammar
+constant directly would be unanalysable until (1) merged. The enforcing gate therefore compares
+against a local wire literal and carries a test that reconciles it with bcc-core's constant as
+soon as that constant exists — skipping, with a named reason, until then.
+
+(3) is deliberately **not** ordered against the others. A client that depended on the server
+having shipped would reintroduce exactly the fail-open behaviour this section exists to remove.
+
 ⚠ **Nothing above changes any other content kind.** The grammar value is additive, the endpoint
 refusals are scoped to module 205, and the client guard is a closed inventory of kinds that
 currently contains one entry. A reviewer should be able to confirm that every other kind's
