@@ -45,15 +45,33 @@ once there is real activity, to confirm the forward fixes behave as intended on 
 **not prerequisites** for any fix, and no reversal ledger, appeal path or ledger migration is
 proposed or needed.
 
+### Account ownership — RESOLVED by the operator, 2026-10-13
+
+⭐ **The accounts are fake, in both environments. Confirmed by the operator.** That is an
+authoritative statement about their own system, and it is the only kind of evidence that could
+settle this — the database cannot distinguish a tester from an early signup, which is exactly
+what the uncertainty note below was for.
+
+**Consequence: no real member has ever been exposed to any of these mechanisms, in either
+environment.** Not because the data is absent — production holds 43 users, 54 `user_info`
+rows, 411 analyses, 11 attestations and 2 accounts carrying scores — but because that data
+belongs to fake accounts, and separately because the mechanisms never fired (zero `vote_ring`,
+`in_vote_ring` or `fan_in_coordination` triggers ever recorded in production, and zero active
+mutual pairs).
+
+⛔ **This does NOT authorize deleting or resetting anything**, and nothing has been. Fake data
+is still data; removing it is a separate decision nobody has asked for.
+
 ### Uncertainty, stated rather than smoothed over
 
-- ⚠⚠ **Account ownership is NOT established and is not needed.** Registrations span **21
-  distinct days** (so not a seeded burst) and **9 of 24 have never logged in** — both facts
-  about *rows*, carrying no claim about *people*. The only conclusion drawn is the measured one:
-  **0 votes and 0 endorsements**, therefore no exposure to any of these mechanisms.
-- ⚠ Specifically **not** relied on: email-domain composition. It was in an earlier draft as a
-  classification signal and has been removed, because a domain cannot establish who owns an
-  account and nothing here needs it to.
+- ⚠ **How this was NOT established.** Earlier drafts reached for email-domain composition and
+  then for "internal/operator accounts". Both were inference dressed as finding, and both were
+  removed before the operator settled it. A domain cannot establish who owns an account.
+- ⚠ Also recorded as a process note: I first reported "no real users" from **staging only** and
+  generalised it. Production turned out to hold considerably more data. The conclusion survived,
+  but the evidence I offered for it did not cover the environment it was about.
+- Retained as facts about *rows*, carrying no claim about people: registrations span **21
+  distinct days** on staging, and **9 of 24** have never logged in.
 - `bcc_trust_tier_days` holds **1435** rows against 24 users (~60 each), which suggests a
   backfill or long accrual. Unrelated to scoring; noted so it is not mistaken for member
   activity.
