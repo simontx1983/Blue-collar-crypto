@@ -6743,6 +6743,7 @@ and rows in an owner-scoped list. Never by the Card.
 | `can_archive` | may archive this announcement (one-way) |
 | `can_manage_comments` | may remove any comment on this announcement |
 | `can_comment` | may post a comment on this announcement |
+| `can_report` | may escalate this announcement to moderation (§4.32.16) |
 
 `Announcement.capabilities` is **optional**. **Absence and malformation both fail closed.** On an
 archived announcement `can_edit`, `can_pin` and `can_comment` are `false` with
@@ -6830,6 +6831,7 @@ rather than assumed. References are to the accepted frontend handoff branches.
 | `capabilities.can_edit` | row | **declared, not yet read** — the edit surface is a later slice |
 | `capabilities.can_archive` | row | **declared, not yet read** — as above |
 | `capabilities.can_manage_comments` | row | **declared, not yet read** — as above |
+| `capabilities.can_report` | row | **declared, not yet read** — the report control is a later slice; §4.32.16 |
 
 ⚠ The three "declared, not yet read" rows are contract, not speculation: the server must emit
 them, because the surfaces that consume them land after the first client slice and a capability
@@ -7176,14 +7178,102 @@ responses and is sourced from the announcement's own discussion — it is correc
 two fields share a name and have different origins, which is exactly why the rule has to name
 which one it is talking about.
 
-##### Reporting is a separate question
+##### Reporting is a separate question — and it has now been answered
 
-**Reporting is not a reaction** and is not decided here. A reaction is a reader expressing
-approval; a report is a reader escalating to moderation. Whether an announcement is reportable
-remains an **open proposal** — it needs a moderation queue-kind registration that this section
-deliberately does not make, and the answer does not follow from the no-reactions decision in
-either direction.
+**Reporting is not a reaction.** A reaction is a reader expressing approval; a report is a
+reader escalating to moderation. The two were decided separately and in opposite directions,
+which is the point: **announcements take no reactions and ARE reportable.** Neither answer
+follows from the other.
 
+The decision and its three prohibitions are in **§4.32.16**.
+
+#### 4.32.16 Reportability — through the existing moderation workflow
+
+> **DECIDED.** §4.32.15 carried this as an open proposal. An announcement **is reportable**,
+> through the moderation workflow that already exists — not through a parallel one.
+
+An announcement is an official notice on a claimed validator page. It carries more weight than
+an ordinary post, which is exactly why it needs an escalation path: a billboard with no abuse
+route is a billboard nobody can challenge.
+
+##### ⚠⚠ Three prohibitions, and only one of them is already true
+
+| Prohibition | Status today | What enforces it |
+|---|---|---|
+| **No reactions.** Reporting adds no reaction, stoke or helpful mark. | **already true** | §4.32.15 and the no-engagement gate. Reporting is a different verb on a different surface. |
+| **No reputation, trust or fraud points.** A report mints no score for anyone — not against the operator, not for the reporter. | **already true** | the report event has exactly ONE subscriber, and it is not a scoring path. ⚠ True by accident of the current wiring, so it needs a test, not a change. |
+| **No automatic hiding or suspension.** | ⛔ **NOT true today** | nothing. See below. |
+
+⚠⚠⚠ **The auto-hide path is live and would hide announcements.** A threshold rule subscribes
+to the report event, counts distinct reporters against the target, and at the configured
+threshold (**default 3**) marks the activity hidden; the next feed read filters it out for
+non-moderators. An announcement projects exactly one feed activity (§4.32.8), and that activity
+is the same `feed_item` the report targets — so **three reporters would silently take down a
+validator's official notice**, with no operator action and no administrator in the loop.
+
+That is the one behaviour this decision forbids, and it is the one that needs code. The
+exclusion must be keyed on the **activity module** (205), not on a title, a kind string or a
+page lookup, because the module is what the hide path actually has in hand.
+
+**Suspension is unaffected and must stay so.** No announcement report may contribute to a
+member suspension or a fraud lock on the operator. Reporting an announcement escalates the
+*announcement* to a human; it does not accumulate against the person.
+
+##### No new route, and no new target kind
+
+Reporting reuses the existing member report endpoint with the existing `feed_item` target
+kind, aimed at the announcement's own feed activity. Consequences worth stating, because they
+are what makes this decision cheap:
+
+- **No new public route.** The existing endpoint, its idempotency (one report per reporter per
+  target, enforced by a UNIQUE constraint) and its rate limit all apply unchanged.
+- **No new administrator route.** The existing moderation queue and its resolve/undo actions
+  serve announcements as they stand.
+- **No new reason-code vocabulary.** The existing reason enum applies.
+- **No contract-parity exposure.** Since no route is added or documented, the cross-repo
+  endpoint guard is untouched in both directions.
+
+⚠ **The admin queue needs two allowlist additions even though it needs no route.** The queue
+derives a report's `post_kind` from the canonical module→kind map, so an announcement report
+already *displays* as `announcement` with no change. But the queue's **POST KIND filter** is a
+closed enum plus a kind→module map, and neither knows `announcement` — so without the
+additions the filter would reject `announcement` as an invalid value and could never select
+these reports. A report that is visible but unfilterable is a report that gets lost in a busy
+queue.
+
+##### `can_report` — a row capability, on the row surfaces only
+
+It joins the §4.32.11 (c) row set, and it obeys that scope's rules: supplied by the detail
+view-model, the comments page and owner-list rows, and **never by the public list or the
+rotator** (§4.32.11), which carry no capabilities for any viewer.
+
+⚠ **`can_report` is NOT an ownership question**, and the generic ownership reason must never
+appear as its denial. Like `can_comment`, it is decided from the viewer's standing and the
+row's availability. The operator is not privileged — and is not *forbidden* either; an
+operator reporting their own announcement is a strange act, not an unsafe one, and the server
+does not special-case it.
+
+Denial reasons, a **closed** set:
+
+`auth_required` · `announcement_unavailable` · `suspended` · `fraud_locked` ·
+`feature_disabled` · `already_reported`
+
+⚠ `already_reported` is new to this subsection and is the one reason that is **not** a
+standing or availability fact. It exists because the report endpoint is idempotent per
+(reporter, target): a second report is accepted and changes nothing, so a client that rendered
+the control as still-available would invite an action with no effect. ⚠ It is **owner-visible
+per viewer** and therefore viewer-dependent — which is a further reason it cannot appear on a
+cacheable public response.
+
+⚠ **`announcement_archived` is deliberately NOT in the set.** An archived announcement keeps
+its permalink and its public record (§4.32.6), so it remains reportable. Archival closes
+authoring and commenting; it does not retroactively make a notice unchallengeable.
+
+##### What is still deferred
+
+Per-reason thresholds, reporter trust-weighting, operator notification on report, and any
+announcement-specific moderation action beyond the existing resolve/undo. None of these is
+required by this decision, and none is implied by it.
 ## 5. Encoded rules — quick reference
 
 ### 5.1 §N7 — gated actions always visible
