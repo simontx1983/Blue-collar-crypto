@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.78 · 2026-09-30 · Phase 1 deliverable
+**Status:** Draft v1.78 · 2026-10-13 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -6458,6 +6458,28 @@ leaks neither operator identity nor claim count.
 Page `post_author`, mirror claim rows, page metadata, PeepSo membership and denormalized read
 models are **forbidden** as authorization inputs.
 
+⚠ `post_author` deserves its own sentence, because the prohibition reads like boilerplate and
+is not: **the claim flow moves page authorship**, so accepting `post_author` as authority would
+make authorship its own proof.
+
+**One public denial reason; the detail stays internal.** Every ownership denial — no claim, a
+claim held by somebody else, or competing claims — presents on the wire as
+`bcc_forbidden` with `reason_code: not_claimer` and nothing else. The server retains a finer
+internal reason for the audit trail (`auth_required`, `not_a_validator_page`, `claim_absent`,
+`claim_ambiguous`, `not_claimer`), and **never serializes it**.
+
+This is not defensive over-reading. A distinguishable `claim_ambiguous` tells an
+unauthenticated prober that competing claims exist on a named validator, and a distinguishable
+`claim_absent` tells them which validators are unclaimed — a map of exactly the pages worth
+attacking. It also matches the live precedent: the validator-messaging surface already
+collapses `AMBIGUOUS` and `UNCLAIMED` into one `unavailable` value, on the stated grounds that
+"the wire must not reveal that competing claims exist".
+
+Scope: this authority is **validator pages only** — a published `peepso-page` with at least one
+validator row bound to it. Collection/creator claims are a different question with different
+semantics and are **out of scope**; they are neither accepted here nor affected by it, and the
+existing collection-creator permissions on page bio and image are unchanged.
+
 **Administrators hold read-only recovery rights only** — inspect drafts, inspect removed
 comments, restore removed comments. They may not create, edit, schedule, publish, pin or
 archive, and may not act as the operator. An administrator who is *independently* the resolved
@@ -6513,6 +6535,10 @@ operator gets operator rights through the normal path, never through an override
 **Never on the wire:** claimant email, wallet address, `rpc_url`, removal reasons, private
 removal metadata, publication-authorization metadata, removed-comment bodies or authors, or any
 draft/scheduled announcement to a non-owner.
+
+**Ordering for every collection above is specified in §4.32.12**, and the client re-sorts
+none of it. **The capability objects these routes carry are specified in §4.32.11**, and the
+`status` field's two vocabularies — a verb on write, a state on read — in §4.32.13.
 
 > ⚠ **Handoff note — why this is a table and not `#### \`METHOD /path\`` headers.**
 > `scripts/contract-parity-guard.php` parses §4 for `` #### `METHOD /path` `` headers and
@@ -6615,9 +6641,15 @@ Adds to §1.4.6 (same semantics):
 | `summary_required` | 400 | Client error | Summary is first-class and must be authored. |
 
 Also used, with existing meanings: `bcc_forbidden` (`reason_code` ∈ `not_claimer` ·
-`claim_ambiguous` · `claim_absent` · `comments_disabled` · `announcement_archived` ·
-`not_comment_author` · `announcement_not_published` · `feature_disabled`), `bcc_conflict`,
-`bcc_rate_limited`, `bcc_not_found`.
+`comments_disabled` · `announcement_archived` · `not_comment_author` ·
+`announcement_not_published` · `feature_disabled`), `bcc_conflict`, `bcc_rate_limited`,
+`bcc_not_found`.
+
+⚠ **`claim_ambiguous` and `claim_absent` were removed from this list** (v1.78 reconciliation).
+An earlier draft enumerated them as wire values, which contradicted §4.32.2's requirement that
+ownership denials leak neither operator identity nor claim count — those two codes distinguish
+exactly the three states §4.32.2 says must be indistinguishable. They remain **internal audit
+reasons**; see §4.32.2. Ownership denials are `not_claimer` on the wire, always.
 
 **Rate limits**, applied **before** any ownership gate: list 20/60s/viewer · write
 `announcement_write` 10/60s/user · comment create `announcement_comment` 20/300s/user.
@@ -6633,6 +6665,306 @@ filter, not a delete.
 
 ⚠ The CPT registration and the comment-bypass guards stay active even when the switch is OFF.
 Turning the feature off must never *open* the bypass surface.
+
+#### 4.32.11 Capability surface — three scopes, and what each one may authorize
+
+> **Added in the v1.78 reconciliation.** §4.32.1–4.32.10 specified storage, visibility,
+> authorization, archival, comments, feed projection, errors and the switch — but **never the
+> capability surface**, even though the entire client is gated on it. The word "capabilities"
+> appeared once, parenthetically, on the detail route. Six of the twelve contract assumptions
+> recorded in the frontend handoff PRs therefore had nothing to verify against. This subsection
+> is that missing half, written to match the frontend split as accepted.
+>
+> ⚠ It also **supersedes** the earlier planning note that described a single owner object
+> carrying `can_create` alongside the row capabilities and no `can_manage`. That shape was
+> superseded by review before the client was built; the two-scope split below is what exists.
+
+Three scopes, deliberately distinct types rather than one optional bag:
+
+**(a) The feature gate — `Card.announcements`**
+
+An additive-optional block on the validator Card view-model:
+
+```json
+"announcements": {
+  "capabilities": {
+    "can_create": { "allowed": true,  "unlock_hint": null, "reason_code": null },
+    "can_manage": { "allowed": true,  "unlock_hint": null, "reason_code": null }
+  }
+}
+```
+
+**Presence of this block is the feature gate.** Absent or `null` hides the entire feature — no
+tab, no bar, no composer, no detail route, and **no request is issued**. There is no client
+flag and no environment toggle. A pre-A2 backend omits the key, which is why the client half
+can ship ahead of the server: the designed state of a backend that has never heard of
+announcements is "renders nothing".
+
+While `bcc_announcements_enabled` is OFF the server **omits the block entirely** (§4.32.10). It
+does not emit it with every entry denied — an emitted block would make the client open the
+surface and issue requests that are all going to 404.
+
+**(b) Owner-level capabilities — `AnnouncementFeatureCapabilities`**
+
+What the viewer may do on the validator *as a whole*. Exactly two entries:
+
+| Entry | Means |
+|---|---|
+| `can_create` | may start a new announcement on this validator |
+| `can_manage` | may open the operator management surface (the drafts list and the management affordances) |
+
+🔒 **`can_comment` must never be added here.** Commenting is decided per announcement — one may
+be archived, another may have comments switched off, a third may not be published or due yet. A
+page-level "may comment" would authorize commenting on *every* announcement, including closed
+ones.
+
+🔒 **`can_manage` authorizes no row mutation.** It opens the surface and nothing more. Every
+edit, pin, archive or moderation action consumes the capability belonging to **that specific
+announcement**. An archived, draft or scheduled row does not inherit permission from the page.
+
+**(c) Row-level capabilities — `AnnouncementCapabilities`**
+
+Supplied **only** by announcement-scoped responses: the detail view-model, the comments page,
+and rows in an owner-scoped list. Never by the Card.
+
+| Entry | Means |
+|---|---|
+| `can_edit` | may PATCH this announcement |
+| `can_pin` | may pin or unpin this announcement |
+| `can_archive` | may archive this announcement (one-way) |
+| `can_manage_comments` | may remove any comment on this announcement |
+| `can_comment` | may post a comment on this announcement |
+
+`Announcement.capabilities` is **optional**: attached for a viewer who may manage, absent for
+public readers. **Absence and malformation both fail closed.** On an archived announcement
+`can_edit`, `can_pin` and `can_comment` are `false` with `reason_code: announcement_archived`,
+while `can_manage_comments` stays `true` for the operator (§4.32.7 keeps archived discussions
+moderatable).
+
+`can_comment` is the **only** comment gate the client may read, and the server resolves it from
+every condition bearing on this one announcement: authentication, member standing,
+fraud/suspension state, `comments_enabled`, published-and-due state, archived state and the
+feature switch. The client re-derives none of it.
+
+**Every entry is a §2.1 `CardPermissionEntry`** — `{allowed, unlock_hint, reason_code}` — read
+through a defensive accessor so a missing map, a missing key or a non-`true` value all collapse
+to `false`.
+
+**`can_comment` denial reasons**, each rendering distinct copy; an unrecognised reason still
+closes the composer:
+
+`auth_required` · `comments_disabled` · `announcement_archived` · `announcement_unavailable` ·
+`suspended` · `fraud_locked` · `feature_disabled`
+
+⚠ These are **capability** reason codes, not error codes. They describe why a control is
+disabled on a successful read; the §4.32.9 list describes a rejected request. The overlap in
+spelling is intentional, so the disabled control and the eventual `403` give the same account.
+
+**(d) Administrator capabilities — a separate object, never merged into either scope above**
+
+`can_inspect_drafts` · `can_inspect_removed` · `can_restore_comment`, on the admin routes only.
+**Every owner and row capability is `false` for a non-operator administrator** (§4.32.2).
+
+##### Field-to-consumer trace
+
+Each field below is traced to the surface that reads it, so an unused field is visible as such
+rather than assumed. References are to the accepted frontend handoff branches.
+
+| Field | Scope | Read by |
+|---|---|---|
+| `announcements` (presence) | Card | the validator profile (tab + bar mount), and the canonical detail route, which returns "not found" when the block is absent |
+| `announcements.capabilities.can_create` | owner | the composer's entry point |
+| `announcements.capabilities.can_manage` | owner | the management surface's entry point |
+| `capabilities.can_pin` | row | the owner row actions (both the gate and its denial copy) |
+| `capabilities.can_comment` | row, on the **comments response** | the comment composer's gate |
+| `capabilities.can_edit` | row | **declared, not yet read** — the edit surface is a later slice |
+| `capabilities.can_archive` | row | **declared, not yet read** — as above |
+| `capabilities.can_manage_comments` | row | **declared, not yet read** — as above |
+
+⚠ The three "declared, not yet read" rows are contract, not speculation: the server must emit
+them, because the surfaces that consume them land after the first client slice and a capability
+that appears later is a capability the client would have to infer in the meantime. They are
+flagged so a reviewer is not misled into treating current client usage as the full contract.
+
+⚠ **`can_comment` travels on the comments response, not on the announcement.** It is returned
+alongside `items` and `pagination` on **every page** of
+`GET /announcements/:id/comments`, and the client reads the **most recently loaded** page — so
+an archive that happens mid-scroll is reflected, rather than the value page 1 was built with.
+
+#### 4.32.12 Ordering — the server's answer, and the client never re-sorts
+
+| Collection | Order |
+|---|---|
+| `?state=active` list | **pinned first** (at most one per validator), then **newest `published_at` first** |
+| `?state=archived` list | **newest `archived_at` first** — an archive is the event being listed |
+| `/rotator` | **pinned first, then newest first**, capped at 5 (§4.32.4) |
+| owner list (`/me/...`) | **newest first** by the row's own effective date: `publish_at` for `scheduled`, otherwise last modification |
+| comments | **stable oldest-first** (§4.32.7) |
+
+**The client applies no ordering of its own, in any of these.** It renders the sequence it was
+given and, for the rotator, slices to the cap without reordering. So an unspecified order is
+not a cosmetic gap — it is undefined behaviour in the rendered output.
+
+⚠ The earlier draft specified the rotator's order and the comments' order and **left the list
+order unstated**, while the client already relied on it. That is the gap this subsection
+closes.
+
+**Pinning promotes on the validator page only** and never reorders the general feed
+(§4.32.8).
+
+⚠ **Cursor stability.** `?state=active` is ordered by a field the operator can change (pinning
+moves a row to the front), so a cursor page boundary can shift under a reader mid-scroll. The
+cursor must therefore carry a **unique tiebreak** (the row id) alongside its sort key, exactly
+as §1.5 requires elsewhere; ordering by `published_at` alone is not a total order, and two
+announcements published in the same second would page unstably.
+
+#### 4.32.13 Status vocabulary — write verbs and read states are different sets
+
+The wire key is `status` in both directions and **the vocabularies are deliberately not the
+same**. This is the one place the contract is easiest to get wrong, so both sets are written
+out.
+
+**Write (request) — a verb. What to do with this submission.**
+
+| `status` | Effect |
+|---|---|
+| `draft` | store, do not publish, visible to the operator only |
+| `publish` | publish now, at authoritative server time; any client timestamp is ignored |
+| `schedule` | publish at `publish_at`, which is **required** here and must be **strictly future** UTC |
+
+`publish_at` is sent **only** with `schedule`. Sending it otherwise is `400 bcc_invalid_request`.
+
+**Read (response) — a state. What this row currently is.**
+
+| `status` | Means |
+|---|---|
+| `draft` | stored, never published |
+| `scheduled` | due in the future; the ownership recheck has not run yet |
+| `published` | live, due, and carrying a valid publication-authorization marker (§4.32.1) |
+| `blocked` | forced to `publish` without a valid marker, and moved to a non-public state by reconciler arm C. **Owner-visible only, never public** |
+
+So `publish` → `published` and `schedule` → `scheduled`: the verb and the resulting state differ
+by more than tense, and **a client must not round-trip a read `status` back into a write.**
+
+`GET /me/validators/:pageId/announcements?status=` accepts `draft` | `scheduled` | `blocked` —
+the three non-public states. It is the **only** route that returns unpublished rows, and it
+**does not** accept `published`, because a published announcement is served by the public list.
+
+`status` appears on the **detail** view-model. It is **absent from list items**, because every
+row a public list can return is `published` by construction (§4.32.1), and an owner list is
+already filtered by the `?status=` the caller asked for.
+
+#### 4.32.14 Worked examples
+
+**Create, scheduled.**
+
+```http
+POST /wp-json/bcc/v1/validators/4471/announcements
+```
+```json
+{ "title": "Upgrade to v18 complete",
+  "summary": "Operator-written one-liner. Required. Never derived from the body.",
+  "body": "We completed the **v18** upgrade at block 19,204,118.\n\nNo downtime.",
+  "status": "schedule",
+  "publish_at": "2026-10-20T14:00:00Z",
+  "comments_enabled": true }
+```
+```json
+{ "data": { "id": "ann_4471", "status": "scheduled", "published_at": null,
+            "is_pinned": false, "is_archived": false, "archived_at": null,
+            "comment_count": 0, "comments_enabled": true,
+            "links": { "self": "/v/blacksmith-node/a/4471" },
+            "capabilities": {
+              "can_edit":            { "allowed": true, "unlock_hint": null, "reason_code": null },
+              "can_pin":             { "allowed": false, "unlock_hint": null, "reason_code": "announcement_not_published" },
+              "can_archive":         { "allowed": true, "unlock_hint": null, "reason_code": null },
+              "can_manage_comments": { "allowed": true, "unlock_hint": null, "reason_code": null },
+              "can_comment":         { "allowed": false, "unlock_hint": null, "reason_code": "announcement_unavailable" } } },
+  "_meta": { "version": "1.0" } }
+```
+
+**Public list, active.**
+
+```http
+GET /wp-json/bcc/v1/validators/4471/announcements?state=active&limit=20
+```
+```json
+{ "data": {
+    "items": [
+      { "id": "ann_4480", "title": "Commission unchanged for Q4",
+        "summary": "Still 5%. No change planned.",
+        "published_at": "2026-10-11T09:00:00Z", "updated_at": "2026-10-11T09:00:00Z",
+        "is_pinned": true, "is_archived": false, "archived_at": null,
+        "comment_count": 3, "comments_enabled": true,
+        "links": { "self": "/v/blacksmith-node/a/4480" } },
+      { "id": "ann_4471", "title": "Upgrade to v18 complete",
+        "summary": "Operator-written one-liner. Required. Never derived from the body.",
+        "published_at": "2026-10-09T14:00:00Z", "updated_at": "2026-10-09T14:00:00Z",
+        "is_pinned": false, "is_archived": false, "archived_at": null,
+        "comment_count": 12, "comments_enabled": true,
+        "links": { "self": "/v/blacksmith-node/a/4471" } }
+    ],
+    "pagination": { "next_cursor": "eyJwIjoiMjAyNi0xMC0wOSIsImkiOjQ0NzF9", "has_more": true } },
+  "_meta": { "version": "1.0" } }
+```
+
+Pinned first, then newest first. No `capabilities` on these rows — this is a public read. No
+`status` either, per §4.32.13.
+
+**Rotator.** Same envelope, bounded to 5, `pagination` present and **inert** — the client never
+reads it. Reusing the list envelope is deliberate: a second response shape would add contract
+surface for no benefit, and a bounded collection that still declares `pagination` is cheaper to
+reason about than one that omits it conditionally.
+
+```http
+GET /wp-json/bcc/v1/validators/4471/announcements/rotator
+```
+```json
+{ "data": { "items": [ "… at most 5, pinned first then newest first …" ],
+            "pagination": { "next_cursor": null, "has_more": false } },
+  "_meta": { "version": "1.0" } }
+```
+
+**Comments, with the gate on the page.**
+
+```http
+GET /wp-json/bcc/v1/announcements/ann_4471/comments?limit=20
+```
+```json
+{ "data": {
+    "items": [
+      { "id": "acmt_9910", "is_removed": false,
+        "body": "Thanks for the heads up.",
+        "author": { "id": 88, "handle": "ironworks", "display_name": "Ironworks",
+                    "avatar_url": "https://…/a.jpg" },
+        "posted_at": "2026-10-09T15:01:02Z",
+        "permissions": { "can_remove": { "allowed": false, "unlock_hint": null, "reason_code": "not_comment_author" } } },
+      { "id": "acmt_9912", "is_removed": true,
+        "removed_at": "2026-10-09T15:02:11Z",
+        "label": "Comment removed by author" }
+    ],
+    "pagination": { "next_cursor": null, "has_more": false },
+    "can_comment": { "allowed": true, "unlock_hint": null, "reason_code": null } },
+  "_meta": { "version": "1.0" } }
+```
+
+Oldest first. The tombstone keeps its position and counts toward `comment_count`, and carries
+no body, author, avatar, user id, actor type or reason.
+
+**An ownership denial — one reason, whatever the cause.**
+
+```http
+POST /wp-json/bcc/v1/validators/4471/announcements
+```
+```json
+{ "error": { "code": "bcc_forbidden",
+             "message": "Only the verified operator of this validator can post announcements.",
+             "status": 403,
+             "data": { "reason_code": "not_claimer" } } }
+```
+
+Identical whether the page is unclaimed, claimed by somebody else, or contested. The internal
+distinction is written to the audit log and never to the response (§4.32.2).
 
 ## 5. Encoded rules — quick reference
 
@@ -6964,6 +7296,63 @@ intent.
 
 **Deliberate divergence:** announcement dates are formatted **client-side**, unlike
 `posted_at_label` (§3.3). Recorded so it reads as intentional rather than drift.
+
+#### v1.78 reconciliation — 2026-10-13 — the capability surface, ordering and status vocabulary
+
+Four additions and two corrections, folded into the same version because §4.32 is still
+**PLANNED** and nothing consumes it on a server yet. Driven by auditing the accepted frontend
+handoff branches against this section and finding that **six of their twelve recorded contract
+assumptions had nothing here to verify against.**
+
+**Added:**
+
+- **§4.32.11 Capability surface.** The whole gated surface was undefined: `Card.announcements`,
+  the owner-level `can_create` / `can_manage`, the row-level `can_edit` / `can_pin` /
+  `can_archive` / `can_manage_comments` / `can_comment`, the administrator object, the
+  `can_comment` denial vocabulary, and a field-to-consumer trace marking the three entries the
+  server must emit that the current client does not yet read.
+- **§4.32.12 Ordering.** The list order was **unstated** while the client already relied on it
+  and sorts nothing itself — undefined behaviour in rendered output, not a cosmetic gap. Also
+  records the cursor tiebreak `?state=active` needs, because `published_at` alone is not a total
+  order and pinning moves a row across page boundaries.
+- **§4.32.13 Status vocabulary.** The wire key `status` carries a **verb** on write
+  (`draft`/`publish`/`schedule`) and a **state** on read
+  (`draft`/`scheduled`/`published`/`blocked`). Neither set was enumerated, and the two are not
+  interchangeable, so a client round-tripping a read value into a write would be wrong in two of
+  four cases.
+- **§4.32.14 Worked examples** for create-scheduled, the active list, the rotator, comments with
+  the page-level gate, and an ownership denial.
+
+**Corrected:**
+
+- **§4.32.9 no longer lists `claim_ambiguous` and `claim_absent` as wire reason codes.** They
+  contradicted §4.32.2 — those two values distinguish precisely the three ownership states
+  §4.32.2 requires to be indistinguishable, so emitting them hands a prober a map of which
+  validators are unclaimed and which are contested. They are retained as **internal audit
+  reasons**. Ownership denials are `not_claimer` on the wire, always.
+- **§4.32.11 supersedes the earlier single-owner-object capability shape** (one bag holding
+  `can_create` beside the row capabilities, with no `can_manage`). That was superseded by review
+  before the client was built; the two-scope split is what exists, and the split is enforced by
+  the client's type system rather than by convention.
+
+**Also clarified in §4.32.2:** the authority is **validator pages only**. Collection/creator
+claims are a separate question, neither accepted here nor affected by this section, and
+existing collection-creator permissions on page bio and image are unchanged.
+
+**Still open, and deliberately not decided here** — both are product calls, and both are
+cross-repo:
+
+1. **Reaction grammar for the `announcement` feed kind.** `ReactionGrammarMap::grammarFor()`
+   defaults an unregistered kind to **social** (like/love/haha/wow/fire) rather than **trust**
+   (`solid`), by design — the map's own note says defaulting to trust would be the worse error.
+   So an unregistered `announcement` kind silently gets emoji on an operator's official notice.
+   Registering it either way is a one-line bcc-core change that must land with §2.11.
+2. **Reportability.** `ContentReportRepository`'s queue-kind map covers `review` and `blog`
+   only. Whether an announcement is reportable content decides whether module 205 joins that
+   map; leaving it out means announcements cannot be reported at all, which may be correct for
+   an operator-authored notice and is not obviously so.
+
+Neither map is touched by this entry.
 
 ### v1.77 — 2026-09-16 — additive — `holdings_status` on the collection-stance panel (+ retraction of the marketplace rollup)
 
