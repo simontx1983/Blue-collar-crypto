@@ -6974,8 +6974,27 @@ distinction is written to the audit log and never to the response (§4.32.2).
 page — the thing that removes the need to pin ordinary posts. It is **not** a post competing for
 engagement. So:
 
-**Announcements carry no reactions, no stoke and no helpful mark, and they contribute nothing
-to trust, reputation, fraud scoring or feed ranking.**
+**Announcements carry no reactions, no stoke and no helpful mark.**
+
+##### What "no ranking effect" means, precisely
+
+It is a statement about **engagement**, not about ordering. Announcements contribute nothing to:
+
+- **trust, reputation or fraud scoring** — no score write, no rank evidence, no fraud signal; and
+- **engagement-based feed boosts** — no reaction count, stoke heat, helpful-mark total or any
+  other popularity signal may promote, demote or re-rank an announcement anywhere.
+
+**Ordering by time is explicitly still allowed**, because it is not an engagement signal:
+
+| Allowed | |
+|---|---|
+| ordinary publication-time ordering | newest `published_at` first in the feed and in the lists, exactly as §4.32.12 specifies |
+| the agreed rotator ordering | pinned first, then newest first, capped at 5 (§4.32.4, §4.32.12) |
+| pinning | promotes **on the validator page only** and never reorders the general feed (§4.32.8) |
+
+So an announcement is placed by **when it was published and whether its operator pinned it** —
+never by how many people liked it. The distinction matters because "no ranking effect" read
+loosely would forbid the chronological order the billboard depends on.
 
 The discussion, the permalink and the announcement bar are **unaffected** — the billboard has a
 comment thread (§4.32.7) and a canonical detail page, and only the *engagement signals* are
@@ -7034,8 +7053,32 @@ reaction behaviour is byte-identical.
   announcements move the operator's own standing — exactly what this decision rules out. It is
   removed on that ground, not because it is a "reaction".
 
-**Kept:** the comment thread, the comment count, Share, the permalink, the detail page and the
-announcement bar.
+**Kept:** the comment thread, Share, the permalink, detail navigation and the announcement bar.
+
+##### ⚠ The comment count is omitted, not substituted
+
+`peepso_disable_comments` is set on the backing post (§4.32.8) and announcement comments live in
+their own comment type rather than as activity comments — but the feed card's `comment_count` is
+hydrated from the **activity** comment count. For an announcement that count is **structurally
+zero and known to be wrong**, while the detail page shows the real total.
+
+**The rule is therefore: source the count from the actual announcement discussion, or emit no
+count at all. Never emit the activity count.** Until the comment integration exists (A5), the
+feed projection **omits `comment_count`** for the announcement kind and the card renders the
+comment affordance without a number.
+
+An honest absence is a missing number; a substituted activity count is a **wrong** number that
+looks authoritative, and "0 comments" on a notice with a live discussion is worse than no figure
+at all — a reader would take it as a statement that nobody replied.
+
+⚠ The comment control itself **stays**: it navigates to the permalink, which is where the
+discussion lives. Only the figure is withheld, and only until it can be sourced correctly.
+
+⚠⚠ **This applies to the `FeedItem` projection only, not to the `Announcement` view-model.**
+`Announcement.comment_count` (§4.32.3) is a required field on the list, rotator and detail
+responses and is sourced from the announcement's own discussion — it is correct and stays. The
+two fields share a name and have different origins, which is exactly why the rule has to name
+which one it is talking about.
 
 ##### Reporting is a separate question
 
@@ -7044,15 +7087,6 @@ approval; a report is a reader escalating to moderation. Whether an announcement
 remains an **open proposal** — it needs a moderation queue-kind registration that this section
 deliberately does not make, and the answer does not follow from the no-reactions decision in
 either direction.
-
-##### The one hydration mismatch this exposes
-
-⚠ `peepso_disable_comments` is set on the backing post (§4.32.8), and announcement comments live
-in their own comment type rather than as activity comments. The feed card's `comment_count` is
-hydrated from the **activity** comment count, so it would read **0** while the detail page shows
-the real total. The feed hydrator must either source the announcement's own count or the card
-must show no count. Recorded here because it is the kind of inconsistency that reads as a bug
-report rather than a design gap.
 
 ## 5. Encoded rules — quick reference
 
