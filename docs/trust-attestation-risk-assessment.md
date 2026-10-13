@@ -165,6 +165,26 @@ they won't consult it.
   A, both attestations get baseline weight only (no diversity
   bonus). Detects reciprocal backing without forbidding it — the
   attestations still count, they just don't compound.
+
+  > ⚠⚠ **AS IMPLEMENTED, THIS DIVERGES FROM THE SPEC ABOVE IN
+  > BOTH DIRECTIONS** (recorded 2026-10-12; see
+  > [`proposal-reciprocity-attestation-dampener.md`](proposal-reciprocity-attestation-dampener.md)).
+  >
+  > `ReciprocityPenaltyResolver::RECIPROCITY_MULTIPLIER = 0.50`
+  > **halves the base weight**, where "baseline weight only (no
+  > diversity bonus)" means ×1.0. And it does **not** suppress
+  > the diversity bonus at all: the 1.3× multiplier lives in
+  > `AttestationScoreSynthesis` and is gated purely on the count
+  > of distinct sources (`:206`), with no reciprocity input — so
+  > a reciprocal pair with enough sources still compounds, which
+  > is the one thing this bullet asked to prevent.
+  >
+  > The class docblock states the 0.50 came from a different
+  > rationale: *"to mirror the wallet-age floor and to neutralize
+  > a hypothetical 2× cartel-stacking effect."* A single active
+  > reverse attestation triggers it — no threshold, no grace
+  > period, no temporal window.
+
 - **Cohort-cluster overlap dampener.** The diversity multiplier
   is currently binary (cross-network = 1.3×, in-network =
   baseline). Refine to a graduated dampener: if the attestor's
@@ -172,6 +192,25 @@ they won't consult it.
   existing attestor set (>50% overlap), apply a 0.8× weight
   multiplier. Cartel members backing cartel targets get *less*
   weight, not just non-bonus weight.
+
+  > ⚠ **AS IMPLEMENTED, STILL SINGLE-STEP, NOT GRADUATED**
+  > (recorded 2026-10-12; see
+  > [`proposal-cohort-overlap-dampener.md`](proposal-cohort-overlap-dampener.md)).
+  >
+  > `CohortOverlapDampener` applies a hard ×0.80 at exactly
+  > ≥50% overlap — 49.9% is ×1.00. Its own docblock says the
+  > step was provisional *"because closed-network testing needs a
+  > clean A/B signal before refining the curve"*; **that
+  > calibration has not happened.** Unlike the bullet above, the
+  > penalty itself IS authorised here ("*less* weight").
+  >
+  > ⚠ The denominator is the **attestor's own** cohort size, so
+  > the rule is strictest against the least active attestor: a
+  > cohort of 2 trips at one shared backer. And it compounds with
+  > the reciprocity multiplier — `0.50 × 0.80 = 0.40` for a
+  > mutual pair inside a dense local community, which is the
+  > ordinary shape of a long-standing trade relationship in one
+  > town. Neither mechanism knows the other fired.
 - **Meta-dispute filer eligibility constraint.** Filers in active
   high-clustering cohorts cannot file meta-disputes against
   cohort members. Prevents the cartel from using the
