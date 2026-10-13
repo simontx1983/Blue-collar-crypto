@@ -1,6 +1,15 @@
 # Proposal — `CohortOverlapDampener` (the ×0.80 attestation dampener)
 
-**Status: PROPOSAL. ⛔ DELIBERATELY UNCHANGED — presented, not altered.**
+**Status: ⭐ FIXED IN bcc-trust #318 (unmerged). Forward-only; no `weight_at_time` rewrite.**
+
+> #318 sets `DAMPENED_MULTIPLIER` to 1.00 and retains the detection, auditing the MEASURED
+> RATIO as `cohort_overlap_ratio` plus a `cohort_overlap_detected` verdict. ⚠ It introduces
+> NO graduated curve, NO minimum-cohort floor and NO new ratio — §5 options B, C and D are
+> all declined, because each replaces one arbitrary number with another and would still be
+> measuring density. The threshold stays at 0.50 and only the consequence is removed.
+>
+> The presentation this document was asked for is in §4 (interaction with reciprocity) and
+> §5 (alternatives); #318 is the outcome of it.
 
 > Left as-is on purpose. §4 now records its interaction with reciprocity **after**
 > bcc-trust #315, which removes the compounding this document originally led with.
