@@ -100,7 +100,13 @@ lives in `bcc-frontend/`.
 
 **Reaction grammars** (`bcc-frontend/src/components/feed/ReactionRail.tsx`): `trust`
 (restrained, signs your name), `social` (expressive, emoji-forward, includes Fire), and
-`tribal` (reserved for V2 — renders nothing).
+`tribal` (reserved for V2 — renders nothing), and `none` (v1.78 — an **empty kind set**, meaning
+reactions do not apply to this kind at all; currently `announcement` only).
+
+> ⚠ `none` and `tribal` both render nothing today and are **not** interchangeable. `tribal` is a
+> placeholder for a V2 grammar that will carry kinds; `none` is a statement that the kind never
+> gets reactions. See api-contract-v1.md §2.11 and §4.32.15 — and note that neither grammar, by
+> itself, removes the Stoke affordance, because Stoke does not read `kind_grammar`.
 
 > **Wire name ≠ label — `stand_behind`:** the `stand_behind` *reaction* was retired in Slice 3
 > (hard-deleted, no longer seeded by `ReactionTypeRegistry`); the identifier survives only as an
