@@ -174,9 +174,22 @@ collection surface is labelled **"Watchlist"** (`bcc-frontend/src/components/onb
 | **Review** | A structured opinion (a vote plus body) rendered as a `review` feed item. | `CardReviewsEndpoint`, `CardReviewsService` (`bcc-trust/app/Domain/Core/REST/`); `post_kind: "review"`. |
 | **Dispute** | A formal complaint adjudicated by a panel of **5** Trusted/Elite members selected with soft-IP diversity. | `DisputeController` (`bcc-trust/app/Domain/Disputes/Controllers/`); `BCC_DISPUTES_PANEL_SIZE = 5` (`bcc-trust/bcc-trust.php`); `bcc_dispute_participations`. |
 | **Drop / Release** | NFT-release and project-update feed items. | `post_kind: "drop"` / `"release"` (`FeedItemCard.tsx`). |
+| **Announcement** | An operator-authored post on a claimed validator page. Private `bcc_announcement` CPT; published announcements are publicly readable and project **one** feed activity (module 205). | Planned — see §4.32 of [api-contract-v1.md](api-contract-v1.md). |
+| **Pin** | A validator marking **one** of their own announcements as the pinned entry. Scoped to the validator page; it never reorders the general feed. | `_bcc_announcement_pinned` meta; one per page, advisory-locked. |
 
-> **Removed:** *Announcement*, *Post-mortem*, *Pin* — no BCC `post_kind`, table, or service.
-> (Post pinning, where it exists, is a PeepSo-native feature, not a BCC concept.)
+> **Reinstated 2026-09-30:** *Announcement* and *Pin*. Both were previously struck from this
+> vocabulary; the Validator Announcements work brings them back as first-class BCC concepts
+> with their own CPT, contract section and feed kind. **This entry supersedes the earlier
+> "Removed" note**, which read: *"Removed: Announcement, Post-mortem, Pin — no BCC post_kind,
+> table, or service."*
+>
+> Scope of the reversal is exactly two terms:
+> - **Announcement** — now a BCC concept (CPT + service + `post_kind`).
+> - **Pin** — now a BCC concept, and specifically **not** the PeepSo-native post-pinning
+>   feature the old note referred to. A BCC pin applies to one announcement on one validator
+>   page.
+>
+> **Post-mortem remains removed** — no `post_kind`, table or service, and none planned.
 
 ---
 
