@@ -2377,7 +2377,8 @@ Full User view-model.
 
 - **Auth:** Anonymous OR Bearer (privacy-filtered)
 - **Path:** `handle`
-- **Query:** `weeks` (optional, default 52, max 104)
+- **Query:** `weeks` (optional, default 52, max 104 — **refused above 104**, not clamped)
+- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (`weeks` outside 1–104, or not a whole number). ⚠ This cap is **104**, not the 50 the list routes carry; enforcing a shared number here would halve a documented two-year window.
 - **Response 200:**
   ```json
   {
@@ -2423,7 +2424,26 @@ Paginated directory of human members. Sibling to §4.9 `/cards` (entity-card dir
     "primary_hall":        { "id": 1138, "slug": "cosmos-hall", "name": "Cosmos Hall" }
   }
   ```
-- **Errors:** `bcc_validation` (invalid `page` / `per_page`)
+- **Errors:** `bcc_invalid_request` **400** — an invalid `page` or `per_page`. ⚠ *(corrected
+  v1.80: this line named `bcc_validation`, a code with **zero producers anywhere in the
+  codebase** and exactly one mention — this one. The route emits the house validation code,
+  which 281 call sites and 114 other lines of this contract already use. No client could have
+  depended on the old name, because nothing ever sent it.)* The two parameters share **one
+  byte-identical refusal**; the body names the bounds rather than echoing the input:
+  ```json
+  { "error": { "code": "bcc_invalid_request",
+               "message": "page must be a whole number >= 1; per_page must be a whole number between 1 and 50.",
+               "status": 400 },
+    "_meta": { "version": "v1" } }
+  ```
+  **`per_page` is refused, not clamped**, for every value outside 1–50 and for anything that
+  is not a whole number — negative, fractional, or malformed. ⚠ Until 2026-10-14 it was
+  neither: the route declared `maximum: 50` beside a `sanitize_callback`, and WordPress
+  enforces a schema only for an argument that declares **no** sanitizer, so the bound never
+  ran — `?per_page=100000` answered **200** with a real `LIMIT 100000`. `absint` then made it
+  worse by rewriting invalid input into valid input (`-5` → `5`, `2.7` → `2`, `50.9` → `50`),
+  so those were served as different numbers rather than refused. `page` is bounded below only;
+  this contract sets it no maximum.
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - **Pagination envelope:** offset (`OffsetPagination` per §1.5) — `total_pages` is the canonical field; clients derive "has more" as `page < total_pages`.
 - **Mapping:** `WP_User_Query` ordered by `user_registered DESC`; each row composed via `CardViewService::getMemberCardForList` (one call per user). `UsersEndpoint::members` prefetches eleven batched maps — followers count, primary-Hall resolution, owned-page count, owned-page typed counts, endorsements received, solids received, reviews written, disputes signed, verified-wallet count, X connections, GitHub connections — via `MemberSummaryPrefetcher::primeFor` before the per-row loop; the card builder delegates the dossier resolution to `UserViewService::getSummary($userId, $viewerId, $prefetched)` so the total query budget stays bounded regardless of `per_page` (no parallel dossier query — same resolution as before, now wrapped in the Card shape). `reputation_tier` is the tier slug (all five bands). `reputation_tier_label` is the pre-rendered §A2 display string. Frontends should encode the tier as a color/border treatment on the rank chip rather than rendering the label as a duplicate word next to `rank_label`.
@@ -2474,9 +2494,9 @@ The member's long-form blog posts (§D6 blog tab), newest-first, cursor-paginate
 
 - **Auth:** Anonymous OR Bearer (V1 blog rows are public; `$viewerId` unused — reactions/permissions hydrate as defaults)
 - **Path:** `handle`
-- **Query:** `cursor` (optional, opaque base64url `{t,id}`, same family as `/feed`) · `limit` (optional, default 20, min 1, max 50)
+- **Query:** `cursor` (optional, opaque base64url `{t,id}`, same family as `/feed`) · `limit` (optional, default 20, min 1, max 50 — **refused above 50**, not clamped)
 - **Response 200:** `CursorEnvelope<FeedItem>` — same shape as `/feed`: `data = { items: FeedItem[] (§3.3), pagination: { next_cursor: string|null, has_more: bool } }`, scoped to `act_user_id = handle AND act_module_id = 'blog'`. The blog body carries the full `full_text` (the Floor variant omits it): `{ excerpt, full_text, wp_post_id, title, category (string|null), tags (string[]), chain_tags ([{id, slug, name, color, icon_url}]), disclosure ({tickers, note}|null), cover_image_url (string|null), cover_image_id (int|null), sources (string[]) }`.
-- **Errors:** `bcc_not_found` (handle missing)
+- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry)
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - **Mapping:** `BlogService::getUserBlog` → `PeepSoActivityRepository::getActivities` (over-fetch-by-1 `has_more`, moderation-hidden excluded per §K1-C); body via `BlogService::hydrateForPostId(..., includeFullText: true)`. Handler `UsersEndpoint::blog` (route `UsersEndpoint.php:172`).
 
@@ -2498,7 +2518,7 @@ Reviews this member has written (§V1.5 reviews-on-file tab), offset-paginated.
   `grade` ∈ `A|B|C` (from `vote_type` 1/0/-1). When the target hides reviews and the viewer isn't the owner: `items: []`, totals `0`, `hidden: true`.
 
   `scope_label` ∈ `PAGE|MEMBER` (v1.48). Member-target rows (reviews this user wrote **about another member**): `subject` = the member's display name, `subject_handle` = their `bcc_handle` (`""` when unset — the frontend suppresses the `ON @…` link; `user_login` is never projected), `scope_label` = `MEMBER`.
-- **Errors:** `bcc_not_found` (handle missing)
+- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry)
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - **Pagination envelope:** offset (§1.5); `total_pages` is `0` (not 1) on empty/hidden.
 - **Mapping:** `UserReviewsService::getReviews` → `VoteRepository::countByVoter` + `findByVoterPaginated` (+ `UserMiniRepository::getRowsByIds` for member-target subjects, v1.48); `posted_at_label` server-rendered (§A2). Handler `UsersEndpoint::reviews` (route `UsersEndpoint.php:203`).
@@ -2519,7 +2539,7 @@ Disputes this member has **filed** (§V1.5 disputes tab), offset-paginated. A di
   }
   ```
   `status` ∈ `open|resolved|dismissed` (mapped from `bcc_disputes.status`: `reviewing`→`open`, `accepted`/`rejected`/`timeout_no_quorum`→`resolved`, `dismissed`→`dismissed`; unknown → `open`). `status_label` carries the richer real outcome (`OPEN`/`ACCEPTED`/`REJECTED`/`NOT DECIDED`/`DISMISSED`). `subject` is the disputed page title, falling back to `"Page removed"`; `scope_label` is `PAGE`. Hidden behaves as reviews (`items: []`, totals `0`, `hidden: true`).
-- **Errors:** `bcc_not_found` (handle missing)
+- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry)
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - **Pagination envelope:** offset (§1.5); `total_pages` is `0` on empty/hidden.
 - **Mapping:** `UserDisputesService::getDisputes` → `DisputeRepository::countByReporter` + `getByReporterPaginated` (live `bcc_disputes`, reporter-keyed). Handler `UsersEndpoint::disputes` (route `UsersEndpoint.php:215`). *(Was `bcc_trust_flags`/FlagsRepository — a write-dead legacy table — until 2026-07-08; the shape is unchanged.)*
@@ -2530,9 +2550,9 @@ Per-member activity wall — a single-author slice of the same activity stream t
 
 - **Auth:** Anonymous OR Bearer (privacy-filtered — caution/risky shadow-limit, mutual-block invisibility, moderation hide, and the author-wall closed/secret/NFT-gated group leak gate apply per-viewer)
 - **Path:** `handle`
-- **Query:** `cursor` (optional, same family as `/feed`) · `limit` (optional, default 20, min 1, max 50)
+- **Query:** `cursor` (optional, same family as `/feed`) · `limit` (optional, default 20, min 1, max 50 — **refused above 50**, not clamped)
 - **Response 200:** `CursorEnvelope<FeedItem>` — identical shape to `/feed`/`/feed/hot`/`/feed/tag`: `data = { items: FeedItem[] (§3.3), pagination: { next_cursor, has_more } }`, fully hydrated (bodies, viewer reactions, author badges/ranks, social proof, permissions, group context, comment counts).
-- **Errors:** `bcc_not_found` (handle missing)
+- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry)
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - **Mapping:** `FeedRankingService::getActivityForAuthor($authorId, $viewerId, …)` — the single-brain feed composition scoped to one author; `excludedGroupIds = (non-open group ids) − (viewer membership ids)` forwarded to the SQL so wall posts in groups the viewer can't see are dropped. Handler `UsersEndpoint::activity` (route `UsersEndpoint.php:228`).
 
