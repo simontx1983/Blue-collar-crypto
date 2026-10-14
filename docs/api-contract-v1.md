@@ -6523,22 +6523,163 @@ operator gets operator rights through the normal path, never through an override
 
 #### 4.32.4 Endpoints
 
+**Still PLANNED — these ten have no implementation yet, so they stay in table form (see
+the handoff note below).**
+
 | Route | Method | Auth | Notes |
 |---|---|---|---|
-| `/bcc/v1/validators/:pageId/announcements` | GET | optional | `?state=active` (default) \| `archived`; `?limit` (20/50) · `?cursor` |
-| `/bcc/v1/validators/:pageId/announcements/rotator` | GET | optional | **max 5**: pinned first + 4 newest non-pinned, else 5 newest active |
-| `/bcc/v1/validators/:pageId/announcements/:id` | GET | optional | detail (+ `body`, capabilities). Not-yet-public → **404 to non-owners, never 403** |
 | `/bcc/v1/validators/:pageId/announcements` | POST | operator | `{title, summary, body, status, publish_at?, comments_enabled?}` |
 | `/bcc/v1/validators/:pageId/announcements/:id` | PATCH | operator | optional fields; no backdating; `409` if archived |
 | `/bcc/v1/validators/:pageId/announcements/:id/archive` | POST | operator | **one-way**; unpins; withdraws the feed activity |
 | `/bcc/v1/validators/:pageId/announcements/:id/pin` | POST / DELETE | operator | one pinned per validator; `409` if archived |
-| `/bcc/v1/me/validators/:pageId/announcements` | GET | operator | `?status=draft\|scheduled\|blocked` — the **only** route returning unpublished |
 | `/bcc/v1/announcements/:id/comments` | GET | optional | flat, **oldest-first** cursor; tombstones in position |
 | `/bcc/v1/announcements/:id/comments` | POST | member | good standing; `403` if disabled or archived |
 | `/bcc/v1/announcements/:id/comments/:commentId` | DELETE | author **or** operator | soft removal → tombstone |
 | `/bcc/v1/admin/announcement-comments/:commentId` | GET | admin | the private original |
 | `/bcc/v1/admin/announcement-comments/:commentId/restore` | POST | admin | restore + audit |
 
+##### Implemented read endpoints
+
+The four below are **registered in PHP** and therefore policed by
+`scripts/contract-parity-guard.php` in both directions — a change to either side without
+the other turns umbrella CI red. They are deliberately the only ones converted out of the
+table: a `METHOD /path` section for an unregistered route is itself a guard failure.
+
+⚠ All four return **404 while `bcc_announcements_enabled` is off** (§4.32.10), and that
+refusal is byte-identical to the 404 for a non-public row. An outside reader cannot tell
+"no such announcement" from "that one is a draft" from "the feature is off".
+
+#### `GET /bcc/v1/validators/:pageId/announcements`
+
+Auth **optional**. The public list — published public data only.
+
+| Param | Type | Default | Notes |
+|---|---|---|---|
+| `state` | enum | `active` | `active` \| `archived`. An unknown value is a `400` from the route schema. |
+| `limit` | int | 20 | 1–50 (§4.32.4). **Out of range is a `400`, not a clamp.** |
+| `cursor` | string | — | opaque; tagged `ann_active` or `ann_archived` per `state` |
+
+- **Cache:** `Cache-Control: no-store`, and **no `Vary`** — see "Freshness" below.
+
+⚠⚠ **Identical for every viewer, including the resolved operator** (§4.32.11). No
+`capabilities`, no `status`, no `body`, and no draft/scheduled/`blocked` row.
+
+⚠ A cursor minted for one `state` is **refused** by the other: the two order by different
+columns (`published_at` vs `archived_at`), so a shared cursor would skip or repeat rows with
+nothing in the response to show it. Ordering per §4.32.12.
+
+Errors: `404 bcc_not_found` (feature off, or `pageId` ≤ 0) ·
+`503 bcc_unavailable` (read failure — see the note under the owner list).
+
+#### `GET /bcc/v1/validators/:pageId/announcements/rotator`
+
+Auth **optional**. Pinned first then newest, hard-capped at **5**.
+
+Takes **no** `cursor` and **no** `limit` — not merely ignored, absent from the route schema,
+so a caller cannot page it. `pagination` is present and **inert**
+(`{next_cursor: null, has_more: false}`), because reusing the list envelope avoids a second
+response shape for the same rows (§4.32.14).
+
+- **Cache:** `Cache-Control: no-store`, no `Vary` — as the list above.
+
+Same public-data rules as the list.
+
+#### `GET /bcc/v1/validators/:pageId/announcements/:id`
+
+Auth **optional**. Detail — the only shape carrying `body` (Markdown **source**, §4.32.3).
+
+⚠⚠ **A not-yet-public announcement is `404` to non-owners, never `403`** (§4.32.4). A 403
+would confirm the row exists, which is the disclosure the rule prevents. The lookup resolves
+through the public collection first; only if that misses does it resolve ownership and retry
+through the owner collection. **One answer for three states** — missing row, another
+operator's draft, and viewer-is-not-the-operator are indistinguishable.
+
+- **Cache:** `Cache-Control: private, no-store` · `Vary: Authorization, Cookie`
+
+It carries row `capabilities` (§4.32.11) and `status` (§4.32.13), so it is **never** publicly
+cacheable even when the row itself is public. The `Vary` is the second half: `capabilities`
+changes when a claim is **revoked** between two requests, so a cache keyed without the
+credential could hand one viewer the permissions resolved for another.
+
+⚠ An archived announcement **still resolves here**: §4.32.6 keeps its permalink. Archival is
+a public record, not a deletion.
+
+#### `GET /bcc/v1/me/validators/:pageId/announcements`
+
+Auth **operator**. The only route that returns unpublished rows.
+
+| Param | Type | Default | Notes |
+|---|---|---|---|
+| `status` | enum | both | `draft` \| `scheduled`. ⚠ See the `blocked` note below. |
+| `limit` | int | 20 | 1–50. **Out of range is a `400`, not a clamp.** |
+| `cursor` | string | — | tagged `ann_owner`; keyed on the effective date |
+
+- **Cache:** `Cache-Control: private, no-store` · `Vary: Authorization, Cookie`
+
+⚠ **`scheduled` means WordPress `post_status = 'future'`**, not `publish` with a future
+date. A row stored as `publish` with a future `post_date_gmt` is excluded from the public
+list by §4.32.1's second predicate **and** from this list, because this list never asks for
+`publish` — so it would be invisible to its own author on both surfaces, with no error
+anywhere. The write path must schedule with `future`. Its author can still reach it by
+permalink through the detail route.
+
+Ownership failure is **`403 bcc_forbidden` with `reason_code: not_claimer`** — the same body
+for no claim, a claim held by someone else, and competing claims (§4.32.2). The server
+retains a finer internal reason and never serialises it: a distinguishable `claim_ambiguous`
+would tell an unauthenticated prober which validators are contested, and a distinguishable
+`claim_absent` would map the unclaimed ones.
+
+⚠⚠ **`?status=blocked` is REJECTED by the route schema, not silently mapped.** §4.32.13
+defines `blocked` as a row moved to a non-public state by **reconciler arm C** — which does
+not exist yet. It has no WordPress `post_status`, so nothing distinguishes it from an
+ordinary `draft`. Accepting it would return **ordinary drafts**: a wrong answer that looks
+right. A rejected parameter is visible; a wrong page is not.
+
+The detail route still returns an operator's own row in **any** state — withholding it would
+hide an operator's own content from them — but its `status` reads `draft` until arm C can
+mark it. **This is a known, documented gap, not a silent one:** when arm C lands it must
+define its marker, this enum must accept `blocked`, and the read-state mapping must consult
+it.
+
+`published` is also rejected, for the contract's own reason: a published announcement is
+served by the public list.
+
+⚠ **A read failure is `503 bcc_unavailable`, never `200` with an empty list.** §4.32 makes an
+empty announcement bar entirely normal, so an empty list on error would hide the fault
+behind a plausible page — a validator's official notices missing from their own page with
+nothing to say why.
+
+##### Freshness — why no announcement read carries a TTL
+
+§4.32.11 says the public list is *"safely cacheable and its cache key needs no viewer
+component."* That is a statement about **cache keys**, and it holds: the public list and the
+rotator send no `Vary`, because nothing in them varies by viewer. It is **not** a freshness
+guarantee, and §1.6's endpoint-kind table has no announcements row — so these four routes
+deliberately ship `no-store` rather than inherit a `max-age` from a neighbouring endpoint.
+
+Three consequences a shared TTL would have, none of which an uncached server-side read
+prevents — the repository sits **behind** the HTTP cache, so "the query is uncached" says
+nothing about who stores the response:
+
+1. **The feature switch would not take effect.** §4.32.10 makes `bcc_announcements_enabled`
+   the surface's off switch; a shared cache would keep serving a `200` after it flips. For a
+   surface whose safe state is disabled, "off within a minute" is the wrong direction to be
+   approximate in.
+2. **Archive and pin would lag, including for the operator.** The response is
+   viewer-independent, so the operator shares the cache entry with everyone: they archive a
+   notice and keep seeing it listed as current, with nothing on the page to explain why.
+   §4.32.6 makes archival a public record — a stale *active* list is a different claim.
+3. **Nothing exists to purge with.** No generation counter, no surrogate key, and no hook
+   fires on archive, on pin or on the switch.
+
+⚠ **Claim revocation is not on that list, and the difference is the point.** The public list
+and rotator carry no viewer-dependent field, so revoking a claim cannot change them — which
+is exactly why they send no `Vary` while detail and the owner list must.
+
+**What would make a public TTL safe**, if the bar's read volume later justifies one: a stated
+freshness guarantee in §1.6, an invalidation hook on archive/pin/switch, and a `max-age` no
+longer than the staleness an operator is told to expect. Until all three exist, a TTL here
+would be an invention rather than a contract.
 **Never on the wire:** claimant email, wallet address, `rpc_url`, removal reasons, private
 removal metadata, publication-authorization metadata, removed-comment bodies or authors, or any
 draft/scheduled announcement to a non-owner.
@@ -6554,7 +6695,10 @@ none of it. **The capability objects these routes carry are specified in §4.32.
 > red for every commit until A2 lands. The table keeps the contract honest and CI green while
 > the section is PLANNED.
 >
-> **When the implementing PR (A2) registers these routes, convert this table into individual
+> **Four routes were converted when A2.4 registered them** — see "Implemented read endpoints"
+> above. The remaining ten stay in table form until their implementation exists, because a
+> `METHOD /path` section for an unregistered route is itself a guard failure. **When each
+> lands, convert its row into an individual
 > `` #### `METHOD /path` `` subsections** so the guard starts policing them. That conversion is
 > part of A2's definition of done, not an optional follow-up — until it happens, these routes
 > are invisible to the parity guard in *both* directions, and the 2026-07-24 ratchet means a
