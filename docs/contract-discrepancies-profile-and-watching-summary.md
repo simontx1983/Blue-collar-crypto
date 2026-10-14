@@ -158,6 +158,73 @@ writing a fixture, a mock, or a second client.
 
 ---
 
+## 3. `bcc_forbidden` carries two unrelated meanings, and a client cannot tell them apart
+
+Not a contract/code disagreement like §1 and §2 — the contract and the PHP
+agree. The problem is that one code is being asked to mean two different
+things, and a client that has to act on it cannot.
+
+**Meaning A — this resource is not yours to read.** §1.4.4
+(`docs/api-contract-v1.md:165`) defines it as "the viewer is authenticated
+but is not the owner / not authorized for this resource", and distinguishes
+it from `bcc_permission_denied` ("gate not met") precisely so clients can
+"branch the unlock-vs-redirect UX cleanly".
+
+**Meaning B — the viewer is sanctioned.** The same code is returned for
+account suspension on at least four documented routes:
+
+| route | line | message |
+|---|---|---|
+| `POST /halls/{id}/join` | 2949 | "Your account is suspended." |
+| NFT-gated group join | 3143 | "Holding the NFT is the eligibility gate, not an override of moderation" |
+| group join (role-independent) | 3261 | "checked before everything else; admin bypass off" |
+| stake-gated join | 3411 | "holding stake is not an override of moderation" |
+
+In meaning B the content is not private at all — the viewer is.
+
+### Why this now matters to the frontend
+
+The operator has decided that a confirmed denial on a **re-read of content
+already displayed** withdraws that content from the screen and drops its
+cached payload (implemented in bcc-frontend #192). That decision is being
+honoured now and does **not** wait on anything here.
+
+But under meaning B the inference "the server refused, so this content is
+private to this viewer" is false. A suspended viewer re-reading an
+otherwise public roster gets a 403 and has the roster taken off their
+screen — correct for meaning A, wrong for meaning B, and the client has no
+way to distinguish them. The client currently treats both the same way,
+deliberately and with that limitation recorded.
+
+### What would let a client get this right
+
+A discriminator that says which meaning applies. Either shape works:
+
+1. a distinct code for the sanction case (`bcc_account_suspended`), leaving
+   `bcc_forbidden` to mean only "not yours to read"; or
+2. a `reason_code` on `bcc_forbidden.data` — the contract already uses that
+   pattern elsewhere (§9.4's `not_claimer` / `claim_ambiguous` /
+   `claim_absent`), so this would be consistent rather than new machinery.
+
+Either would let the client withdraw content on a resource-privacy refusal
+and show a suspension notice on a sanction refusal, instead of applying one
+behaviour to both.
+
+### What is NOT being asked for
+
+No change to who gets a 403, no new gate, and no change to any status code.
+This is a request for a *distinguisher* on an existing refusal, and it is
+not a blocker: the frontend behaviour above ships without it.
+
+### Questions
+
+1. Is the suspension 403 intended to be indistinguishable from the
+   ownership 403, or is that incidental?
+2. If a discriminator is added, is `reason_code` on `data` preferred over a
+   new code, given §9.4 already establishes that pattern?
+
+---
+
 ## Not in scope here
 
 - **`isNonRetryableFixedReadFailure` was missing two 403 codes.** The
