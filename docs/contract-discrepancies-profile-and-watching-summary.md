@@ -173,12 +173,12 @@ it from `bcc_permission_denied` ("gate not met") precisely so clients can
 **Meaning B — the viewer is sanctioned.** The same code is returned for
 account suspension on at least four documented routes:
 
-| route | line | message |
+| route | line | what it says |
 |---|---|---|
-| `POST /halls/{id}/join` | 2949 | "Your account is suspended." |
-| NFT-gated group join | 3143 | "Holding the NFT is the eligibility gate, not an override of moderation" |
-| group join (role-independent) | 3261 | "checked before everything else; admin bypass off" |
-| stake-gated join | 3411 | "holding stake is not an override of moderation" |
+| Hall join | 2956 | account suspended — "Your account is suspended." |
+| NFT-gated group join | 3150 | "Holding the NFT is the eligibility gate, not an override of moderation; admin bypass off" |
+| group join (role-independent) | 3268 | "Checked before everything else; admin bypass off — a suspended account is blocked regardless of role" |
+| stake-gated join | 3418 | "holding stake is not an override of moderation" |
 
 In meaning B the content is not private at all — the viewer is.
 
@@ -202,9 +202,19 @@ A discriminator that says which meaning applies. Either shape works:
 
 1. a distinct code for the sanction case (`bcc_account_suspended`), leaving
    `bcc_forbidden` to mean only "not yours to read"; or
-2. a `reason_code` on `bcc_forbidden.data` — the contract already uses that
-   pattern elsewhere (§9.4's `not_claimer` / `claim_ambiguous` /
-   `claim_absent`), so this would be consistent rather than new machinery.
+2. a machine-readable reason on `bcc_forbidden.data` — **which this
+   contract already does, for this exact code, including for suspension.**
+   `POST /communities` (line 6157) documents "two gates, in order: (a)
+   account suspended … (b) the custody acquisition gate … stable machine
+   reason in `error.data.reason`, gate order: `suspended` → `new_member` →
+   `below_neutral` → `in_recovery` → `cap_reached` → `cooldown_active`".
+   So a `suspended` reason on a `bcc_forbidden` is established vocabulary;
+   it is simply absent from the read routes. `bcc_forbidden` + `reason_code`
+   is also already used on the claimer path (lines 369, 6474:
+   `reason_code: not_claimer`).
+
+   That makes this an extension of an existing convention rather than new
+   machinery — which is the main reason it is worth asking for.
 
 Either would let the client withdraw content on a resource-privacy refusal
 and show a suspension notice on a sanction refusal, instead of applying one
