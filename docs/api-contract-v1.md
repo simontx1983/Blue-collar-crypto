@@ -6476,20 +6476,37 @@ Auth **operator**. Creates an announcement under one of the three write verbs (�
 | `status` | enum | yes | `draft` \| `publish` \| `schedule`. ⚠⚠ `blocked` is **rejected by the route schema** — it is a read state produced by reconciler arm C (§4.32.17), never a verb. |
 | `title` | string | yes | ≤ 200 characters after sanitisation |
 | `body` | string | no | ≤ 20000 characters; Markdown source |
-| `publish_at` | string | with `schedule` only | `Y-m-d H:i:s` UTC, **strictly future**. ⚠ Sending it with any other verb is `400 bcc_invalid_request`, not silently ignored. |
+| `publish_at` | string | with `schedule` only | `Y-m-d H:i:s` UTC, **strictly future**. ⚠ Sending it with any other verb is `400 bcc_invalid_request`, not silently ignored. ⚠⚠ `schedule` writes **no publication-authorization marker** — arm C writes it at promotion (§4.32.17). |
 
 - **Success:** `201` with `{ id, state, capabilities }`. `capabilities` comes from the owner-scope producer (§4.32.11); there is no public capability producer.
 - **Cache:** `Cache-Control: private, no-store` · `Vary: Authorization, Cookie`
-- **Errors:** `404 bcc_not_found` (feature off, **or** the caller is not the operator — see below) · `400 bcc_invalid_request` (bad verb, missing/oversized `title`, oversized `body`, non-future or non-canonical `publish_at`, `publish_at` with the wrong verb) · `503 bcc_unavailable` (storage or confirmation failure)
+- **Errors:** `403 bcc_forbidden` + `reason_code: not_claimer` (not the operator) · `404 bcc_not_found` (feature off) · `400 bcc_invalid_request` (bad verb, missing/oversized `title`, oversized `body`, non-future or non-canonical `publish_at`, `publish_at` with the wrong verb) · `503 bcc_unavailable` (storage or confirmation failure)
 
-⚠⚠ **A non-operator refusal is `404`, never `403`, and never carries the private
-reason.** `claim_absent`, `claim_ambiguous` and `not_claimer` are internal
-vocabulary; a write refusal is byte-identical to a missing row so a prober
-cannot map which validator pages have an announcements surface. ⚠ This differs
-from `GET /bcc/v1/me/validators/:pageId/announcements`, which answers `403
-bcc_forbidden` with `reason_code: not_claimer`. The asymmetry is **recorded, not
-intended**: the write routes chose the stricter disclosure posture, and
-reconciling the two is an open item.
+⚠⚠ **An ownership denial is `403 bcc_forbidden` with `reason_code:
+not_claimer`** — the generic reason and nothing else, exactly as §4.32.2
+requires.
+
+⚠ An earlier draft of these sections specified `404` here, reasoning that a
+`403` would let a prober map which validator pages have an announcements
+surface. §4.32.2 settles it the other way and says why, so the write routes are
+aligned to it rather than the reverse: the disclosure concern is answered by the
+reason being **generic**, not by the status code, and the public read list is
+unauthenticated anyway. The asymmetry with
+`GET /bcc/v1/me/validators/:pageId/announcements` that the earlier draft
+recorded as an open item is **closed by this alignment**, not by changing the
+read route.
+
+The finer internal reasons (`auth_required`, `not_a_validator_page`,
+`claim_absent`, `claim_ambiguous`) are retained server-side and **never
+serialised** — a distinguishable `claim_ambiguous` would reveal which validators
+are contested, and a distinguishable `claim_absent` which are unclaimed.
+
+⚠ `404` remains correct for two **different** cases, so all three outcomes stay
+distinguishable to a legitimate operator: the **feature being off** (§4.32.10),
+and a **genuinely missing announcement** on a page the caller does operate.
+⚠ It is also still correct on the READ side for a not-yet-public row requested
+by a non-owner (§4.32.4) — there the row's *existence* is what is hidden, which
+is a different question from ownership and is deliberately left unchanged.
 
 ⚠ `permission_callback` is `__return_true` on all five write routes, and that is
 the privacy-preserving choice rather than an oversight: a callback denial emits
@@ -6512,7 +6529,7 @@ Auth **operator**. Edits `title` / `body`, and re-schedules a still-pending row.
 | `publish_at` | string | optional; **only** valid while the row is `scheduled` |
 
 - **Success:** `200` with `{ id, state, capabilities }`
-- **Errors:** `404 bcc_not_found` · `400 bcc_invalid_request` (nothing to change; oversized field; non-future `publish_at`) · `409 bcc_conflict` (the row is archived, or `publish_at` was sent for a row that is not `scheduled`) · `503 bcc_unavailable`
+- **Errors:** `403 bcc_forbidden` + `reason_code: not_claimer` · `404 bcc_not_found` (feature off, or no such announcement) · `400 bcc_invalid_request` (nothing to change; oversized field; non-future `publish_at`) · `409 bcc_conflict` (the row is archived, or `publish_at` was sent for a row that is not `scheduled`) · `503 bcc_unavailable`
 
 #### `POST /bcc/v1/validators/:pageId/announcements/:id/publish`
 
@@ -6520,14 +6537,14 @@ Auth **operator**. Promotes a draft to published at authoritative server time.
 
 - **Success:** `200`. Writes the publication-authorization marker (§4.32.1) recording the authorizing user and instant.
 - ⚠ **This is also the recovery path for a `blocked` row** (§4.32.17): a fresh publish by a currently authorized operator clears the blocked marker. The clear happens only after the operator check has passed, so recovery is not a bypass.
-- **Errors:** `404 bcc_not_found` · `409 bcc_conflict` (already published, or archived) · `503 bcc_unavailable`
+- **Errors:** `403 bcc_forbidden` + `reason_code: not_claimer` · `404 bcc_not_found` (feature off, or no such announcement) · `409 bcc_conflict` (already published, or archived) · `503 bcc_unavailable`
 
 #### `POST /bcc/v1/validators/:pageId/announcements/:id/archive`
 
 Auth **operator**. Archival is **one-way** in v1 and is **not a deletion** (§4.32.6).
 
 - **Success:** `200`. Stamps `_bcc_announcement_archived_at`; the row **keeps its permalink and stays publicly readable**, so it remains challengeable.
-- **Errors:** `404 bcc_not_found` · `409 bcc_conflict` (already archived — refused rather than re-stamped, because moving the timestamp would change a value a reader may already hold) · `503 bcc_unavailable`
+- **Errors:** `403 bcc_forbidden` + `reason_code: not_claimer` · `404 bcc_not_found` (feature off, or no such announcement) · `409 bcc_conflict` (already archived — refused rather than re-stamped, because moving the timestamp would change a value a reader may already hold) · `503 bcc_unavailable`
 
 #### `POST /bcc/v1/validators/:pageId/announcements/:id/pin`
 
@@ -6538,7 +6555,7 @@ Auth **operator**. Pins or unpins. §4.32.12 allows **at most one** pinned row p
 | `pinned` | boolean | yes | `true` pins, `false` unpins |
 
 - **Success:** `200` with `state` of `pinned` or `unpinned`
-- **Errors:** `404 bcc_not_found` · `409 bcc_conflict` (archived row; unpublished row; **or another pin change is already in progress for this page**) · `503 bcc_unavailable` (the current pin could not be read, so the pin was not applied)
+- **Errors:** `403 bcc_forbidden` + `reason_code: not_claimer` · `404 bcc_not_found` (feature off, or no such announcement) · `409 bcc_conflict` (archived row; unpublished row; **or another pin change is already in progress for this page**) · `503 bcc_unavailable` (the current pin could not be read, so the pin was not applied)
 
 ⚠⚠ **The critical section is serialised by a page-scoped advisory lock, and it
 had to be.** Without one, six concurrent pin requests on a single page left
@@ -6720,7 +6737,7 @@ Auth **operator**. The only route that returns unpublished rows.
 
 | Param | Type | Default | Notes |
 |---|---|---|---|
-| `status` | enum | both | `draft` \| `scheduled`. ⚠ See the `blocked` note below. |
+| `status` | enum | all three | `draft` \| `scheduled` \| `blocked`. ⚠ `draft` **excludes** blocked rows — see below. |
 | `limit` | int | 20 | 1–50. **Out of range is a `400`, not a clamp.** |
 | `cursor` | string | — | tagged `ann_owner`; keyed on the effective date |
 
@@ -7211,6 +7228,38 @@ concurrent request in another process could read the row. No action-based guard
 can close that, because core offers no filter on that write. The veto removes the
 window entirely for the scheduled path — the only path where the authorization is
 stale by construction.
+
+⚠⚠ **WHEN THE MARKER IS WRITTEN: AT PROMOTION, NOT AT SCHEDULE TIME.** This is
+the §6.1 decision, resolved on measurement. Writing it at schedule time was
+tried first and left a real exposure: an **overdue** scheduled row (status
+`future`, due instant passed, cron not yet run) has a PAST `post_date_gmt`, so
+visibility predicate 2 stops refusing, and a publish by any non-cron path then
+satisfies all three predicates for the whole interval between core's status
+write and the backstop. Measured readable through the public list, rotator and
+detail. A published row later demoted to `draft` kept its marker and had the
+same shape.
+
+So: `schedule` writes no marker, and arm C writes it at the
+`publish_future_post` veto hook after the authority re-check. A row that is not
+yet public therefore carries **no marker at all**, and predicate 3 refuses for
+the whole interval, on every path.
+
+⚠ **Leaving `publish` retires the marker.** The marker means "authorized to
+publish at time T"; once the row is not public that authorization is spent.
+**This is not a post-publication revocation policy**: it fires only when
+something has already taken the row out of `publish`, and never un-publishes
+anything. A notice that stays published keeps its marker untouched; one that is
+demoted must be re-published through `POST …/:id/publish`, which writes a fresh
+marker under a fresh check.
+
+⚠ **The residual, stated.** For a row whose marker was written by something
+outside this feature — another plugin, a manual meta write, or a row predating
+this rule — the interval exposure remains, and it cannot be closed by any
+action-based guard: `wp_publish_post()` writes the status directly and core
+offers no filter on that write. Closing it would require public reads to resolve
+claim authority, which §4.32.11 forbids. Pinned by
+`scripts/tests/announcement-publication-interval.php` cases B, E and F so it
+cannot be forgotten.
 
 **Ordering inside a block is load-bearing.** The publication marker is removed
 **first**, because it is predicate 3: once gone the row cannot be public even if a
