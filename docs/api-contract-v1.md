@@ -6458,8 +6458,98 @@ Retract the viewer's stance (back to neutral). NOT holder-gated — you can alwa
 
 An **announcement** is an operator-authored post on a claimed validator page. Storage is a
 private `bcc_announcement` CPT (`public:false`, `publicly_queryable:false`, **`show_in_rest:false`**,
-hidden from wp-admin). Published announcements are publicly readable and project exactly **one**
-feed activity.
+hidden from wp-admin). Published announcements are publicly readable.
+
+⚠ **No feed projection exists.** An earlier version of this paragraph said a
+published announcement projects "exactly one feed activity". Nothing projects
+announcements into the feed today: `FeedColdStartService::VERB_BY_MODULE` has no
+`205` entry, and the write layer emits no activity row. Corrected rather than
+left standing, because a contract that claims a projection invites a client to
+wait for one. See §4.32.17 for what a future projection must consult.
+
+#### `POST /bcc/v1/validators/:pageId/announcements`
+
+Auth **operator**. Creates an announcement under one of the three write verbs (§4.32.13).
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `status` | enum | yes | `draft` \| `publish` \| `schedule`. ⚠⚠ `blocked` is **rejected by the route schema** — it is a read state produced by reconciler arm C (§4.32.17), never a verb. |
+| `title` | string | yes | ≤ 200 characters after sanitisation |
+| `body` | string | no | ≤ 20000 characters; Markdown source |
+| `publish_at` | string | with `schedule` only | `Y-m-d H:i:s` UTC, **strictly future**. ⚠ Sending it with any other verb is `400 bcc_invalid_request`, not silently ignored. |
+
+- **Success:** `201` with `{ id, state, capabilities }`. `capabilities` comes from the owner-scope producer (§4.32.11); there is no public capability producer.
+- **Cache:** `Cache-Control: private, no-store` · `Vary: Authorization, Cookie`
+- **Errors:** `404 bcc_not_found` (feature off, **or** the caller is not the operator — see below) · `400 bcc_invalid_request` (bad verb, missing/oversized `title`, oversized `body`, non-future or non-canonical `publish_at`, `publish_at` with the wrong verb) · `503 bcc_unavailable` (storage or confirmation failure)
+
+⚠⚠ **A non-operator refusal is `404`, never `403`, and never carries the private
+reason.** `claim_absent`, `claim_ambiguous` and `not_claimer` are internal
+vocabulary; a write refusal is byte-identical to a missing row so a prober
+cannot map which validator pages have an announcements surface. ⚠ This differs
+from `GET /bcc/v1/me/validators/:pageId/announcements`, which answers `403
+bcc_forbidden` with `reason_code: not_claimer`. The asymmetry is **recorded, not
+intended**: the write routes chose the stricter disclosure posture, and
+reconciling the two is an open item.
+
+⚠ `permission_callback` is `__return_true` on all five write routes, and that is
+the privacy-preserving choice rather than an oversight: a callback denial emits
+WordPress's **own** 401/403 envelope, which would disclose the surface. The gate
+is the first statement of each handler — feature switch, then a **fresh**
+operator-authority decision.
+
+⚠ Fields in §4.32's request sketch that are **not yet accepted**: `summary` and
+`comments_enabled`. They are omitted from this route rather than accepted and
+discarded.
+
+#### `PATCH /bcc/v1/validators/:pageId/announcements/:id`
+
+Auth **operator**. Edits `title` / `body`, and re-schedules a still-pending row.
+
+| Field | Type | Notes |
+|---|---|---|
+| `title` | string | optional; omitted means "leave alone", not "set empty" |
+| `body` | string | optional; same rule |
+| `publish_at` | string | optional; **only** valid while the row is `scheduled` |
+
+- **Success:** `200` with `{ id, state, capabilities }`
+- **Errors:** `404 bcc_not_found` · `400 bcc_invalid_request` (nothing to change; oversized field; non-future `publish_at`) · `409 bcc_conflict` (the row is archived, or `publish_at` was sent for a row that is not `scheduled`) · `503 bcc_unavailable`
+
+#### `POST /bcc/v1/validators/:pageId/announcements/:id/publish`
+
+Auth **operator**. Promotes a draft to published at authoritative server time.
+
+- **Success:** `200`. Writes the publication-authorization marker (§4.32.1) recording the authorizing user and instant.
+- ⚠ **This is also the recovery path for a `blocked` row** (§4.32.17): a fresh publish by a currently authorized operator clears the blocked marker. The clear happens only after the operator check has passed, so recovery is not a bypass.
+- **Errors:** `404 bcc_not_found` · `409 bcc_conflict` (already published, or archived) · `503 bcc_unavailable`
+
+#### `POST /bcc/v1/validators/:pageId/announcements/:id/archive`
+
+Auth **operator**. Archival is **one-way** in v1 and is **not a deletion** (§4.32.6).
+
+- **Success:** `200`. Stamps `_bcc_announcement_archived_at`; the row **keeps its permalink and stays publicly readable**, so it remains challengeable.
+- **Errors:** `404 bcc_not_found` · `409 bcc_conflict` (already archived — refused rather than re-stamped, because moving the timestamp would change a value a reader may already hold) · `503 bcc_unavailable`
+
+#### `POST /bcc/v1/validators/:pageId/announcements/:id/pin`
+
+Auth **operator**. Pins or unpins. §4.32.12 allows **at most one** pinned row per page, so pinning clears any other pin first.
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `pinned` | boolean | yes | `true` pins, `false` unpins |
+
+- **Success:** `200` with `state` of `pinned` or `unpinned`
+- **Errors:** `404 bcc_not_found` · `409 bcc_conflict` (archived row; unpublished row; **or another pin change is already in progress for this page**) · `503 bcc_unavailable` (the current pin could not be read, so the pin was not applied)
+
+⚠⚠ **The critical section is serialised by a page-scoped advisory lock, and it
+had to be.** Without one, six concurrent pin requests on a single page left
+**two** pins surviving — a measured race, not a theoretical one. A sequential
+"pin twice, find one" test cannot observe it. Contention answers `409` rather
+than queueing: a queued pin would return `200` to a caller whose pin is then
+cleared by the request behind it.
+
+⚠ A failure to read the current pin **refuses** the write (`503`) instead of
+proceeding. An errored read returns "nothing is pinned", and pinning on that
+basis is exactly how the two-pin state arises.
 
 #### 4.32.1 Visibility — three predicates, not two
 
@@ -6649,11 +6739,16 @@ retains a finer internal reason and never serialises it: a distinguishable `clai
 would tell an unauthenticated prober which validators are contested, and a distinguishable
 `claim_absent` would map the unclaimed ones.
 
-⚠⚠ **`?status=blocked` is REJECTED by the route schema, not silently mapped.** §4.32.13
-defines `blocked` as a row moved to a non-public state by **reconciler arm C** — which does
-not exist yet. It has no WordPress `post_status`, so nothing distinguishes it from an
-ordinary `draft`. Accepting it would return **ordinary drafts**: a wrong answer that looks
-right. A rejected parameter is visible; a wrong page is not.
+⚠⚠ **`?status=blocked` is REJECTED by the route schema, not silently mapped.**
+Accepting it would need an owner-list filter this route does not yet implement,
+and a parameter that is accepted but unfiltered would return **ordinary drafts** —
+a wrong answer that looks right. A rejected parameter is visible; a wrong page is not.
+
+⚠ **Arm C now exists** (§4.32.17), so the REASON for the rejection has changed and
+the older wording here ("which does not exist yet") no longer applies. `blocked` is
+no longer indistinguishable from a draft: it carries `_bcc_announcement_blocked_at`,
+and the **detail** view-model reports `status: "blocked"` for an operator's own row.
+What is still missing is only the owner-list filter.
 
 The detail route still returns an operator's own row in **any** state — withholding it would
 hide an operator's own content from them — but its `status` reads `draft` until arm C can
@@ -7055,18 +7150,94 @@ out.
 | `draft` | stored, never published |
 | `scheduled` | due in the future; the ownership recheck has not run yet |
 | `published` | live, due, and carrying a valid publication-authorization marker (§4.32.1) |
-| `blocked` | forced to `publish` without a valid marker, and moved to a non-public state by reconciler arm C. **Owner-visible only, never public** |
+| `blocked` | withheld by **reconciler arm C** (§4.32.17) because operator authority no longer held at publication time: stored `draft`, publication marker removed, `_bcc_announcement_blocked_at` present. **Owner-visible only, never public** |
 
 So `publish` → `published` and `schedule` → `scheduled`: the verb and the resulting state differ
 by more than tense, and **a client must not round-trip a read `status` back into a write.**
 
-`GET /me/validators/:pageId/announcements?status=` accepts `draft` | `scheduled` | `blocked` —
-the three non-public states. It is the **only** route that returns unpublished rows, and it
+`GET /me/validators/:pageId/announcements?status=` accepts `draft` | `scheduled`.
+
+⚠⚠ **It does NOT accept `blocked`, and this paragraph previously said it did.**
+That was an internal inconsistency with the owner-route section above, which has
+always documented the rejection. Arm C (§4.32.17) now produces the state and the
+**detail** view-model reports it, but the owner-list **filter** is still not
+implemented — so the enum stays two-valued and the drift is resolved in favour of
+what ships. Adding `?status=blocked` is an open item, and it is now implementable
+because the state finally has a marker to filter on.
 **does not** accept `published`, because a published announcement is served by the public list.
 
 `status` appears on the **detail** view-model. It is **absent from list items**, because every
 row a public list can return is `published` by construction (§4.32.1), and an owner list is
 already filtered by the `?status=` the caller asked for.
+
+#### 4.32.17 Reconciler arm C — publication-time authority re-check, and the `blocked` representation
+
+`schedule` captures an authorization now and acts on it later. WordPress's cron
+does the publishing, with **no operator session**, so a claim revoked, removed or
+made ambiguous between scheduling and the due instant would otherwise publish the
+notice under an authorization that no longer holds. Arm C is the re-check.
+
+**The stored representation.** `blocked` is not a WordPress `post_status`; it is a
+`draft` row carrying arm C's marker. Two meta keys, both owner-visible only:
+
+| Key | Value |
+|---|---|
+| `_bcc_announcement_blocked_at` | UTC `Y-m-d H:i:s`. **Presence is the state** — an empty value is not blocked. |
+| `_bcc_announcement_blocked_reason` | `authority_lost` \| `authority_unverifiable` |
+
+A blocked row is, simultaneously: `post_status = 'draft'`, the publication
+marker (§4.32.1) **removed**, and `_bcc_announcement_blocked_at` present. All
+three, so it fails visibility predicates 1 **and** 3 — not one of them.
+
+⚠⚠ **The reason set is deliberately coarser than the authority's.**
+`claim_absent`, `claim_ambiguous` and `not_claimer` are private vocabulary
+(§4.32.2); collapsing them to `authority_lost` is what stops the blocked state
+becoming the disclosure channel that §4.32.11 closes everywhere else.
+`authority_unverifiable` is used only when the check itself could not complete —
+an unreadable answer is treated as failure, never as permission.
+
+**Where it runs.** Two layers of deliberately different strength, because
+`wp_publish_post()` writes `post_status` with a direct database update and never
+passes through `wp_insert_post()` — so **no filter can veto it**, and only
+actions fire, after the row is already public.
+
+| Layer | Hook | Strength |
+|---|---|---|
+| veto | `publish_future_post`, priority **1** | **Publication never happens.** Core's `check_and_publish_future_post()` runs at 10 and returns early unless the status is `future`; blocking first makes it return. There is **no window** in which the row is public. |
+| backstop | `transition_post_status` | **Revert.** Catches an entry into `publish` from wp-admin, WP-CLI, another plugin, or any route that is not ours. It cannot veto, so it reverts within the same request. |
+
+⚠ **The backstop's honest limit:** between core's status write and the hook, a
+concurrent request in another process could read the row. No action-based guard
+can close that, because core offers no filter on that write. The veto removes the
+window entirely for the scheduled path — the only path where the authorization is
+stale by construction.
+
+**Ordering inside a block is load-bearing.** The publication marker is removed
+**first**, because it is predicate 3: once gone the row cannot be public even if a
+concurrent write restores the status. Then the status is reverted, then the
+blocked marker is stamped, then the pending cron event is cleared (otherwise core
+retries and re-blocks on every tick).
+
+**Recovery.** A fresh `POST …/:id/publish` by a **currently** authorized operator
+clears the blocked marker. The clear happens only after the operator check has
+passed, so there is no path that clears it without a fresh check — a stranger's
+attempt answers `404` and leaves the row blocked.
+
+⚠ **Arm C is registered outside the feature switch.** Gating it would mean
+turning the feature off between scheduling and the due instant *removes* the
+guard, so switching off would **open** a publication path. Turning a feature off
+must never open one.
+
+⚠⚠ **Residual risk, stated rather than closed.** Arm C re-checks at publication,
+so a lapsed claim cannot publish. It does **not** retroactively close a notice
+whose claim lapses *after* it is already public — that is a different reconciler
+arm and is not specified here.
+
+**Feed.** A blocked notice cannot reach the feed, and neither can a published one
+today: nothing projects announcements into the feed at all.
+`FeedColdStartService::VERB_BY_MODULE` has no `205` entry, so the guarantee is
+structural rather than a filter. When projection is added it must consult the
+blocked marker.
 
 #### 4.32.14 Worked examples
 
