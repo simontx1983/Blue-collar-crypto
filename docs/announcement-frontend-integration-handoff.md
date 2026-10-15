@@ -548,3 +548,131 @@ usage and exits with no assertions at all.
 **Open question for the frontend, not the backend:** whether the bar renders the rotator
 (fixed top 5, no paging) or the active list (paginated). Both are live; the rotator exists
 so the bar need not page.
+
+---
+
+## 14. Integration findings handed to the frontend agent
+
+Measured 2026-10-15 by the backend session against released frontend main
+`ddf5d6cc1245d295e2b4c4da54bed1a5face00e9` (GitHub deployment `Production`,
+2026-10-14T16:33:30). Recorded here because they were found while looking, and
+they belong to whoever does the integration — **the backend session did not and
+must not implement them.** All four frontend heads are untouched: #167
+`71005e6c7c75df180171baaeeccc1410aa81a2e3`, #168
+`683505d44d6dc865ba4ad41531e86e44f0120742`, #188
+`4b59fab26b1a81579b0827f6b133aad7d0d187be`.
+
+### 14.1 EntityTabs — one conflict, and the shape of its resolution
+
+#167 is **46 commits behind** released main. Merging main into it produces
+**exactly one conflict**, in `src/components/entity/EntityTabs.tsx`. Nothing else
+conflicts.
+
+The two sides:
+
+- **#167** builds `tabs` as a mutable array and inserts with
+  `tabs.push({ key: "announcements", label: "Announcements" })` after Reviews,
+  guarded on `announcementsPanel !== undefined && announcementsPanel !== null`.
+- **Released main** (from #169, shipped to production in #193 `c17d54be`) replaced
+  that with a `useMemo` array. Its own comment says why: *"Memoized because
+  `tabKeys` below feeds useRovingTabs, whose onKeyDown is itself memoized on the
+  key list — rebuilding the array every render would rebuild the handler every
+  render for no reason."*
+
+So the tab must be re-expressed **inside** the memo, with a `hasAnnouncements`
+boolean in the dependency array, exactly as `hasOnchain` / `hasChains` already are:
+
+```ts
+const hasAnnouncements =
+  announcementsPanel !== undefined && announcementsPanel !== null;
+
+const tabs: EntityTabDef[] = useMemo(() => {
+  const list: EntityTabDef[] = [
+    { key: "backing",  label: ATTESTATION_COPY.supporters_tab },
+    { key: "reviews",  label: "Reviews"  },
+  ];
+  if (hasAnnouncements) list.push({ key: "announcements", label: "Announcements" });
+  list.push(
+    { key: "activity", label: "Activity" },
+    { key: "watchers", label: "Watchers" },
+  );
+  if (hasOnchain) list.push({ key: "onchain", label: "On-chain" });
+  if (hasChains)  list.push({ key: "chains",  label: "Chains"  });
+  return list;
+}, [hasAnnouncements, hasOnchain, hasChains]);
+```
+
+⚠ Two things that are easy to get wrong here. **Order matters** — #167 placed
+Announcements between Reviews and Activity on purpose ("operator's own voice next
+to what others said about them, both ahead of raw activity"), and main's memo
+lists `activity`/`watchers` in its initial literal, so a naive `push` after the
+literal puts Announcements *after* Watchers instead. And **the dependency array
+is load-bearing**: omit `hasAnnouncements` and the tab list goes stale when the
+capability block arrives, which also staleness-freezes the memoized `onKeyDown`
+and breaks roving focus. Activation stays **manual** (Arrow/Home/End move focus,
+Enter/Space selects) — automatic activation would fire a request for every tab
+arrowed past, which is why both profile strips do it this way.
+
+### 14.2 AnnouncementsPanel — five gaps against the shipped denial policy
+
+The relevant policy shipped **after** #167 was written: frontend PR **#194**
+(`ddf5d6cc`, *"last blanket-isError branches, bcc_blocked copy, and the composer
+permission boundary"*). Its primitives live in `src/lib/api/errors.ts`
+(`isCode`, `humanizeCode`, `isPermissionDenial`) and
+`src/lib/api/resource-denial.ts` (`shouldWithdrawOnDenial`, `useDenialGate`,
+`useReportDenial`), and **13 shipped components** now follow it.
+
+The canonical shape, from `CardReviewsPanel` / `CardWatchersPanel`:
+
+```ts
+const gate = useDenialGate(queryKey);
+if (gate.withdrawn) return <withdrawn copy />;
+useReportDenial(
+  shouldWithdrawOnDenial(query.error, query.isRefetchError, query.data !== undefined),
+  gate.withdraw,
+);
+const retryProps = isPermissionDenial(query.error) ? {} : { onRetry: retry };
+if (query.isError && items.length === 0) return <whole-panel failure />;
+```
+
+`AnnouncementsPanel.tsx` on #167 has two infinite queries —
+`active` and `archived`, both `useAnnouncements(pageId, { state })` with
+`data.pages.flatMap(...)` — and diverges five ways:
+
+| # | Gap | Consequence |
+|---|---|---|
+| 1 | `{active.isError ? <LoadFailure/> : …}` is **blanket** | fires with rows already loaded, so a failed LOAD MORE **erases the loaded list** — the recorded defect class |
+| 2 | `onRetry={() => void active.refetch()}` is **unconditional** | a `bcc_forbidden`/`bcc_not_found` denial gets a Retry that fails identically every press |
+| 3 | no `useDenialGate` / `useReportDenial` | a denied **refetch** keeps painting content the server has just refused, and its cached payload is never dropped |
+| 4 | archived section is `{archivedItems.length > 0 && …}` | an archived read failure renders **nothing at all** — no message, no retry, silently invisible |
+| 5 | no foot-of-list failure on either list | a failed `fetchNextPage` shows nothing; LOAD MORE just stops working |
+
+Gap 1 is the one originally flagged; 2–5 were found while checking it.
+
+### 14.3 ⚠⚠ The constraint that shapes the fix: the composer holds no draft
+
+`AnnouncementComposer.tsx` keeps `title`, `summary`, `body`, `mode`,
+`publishAtLocal` and `commentsEnabled` in plain `useState` with **no persistence
+of any kind** — no `localStorage`, no draft key, nothing. It is rendered as a
+sibling inside the panel's returned tree:
+
+```tsx
+{composerOpen && <AnnouncementComposer … />}
+```
+
+Every sibling panel implements the gate with an **early `return` on
+`gate.withdrawn`**. Doing that here would unmount the composer and **destroy a
+typed draft outright**. The shipped doctrine is explicit that withdrawal
+*"never touches drafts or any other storage"*, so the early return is the wrong
+shape for this panel specifically.
+
+So the gate must wrap the **list article**, leaving the composer mounted as a
+sibling — a deliberate divergence from the other 13 call sites, justified because
+none of them holds unsaved user input, and worth a comment in the code saying so.
+Two queries means two gates, or one gate scoped to whichever read the panel
+treats as its subject.
+
+⚠ The alternative — persisting announcement drafts the way `BlogComposer` does —
+is a **larger product decision**, not a bug fix: it introduces viewer-scoped
+storage with its own scope and sign-out rules. Do not fold it into this fix
+without deciding it separately.
