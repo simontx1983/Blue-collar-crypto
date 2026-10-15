@@ -6896,6 +6896,151 @@ none of it. **The capability objects these routes carry are specified in §4.32.
 > are invisible to the parity guard in *both* directions, and the 2026-07-24 ratchet means a
 > registered-but-undocumented route is itself a CI failure.
 
+##### Implemented comment endpoints
+
+All five are **registered in PHP** and therefore policed by
+`scripts/contract-parity-guard.php` in both directions, like the read and write routes
+above. They are converted out of the §4.32.4 table for exactly that reason: a
+`METHOD /path` section for an unregistered route is itself a guard failure, and a
+registered route with no section turns umbrella CI red.
+
+⚠⚠ **Path identifiers are bare numeric** — `:id` and `:commentId` both match `\d+`. The
+`acmt_` prefix is a view-model value, never a path segment. See the rule stated above the
+read endpoints.
+
+⚠ All five return **404 while `bcc_announcements_enabled` is off** (§4.32.10), including the
+two administrator routes. An administrator surface for a switched-off feature is still a
+surface, and §4.32.10 carves out no exception.
+
+#### `GET /bcc/v1/announcements/:id/comments`
+
+Auth **optional**. The canonical chronological discussion for one announcement.
+
+| Param | Type | Default | Notes |
+|---|---|---|---|
+| `limit` | int | 20 | 1–50. **Out of range is a `400`, not a clamp.** |
+| `cursor` | string | — | tagged `ann_comments`; keyed on `(comment_date_gmt, comment_ID)` |
+
+- **Success:** `200` with `{ items, pagination, can_comment }`.
+- **Cache:** `Cache-Control: private, no-store` · `Vary: Authorization, Cookie`
+- **Errors:** `404 bcc_not_found` (feature off, **or the announcement is not publicly
+  readable**) · `503 bcc_unavailable`
+
+⚠⚠ **A thread on a non-public announcement is `404`, and that is true even for the
+operator.** §4.32.4's read-side rule hides the row's EXISTENCE, which is a different
+question from ownership — so a draft's comment thread must not confirm that the draft
+exists. This is the one place in §4.32 where an operator is deliberately told "not found"
+about their own row, and it is not an ownership denial.
+
+⚠ **`private, no-store` even though the thread is mostly public**, because it is
+viewer-dependent: `can_comment` and each row's `permissions.can_remove` differ per viewer.
+A shared cache entry would hand one member another member's permissions.
+
+⚠ `can_comment` rides on the ENVELOPE rather than being left to the client to infer, so a
+reader knows whether to render a composer without a second request. It comes from the same
+§4.32.11 producer as every other capability.
+
+#### `POST /bcc/v1/announcements/:id/comments`
+
+Auth **member in good standing** (§4.32.7).
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `body` | string | yes | plain text, 1–2000 chars after normalisation, valid UTF-8, normalised line endings |
+| `parent_id` | int | — | ⚠⚠ **Sending it at all is `400 replies_not_supported`**, including `0`. v1 comments are flat; answering `201` would tell a client its reply had been threaded. |
+
+- **Success:** `201` with the created comment in the §4.32.14 shape.
+- **Errors:** `403 bcc_forbidden` + `reason_code` · `404 bcc_not_found` (feature off, or the
+  announcement is not publicly readable) · `400 bcc_invalid_request` (absent, blank,
+  oversized or non-UTF-8 body) · `400` + `reason_code: replies_not_supported` ·
+  `503 bcc_unavailable`
+
+⚠ **`body` is NOT declared `required` in the route schema**, deliberately. A
+schema-required field is validated by WordPress BEFORE the handler runs, so a request
+omitting it would answer `400` while the feature is off — the §4.32.10 divergence that
+`status` and `title` already carry on the create route. This route does not add a third:
+the body is refused by the handler, after the feature gate.
+
+**`reason_code` vocabulary for a refusal, in the order the gate applies them:**
+
+| `reason_code` | Meaning |
+|---|---|
+| `announcement_archived` | §4.32.6 — archived threads are read-only. Non-retryable. |
+| `comments_disabled` | The operator turned the discussion off (§4.32.7). |
+| `auth_required` | Not signed in. **No anonymous comments.** |
+| `suspended` | Suspended account, **or** a reputation tier below `neutral`. See below. |
+| `fraud_locked` | The account is restricted. |
+
+⚠⚠ **STANDING AND SUSPENSION PRESENT IDENTICALLY, AND THAT IS DELIBERATE.** §4.32.11's
+reason inventory is CLOSED and has no "standing" entry, and the frontend closes the
+composer on an unrecognised reason — so a new code would produce a disabled control with
+no copy. To a member, both mean "you may not post right now".
+
+⚠ "Good standing" resolves through `UserViewService::isInGoodStanding()`, the documented
+single source of truth: tier ∈ {`neutral`, `trusted`, `elite`}. A member with **no score
+row defaults to `neutral`**, so a brand-new member CAN comment — only an explicit `risky`
+or `caution` tier denies.
+
+#### `DELETE /bcc/v1/announcements/:id/comments/:commentId`
+
+Auth **comment author** or **resolved operator** (§4.32.7). Soft removal; the comment stays
+in position as a tombstone.
+
+- **Success:** `200` with the tombstone shape — four keys, nothing else.
+- **Errors:** `403 bcc_forbidden` + `reason_code: not_comment_author` · `404 bcc_not_found`
+  (feature off, no such comment, or the announcement is not publicly readable) ·
+  `409 bcc_conflict` (already removed) · `503 bcc_unavailable`
+
+⚠⚠ **`not_comment_author` IS THE PUBLIC REASON FOR EVERY REMOVAL DENIAL**, whoever asks.
+A stranger, a signed-out visitor and a member who simply did not write that comment all
+receive the same reason, so the response cannot be used to work out who DID write it.
+
+⚠ **An ADMINISTRATOR cannot remove.** §4.32.7's actor table gives administrators
+"— (restore only)", so an admin who is neither the author nor the operator receives the
+same `403 not_comment_author` as anyone else. Administrator power over a comment is
+RECOVERY, not moderation.
+
+⚠ **Already-removed is `409`, not an idempotent `200`.** Re-stamping would move
+`removed_at`, a value a reader may already hold — the same reasoning as the one-way
+archive.
+
+#### `GET /bcc/v1/admin/announcement-comments/:commentId`
+
+Auth **administrator**. Returns the private original of a comment, removed or not.
+
+- **Success:** `200` with `{ id, announcement_id, is_removed, removed_at, removed_actor,
+  original_body, author_user_id, posted_at }`.
+- **Errors:** `404 bcc_not_found` (feature off, or no such comment) · `503 bcc_unavailable`
+  · `401` / `403` from the admin permission callback.
+
+⚠⚠ **THIS IS THE ONLY SURFACE IN §4.32 THAT MAY RETURN A REMOVED BODY**, and it is the
+reason the tombstone representation keeps the original rather than overwriting it. Its
+response shape is deliberately NOT the public comment shape — the body is named
+`original_body` and the actor is named explicitly — so an administrative tool cannot
+accidentally render it where a public payload is expected, and a reviewer can tell the two
+apart at a glance.
+
+⚠ Unlike the three member routes, the two administrator routes gate in the
+`permission_callback` (`BearerAuth::requireAdmin`), which is what every other `/admin/`
+route in this plugin does. The disclosure argument that makes the member routes use
+`__return_true` does not apply: the path is explicitly administrative and there is no
+ownership question to leak.
+
+#### `POST /bcc/v1/admin/announcement-comments/:commentId/restore`
+
+Auth **administrator**. Clears the tombstone and makes the comment readable again.
+
+- **Success:** `200` with `{ id, is_removed: false }`.
+- **Errors:** `404 bcc_not_found` (feature off, or no such comment) · `409 bcc_conflict`
+  (not removed) · `503 bcc_unavailable` · `401` / `403` from the admin permission callback.
+
+⚠ **Comment authors cannot restore** (§4.32.7). The author who removed their own comment
+has no route back; recovery is administrator-only, and the policy enforces it independently
+of the permission callback so the rule is testable without a request.
+
+⚠ Author removal, validator removal and administrator restoration each write a **distinct**
+audit action, as §4.32.7 requires.
+
 #### 4.32.5 Publication dates
 
 Immediate publication uses **authoritative server time**; any client-supplied timestamp is
