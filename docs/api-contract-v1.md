@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.78 · 2026-10-13 · Phase 1 deliverable
+**Status:** Draft v1.80 · 2026-10-15 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -7126,9 +7126,29 @@ Adds to §1.4.6 (same semantics):
 |---|---|---|---|
 | `announcement_archived` | 403 / 409 | Client error | Archived: read-only. **Non-retryable** — archive is one-way, so a retry can never succeed. |
 | `replies_not_supported` | 400 | Client error | `parent_id` sent; v1 comments are flat. |
-| `publish_at_not_future` | 400 | Client error | Scheduled time is not strictly in the future. |
-| `backdating_not_allowed` | 400 | Client error | Attempt to move a publication date earlier. |
+| `publish_at_not_future` | 400 | Client error | Scheduled time is not strictly in the future. ⚠⚠ **NOT EMITTED — see below.** |
+| `backdating_not_allowed` | 400 | Client error | Attempt to move a publication date earlier. ⚠⚠ **NOT EMITTED — see below.** |
 | `summary_required` | 400 | Client error | Summary is first-class and must be authored. |
+
+⚠⚠ **`publish_at_not_future` AND `backdating_not_allowed` HAVE NO PRODUCER.**
+Measured against the write routes: both failure modes answer
+`400 bcc_invalid_request` with **no `reason_code` key at all**, so a client
+cannot tell a malformed `publish_at` from a past one, and neither can the
+operator reading the message. Every other code in this table is emitted —
+`summary_required`, `announcement_archived`, `replies_not_supported`,
+`comments_disabled` and `not_claimer` each have producers in the plugin.
+
+They are recorded here as **planned, not available**, so that no client gates a
+control on a code that will never arrive. A client that branches on them today
+silently takes its fallback path forever, which is the failure mode this note
+exists to prevent.
+
+⚠ Closing the gap is a **behaviour change to an error envelope**, not a
+documentation fix: §4.32.11's reason inventory is closed and a client that meets
+an unrecognised reason takes its own refusal path, so emitting two new codes has
+client consequences and needs its own change with its own tests. The entry is
+left in place rather than deleted because the distinction is worth having — a
+client cannot currently explain to an operator *why* a schedule was refused.
 
 Also used, with existing meanings: `bcc_forbidden` (`reason_code` ∈ `not_claimer` ·
 `comments_disabled` · `announcement_archived` · `not_comment_author` ·
@@ -7497,6 +7517,20 @@ blocked marker.
 
 **Create, scheduled.**
 
+⚠⚠ **`publish_at` IS `Y-m-d H:i:s`, NOT ISO-8601 — and this example used to get
+that wrong.** It carried `"2026-10-20T14:00:00Z"`, which the route refuses with
+`400 bcc_invalid_request`: *"publish_at must be a strictly future UTC instant
+formatted Y-m-d H:i:s."* §4.32.4's parameter table always said `Y-m-d H:i:s`;
+this example contradicted it, and an example is what a client is written
+against.
+
+⚠ **It is the one request field in §4.32 that is not ISO-8601**, which is why
+`toISOString()` is the natural wrong answer: every DATE THIS FEATURE RETURNS is
+ISO-8601 UTC with a `Z` (§4.32.3), so a client that round-trips a read value
+into `publish_at` is refused. Same hazard as the write-verb / read-state split
+in §4.32.13 — `schedule` vs `scheduled` — and worth reading as one rule: **a
+§4.32 write field is not necessarily the shape the matching read returns.**
+
 ```http
 POST /wp-json/bcc/v1/validators/4471/announcements
 ```
@@ -7505,7 +7539,7 @@ POST /wp-json/bcc/v1/validators/4471/announcements
   "summary": "Operator-written one-liner. Required. Never derived from the body.",
   "body": "We completed the **v18** upgrade at block 19,204,118.\n\nNo downtime.",
   "status": "schedule",
-  "publish_at": "2026-10-20T14:00:00Z",
+  "publish_at": "2026-10-20 14:00:00",
   "comments_enabled": true }
 ```
 ```json
