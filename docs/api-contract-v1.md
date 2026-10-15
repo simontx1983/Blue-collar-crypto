@@ -6475,12 +6475,22 @@ Auth **operator**. Creates an announcement under one of the three write verbs (�
 |---|---|---|---|
 | `status` | enum | yes | `draft` \| `publish` \| `schedule`. ⚠⚠ `blocked` is **rejected by the route schema** — it is a read state produced by reconciler arm C (§4.32.17), never a verb. |
 | `title` | string | yes | ≤ 200 characters after sanitisation |
+| `summary` | string | **yes** | ≤ 300 characters, plain text. §4.32.3 makes it first-class and **never inferred from the body**. ⚠ An ABSENT field is refused by the route schema (`rest_missing_callback_param`); a BLANK one is refused by the handler as `400 bcc_invalid_request` carrying `reason_code: summary_required`. The two are deliberately distinguishable. |
 | `body` | string | no | ≤ 20000 characters; Markdown source |
 | `publish_at` | string | with `schedule` only | `Y-m-d H:i:s` UTC, **strictly future**. ⚠ Sending it with any other verb is `400 bcc_invalid_request`, not silently ignored. ⚠⚠ `schedule` writes **no publication-authorization marker** — arm C writes it at promotion (§4.32.17). |
+| `comments_enabled` | boolean | no | Per-announcement discussion switch (§4.32.7). ⚠⚠ **Omitting it is not the same as sending `true`.** The meta key is written ONLY when the field is supplied, because every reader treats an ABSENT key as **enabled** — §4.32.7 makes discussion the default. Writing a default would give every row a stored preference nobody expressed. |
 
 - **Success:** `201` with `{ id, state, capabilities }`. `capabilities` comes from the owner-scope producer (§4.32.11); there is no public capability producer.
 - **Cache:** `Cache-Control: private, no-store` · `Vary: Authorization, Cookie`
-- **Errors:** `403 bcc_forbidden` + `reason_code: not_claimer` (not the operator) · `404 bcc_not_found` (feature off) · `400 bcc_invalid_request` (bad verb, missing/oversized `title`, oversized `body`, non-future or non-canonical `publish_at`, `publish_at` with the wrong verb) · `503 bcc_unavailable` (storage or confirmation failure)
+- **Errors:** `403 bcc_forbidden` + `reason_code: not_claimer` (not the operator) · `404 bcc_not_found` (feature off) · `400 bcc_invalid_request` (bad verb, missing/oversized `title`, **blank summary — with `reason_code: summary_required`** — oversized `summary`, oversized `body`, non-future or non-canonical `publish_at`, `publish_at` with the wrong verb) · `503 bcc_unavailable` (storage or confirmation failure)
+
+⚠ **How `summary_required` reaches the wire.** §4.32.9 lists it as a code while
+this route's error line names `bcc_invalid_request`; both are satisfied rather
+than one being chosen. The envelope keeps the house `bcc_invalid_request` that
+every other 400 on these routes uses, and §4.32.9's code rides alongside as
+`reason_code`. A **length** failure is a different mistake and carries **no**
+`reason_code`, so a client can tell "you did not write one" from "yours is too
+long".
 
 ⚠⚠ **An ownership denial is `403 bcc_forbidden` with `reason_code:
 not_claimer`** — the generic reason and nothing else, exactly as §4.32.2
@@ -6514,22 +6524,44 @@ WordPress's **own** 401/403 envelope, which would disclose the surface. The gate
 is the first statement of each handler — feature switch, then a **fresh**
 operator-authority decision.
 
-⚠ Fields in §4.32's request sketch that are **not yet accepted**: `summary` and
-`comments_enabled`. They are omitted from this route rather than accepted and
-discarded.
+⚠ **Both `summary` and `comments_enabled` are now accepted.** This paragraph
+previously recorded them as "not yet accepted — omitted from this route rather
+than accepted and discarded", which was accurate when written: the read side had
+projected `summary` from `post_excerpt` and `comments_enabled` from its meta key
+since A2.3b, and `can_comment` had read the latter since the capability resolver
+landed, but neither field had a WRITER. The writer now exists, so the omission
+note is replaced rather than left standing.
+
+⚠⚠ **`summary` becoming required is a behaviour change to a route that had
+already shipped**, and is recorded as such: a caller that omits it now receives
+`400` where it previously received `201`. §4.32.3 is decisive that the field is
+required, so the only real question was timing — and with the feature switch
+absent in every environment and zero announcement rows anywhere, there was no
+compatibility cost at the moment it was made.
 
 #### `PATCH /bcc/v1/validators/:pageId/announcements/:id`
 
-Auth **operator**. Edits `title` / `body`, and re-schedules a still-pending row.
+Auth **operator**. Edits `title` / `summary` / `body`, toggles the discussion
+switch, and re-schedules a still-pending row.
 
 | Field | Type | Notes |
 |---|---|---|
 | `title` | string | optional; omitted means "leave alone", not "set empty" |
+| `summary` | string | optional; same rule. ⚠⚠ **Omitting it leaves it alone; SENDING it blank is refused** with `400` + `reason_code: summary_required`, because §4.32.3 makes it required — there is no way to clear a summary once authored, only to replace it. |
 | `body` | string | optional; same rule |
+| `comments_enabled` | boolean | optional. ⚠ Counts as a change on its own: an operator closing a discussion and altering nothing else is a real edit, not a "nothing to change" `400`. ⚠ Permitted on a draft or scheduled row too — closing comments ahead of publication is a legitimate choice, and the capability gate already refuses commenting on anything not yet public. |
 | `publish_at` | string | optional; **only** valid while the row is `scheduled` |
 
+⚠⚠ **`summary` IS editable, and this table previously omitted it.** §4.32.8
+has always said an edit "updates hydrated `title`/`summary`/`body` in place",
+so the normative text and this enumeration disagreed. The enumeration was the
+stale half: a field that §4.32.3 makes **required at create** and that no route
+could ever change would leave an operator unable to correct a typo in the one
+line that appears on every list, rotator and feed card. Resolved in favour of
+§4.32.8.
+
 - **Success:** `200` with `{ id, state, capabilities }`
-- **Errors:** `403 bcc_forbidden` + `reason_code: not_claimer` · `404 bcc_not_found` (feature off, or no such announcement) · `400 bcc_invalid_request` (nothing to change; oversized field; non-future `publish_at`) · `409 bcc_conflict` (the row is archived, or `publish_at` was sent for a row that is not `scheduled`) · `503 bcc_unavailable`
+- **Errors:** `403 bcc_forbidden` + `reason_code: not_claimer` · `404 bcc_not_found` (feature off, or no such announcement) · `400 bcc_invalid_request` (nothing to change — **`comments_enabled` alone counts as a change**; blank `summary`, with `reason_code: summary_required`; oversized field; non-future `publish_at`) · `409 bcc_conflict` (the row is archived, or `publish_at` was sent for a row that is not `scheduled`) · `503 bcc_unavailable`
 
 #### `POST /bcc/v1/validators/:pageId/announcements/:id/publish`
 
@@ -6664,6 +6696,34 @@ the handoff note below).**
 | `/bcc/v1/announcements/:id/comments/:commentId` | DELETE | author **or** operator | soft removal → tombstone |
 | `/bcc/v1/admin/announcement-comments/:commentId` | GET | admin | the private original |
 | `/bcc/v1/admin/announcement-comments/:commentId/restore` | POST | admin | restore + audit |
+
+⚠⚠ **PATH IDENTIFIERS ARE BARE NUMERIC. VIEW-MODEL IDENTIFIERS ARE PREFIXED.
+THESE ARE NOT THE SAME STRING AND MUST NOT BE INTERCHANGED.**
+
+Every `:pageId`, `:id` and `:commentId` in §4.32 is a bare integer and every
+registered route matches `\d+`. The prefixed forms — `ann_4480`, `acmt_9912` —
+are **view-model values**: they exist so a client cannot confuse an announcement
+id with a comment id or a page id once the two are side by side in one payload.
+They are never path segments.
+
+⚠ A worked example in §4.32.14 previously wrote the announcement id with its
+view-model prefix (SUPERSEDED — `.../announcements/ann_<id>/comments`), which was
+the only place in the whole section to put a prefixed id in a URL; every other
+example uses a bare number. It compounded the confusion by reusing `4471`, the
+**page** id from its neighbouring examples, as an **announcement** id. Both
+faults are corrected there, and the rule is stated here so the next example
+cannot drift the same way.
+
+⚠ The citation above is deliberately written as `ann_<id>` rather than as a
+concrete id, so that a sweep for stray prefixed identifiers in live URLs —
+`grep -oE '/bcc/v1/[^ ]*(ann_|acmt_)[0-9]+'` — returns **nothing** across this
+document. A historical quotation that still looks like a live path is how the
+original fault survived review in the first place.
+
+⚠ A client that holds a view-model id must therefore strip the prefix before
+building a URL. That is deliberate: it is a one-line transformation, and the
+alternative — accepting both forms in the route regex — would mean two spellings
+of every resource and no single canonical link.
 
 ##### Implemented read endpoints
 
@@ -7393,7 +7453,7 @@ GET /wp-json/bcc/v1/validators/4471/announcements/rotator
 **Comments, with the gate on the page.**
 
 ```http
-GET /wp-json/bcc/v1/announcements/ann_4471/comments?limit=20
+GET /wp-json/bcc/v1/announcements/4480/comments?limit=20
 ```
 ```json
 { "data": {
@@ -7406,7 +7466,13 @@ GET /wp-json/bcc/v1/announcements/ann_4471/comments?limit=20
         "permissions": { "can_remove": { "allowed": false, "unlock_hint": null, "reason_code": "not_comment_author" } } },
       { "id": "acmt_9912", "is_removed": true,
         "removed_at": "2026-10-09T15:02:11Z",
-        "label": "Comment removed by author" }
+        "label": "Comment removed by author" },
+      { "id": "acmt_9915", "is_removed": false,
+        "body": "Will the fee change next quarter?",
+        "author": { "id": 91, "handle": "coldforge", "display_name": "Coldforge",
+                    "avatar_url": "https://…/c.jpg" },
+        "posted_at": "2026-10-09T15:40:00Z",
+        "permissions": { "can_remove": { "allowed": true, "unlock_hint": null, "reason_code": null } } }
     ],
     "pagination": { "next_cursor": null, "has_more": false },
     "can_comment": { "allowed": true, "unlock_hint": null, "reason_code": null } },
@@ -7415,6 +7481,18 @@ GET /wp-json/bcc/v1/announcements/ann_4471/comments?limit=20
 
 Oldest first. The tombstone keeps its position and counts toward `comment_count`, and carries
 no body, author, avatar, user id, actor type or reason.
+
+⚠ **The arithmetic in this example is deliberate and was previously wrong.**
+Announcement `ann_4480` is listed above with `comment_count: 3`, and this thread
+returns exactly three items — two readable and one tombstone — with
+`has_more: false`. That is the §4.32.7 rule made visible: a removed comment
+still counts, so a client rendering "3 comments" over a list of two readable
+ones plus a tombstone is correct and needs no reconciliation of its own. The
+earlier version showed two items against a different announcement's count of 12.
+
+⚠ `can_remove` differs per row because it is the viewer's relationship to each
+comment, not a property of the thread: the viewer here authored `acmt_9915` and
+not `acmt_9910`. §4.32.7 records the actor-relationship rule that decides it.
 
 **An ownership denial — one reason, whatever the cause.**
 
