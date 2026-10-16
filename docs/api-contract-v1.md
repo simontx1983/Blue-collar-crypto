@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.78 · 2026-10-13 · Phase 1 deliverable
+**Status:** Draft v1.81 · 2026-10-16 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -6575,8 +6575,31 @@ Auth **operator**. Promotes a draft to published at authoritative server time.
 
 Auth **operator**. Archival is **one-way** in v1 and is **not a deletion** (§4.32.6).
 
+⚠⚠ **ONLY A PUBLISHED NOTICE CAN BE ARCHIVED.** A `draft`, `scheduled` or
+`blocked` row is refused with `409 bcc_conflict` and
+`reason_code: announcement_not_published`, **before any write** — state,
+archived marker and visibility are all left unchanged.
+
+This is not a new restriction so much as the definition being enforced. Every
+property this section promises presupposes a published row: the permalink that
+is kept, the public readability that is retained, the challengeability that
+follows. Applied to a draft it delivered the opposite, and **that was measured,
+not reasoned about**: an archived draft appeared on **no list surface** — not
+`?status=draft` (the owner list filters archived rows), not any other owner
+status, and not the public archived list (§4.32.1's predicate excludes a row
+that was never published) — while `GET …/announcements/:id` still answered
+`200`. The row survived, readable only by an id its own operator had no
+remaining way to obtain, with no route back because archival is one-way.
+
+⚠ `announcement_not_published` is **reused, not minted** — it is the same code
+`can_pin` returns for the same condition (§4.32.11), so a client that renders
+one renders the other.
+
+⚠ **`can_archive` carries the same rung**, so a client reading capabilities
+never draws a control this route will refuse.
+
 - **Success:** `200`. Stamps `_bcc_announcement_archived_at`; the row **keeps its permalink and stays publicly readable**, so it remains challengeable.
-- **Errors:** `403 bcc_forbidden` + `reason_code: not_claimer` · `404 bcc_not_found` (feature off, or no such announcement) · `409 bcc_conflict` (already archived — refused rather than re-stamped, because moving the timestamp would change a value a reader may already hold) · `503 bcc_unavailable`
+- **Errors:** `403 bcc_forbidden` + `reason_code: not_claimer` · `404 bcc_not_found` (feature off, or no such announcement) · `409 bcc_conflict` + `reason_code: announcement_not_published` (the row is not published) · `409 bcc_conflict` (already archived — refused rather than re-stamped, because moving the timestamp would change a value a reader may already hold; this check is applied FIRST, so a row archived before the state rung existed still answers exactly as it did) · `503 bcc_unavailable`
 
 #### `POST /bcc/v1/validators/:pageId/announcements/:id/pin`
 
@@ -7129,6 +7152,8 @@ Adds to §1.4.6 (same semantics):
 | `publish_at_not_future` | 400 | Client error | Scheduled time is not strictly in the future. |
 | `backdating_not_allowed` | 400 | Client error | Attempt to move a publication date earlier. |
 | `summary_required` | 400 | Client error | Summary is first-class and must be authored. |
+| `announcement_not_published` | 409 | Client error | The row is not published, and the action requires it (archive, pin). Also the `can_archive` / `can_pin` denial reason. |
+| `announcement_already_published` | — | Capability reason | ⭐ **NEW in v1.81.** The `can_publish` denial on a row that is already live. ⚠ The matching ROUTE refusal is `409 bcc_conflict` with the message *"Already published."* and **no** `reason_code`, which is pre-existing behaviour this revision does not change. |
 
 Also used, with existing meanings: `bcc_forbidden` (`reason_code` ∈ `not_claimer` ·
 `comments_disabled` · `announcement_archived` · `not_comment_author` ·
@@ -7221,9 +7246,31 @@ and rows in an owner-scoped list. Never by the Card.
 |---|---|
 | `can_edit` | may PATCH this announcement |
 | `can_pin` | may pin or unpin this announcement |
-| `can_archive` | may archive this announcement (one-way) |
+| `can_archive` | may archive this announcement (one-way). ⚠ **Requires a published row** — see §4.32.4's archive section |
+| `can_publish` | may move this announcement to published **now** |
 | `can_manage_comments` | may remove any comment on this announcement |
 | `can_comment` | may post a comment on this announcement |
+
+⚠⚠ **`can_publish` IS NOT `can_edit`, AND MUST NOT BE INFERRED FROM IT.** They
+diverge on the two states that matter most: a **published** row is editable and
+cannot be published again (`announcement_already_published`), and an
+**archived** row is neither (`announcement_archived`). A client inferring
+publication permission from `can_edit` would draw a Publish control on every
+live notice on the page.
+
+⚠ **A `blocked` row IS publishable**, deliberately. §4.32.17's arm C forces a
+row back to draft when operator authority lapsed at publication time, and
+publishing is the documented way back — the route clears the block only after
+its own fresh operator check passes, so recovery is not a bypass. A capability
+that refused blocked rows would hide the one route out of a state the operator
+never chose.
+
+⚠ **The capability is not the authorization.** `POST …/:id/publish` enforces its
+own rules independently and in the same order — a **fresh** operator
+resolution per request, the row being the operator's own, archival, then
+already-published. `can_publish` exists so a client knows whether to DRAW the
+control; it is not what makes the request safe, and a client that ignored it
+would be refused by the route, not admitted by it.
 
 `Announcement.capabilities` is **optional**. **Absence and malformation both fail closed.** On an
 archived announcement `can_edit`, `can_pin` and `can_comment` are `false` with
@@ -7516,9 +7563,11 @@ POST /wp-json/bcc/v1/validators/4471/announcements
             "capabilities": {
               "can_edit":            { "allowed": true, "unlock_hint": null, "reason_code": null },
               "can_pin":             { "allowed": false, "unlock_hint": null, "reason_code": "announcement_not_published" },
-              "can_archive":         { "allowed": true, "unlock_hint": null, "reason_code": null },
+              "can_archive":         { "allowed": false, "unlock_hint": null, "reason_code": "announcement_not_published" },
+              "can_publish":         { "allowed": true, "unlock_hint": null, "reason_code": null },
               "can_manage_comments": { "allowed": true, "unlock_hint": null, "reason_code": null },
-              "can_comment":         { "allowed": false, "unlock_hint": null, "reason_code": "announcement_unavailable" } } },
+              "can_comment":         { "allowed": false, "unlock_hint": null, "reason_code": "announcement_unavailable" },
+              "can_report":          { "allowed": false, "unlock_hint": null, "reason_code": "announcement_unavailable" } } },
   "_meta": { "version": "1.0" } }
 ```
 
@@ -7570,9 +7619,11 @@ GET /wp-json/bcc/v1/me/validators/4471/announcements?status=draft
         "capabilities": {
           "can_edit":            { "allowed": true,  "unlock_hint": null, "reason_code": null },
           "can_pin":             { "allowed": false, "unlock_hint": null, "reason_code": "announcement_not_published" },
-          "can_archive":         { "allowed": true,  "unlock_hint": null, "reason_code": null },
+          "can_archive":         { "allowed": false, "unlock_hint": null, "reason_code": "announcement_not_published" },
+          "can_publish":         { "allowed": true,  "unlock_hint": null, "reason_code": null },
           "can_manage_comments": { "allowed": true,  "unlock_hint": null, "reason_code": null },
-          "can_comment":         { "allowed": false, "unlock_hint": null, "reason_code": "announcement_unavailable" } } }
+          "can_comment":         { "allowed": false, "unlock_hint": null, "reason_code": "announcement_unavailable" },
+          "can_report":          { "allowed": false, "unlock_hint": null, "reason_code": "announcement_unavailable" } } }
     ],
     "pagination": { "next_cursor": null, "has_more": false } },
   "_meta": { "version": "1.0" } }
