@@ -6820,7 +6820,7 @@ Auth **operator**. The only route that returns unpublished rows.
 
 | Param | Type | Default | Notes |
 |---|---|---|---|
-| `status` | enum | all three | `draft` \| `scheduled` \| `blocked`. ⚠ `draft` **excludes** blocked rows — see below. |
+| `status` | enum | `draft`, `scheduled` | `draft` \| `scheduled` \| `blocked` \| `published` — one value per request, not a list. ⚠ `draft` **excludes** blocked rows, and `published` excludes them too — see below. ⚠⚠ The DEFAULT is two values, not "all four": widening it would change the meaning of a request nobody edited. |
 | `limit` | int | 20 | 1–50. **Out of range is a `400`, not a clamp.** |
 | `cursor` | string | — | tagged `ann_owner`; keyed on the effective date |
 
@@ -6839,25 +6839,37 @@ retains a finer internal reason and never serialises it: a distinguishable `clai
 would tell an unauthenticated prober which validators are contested, and a distinguishable
 `claim_absent` would map the unclaimed ones.
 
-⚠⚠ **`?status=blocked` is REJECTED by the route schema, not silently mapped.**
-Accepting it would need an owner-list filter this route does not yet implement,
-and a parameter that is accepted but unfiltered would return **ordinary drafts** —
-a wrong answer that looks right. A rejected parameter is visible; a wrong page is not.
+⚠⚠ **ALL FOUR §4.32.13 WRITE STATES ARE NOW ACCEPTED, and each was added only once
+its filter could mean what it says.** Earlier revisions of this section documented
+`blocked` and then `published` as *rejected*; both rejections have been retired, and
+for different reasons.
 
-⚠ **Arm C now exists** (§4.32.17), so the REASON for the rejection has changed and
-the older wording here ("which does not exist yet") no longer applies. `blocked` is
-no longer indistinguishable from a draft: it carries `_bcc_announcement_blocked_at`,
-and the **detail** view-model reports `status: "blocked"` for an operator's own row.
-What is still missing is only the owner-list filter.
+**`blocked`** was rejected while a parameter that was accepted but unfiltered would
+have returned **ordinary drafts** — a wrong answer that looks right, where a rejected
+parameter is at least visible. Arm C (§4.32.17) stamps `_bcc_announcement_blocked_at`,
+so a blocked row is separable in SQL from an ordinary draft and the filter is real.
+⚠ `draft` and `blocked` are **mutually exclusive filters over the same WordPress
+`post_status`**: a blocked row IS stored as `draft`, so `?status=draft` excludes rows
+carrying the marker and `?status=blocked` requires it.
 
-The detail route still returns an operator's own row in **any** state — withholding it would
-hide an operator's own content from them — but its `status` reads `draft` until arm C can
-mark it. **This is a known, documented gap, not a silent one:** when arm C lands it must
-define its marker, this enum must accept `blocked`, and the read-state mapping must consult
-it.
+**`published`** was rejected on the grounds that *"a published announcement is served
+by the public list"*. ⚠⚠ **That reason was wrong, and the correction is the point of
+this revision.** It is true of the ROWS and false of the CAPABILITIES: §4.32.11
+forbids the public list and the rotator from carrying `capabilities` for **any**
+viewer, so an operator could obtain management capabilities for a published
+announcement only through the detail route, one row at a time — an N+1 over the whole
+billboard, and no way at all to render management controls on a list of live notices.
+This route is the only **set-returning** surface §4.32.11 permits to carry row
+capabilities, so it is where that gap closes.
 
-`published` is also rejected, for the contract's own reason: a published announcement is
-served by the public list.
+⚠ `?status=published` **excludes** rows carrying arm C's blocked marker, for the same
+reason `draft` does: the read-state mapping checks the marker **before**
+`post_status`, so such a row reports its own `status` as `blocked`, and returning it
+under a published query would make the filter and the view-model disagree about one
+row.
+
+⚠ The detail route continues to return an operator's own row in **any** state —
+withholding it would hide an operator's own content from them.
 
 ⚠ **A read failure is `503 bcc_unavailable`, never `200` with an empty list.** §4.32 makes an
 empty announcement bar entirely normal, so an empty list on error would hide the fault
@@ -7149,11 +7161,31 @@ Adds to §1.4.6 (same semantics):
 |---|---|---|---|
 | `announcement_archived` | 403 / 409 | Client error | Archived: read-only. **Non-retryable** — archive is one-way, so a retry can never succeed. |
 | `replies_not_supported` | 400 | Client error | `parent_id` sent; v1 comments are flat. |
-| `publish_at_not_future` | 400 | Client error | Scheduled time is not strictly in the future. |
-| `backdating_not_allowed` | 400 | Client error | Attempt to move a publication date earlier. |
+| `publish_at_not_future` | 400 | Client error | Scheduled time is not strictly in the future. ⚠⚠ **NOT EMITTED — see below.** |
+| `backdating_not_allowed` | 400 | Client error | Attempt to move a publication date earlier. ⚠⚠ **NOT EMITTED — see below.** |
 | `summary_required` | 400 | Client error | Summary is first-class and must be authored. |
 | `announcement_not_published` | 409 | Client error | The row is not published, and the action requires it (archive, pin). Also the `can_archive` / `can_pin` denial reason. |
 | `announcement_already_published` | — | Capability reason | ⭐ **NEW in v1.81.** The `can_publish` denial on a row that is already live. ⚠ The matching ROUTE refusal is `409 bcc_conflict` with the message *"Already published."* and **no** `reason_code`, which is pre-existing behaviour this revision does not change. |
+
+⚠⚠ **`publish_at_not_future` AND `backdating_not_allowed` HAVE NO PRODUCER.**
+Measured against the write routes: both failure modes answer
+`400 bcc_invalid_request` with **no `reason_code` key at all**, so a client
+cannot tell a malformed `publish_at` from a past one, and neither can the
+operator reading the message. Every other code in this table is emitted —
+`summary_required`, `announcement_archived`, `replies_not_supported`,
+`comments_disabled` and `not_claimer` each have producers in the plugin.
+
+They are recorded here as **planned, not available**, so that no client gates a
+control on a code that will never arrive. A client that branches on them today
+silently takes its fallback path forever, which is the failure mode this note
+exists to prevent.
+
+⚠ Closing the gap is a **behaviour change to an error envelope**, not a
+documentation fix: §4.32.11's reason inventory is closed and a client that meets
+an unrecognised reason takes its own refusal path, so emitting two new codes has
+client consequences and needs its own change with its own tests. The entry is
+left in place rather than deleted because the distinction is worth having — a
+client cannot currently explain to an operator *why* a schedule was refused.
 
 Also used, with existing meanings: `bcc_forbidden` (`reason_code` ∈ `not_claimer` ·
 `comments_disabled` · `announcement_archived` · `not_comment_author` ·
@@ -7296,6 +7328,17 @@ on **any** response carrying an `Announcement`, the public list included.
 the operator**. An operator reading the public list sees exactly what an anonymous reader sees;
 their own drafts are on `/me/...` and nowhere else.
 
+⚠⚠ **A CONSEQUENCE WORTH STATING ONCE, because missing it left a real gap in the
+implementation for the whole of A2–A5: the owner list is the ONLY set-returning
+surface that may carry row capabilities.** The table above is otherwise easy to read
+as "detail and owner list both carry them, so either will do" — but detail carries
+them for ONE row. Any management UI over a *set* of announcements, in any state
+including `published`, has exactly one surface that can supply its capabilities. That
+is why `GET /me/validators/:pageId/announcements` accepts `?status=published`
+(§4.32.4) even though the public list already serves those rows: the rows are public,
+the capabilities are not, and nothing may add them to a cacheable surface to
+compensate.
+
 Three things follow, and each is a property worth having rather than a restriction:
 
 1. **The public list is viewer-independent.** Two readers of the same page and cursor get
@@ -7424,16 +7467,17 @@ out.
 So `publish` → `published` and `schedule` → `scheduled`: the verb and the resulting state differ
 by more than tense, and **a client must not round-trip a read `status` back into a write.**
 
-`GET /me/validators/:pageId/announcements?status=` accepts `draft` | `scheduled`.
+`GET /me/validators/:pageId/announcements?status=` accepts all four write states —
+`draft` | `scheduled` | `blocked` | `published` — **one per request**, and defaults to
+`draft`, `scheduled` when the parameter is absent.
 
-⚠⚠ **It does NOT accept `blocked`, and this paragraph previously said it did.**
-That was an internal inconsistency with the owner-route section above, which has
-always documented the rejection. Arm C (§4.32.17) now produces the state and the
-**detail** view-model reports it, but the owner-list **filter** is still not
-implemented — so the enum stays two-valued and the drift is resolved in favour of
-what ships. Adding `?status=blocked` is an open item, and it is now implementable
-because the state finally has a marker to filter on.
-**does not** accept `published`, because a published announcement is served by the public list.
+⚠ **This paragraph has been wrong in both directions and is worth reading as a
+cautionary note rather than just a spec line.** It once claimed `blocked` was accepted
+when it was rejected; it was then corrected to two-valued and became stale again when
+`blocked` landed; and it recorded the `published` rejection whose stated reason turned
+out not to hold (§4.32.4 explains why). The enum and its defaults are pinned by
+executable assertions on the route registration, so the authority for this line is the
+test, and this line is the description of it.
 
 `status` appears on the **detail** view-model. It is **absent from list items**, because every
 row a public list can return is `published` by construction (§4.32.1), and an owner list is
@@ -7544,6 +7588,20 @@ blocked marker.
 
 **Create, scheduled.**
 
+⚠⚠ **`publish_at` IS `Y-m-d H:i:s`, NOT ISO-8601 — and this example used to get
+that wrong.** It carried `"2026-10-20T14:00:00Z"`, which the route refuses with
+`400 bcc_invalid_request`: *"publish_at must be a strictly future UTC instant
+formatted Y-m-d H:i:s."* §4.32.4's parameter table always said `Y-m-d H:i:s`;
+this example contradicted it, and an example is what a client is written
+against.
+
+⚠ **It is the one request field in §4.32 that is not ISO-8601**, which is why
+`toISOString()` is the natural wrong answer: every DATE THIS FEATURE RETURNS is
+ISO-8601 UTC with a `Z` (§4.32.3), so a client that round-trips a read value
+into `publish_at` is refused. Same hazard as the write-verb / read-state split
+in §4.32.13 — `schedule` vs `scheduled` — and worth reading as one rule: **a
+§4.32 write field is not necessarily the shape the matching read returns.**
+
 ```http
 POST /wp-json/bcc/v1/validators/4471/announcements
 ```
@@ -7552,7 +7610,7 @@ POST /wp-json/bcc/v1/validators/4471/announcements
   "summary": "Operator-written one-liner. Required. Never derived from the body.",
   "body": "We completed the **v18** upgrade at block 19,204,118.\n\nNo downtime.",
   "status": "schedule",
-  "publish_at": "2026-10-20T14:00:00Z",
+  "publish_at": "2026-10-20 14:00:00",
   "comments_enabled": true }
 ```
 ```json
