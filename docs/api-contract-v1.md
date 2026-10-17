@@ -5829,7 +5829,7 @@ Coalesced per-viewer badge payload. Replaces three previously-uncached polling e
 File a content report against a feed item or an **announcement** (§K1 Phase B). Idempotent per (reporter, target).
 
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
-- **Body (JSON):** `target_kind` (**required**, ∈ `feed_item | announcement`) · `target_id` (**required**, int ≥ 1 — the `act_id` for `feed_item`, the **announcement id** for `announcement`) · `reason_code` (**required**, ∈ `spam|harassment|hate|violence|misinformation|other`) · `comment` (optional, ≤ 500 chars; **required when `reason_code = other`**)
+- **Body (JSON):** `target_kind` (**required**, ∈ `feed_item | announcement`) · `target_id` (**required**, int ≥ 1 — the `act_id` for `feed_item`, the **bare integer announcement id, prefix stripped** for `announcement`; see below) · `reason_code` (**required**, ∈ `spam|harassment|hate|violence|misinformation|other`) · `comment` (optional, ≤ 500 chars; **required when `reason_code = other`**)
 - **Response 200:** `{ "data": { "ok": true, "report_id": 5512, "status": "created" } }` — `status` ∈ `created | existing` (UNIQUE `(reporter, target_kind, target_id)` blocks a second row; `existing` returns `report_id: 0`).
 - **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (bad kind/id/reason, comment > 500, missing comment for `other`, or self-report) · **`bcc_not_found` 404** (`announcement` only — the notice is not publicly readable; see below) · `bcc_rate_limited` 429 (FLAG limits, 5 / 5 min / reporter) · `bcc_unavailable` 503
 - **Mapping:** `MyReportsEndpoint::create` (route `MyReportsEndpoint.php:38`) → `ContentReportService::fileReport`; fires `do_action('bcc_content_reported', …)` for async Phase C subscribers.
@@ -5842,6 +5842,44 @@ taken on the client's word, and the announcement view-model carries no activity,
 feed or module id for a client to send — deliberately, because publishing one
 would both widen what a public notice discloses and make the author/activity
 relationship a browser-supplied claim.
+
+⚠⚠ **`target_id` IS THE BARE INTEGER — `3731`, NOT `"ann_3731"`.** This is
+spelled out because the two are easy to confuse and the contract previously
+said only "the announcement id". An `Announcement.id` **on the wire** is the
+PREFIXED string — §4.32.3's view-model carries `"ann_4471"` — so a client
+holding a notice must strip the prefix before sending it. The same rule the
+feed path already follows, where `feed_<n>` is parsed to a number.
+
+⚠ **This EXTENDS the "path identifiers are bare numeric, view-model
+identifiers are prefixed" rule stated earlier in this section to a BODY
+field** — the first one it reaches. That rule says the prefixed forms "are
+never path segments", which is true and was not enough: `target_id` is not a
+path segment, so a reader could satisfy the letter of it and still send
+`"ann_3731"` in a payload. The frontend session found exactly that gap while
+confirming the request shape.
+
+Measured, so a client can rely on the failure mode rather than the happy path:
+
+| sent | result |
+|---|---|
+| `3731` · `"3731"` | **200**, both resolving to row 3731 (a numeric string is coerced) |
+| `"ann_3731"` · `"ANN_3731"` | **400 `rest_invalid_param`** — *"target_id is not of type integer."* |
+| `3731.5` · `"3731.5"` · `""` | **400 `rest_invalid_param`** |
+| `0` · `-3731` | **400** (`minimum: 1`) |
+| absent / `null` | **400 `rest_missing_callback_param`** |
+
+⚠⚠ **A PREFIXED ID THEREFORE CANNOT REACH A ROW.** It is refused by the
+argument SCHEMA, before the handler runs, with a code distinct from every
+application refusal — so the dangerous outcome (a report filed against the
+wrong row, because some other layer had coerced `"ann_3731"` to `0` or to
+`3731`) is structurally unavailable, not merely unlikely.
+
+⚠ **That guarantee rests on `target_id` declaring NO `sanitize_callback`**, and
+it is a property worth not disturbing: WordPress substitutes the
+schema-enforcing `rest_parse_request_arg` only for an argument that declares
+none, so adding one would make `type` and `minimum` decorative — the exact
+defect **#328** fixed on `GET /members`, where a declared `absint` served
+100,000 rows against a documented cap of 50.
 
 ⚠⚠ **REPORTABILITY IS PUBLIC READABILITY, NOT `post_status`.** A notice is
 reportable exactly when it is publicly readable under §4.32.1 — the same
