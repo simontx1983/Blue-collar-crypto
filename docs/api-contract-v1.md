@@ -7487,6 +7487,43 @@ DENIED**, which hides it. For `own_content` that is the correct outcome anyway, 
 a client that has not been updated degrades to the behaviour the rung exists to
 produce rather than to a wrong one.
 
+##### ⚠⚠ How each `can_report` denial RENDERS — §N7, and `unlock_hint` is the discriminator
+
+Written down because it was guessed at, and the two implementations guessed
+differently: the server authors a real sentence for the anonymous case while the
+first announcements client rendered **nothing** on every denial. Both halves
+were faithful to their own brief; neither brief cited §N7.
+
+§5.1's rule and its worked precedents (`can_watch` on your own card,
+`can_open_dispute` for a non-owner, the whole `can_message` table) already decide
+it, and the discriminator is **`unlock_hint`**, not the reason code:
+
+> a gate the viewer could **eventually resolve** is rendered **visible-disabled
+> with the hint**; a **structurally impossible** gate carries `unlock_hint: null`
+> and the frontend **hides** it.
+
+So the server's hint is NOT decorative — it is the instruction:
+
+| reason | `unlock_hint` | render |
+|---|---|---|
+| `auth_required` | *"Sign in to report this announcement."* | **visible-disabled with the hint.** Signing in is the canonical resolvable gate, and this matches `can_message`'s own `auth_required` ("visible-disabled, sign-in copy") and the attestation cluster's existing disabled REPORT |
+| `own_content` | `null` | **hide** — structurally impossible, the §N7 carve-out exactly as "you can't follow yourself". No action exists that would let an author report their own notice, so a hint would promise one |
+| `announcement_unavailable` | `null` | **hide** — not a report gate the viewer resolves |
+| `suspended` · `fraud_locked` | `null` | **hide** — following `can_message`'s `sender_restricted`; a report control is not the place to tell someone about their account state |
+| `feature_disabled` | `null` | **hide** — the feature does not exist for this viewer |
+| `already_reported` | `null` | **hide** — the report landed; a second one changes nothing (the route is idempotent) |
+
+⚠ **`auth_required` IS THE ONLY VISIBLE-DISABLED CASE**, and it is the only one
+the server gives a hint to. A client can therefore implement the whole table as
+"render the hint when there is one, hide when there is not" and never branch on a
+reason code — which also means a reason added later needs no client change,
+provided the server keeps the hint convention.
+
+⚠ **Hiding a denied control is NOT the safe default here**, which is the trap:
+hiding is right for six of the seven and wrong for the one that teaches an
+anonymous reader how to act. §5.1's own words — "hidden gates teach nothing;
+visible gates teach the system".
+
 ⚠ These are **capability** reason codes, not error codes. They describe why a control is
 disabled on a successful read; the §4.32.9 list describes a rejected request. The overlap in
 spelling is intentional, so the disabled control and the eventual `403` give the same account.
