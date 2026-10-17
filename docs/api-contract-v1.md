@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.81 · 2026-10-16 · Phase 1 deliverable
+**Status:** Draft v1.82 · 2026-10-17 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -5826,13 +5826,87 @@ Coalesced per-viewer badge payload. Replaces three previously-uncached polling e
 
 #### `POST /bcc/v1/me/reports`
 
-File a content report against a feed item (§K1 Phase B). Idempotent per (reporter, target).
+File a content report against a feed item or an **announcement** (§K1 Phase B). Idempotent per (reporter, target).
 
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
-- **Body (JSON):** `target_kind` (**required**, V1 only `feed_item`) · `target_id` (**required**, int ≥ 1, the `act_id`) · `reason_code` (**required**, ∈ `spam|harassment|hate|violence|misinformation|other`) · `comment` (optional, ≤ 500 chars; **required when `reason_code = other`**)
+- **Body (JSON):** `target_kind` (**required**, ∈ `feed_item | announcement`) · `target_id` (**required**, int ≥ 1 — the `act_id` for `feed_item`, the **bare integer announcement id, prefix stripped** for `announcement`; see below) · `reason_code` (**required**, ∈ `spam|harassment|hate|violence|misinformation|other`) · `comment` (optional, ≤ 500 chars; **required when `reason_code = other`**)
 - **Response 200:** `{ "data": { "ok": true, "report_id": 5512, "status": "created" } }` — `status` ∈ `created | existing` (UNIQUE `(reporter, target_kind, target_id)` blocks a second row; `existing` returns `report_id: 0`).
-- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (bad kind/id/reason, comment > 500, missing comment for `other`, or self-report) · `bcc_rate_limited` 429 (FLAG limits, 5 / 5 min / reporter) · `bcc_unavailable` 503
+- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (bad kind/id/reason, comment > 500, missing comment for `other`, or self-report) · **`bcc_not_found` 404** (`announcement` only — the notice is not publicly readable; see below) · `bcc_rate_limited` 429 (FLAG limits, 5 / 5 min / reporter) · `bcc_unavailable` 503
 - **Mapping:** `MyReportsEndpoint::create` (route `MyReportsEndpoint.php:38`) → `ContentReportService::fileReport`; fires `do_action('bcc_content_reported', …)` for async Phase C subscribers.
+
+⚠⚠ **FOR `announcement`, THE CLIENT SENDS THE NOTICE'S OWN ID AND NOTHING
+ELSE.** No page id, no author id, no feed-activity id. The server resolves the
+page from the notice's parent, evaluates §4.32.1's readability predicate and
+reads the author itself. Nothing about the author or the projected activity is
+taken on the client's word, and the announcement view-model carries no activity,
+feed or module id for a client to send — deliberately, because publishing one
+would both widen what a public notice discloses and make the author/activity
+relationship a browser-supplied claim.
+
+⚠⚠ **`target_id` IS THE BARE INTEGER — `3731`, NOT `"ann_3731"`.** This is
+spelled out because the two are easy to confuse and the contract previously
+said only "the announcement id". An `Announcement.id` **on the wire** is the
+PREFIXED string — §4.32.3's view-model carries `"ann_4471"` — so a client
+holding a notice must strip the prefix before sending it. The same rule the
+feed path already follows, where `feed_<n>` is parsed to a number.
+
+⚠ **This EXTENDS the "path identifiers are bare numeric, view-model
+identifiers are prefixed" rule stated earlier in this section to a BODY
+field** — the first one it reaches. That rule says the prefixed forms "are
+never path segments", which is true and was not enough: `target_id` is not a
+path segment, so a reader could satisfy the letter of it and still send
+`"ann_3731"` in a payload. The frontend session found exactly that gap while
+confirming the request shape.
+
+Measured, so a client can rely on the failure mode rather than the happy path:
+
+| sent | result |
+|---|---|
+| `3731` · `"3731"` | **200**, both resolving to row 3731 (a numeric string is coerced) |
+| `"ann_3731"` · `"ANN_3731"` | **400 `rest_invalid_param`** — *"target_id is not of type integer."* |
+| `3731.5` · `"3731.5"` · `""` | **400 `rest_invalid_param`** |
+| `0` · `-3731` | **400** (`minimum: 1`) |
+| absent / `null` | **400 `rest_missing_callback_param`** |
+
+⚠⚠ **A PREFIXED ID THEREFORE CANNOT REACH A ROW.** It is refused by the
+argument SCHEMA, before the handler runs, with a code distinct from every
+application refusal — so the dangerous outcome (a report filed against the
+wrong row, because some other layer had coerced `"ann_3731"` to `0` or to
+`3731`) is structurally unavailable, not merely unlikely.
+
+⚠ **That guarantee rests on `target_id` declaring NO `sanitize_callback`**, and
+it is a property worth not disturbing: WordPress substitutes the
+schema-enforcing `rest_parse_request_arg` only for an argument that declares
+none, so adding one would make `type` and `minimum` decorative — the exact
+defect **#328** fixed on `GET /members`, where a declared `absint` served
+100,000 rows against a documented cap of 50.
+
+⚠⚠ **REPORTABILITY IS PUBLIC READABILITY, NOT `post_status`.** A notice is
+reportable exactly when it is publicly readable under §4.32.1 — the same
+single-row predicate the detail route applies. A `publish` row whose
+publication-authorization marker is absent, future or author-mismatched reads as
+`published` on the owner list and is **not** publicly readable; it is **not**
+reportable either, and a status check would have made it so.
+
+⚠ **An ARCHIVED notice IS reportable.** §4.32.6 keeps it at its canonical
+permalink precisely so it stays challengeable, and the readability predicate does
+not filter archival. Dropping archived rows would remove the challenge exactly
+when the operator had closed the discussion.
+
+⚠ **"Not reportable" is ONE answer for every shape.** A draft, a scheduled row,
+a `blocked` row, an unauthorized `publish` row and an id that never existed all
+answer `404 bcc_not_found` with the message *"Not found."* — byte-identical
+envelopes, the same non-disclosure §4.32.1 buys. A distinct code for "exists but
+you may not report it" would confirm a draft's existence to anyone who guessed
+its id. ⚠ A **failed read** is `bcc_unavailable` 503, never 404: failing closed
+on an unreadable database must not look like content that does not exist.
+
+⚠ **Reporting a notice has no moderation side effect beyond the row.** No
+automatic hiding (§4.32.16), no reputation, trust or fraud signal, and no change
+to the notice's state or visibility — it stays `published` and publicly readable.
+
+See §4.32.16 for the full reportability rules and §4.32.11 for the `can_report`
+capability that must agree with this route.
 
 #### `POST /bcc/v1/report-user`
 
@@ -7166,6 +7240,8 @@ Adds to §1.4.6 (same semantics):
 | `summary_required` | 400 | Client error | Summary is first-class and must be authored. |
 | `announcement_not_published` | 409 | Client error | The row is not published, and the action requires it (archive, pin). Also the `can_archive` / `can_pin` denial reason. |
 | `announcement_already_published` | — | Capability reason | ⭐ **NEW in v1.81.** The `can_publish` denial on a row that is already live. ⚠ The matching ROUTE refusal is `409 bcc_conflict` with the message *"Already published."* and **no** `reason_code`, which is pre-existing behaviour this revision does not change. |
+| `own_content` | — | Capability reason | ⭐ **NEW in v1.82.** The `can_report` denial on a notice the viewer wrote. ⚠ The matching ROUTE refusal is `400 bcc_invalid_request` with the message *"You can't report your own post."* and **no** `reason_code` — pre-existing behaviour for `feed_item`, and this revision does not change it. |
+| `announcement_unavailable` | — | Capability reason | Not new, listed here because it is now reachable on a second gate: it is the `can_report` denial on a row that is not publicly readable, as well as the `can_comment` denial it already was. |
 
 ⚠⚠ **`publish_at_not_future` AND `backdating_not_allowed` HAVE NO PRODUCER.**
 Measured against the write routes: both failure modes answer
@@ -7282,6 +7358,7 @@ and rows in an owner-scoped list. Never by the Card.
 | `can_publish` | may move this announcement to published **now** |
 | `can_manage_comments` | may remove any comment on this announcement |
 | `can_comment` | may post a comment on this announcement |
+| `can_report` | may report this announcement to moderation (§4.32.16). ⚠ **Survives archival**, and is the only row capability that does |
 
 ⚠⚠ **`can_publish` IS NOT `can_edit`, AND MUST NOT BE INFERRED FROM IT.** They
 diverge on the two states that matter most: a **published** row is editable and
@@ -7377,6 +7454,76 @@ closes the composer:
 `auth_required` · `comments_disabled` · `announcement_archived` · `announcement_unavailable` ·
 `suspended` · `fraud_locked` · `feature_disabled`
 
+**`can_report` denial reasons** — a separate CLOSED inventory, and deliberately
+not the comment list:
+
+`auth_required` · `announcement_unavailable` · `suspended` · `fraud_locked` ·
+`feature_disabled` · `already_reported` · `own_content`
+
+⚠ **`announcement_archived` IS ABSENT, and that absence is the §4.32.6
+guarantee** — archival closes authoring, not challenge. ⚠ **Member standing is
+absent too**: commenting requires good standing, reporting does not, because
+gating a report on standing would silence exactly the reporters least able to be
+heard another way. ⚠ **The ownership reason is absent**: reporting is not an
+ownership question, so `not_claimer` must never appear here for an operator or a
+non-operator.
+
+⚠⚠ **`can_report` MUST AGREE WITH THE ROUTE, AND `own_content` IS WHY THIS IS
+STATED.** Before v1.82 it did not: `POST /me/reports` refuses a self-report, and
+the owner surfaces return only rows the viewer authored — so `can_report`
+answered `allowed: true` on **every** row of the one surface where the request
+could never succeed. A capability that advertises a refused request is a control
+that draws, clicks and fails, and every dead control found in this feature hid a
+second defect behind it. The capability and the route now answer the same
+question in the same order: feature → publicly readable → authenticated →
+standing → **own content** → already reported.
+
+⚠ **The capability is not the authorization.** The route enforces its own rules
+independently; `can_report` exists so a client knows whether to DRAW the control.
+A client that ignored it would be refused by the route, not admitted by it.
+
+⚠ **A client with no copy for an unrecognised reason must render the control as
+DENIED**, which hides it. For `own_content` that is the correct outcome anyway, so
+a client that has not been updated degrades to the behaviour the rung exists to
+produce rather than to a wrong one.
+
+##### ⚠⚠ How each `can_report` denial RENDERS — §N7, and `unlock_hint` is the discriminator
+
+Written down because it was guessed at, and the two implementations guessed
+differently: the server authors a real sentence for the anonymous case while the
+first announcements client rendered **nothing** on every denial. Both halves
+were faithful to their own brief; neither brief cited §N7.
+
+§5.1's rule and its worked precedents (`can_watch` on your own card,
+`can_open_dispute` for a non-owner, the whole `can_message` table) already decide
+it, and the discriminator is **`unlock_hint`**, not the reason code:
+
+> a gate the viewer could **eventually resolve** is rendered **visible-disabled
+> with the hint**; a **structurally impossible** gate carries `unlock_hint: null`
+> and the frontend **hides** it.
+
+So the server's hint is NOT decorative — it is the instruction:
+
+| reason | `unlock_hint` | render |
+|---|---|---|
+| `auth_required` | *"Sign in to report this announcement."* | **visible-disabled with the hint.** Signing in is the canonical resolvable gate, and this matches `can_message`'s own `auth_required` ("visible-disabled, sign-in copy") and the attestation cluster's existing disabled REPORT |
+| `own_content` | `null` | **hide** — structurally impossible, the §N7 carve-out exactly as "you can't follow yourself". No action exists that would let an author report their own notice, so a hint would promise one |
+| `announcement_unavailable` | `null` | **hide** — not a report gate the viewer resolves |
+| `suspended` · `fraud_locked` | `null` | **hide** — following `can_message`'s `sender_restricted`; a report control is not the place to tell someone about their account state |
+| `feature_disabled` | `null` | **hide** — the feature does not exist for this viewer |
+| `already_reported` | `null` | **hide** — the report landed; a second one changes nothing (the route is idempotent) |
+
+⚠ **`auth_required` IS THE ONLY VISIBLE-DISABLED CASE**, and it is the only one
+the server gives a hint to. A client can therefore implement the whole table as
+"render the hint when there is one, hide when there is not" and never branch on a
+reason code — which also means a reason added later needs no client change,
+provided the server keeps the hint convention.
+
+⚠ **Hiding a denied control is NOT the safe default here**, which is the trap:
+hiding is right for six of the seven and wrong for the one that teaches an
+anonymous reader how to act. §5.1's own words — "hidden gates teach nothing;
+visible gates teach the system".
+
 ⚠ These are **capability** reason codes, not error codes. They describe why a control is
 disabled on a successful read; the §4.32.9 list describes a rejected request. The overlap in
 spelling is intentional, so the disabled control and the eventual `403` give the same account.
@@ -7401,6 +7548,7 @@ rather than assumed. References are to the accepted frontend handoff branches.
 | `capabilities.can_edit` | row | **declared, not yet read** — the edit surface is a later slice |
 | `capabilities.can_archive` | row | **declared, not yet read** — as above |
 | `capabilities.can_manage_comments` | row | **declared, not yet read** — as above |
+| `capabilities.can_report` | row — **detail / owner list only** | the notice's report control (both the gate and its denial copy) |
 
 ⚠ The three "declared, not yet read" rows are contract, not speculation: the server must emit
 them, because the surfaces that consume them land after the first client slice and a capability
@@ -7892,13 +8040,89 @@ responses and is sourced from the announcement's own discussion — it is correc
 two fields share a name and have different origins, which is exactly why the rule has to name
 which one it is talking about.
 
-##### Reporting is a separate question
+##### Reporting is a separate question — and it has since been DECIDED
 
-**Reporting is not a reaction** and is not decided here. A reaction is a reader expressing
-approval; a report is a reader escalating to moderation. Whether an announcement is reportable
-remains an **open proposal** — it needs a moderation queue-kind registration that this section
-deliberately does not make, and the answer does not follow from the no-reactions decision in
-either direction.
+**Reporting is not a reaction**, and that part stands: a reaction is a reader
+expressing approval, a report is a reader escalating to moderation, and neither
+answer follows from the other.
+
+⚠⚠ **RETRACTED in v1.82 — this subsection said reportability "remains an open
+proposal".** It is decided: **announcements ARE reportable**, and the rules are
+§4.32.16. The sentence stayed here after the decision shipped, which is how a
+reader could consult the canonical contract, find reportability undecided, and
+be wrong about a capability the server had already been emitting. The paragraph
+is corrected in place rather than deleted so that a reader comparing revisions
+can see the question was answered rather than dropped.
+
+#### 4.32.16 Reportability — decided, and bounded
+
+⚠⚠ **THIS SECTION DID NOT EXIST UNTIL v1.82, AND THE CODE HAD BEEN CITING IT.**
+`AnnouncementCapabilityResolver`, `AnnouncementModerationPolicy` and their suites
+all reference "§4.32.16" for the rules below; §4.32.15 ended at reactions and
+§4.32.17 begins at the reconciler, so the cited section was simply absent while
+§4.32.15 still called reportability an open proposal. Written down here, with the
+reference made real rather than the citations rewritten — the citations were
+pointing at the right idea.
+
+**Announcements are reportable.** A notice is an official statement from a
+validator operator, and a reader who believes one is abusive, fraudulent or
+misleading must have a way to escalate. Nothing about the no-reactions decision
+(§4.32.15) bears on it: that decision removes an engagement signal, this one
+preserves a challenge.
+
+##### What is reportable, and by whom
+
+| | |
+|---|---|
+| **route** | `POST /bcc/v1/me/reports` with `target_kind: "announcement"` and the **notice's own id** as `target_id` (§4.32.4) |
+| **reportable** | exactly the notices that are **publicly readable** under §4.32.1 — including **archived** ones (§4.32.6) |
+| **not reportable** | draft, scheduled, `blocked`, and a `publish` row whose publication-authorization marker is absent, future or author-mismatched — all answering `404 bcc_not_found` *identically* |
+| **not by** | the notice's **author** (`400`, and `can_report` denies with `own_content`), an anonymous viewer (`401`), or a suspended account (`403`) |
+| **capability** | `can_report`, row-scoped, on detail and the owner list only — never on the public list or rotator (§4.32.11) |
+| **idempotent** | UNIQUE `(reporter, target_kind, target_id)`; a second report is accepted and changes nothing (`status: "existing"`, `report_id: 0`) |
+
+##### ⚠⚠ No automatic hiding — the guarantee that needed its own mechanism
+
+The platform's auto-hide path counts **distinct pending reporters** against a
+`feed_item` target and, at the configured threshold, hides the activity; the next
+feed read then filters it out for non-moderators.
+
+An announcement projects **exactly one** feed activity (§4.32.8), and that
+activity is a `feed_item` a report could target. So without an explicit
+exclusion, **three readers could take down a validator's official notice** — no
+operator action, no administrator in the loop, and nothing in any response saying
+it had happened.
+
+Therefore:
+
+1. **An announcement activity is never auto-hidden**, whoever reports it and
+   however many do. The exclusion is keyed on the announcement feed module and is
+   evaluated before the counter.
+2. **Ordinary content stays auto-hideable.** A policy that blocked everything
+   would satisfy (1) while disabling platform moderation, so the exclusion must
+   be exact — not a prefix match, not a blanket false.
+3. **An activity whose module cannot be read is NOT hidden.** You cannot
+   responsibly hide content you cannot identify. ⚠ This is a deliberate
+   trade-off against (2), and it is the one outcome this section forbids
+   unconditionally.
+4. **A report on the `announcement` target kind cannot reach the counter at
+   all** — structurally, because the handler returns before anything else for a
+   kind that is not `feed_item`. (1) covers the activity; this covers the notice.
+
+##### ⚠ No scoring, no reward, no state change
+
+Filing a report mints no attestation, no trust-activity row, no reputation
+movement and no reward of any kind, for the reporter or the author. It does not
+change the notice's status, its archival marker or its visibility: the notice
+stays published and publicly readable, which is the point — a report escalates
+to a human, it does not act.
+
+##### What a report DOES do
+
+It inserts one row and fires `do_action('bcc_content_reported', …)` for the
+async Phase C subscribers (§K1), which is where the administrator-facing
+moderation queue reads it. Administrator resolution of a reported announcement is
+unchanged by this section and uses the existing moderation surfaces.
 
 ## 5. Encoded rules — quick reference
 
