@@ -7524,6 +7524,29 @@ hiding is right for six of the seven and wrong for the one that teaches an
 anonymous reader how to act. §5.1's own words — "hidden gates teach nothing;
 visible gates teach the system".
 
+⚠⚠ **"VISIBLE-DISABLED" NAMES THE CONTROL'S STATE, NOT THE COPY'S — AND THE
+HINT MUST BE PERCEIVABLE, NOT SCREEN-READER-ONLY.** The distinction matters
+because of how the control is rendered: a `disabled` button is removed from the
+tab order and is widely skipped by assistive technology, so a description hung
+off it (`aria-describedby`, an `sr-only` span) can go unannounced to the very
+viewer it was written for. A hint nobody perceives is the hidden gate §5.1
+forbids, wearing a disabled button as a disguise — it satisfies the letter of
+"render the hint" and loses the entire reason for the rule.
+
+So the hint is rendered as **text the viewer can read**, adjacent to the
+disabled control. An `sr-only`-only treatment does NOT satisfy this section.
+(Keeping an `aria-describedby` association as well is fine and welcome; what is
+not acceptable is that being the *only* path to the copy.)
+
+⚠ This was not obvious from "visible-disabled" alone — the phrase was read as
+describing the button, which it does, and the copy's treatment was left to
+inference. Stated here because the inference went the other way once already.
+
+⚠ **And the control must not be submittable while disabled.** `allowed: false`
+is the authorization answer; the route refuses the request independently
+(§4.32.4), so a disabled control that could still fire would produce a refusal
+the viewer was already told about — noise, not a safeguard.
+
 ⚠ These are **capability** reason codes, not error codes. They describe why a control is
 disabled on a successful read; the §4.32.9 list describes a rejected request. The overlap in
 spelling is intentional, so the disabled control and the eventual `403` give the same account.
