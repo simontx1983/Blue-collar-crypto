@@ -251,6 +251,28 @@ truth ownership check still goes through the third-party reader.
   owns — read it through the third-party reader. The single-graph
   rule still applies: PeepSo rows go through PeepSo readers/writers.
 
+## Multi-chain validator-operator profiles
+
+Validator pages remain separate public identities because each page has
+its own chain, validator record, trust activity, and community. Shared
+operator-authored branding is stored once per verified operator account
+in `wp_bcc_operator_profiles`; optional rows in
+`wp_bcc_operator_profile_overrides` customize one page without changing
+the other chains. `null` means inherit the shared value; an empty string
+means intentionally suppress that field on the selected page.
+
+Every page write re-resolves `ValidatorPageOperatorAuthority` against the
+current verified operator claim. A denormalized user id in the override
+row is never authorization. Public cards expose the effective profile
+only when the page resolves to exactly one verified operator; ambiguous
+and unclaimed pages fail closed. The profile is BCC-owned data and must
+not be stored in `wp_users.description` or PeepSo profile fields.
+
+Canonical implementation: `OperatorProfileRepository`,
+`OperatorProfileEndpoint`, and `schema-operator-profiles.php` in the
+bcc-trust Onchain domain. `PageCardPrefetcher` batches profile reads for
+directory cards; the single-card path uses the same repository resolver.
+
 ## Cross-plugin contracts
 
 - **ServiceLocator** (11 interfaces in `bcc-core/src/Contracts/*`,
