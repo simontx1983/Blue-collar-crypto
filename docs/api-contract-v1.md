@@ -3560,6 +3560,69 @@ surfaces can refresh without re-fetching the full profile.
   formulas, no fraud/IP/device/cluster signals, no other member's
   weights.
 
+#### `GET /bcc/v1/me/validator-pages`
+
+The operator dashboard's only data source: every validator page the
+signed-in member holds a **verified operator claim** on, across every
+chain. Added for the multi-chain operator dashboard (2026-11-04).
+
+- **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
+  Each member sees ONLY their own claims — the repository read is
+  user-scoped and the route takes no parameter that could widen it.
+  There is no third-party variant of this route.
+- **Response 200:** `{ items: ValidatorPageRow[], total: int }` under the
+  standard `data` envelope. `total` is the length of `items`, not a
+  database-wide count; the read is bounded at 100 rows.
+- **`ValidatorPageRow`:**
+  - `claim_role` string — always `"operator"` for this route.
+  - `claim_status` string — always `"verified"` for this route.
+  - `page_id` int|null — the public page. **null** means the member holds
+    the claim but the page is missing; the row is still returned so the
+    discrepancy is visible rather than silently dropped.
+  - `page_slug` string|null — `wp_posts.post_name`, frozen at mint. ⚠ Do
+    NOT rebuild this from the current moniker; monikers drift.
+  - `chain` `{ slug, name, type }` — each claimed page keeps its own
+    chain. Values may be null for a validator row whose chain row is
+    absent.
+  - `validator` `{ id, moniker, operator_address }`.
+  - `chain_reported_status` string — see the warning below.
+- **Errors:** `bcc_unauthorized` 401
+- **Cache:** `Cache-Control: private, no-store`
+- **Mapping:** `MeValidatorPagesEndpoint::handle` →
+  `ClaimRepository::listVerifiedValidatorPagesForUser`.
+
+⭐ **Multi-chain by construction.** One account holds as many operator
+claims as it can prove. `bcc_onchain_claims`'s only uniqueness is
+`uq_user_entity (user_id, entity_type, entity_id)`, and the exclusivity
+lock in `createExclusiveClaim()` is keyed
+`bcc_claim:{entityType}:{entityId}:{role}` — neither is scoped to a user
+or a chain, so a claim on one chain can never block a claim on another.
+No client may assume one validator page per member.
+
+⚠⚠ **`chain_reported_status` IS NOT A MEMBERSHIP CLAIM.** It is the last
+status a provider reported for that validator, and it cannot establish
+whether the validator is in its chain's current active set:
+
+- it freezes indefinitely for a row the index fetch stops returning,
+  because `bulkUpsert()` writes only the rows a fetch contained;
+- `"inactive"` does **not** mean "absent from the fetch" — the Solana
+  fetcher merges `current` **and** `delinquent` into one list and labels
+  the delinquent entries `inactive`, so there it means **present**;
+- the per-validator enrichment path and the wallet-link upsert can both
+  write it at a time unrelated to any fetch.
+
+⇒ Clients **must not** render an "in the active set" or "not in the
+current set" badge from this field. Proving membership requires a
+per-row field written only on a clean, verified, untruncated fetch;
+until that exists, the honest surface is a chain-level "last read"
+statement, not a per-row claim.
+
+⚠ `fetched_at` is deliberately **not** exposed. It has three writers
+(the indexer with a 6-hour debounce on unchanged rows, the wallet-link
+upsert, and per-validator enrichment unconditionally), so it would
+overstate freshness for an enriched-but-absent validator. A precise
+"last seen" date cannot be derived from it.
+
 #### `POST /bcc/v1/me/findings/:id/appeal`
 
 *(New in v1.63 — Rank Phase 8, spec §15.5.)* The **once-only** member
