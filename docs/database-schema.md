@@ -140,6 +140,8 @@ schema-install path in `tables.php` is itself routed through the same runner.
 | wp_bcc_wallet_links | 9 | User↔wallet links per chain | schema-wallets.php / WalletRepository | Active |
 | wp_bcc_onchain_signals | 3 | Unified on-chain trust signals (wallet age/tx/role boost) | schema-core.php / OnchainSignalRepository | Active |
 | wp_bcc_onchain_claims | 0 | Entity claims (incl. page claims via entity_type='page') | schema-claims.php | Active |
+| wp_bcc_operator_profiles | 0 | One shared public branding/profile record per validator operator account (brand name, bio, links, logo attachment) | schema-operator-profiles.php / OperatorProfileRepository | Active |
+| wp_bcc_operator_profile_overrides | 0 | Optional per-validator-page profile overrides; null inherits the operator's shared value | schema-operator-profiles.php / OperatorProfileRepository | Active |
 | wp_bcc_onchain_collections | 314 | NFT collection metadata cache (TTL) | schema-collections.php | Active |
 | wp_bcc_collection_signals | 2 | Per-(user,collection) demand/verify stance signals (airdrop-proof demand queue) | schema-collection-signals.php / CollectionSignalRepository | Active |
 | wp_bcc_onchain_collection_pieces | 0 | Individual NFT pieces within a collection (TTL) | schema-collection-pieces.php | Active |

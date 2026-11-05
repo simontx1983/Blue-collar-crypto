@@ -1024,6 +1024,7 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
   "viewer_has_endorsed": false,
   "endorse_unlock_hint": null,
   "chains": null,
+  "operator_profile": null,
   "member_dossier": null,
   "crest": { "...": "see §2.9" },
   "stats": [ "...": "see per-kind below" ],
@@ -1036,6 +1037,7 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
 
 **Field rules:**
 
+- `operator_profile` is always present. It is non-null only on a validator page with exactly one verified operator and a saved profile; other card kinds, unclaimed/ambiguous validator pages, and operators without saved profile data return `null`. Shape: `{ brand_name, bio, website_url, socials: { x, discord, telegram }, logo_url }`. Values include the page override, if any. The crest uses the shared logo after a page-specific uploaded avatar and before the chain-imported validator logo.
 - `card_kind` ∈ {`validator`, `project`, `creator`, `member`, `community`}. `community` cards (v1.27) are emitted ONLY as the additive `card` field on the §4.7.4 discovery items and the §4.7.5 group detail response — `GET /cards/:type/:id` and `GET /cards` do NOT accept `community` (route enum unchanged); see §3.2.4 for the kind's rules.
 - `is_claimed` is meaningful for `validator` / `project` / `creator`. For `member`, `is_claimed: true` always (members are their own pages).
 - `is_claim_verified` (verified-wins slice, 2026-06-30) — `true` when the page has a **verified on-chain operator/creator claim** (`onchain_claims.status='verified' AND claim_role IN ('operator','creator')`), i.e. the real entity proved key control. Distinct from `is_claimed` (ANY claim exists) and from `is_verified`/the member email flag. Drives the "✓ Verified Operator" badge + the dominant search-ranking bonus + same-name look-alike demotion. `false` on `member`/`community` cards (not on-chain-claimed). Projected from the read model (`has_verified_claim`), refreshed whenever a claim verify/revoke re-syncs the page.
@@ -2178,6 +2180,7 @@ Returns a full Card view-model.
   - `trust_score`, `reputation_tier`, `reputation_tier_label`, `is_in_good_standing`, `flags` ← `bcc_page_read_model` (§A4)
   - `is_claimed`, `claimed_by_handle` ← `peepso_pages.claimed_by` (§B5)
   - `chain` ← `peepso_page` meta (existing AbstractPageType)
+  - `operator_profile` ← shared operator profile + page override, exposed only after the verified operator resolver returns one unambiguous owner (operator-profile routes below)
   - `stats[]` per kind ← see §6 mapping table
   - `permissions.*` ← `bcc-trust` permission resolver (§A4) combining O5 + D2 gates
   - `social_proof` ← join over `peepso_user_followers` + `peepso_reactions` filtered by viewer's network and trust-weighted (§O4.1)
@@ -3622,6 +3625,75 @@ statement, not a per-row claim.
 upsert, and per-validator enrichment unconditionally), so it would
 overstate freshness for an enriched-but-absent validator. A precise
 "last seen" date cannot be derived from it.
+
+#### `GET /bcc/v1/me/operator-profile`
+
+Read the signed-in operator's shared public profile and the per-validator
+overrides for their verified operator pages. One account profile is shared
+across chains; page overrides change only the selected validator page.
+
+- **Auth:** An authenticated WordPress account is required. Anonymous → `bcc_unauthorized` 401.
+- **Response 200:** `{ profile: OperatorProfile|null, pages: OperatorProfilePage[], total: int, limit: 100 }` under the standard `data` envelope. The read is user-scoped and bounded at 100 claimed pages.
+- **`OperatorProfile`:** `brand_name`, `bio`, `website_url`, `x_url`, `discord_url`, `telegram_url`, `logo_url`, `updated_at`. `profile` is `null` until the operator saves profile text or uploads a logo.
+- **`OperatorProfilePage`:** `page_id`, `page_slug`, `chain`, `validator`, `overrides`, and `effective`. `page_id` may be `null` when a verified claim has no published page. Each override value is `string|null`; `null` means inherit the shared value, and `""` explicitly clears it for that page. `effective` contains the values after inheritance plus the shared `logo_url`.
+- **Errors:** `bcc_unauthorized` (401)
+- **Cache:** `Cache-Control: private, no-store`
+- **Mapping:** `OperatorProfileEndpoint::get` → `ClaimRepository::listVerifiedValidatorPagesForUser` + `OperatorProfileRepository`.
+
+#### `PATCH /bcc/v1/me/operator-profile`
+
+Partially update the shared profile once for all verified validator pages
+managed by this account. Omitted fields are unchanged; an empty string
+clears a shared text field.
+
+- **Auth:** An authenticated WordPress account and at least one verified validator operator claim are required. Anonymous → `bcc_unauthorized` 401; no verified validator operator claim → `bcc_forbidden` 403.
+- **Body (JSON):** Any subset of `brand_name` (≤100 characters), `bio` (≤1,000 characters), `website_url`, `x_url`, `discord_url`, `telegram_url` (each ≤255 characters). URLs must be absolute HTTP(S) URLs without embedded credentials. Text is sanitized server-side. Logo is managed by the separate upload route below.
+- **Response 200:** the updated `GET /me/operator-profile` data.
+- **Errors:** `bcc_unauthorized` (401) · `bcc_forbidden` (403) · `bcc_invalid_request` (400) · `bcc_profile_save_failed` (503)
+- **Cache:** `Cache-Control: private, no-store`
+
+#### `PATCH /bcc/v1/me/operator-profile/pages/:page_id`
+
+Set page-specific values for one validator page. Omitted fields are
+unchanged; `null` restores inheritance from the shared profile; `""`
+explicitly suppresses that field on this page.
+
+- **Auth:** An authenticated WordPress account is required; the caller must be the single verified operator for this published validator page. Every request re-resolves the operator claim and fails closed for missing or ambiguous ownership.
+- **Body (JSON):** Same fields and length/URL rules as `PATCH /me/operator-profile`; values may also be `null` to inherit the shared value.
+- **Response 200:** the updated `GET /me/operator-profile` data.
+- **Errors:** `bcc_unauthorized` (401) · `bcc_forbidden` (403, generic reason; does not reveal claim state) · `bcc_invalid_request` (400) · `bcc_profile_save_failed` (503)
+- **Cache:** `Cache-Control: private, no-store`
+
+#### `DELETE /bcc/v1/me/operator-profile/pages/:page_id`
+
+Remove all overrides for one validator page so it inherits the shared
+profile again.
+
+- **Auth:** Same verified-operator check as `PATCH /me/operator-profile/pages/:page_id`.
+- **Response 200:** the updated `GET /me/operator-profile` data.
+- **Errors:** `bcc_unauthorized` (401) · `bcc_forbidden` (403) · `bcc_profile_save_failed` (503)
+- **Cache:** `Cache-Control: private, no-store`
+
+#### `POST /bcc/v1/me/operator-profile/logo`
+
+Upload the shared operator logo. The existing per-page avatar remains a
+page-specific visual override and takes precedence on that page.
+
+- **Auth:** An authenticated WordPress account and at least one verified validator operator claim are required.
+- **Body (`multipart/form-data`):** `logo` (**required**, image file); validation, MIME detection, size limits, and upload throttling reuse `BlogCoverImageWriter`.
+- **Response 200:** `{ logo_url: string }` under the standard `data` envelope.
+- **Errors:** `bcc_unauthorized` (401) · `bcc_forbidden` (403) · `bcc_invalid_request` (400) · `bcc_rate_limited` (429) · `bcc_unavailable` (503) · `bcc_profile_save_failed` (503)
+- **Cache:** `Cache-Control: private, no-store`
+
+#### `DELETE /bcc/v1/me/operator-profile/logo`
+
+Clear the shared logo reference. This does not delete the WordPress media
+attachment; it only stops using it as operator branding.
+
+- **Auth:** An authenticated WordPress account and at least one verified validator operator claim are required.
+- **Response 200:** `{ logo_url: null }` under the standard `data` envelope.
+- **Errors:** `bcc_unauthorized` (401) · `bcc_forbidden` (403) · `bcc_profile_save_failed` (503)
+- **Cache:** `Cache-Control: private, no-store`
 
 #### `POST /bcc/v1/me/findings/:id/appeal`
 
