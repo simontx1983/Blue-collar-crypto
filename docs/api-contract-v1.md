@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.82 · 2026-10-17 · Phase 1 deliverable
+**Status:** Draft v1.83 · 2026-11-05 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1049,6 +1049,7 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
   - `none` — not a messageable kind (member/community/project/creator at V1), or the surface is operator-disarmed.
   - **Clients MUST NOT infer messaging lifecycle from `is_claimed`** — that field cannot distinguish never-claimed from previously-claimed, which are different destinations. `messaging.destination` is the only sanctioned source. It is a rendering hint: the server re-resolves on every submit, so a stale card degrades to an honest error, never a misroute.
 - `chains` (per §K3) — list of `CardChain` objects when 2+ chains back the same page; `null` otherwise. V1.5 validator-only; creator gallery filter is V2.
+- `page_stream` *(v1.83)* — validator cards only; **absent** on every other kind. `{ "can_post": bool }`, true only for the page's current verified operator (§4.32.2's authority). Its presence mounts the public Activity feed, so it does **not** depend on `bcc_announcements_enabled`. `permissions.can_post_as_entity` is not an authorization input and does not gate these posts.
 - `rank_label` — **populated on ranked `member` cards** (the earned Rank label — Apprentice/Journeyman/Veteran — via `UserViewService::getSummary`'s member-state resolution, §4.8). **`null` for New Members (v1.59** — a New Member card carries no rank chip; the pre-v1.59 `""` empty-string case is gone**)** and `null` on page kinds (`validator`/`project`/`creator`) — Rank is member-only. The field is always present (the union is `string | null`). `current_rank_label` mirrors it (own/profile surfaces). Card view-models do not carry `member_state`; the member summary / `member_dossier` resolution path does (§3.1).
 - `reputation_tier_label` — trust-tier name (Risky/Caution/Neutral/Trusted/Elite). Populated on `member` AND entity cards as of v1.57 (it was member-only while entity cards carried rarity words instead). `null` only on `community` cards.
 - `member_dossier` — **non-null object on `member` cards, `null` on page kinds** (always present for shape uniformity, like `chains`). Carries the back-of-card signal blocks the `/members`, watchers, and followers/following lists previously emitted as a bare `MemberSummary`. Server-composed from the same `UserViewService::getSummary` resolution (no parallel query). Shape:
@@ -1250,6 +1251,7 @@ Feed items share an envelope and vary by `post_kind`.
 - `scope_tags` lists which feed-mode tabs (§N6) this post is eligible for. Used for client-side optimistic filtering when switching tabs without refetching.
 - `comment_count` is the number of visible (non-trashed) comments on the post at response-time. Server-computed via one batched COUNT(*) GROUP BY across the page. Clients MUST treat this as a count badge — the actual list is fetched separately via §4.13. Always present; `0` when there are no comments.
 - `group` is **omitted** (not `null`) when the post does NOT come from a PeepSo group. When present, the post is a wall post inside a group:
+- `page_context` *(v1.83)* is the validator page a status post was written for: `{ "id": 6599, "name": "Coinbase01", "handle": "coinbase01", "url": "/v/coinbase01", "label": "Operator of Coinbase01" }`, or `null` when the post carries no page marker or the page no longer resolves to a published page. Present on every feed surface, including the permalink; a blog-tab item is always `null`. `label` is server-rendered (§A2): render it verbatim, linked to `url`. It describes the post, not the author's standing today, so it stays after the author stops being the page's operator. `name` is the validator's moniker, falling back to the page title. A cached hot feed can lack the key for a short time after a deploy, so clients read it as optional.
   - `id` — group_id (matches `group_id` in §4.7.x endpoints).
   - `type` ∈ `nft` | `validator` | `hall` | `user` | `system` — matches §4.7.2 group `type`.
   - `verification` is `null` for non-NFT groups; for NFT-gated groups it carries `{kind: 'on_chain', label: 'On-Chain Verified'}`. Frontend MUST render `label` verbatim — never abbreviate to "Verified" alone.
@@ -2813,6 +2815,19 @@ columns→`*_at_watch`) via a data-preserving migration. Canonical celebration c
 `"Now watching <name>."` (icon `watch`).
 
 ### 4.6 Pages (claim flow)
+
+#### `GET /bcc/v1/pages/:id/feed`
+
+*(New in v1.83.)* The everyday posts written for a validator page, newest first. Announcements are separate (§4.32).
+
+- **Auth:** public. A signed-out visitor can read it.
+- **Query:** `cursor` (string, optional) · `limit` (int, optional, default 20, 1–50).
+- **Response 200:** the same `{ items: FeedItem[], pagination: { next_cursor, has_more } }` as `GET /groups/:id/feed`.
+- **Scope:** only posts carrying the page marker. Filtered by the marker alone, **never by current operator**: a post stays on the page, with its label, after its author loses operator status.
+- **Exclusions:** same as the author wall: the §O4.1 reputation shadow list (a caution or risky author's posts read as empty here too), §K1 mutual blocks, and moderation-hidden rows.
+- **Errors:** `bcc_not_found` 404 unless `id` is a published validator page.
+- **Cache:** `private, no-store`, `Vary: Authorization, Cookie` (per-viewer exclusions).
+- **Mapping:** `PagesEndpoint::feed` → `FeedRankingService::getActivityForPage` → `ActivityFeedService::getActivityForPage`.
 
 #### `POST /bcc/v1/pages/:id/claim`
 
@@ -6175,6 +6190,7 @@ Create a post. The `kind` discriminator routes to one of three writers (`status`
 - **Content-Type:** `application/json`.
 - **Body (common):** `kind` (string, optional, default `status`) ∈ `status|review|blog` (`sanitize_key`) · `content` (string, **required**) — kind-dependent (PeepSo's `add_post` owns escaping; not `wp_kses`'d at the REST layer).
 - **Body (`kind=status`):** `group_id` (int, optional, > 0 — §4.7.6 group-scope; viewer must be an active member, validated before throttle) · `visibility` (string, optional, default `members_only`) ∈ `members_only|public_group|public_all` (only meaningful when `group_id > 0`; unrecognized clamps to `members_only`; stored `_bcc_post_visibility`; **`public_all` is authorization-gated — see the §4.14 `visibility` rule: open → any posting member, closed/secret → owner/admin or opted-in members, else `bcc_permission_denied 403`**) · `hall_feed` (string, optional, default `main`) ∈ `main|ranked` *(v1.62 — Rank Phase 7, spec §21.3; status kind only)* — Hall feed-channel selector: `ranked` targets the Hall's second feed and is only valid when `group_id` targets a **Hall** (`ranked` with no group or a non-Hall group → `bcc_invalid_request 400` "Only Halls have a ranked feed."); anything except the literal `ranked` clamps to `main` (defense in depth — a malformed value posts to the main channel it was always allowed to post to). The write gate is `can('post_ranked_hall_feed')` (Journeyman+ AND Neutral+ AND not suspended AND not in §14.2 recovery), checked **after** membership so a Hall member below Journeyman gets the honest capability denial (`bcc_forbidden 403`, reason in `error.data.reason` ∈ `suspended|new_member|below_journeyman|below_neutral|in_recovery`), not a shape error. A ranked post is stamped `_bcc_ranked_feed = '1'` post-meta (main-channel posts carry no marker) · content 1–500 chars.
+- **Body (`kind=status`, page target, v1.83):** `target_page_id` (int, optional, > 0) writes the post for that validator page. It is still the author's own status post, on their wall and the Floor, plus a page marker that puts it on `GET /pages/:id/feed` and fills `page_context`. Refused before the content and throttle gates, so a refusal writes nothing, spends no throttle slot and fires no event: with `group_id` as well → `bcc_invalid_request` 400; author not the page's **current** verified operator → `bcc_forbidden` 403 with `error.data.reason_code` = `not_claimer`, one identical body for a stranger, another page's operator, an unclaimed, contested or non-validator page. A suspended author gets the ordinary suspended 403 first, with no `reason_code`. The `/posts/photo` and `/posts/gif` routes take no page target: page posts are text only. `target_page_id` keeps its review meaning on `kind=review`.
 - **Body (`kind=review`):** the target is **either** an entity page **or** a member. Entity: `target_page_id` (int, > 0; `group_id` ignored). Member (Slice 2, Architecture A — a person is a trust subject): `target_kind` = `user_profile` + `target_user_id` (int, > 0) — resolved server-side to the member's lazily-provisioned self-page; the self-page id scheme stays a backend detail. Always: `grade` (string, **required**) ∈ `trust|neutral|caution` (→ vote_type +1/0/−1) · content 1–4000 chars (the written reason — required for every review, incl. a down-review). A member down-review additionally fails closed (`bcc_forbidden`) when the target reported the voter within `BCC_TRUST_RETALIATION_WINDOW_DAYS`; self-reviews and the Trusted/Elite downvote gate apply identically to entity votes.
 - **Body (`kind=blog`, §D6):** `content` (**required**, full_text, 1–60000) · `excerpt` (**required**, 80–500) · `title` (optional, ≤ 120) · `category` (optional) ∈ `news|analysis|guide|opinion|tools|events` · `tags` (string[], ≤ 5; lowercase `[a-z0-9-]`, ≤ 24 each, deduped) · `chain_tags` (string[], ≤ 3 — chain **slugs** over the wire, resolved via `ChainRepository::getBySlug`) · `disclosure` ({tickers ≤ 20 uppercase `[A-Z0-9]` ≤ 12 each, note ≤ 500} | null — empty struct rejected, send `null`) · `sources` (string[], ≤ 20, ≤ 280 each, deduped) · `cover_image_id` (int, > 0 — from `POST /blog/cover-image`, must be an `attachment` owned by the author) · `status` (optional, default `publish`) ∈ `draft|publish` (a draft fires no `bcc_blog_post_created`, gets no activity row, reachable only via `GET /posts/:id`). `group_id` is **rejected** for `kind=blog` (V1 blogs land on the author's own wall).
 - **Rate limit:** burst seatbelt — 5 / 120s / author, keyed separately for status / blog. Reviews additionally pass through `VoteService`'s fraud/rate/coordination pipeline.
@@ -8572,6 +8588,17 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.83 — 2026-11-05 — additive — validator page posts and feed
+
+A claimed validator's operator can write everyday posts for their page, and the page has a real public feed.
+
+- **New route:** §4.6 `GET /pages/:id/feed`.
+- **`POST /posts` `kind=status`** accepts `target_page_id`, gated on current operator status.
+- **`FeedItem.page_context`** and **`Card.page_stream`** are new.
+- **Not post-as-entity.** §8's deferral of posting *as* a page stands: the author on these posts is the operator's own account, labelled with the validator.
+- **Earlier posts keep their place and label** after the author loses operator status. Only new posts need current status.
+- Requires bcc-core's `ActivityFeedService::getActivityForPage`.
 
 ### v1.78 — 2026-09-30 — additive, **contract-first** — §4.32 Validator announcements (PLANNED)
 
