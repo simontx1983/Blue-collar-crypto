@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.83 · 2026-11-05 · Phase 1 deliverable
+**Status:** Draft v1.84 · 2026-11-05 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1050,6 +1050,7 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
   - **Clients MUST NOT infer messaging lifecycle from `is_claimed`** — that field cannot distinguish never-claimed from previously-claimed, which are different destinations. `messaging.destination` is the only sanctioned source. It is a rendering hint: the server re-resolves on every submit, so a stale card degrades to an honest error, never a misroute.
 - `chains` (per §K3) — list of `CardChain` objects when 2+ chains back the same page; `null` otherwise. V1.5 validator-only; creator gallery filter is V2.
 - `page_stream` *(v1.83)* — validator cards only; **absent** on every other kind. `{ "can_post": bool }`, true only for the page's current verified operator (§4.32.2's authority). Its presence mounts the public Activity feed, so it does **not** depend on `bcc_announcements_enabled`. `permissions.can_post_as_entity` is not an authorization input and does not gate these posts.
+- `delegator_group` *(v1.84)* — validator cards only; **absent** on every other kind. `{ "group": DelegatorGroup | null, "can_create": bool, "can_edit_min_stake": bool, "options": [{ "validator_id": 92, "name": "Coinbase01", "chain_slug": "cosmos", "chain_name": "Cosmos Hub", "native_token": "ATOM" }], "unavailable_reason": string | null }`. `can_create` needs the current operator, a supported option and no group yet. `can_edit_min_stake` needs the current operator and a group. `options` lists the page's supported validators. `unavailable_reason` is server-rendered, set when no bound validator is supported. See §4.7.8.
 - `rank_label` — **populated on ranked `member` cards** (the earned Rank label — Apprentice/Journeyman/Veteran — via `UserViewService::getSummary`'s member-state resolution, §4.8). **`null` for New Members (v1.59** — a New Member card carries no rank chip; the pre-v1.59 `""` empty-string case is gone**)** and `null` on page kinds (`validator`/`project`/`creator`) — Rank is member-only. The field is always present (the union is `string | null`). `current_rank_label` mirrors it (own/profile surfaces). Card view-models do not carry `member_state`; the member summary / `member_dossier` resolution path does (§3.1).
 - `reputation_tier_label` — trust-tier name (Risky/Caution/Neutral/Trusted/Elite). Populated on `member` AND entity cards as of v1.57 (it was member-only while entity cards carried rarity words instead). `null` only on `community` cards.
 - `member_dossier` — **non-null object on `member` cards, `null` on page kinds** (always present for shape uniformity, like `chains`). Carries the back-of-card signal blocks the `/members`, watchers, and followers/following lists previously emitted as a bare `MemberSummary`. Server-composed from the same `UserViewService::getSummary` resolution (no parallel query). Shape:
@@ -3398,7 +3399,7 @@ Cross-kind discovery list. Sort key: `verified DESC, heat_score DESC, member_cou
 - **Cache:** anon → `Cache-Control: public, max-age=60` (60s window keeps newly-warming groups discoverable quickly); authed → `private, no-store` (v1.27 — each item's `card.community_dossier.viewer_is_member` is viewer-scoped, so authed responses must never sit in a shared cache; this matches the §4.7.5 detail posture).
 - **Privacy:** `secret` groups never appear here regardless of viewer. `closed` groups appear with name + member_count visible; content stays private at PeepSo's layer.
 - **Filter `verified=1`:** restricts to groups with `_bcc_group_kind IN ('holders','delegators')`. Use this to render an "On-Chain Verified only" filter chip on the discovery page. **Widened in v1.52** — it previously meant `'holders'` alone. Both kinds emit `verification.kind = "on_chain"`, so an existing chip keeps working and simply returns delegator communities too; the same widening applies to the `verified` component of the sort key.
-- **`validator_stats` (v1.52):** stats block for `validator`-type cards only — `{ moniker, status, commission, total_stake, delegator_count, min_stake_display, validator_page }`. `null` for every other kind, and `null` when the underlying validator is not yet indexed. Each inner field is independently nullable (enrichment can leave any column unpopulated). `commission` and `total_stake` are numbers; `delegator_count` an integer; `min_stake_display` a server-pre-formatted string (`"1 ATOM"`, or a bare amount when the chain's native token is unknown) rendered verbatim per §A2/§S; `validator_page` is the frontend path to the backing validator page (`/v/{slug}`, composed server-side via the locked `CardUrlMap`) or `null` when no page backs the validator. This is the delegator-community analogue of `collection_stats` — the two are mutually exclusive by kind and never both non-null.
+- **`validator_stats` (v1.52):** stats block for `validator`-type cards only — `{ moniker, chain_name, status, commission, total_stake, delegator_count, min_stake_display, validator_page }` (`chain_name` new in v1.84). `null` for every other kind, and `null` when the underlying validator is not yet indexed. Each inner field is independently nullable (enrichment can leave any column unpopulated). `commission` and `total_stake` are numbers; `delegator_count` an integer; `min_stake_display` a server-pre-formatted string (`"1 ATOM"`, or a bare amount when the chain's native token is unknown) rendered verbatim per §A2/§S; `validator_page` is the frontend path to the backing validator page (`/v/{slug}`, composed server-side via the locked `CardUrlMap`) or `null` when no page backs the validator. This is the delegator-community analogue of `collection_stats` — the two are mutually exclusive by kind and never both non-null.
 - **`image_url`:** cover-art URL. NFT-type cards return the underlying collection's `image_url` (joined through `wp_bcc_onchain_collections`). Non-NFT cards (`hall`/`system`/`user`) return `null` in V1 — the frontend falls back to a generated initials block. PeepSo group avatars for non-NFT kinds is V1.5.
 - **`description`:** group post body, plain-text + tag-stripped + truncated to ~200 chars (em-dash ellipsis when truncated). `null` when the group has no description on file. Applies to all kinds — `hall`/`system`/`user` cards can use the same field on a future detail surface.
 - **`collection_stats`:** market-data block for NFT-type cards only — drives the discovery card's flip-to-back UX (floor price, holder distribution, lifetime volume, listed %, royalty %). Each inner field is independently nullable since the upstream fetch can leave any column unpopulated. Currency-bearing fields (`floor_price`, `total_volume`) are returned as raw strings (full decimal precision) PLUS server-pre-formatted `*_display` strings (`floor_display`, `volume_display`, `holders_display`, `supply_display`, `listed_display`, `royalty_display`, `min_balance_display`). Frontend renders `*_display` verbatim per §A2 / §S — no client-side number-formatting decisions. `distribution_pct` is the server-computed `holders / supply * 100` (rounded), exposed as a number alongside `holders_display` for charting use. `min_balance` mirrors the gate threshold (`_bcc_gate_min_balance` post-meta). Em-dash (`"—"`) appears in `*_display` when the underlying value is missing/zero so the wire never surfaces "0.00 STARS" as a fake-low signal. Non-NFT cards return `null` for the entire block — there is no equivalent for `hall`/`system`/`user` kinds.
@@ -3408,7 +3409,7 @@ Cross-kind discovery list. Sort key: `verified DESC, heat_score DESC, member_cou
 
 ### 4.7.8 Validator/Delegator Communities (delegation-gated)
 
-*(New in v1.52.)* Delegation-gated PeepSo groups: one closed community per **claimed validator**, auto-provisioned when a verified operator claim lands and **owned by that operator**. Delegators see suggestions and join explicitly — the same suggest-don't-auto-join model as §4.7.1, minus the auto-join preference (a deliberate V1 cut, so there are **no** `preferences` routes here). Privacy is `closed` (defense in depth): non-members see the community exists, but content is gated by both PeepSo and our server-side delegation check.
+*(New in v1.52.)* Delegation-gated PeepSo groups: one closed community per **validator page**, created when the page's verified operator **chooses** to *(v1.84: nothing creates one on claim any more)* and **owned by that operator**. It is tied to one validator bound to that page, which is the one delegation is verified against. Only `chain_type = cosmos` chains are supported. Delegators see suggestions and join explicitly — the same suggest-don't-auto-join model as §4.7.1, minus the auto-join preference (a deliberate V1 cut, so there are **no** `preferences` routes here). Privacy is `closed` (defense in depth): non-members see the community exists, but content is gated by both PeepSo and our server-side delegation check.
 
 Shape mirrors §4.7.1 exactly, with a `validator_stats` block replacing `collection`. `verification` and `activity` are the §4.7.1 shared blocks verbatim.
 
@@ -3427,6 +3428,7 @@ Shape mirrors §4.7.1 exactly, with a `validator_stats` block replacing `collect
         "member_count": 42,
         "validator_stats": {
           "moniker": "Coinbase01",
+          "chain_name": "Cosmos Hub",
           "status": "active",
           "commission": 5.0,
           "total_stake": 1250000.5,
@@ -3455,7 +3457,7 @@ Shape mirrors §4.7.1 exactly, with a `validator_stats` block replacing `collect
   - `bcc_rate_limited` **429** — throttled.
   - `bcc_forbidden` **403** — account suspended (holding stake is not an override of moderation).
   - `bcc_invalid_request` **400** — not a delegator community.
-  - `bcc_permission_denied` **403** — opted out recently, **or** not eligible (`error.message` is the server-pinned hint, e.g. `"Delegate at least 10 ATOM to Coinbase01 to join this community."` — render verbatim per §A2/§N7).
+  - `bcc_permission_denied` **403** — opted out recently (`error.data.reason_code` = `opt_out_active`, v1.84), **or** not eligible (`error.message` is the server-pinned hint, e.g. `"Delegate at least 10 ATOM to Coinbase01 to join this community."` — render verbatim per §A2/§N7).
   - `bcc_upstream_unavailable` **503** — **could not verify** the delegation. This is NOT "you don't qualify": the join failed **closed** during an upstream outage. Clients MUST present it as retryable and MUST NOT render it as an eligibility failure.
   - `bcc_internal_error` **503** — community sits on an unsupported (non-Cosmos) chain.
 
@@ -3472,7 +3474,43 @@ Both methods are registered and behave identically (`DELETE` is the REST-idiomat
 
 #### Revocation (no endpoint — behaviour note)
 
-Membership is re-verified periodically. A member proven to no longer meet the stake threshold is removed silently (audit row only, no notification) and **no opt-out is written** — re-delegating re-qualifies them immediately. A member whose delegation cannot be verified is **skipped, never removed**: an upstream outage must not evict a community. Operator-owners are never revoked. Clients should therefore treat membership as server-authoritative and re-read rather than caching it indefinitely.
+Membership is re-verified by a sweep against the group's **current** minimum, so a raised minimum applies here and a lowered one removes nobody. A member proven to no longer meet it is removed with an audit row and one in-app notice (below), and **no opt-out is written**, so meeting the minimum re-qualifies them. A wallet's delegation set is cached for up to 5 minutes, so a join straight after a top-up can still read the old amount for that long. A member whose delegation cannot be verified is **skipped, never removed and not notified**: an upstream outage must not evict a community. A member with no verified wallet on the chain counts as not delegating. Operator-owners are never revoked.
+
+**Pace (v1.84):** at most 200 member checks per run, twice a day, across **all** delegator groups, resuming where the last run stopped and reaching every group however many exist. A raised minimum can therefore take several runs, and days for large groups. Clients must not promise a time, and should treat membership as server-authoritative and re-read rather than caching it indefinitely.
+
+**Removal notice (v1.84):** bell type `bcc_delegator_group_removed`, preference `bell.bcc_delegator_group_removed` (default on). In-app only: no push, and excluded from the email digest. Sent only after a real removal, never for a voluntary leave, a moderator eviction, a refused removal or an unverified member. `actor` is the member themself. `message` is rendered when read, from the group's actual validator and chain and its minimum at that moment: *"You're no longer in {group}, the delegator group for {validator} on {chain}. It requires at least {minimum} delegated, and we couldn't confirm that from your linked wallet. You can rejoin any time once you meet it."* `link` is the group; if the group has since been deleted, a short stored fallback and `/` are used.
+
+#### `POST /bcc/v1/pages/:id/delegator-group`
+
+*(New in v1.84.)* The page's verified operator creates its delegator group.
+
+- **Auth:** Bearer required. **Throttle:** 10/60s per user, shared with `PATCH`.
+- **Body:** `validator_id` (int, required) — a validator bound to this page · `min_stake` (string, required) — a plain positive decimal in display units, above 0 and at most `1000000000`, with at most 6 decimal places. No scientific notation, signs or whitespace. Trailing fractional zeros are dropped.
+- **Check order:** auth → throttle → suspension → operator authority → validator bound to this page → supported chain → `min_stake` → one group per page. Chain and operator address come from the validator row, never the request. Refusals create nothing.
+- **Response 201:** `{ "group": DelegatorGroup }`.
+- **Errors:**
+  - `bcc_unauthorized` **401** — not signed in.
+  - `bcc_rate_limited` **429** — throttled.
+  - `bcc_forbidden` **403** — account suspended, or not the page's current operator (`error.data.reason_code` = `not_claimer`, one identical body for every such denial).
+  - `bcc_not_found` **404** — that validator isn't on this page.
+  - `bcc_delegator_group_unavailable` **400** — unsupported chain.
+  - `bcc_invalid_request` **422** — invalid `min_stake`.
+  - `bcc_conflict` **409** — the page already has a group; `error.data.group` is that `DelegatorGroup`.
+  - `bcc_internal_error` **503** — the write could not be completed or the page lock was busy. Retry.
+- **Cache:** `private, no-store`.
+
+`DelegatorGroup` = `{ "id": 5310, "slug": "delegators-coinbase01", "url": "/communities/delegators-coinbase01", "min_stake": "1.5", "min_stake_display": "1.5 ATOM", "validator": { "id": 92, "name": "Coinbase01", "chain_slug": "cosmos", "chain_name": "Cosmos Hub" } }`. It never carries an operator address: this block is on an anonymous card, and a valoper converts to the operator's account address.
+
+#### `PATCH /bcc/v1/pages/:id/delegator-group`
+
+*(New in v1.84.)* The page's verified operator changes the minimum.
+
+- **Auth:** Bearer required. **Throttle:** shared with `POST`.
+- **Body:** `min_stake` (string, required), same rules as `POST`.
+- **Authority:** the page's current verified operator, **not** group ownership.
+- **Response 200:** `{ "group": DelegatorGroup }`. An identical value is a no-op with no audit row. A real change writes `validator_group_min_stake_changed` with old and new values.
+- **Effect:** the next join uses the new value at once. Removals follow the sweep's pace above; this route removes nobody itself.
+- **Errors:** the same `401`, `429`, `403`, `422` and `503` as `POST` · `bcc_not_found` **404** — the page has no group.
 
 ### 4.7.9 Tour Seen Store
 
@@ -4155,7 +4193,8 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
     "bcc_mention":                true,
     "bcc_hall_post":              true,
     "bcc_comment_received":       true,
-    "bcc_holder_community_live":  true
+    "bcc_holder_community_live":  true,
+    "bcc_delegator_group_removed": true
   },
   "push": {
     "enabled": false,
@@ -8588,6 +8627,14 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.84 — 2026-11-05 — behaviour change plus additive — operator-created delegator groups
+
+- **Behaviour change:** a verified claim no longer creates a delegator group, and neither does a backfill or an admin action. The operator chooses. Groups that already exist are untouched. Supersedes the auto-provisioning described in v1.52.
+- **One group per validator page**, tied to one validator bound to that page.
+- **New routes:** §4.7.8 `POST` and `PATCH /pages/:id/delegator-group`. The operator sets the minimum and can edit it.
+- **Sweep:** a member removed for falling below the minimum now gets an in-app notice instead of silence, and the sweep reaches every group rather than the first 500.
+- **New:** `Card.delegator_group`, `validator_stats.chain_name`, bell type and preference `bcc_delegator_group_removed`, and `reason_code: opt_out_active` on a join refused for a recent leave.
 
 ### v1.83 — 2026-11-05 — additive — validator page posts and feed
 
