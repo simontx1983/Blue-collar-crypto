@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.85 · 2026-11-05 · Phase 1 deliverable
+**Status:** Draft v1.86 · 2026-11-06 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2869,12 +2869,19 @@ Claims a validator/creator/project page using a wallet signature (§B5, §N8).
     ]
   }
   ```
-- **Errors:**
-  - `bcc_invalid_request` (bad signature, wrong chain, expired nonce)
-  - `bcc_permission_denied` (signed wallet is not in the page's claim key set per §B5)
-  - `bcc_conflict` (page already claimed by someone else; payload includes `claimed_by_handle`)
-  - `bcc_rate_limited`
+- **Errors:** the complete set this route can emit, each with its HTTP status. Corrected and completed in **v1.86** against the implementation; see the changelog for what was wrong and why it mattered.
+  - `bcc_unauthorized` **401** — not signed in.
+  - `bcc_invalid_request` **400** — missing or malformed `page_id` or `entity_id`, or an `entity_type` outside the accepted set.
+  - `bcc_forbidden` **403** — two distinct causes behind one code: the entity is **not bound to this page**, or the caller's connected wallet **does not match the entity's operator** (§B5 — operator address + consensus pubkey only; delegators excluded).
+    ⚠ **This replaces `bcc_permission_denied`, which this route has never emitted.** Measured against the implementation: the endpoint produces zero `bcc_permission_denied`, and its 403 is `bcc_forbidden`. Same defect class as the `/members` `bcc_validation` line corrected in v1.80 — a documented code no producer emits is a code a client would wait forever to see.
+  - `bcc_not_found` **404** — the page does not exist or is not a `peepso-page`; **or (new in v1.86) the claimed entity itself could not be found.**
+  - `bcc_conflict` **409** — the entity is already claimed by another user.
+  - `bcc_precondition_failed` **412** — no wallet connected yet (`Connect a wallet first to claim this.`).
+  - `bcc_rate_limited` **429**.
+  - `bcc_unavailable` **503 (new in v1.86)** — the claim could not be completed for a **server-side, transient** reason: an advisory-lock timeout (two submissions in quick succession), a failed write, or a database error. **Retryable** — a client may re-submit the same claim unchanged, and should offer that rather than suggesting the wallet is wrong.
+  - ⚠⚠ **Why the last two are a behaviour change and not just new documentation.** Both causes previously fell through to the **403** above, so a server fault and a missing entity both told a legitimate operator that *their wallet does not match the validator*. The plausible reaction to that message is to unlink a correct wallet or give up, and it left support with nothing to diagnose. A client that treats 403 as "wallet is wrong" MUST now distinguish these: 503 is retryable, 404 is not, and neither says anything about the wallet.
 - **Rate limit:** 3/hour/user, 10/day/IP, **30 attempts/day/page** (caps total claim attempts on a single page across all users to prevent attempt flooding per §B5)
+- ⚠⚠ **ERRATUM, OPEN (noted v1.86, NOT fixed here): the Body and Response blocks above do not describe this endpoint.** They show a signature-bearing body (`wallet_address`, `chain`, `nonce`, `signature`, `public_key`) and a **201**. The implementation reads **`entity_type` + `entity_id`** and proves ownership from the caller's **already-linked, already-verified** wallet — it takes no signature on this route — and the success path returns **200**. The accurate request shape is the one this contract already gives in §1's card action descriptor: `{ "entity_type": "validator", "entity_id": 47 }`. So the two halves of this document disagree, and §1 is the half that matches the code. **Send the §1 shape.** Only the error list above was brought in line with the implementation in v1.86; correcting the Body, the status code and the Mapping bullets is a larger, separate change, deliberately not bundled with an error-code correction.
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:**
   - Verifies signature via `bcc-core` `WalletVerifier`
@@ -8633,6 +8640,18 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.86 — 2026-11-06 — behaviour change plus correction — the claim route stops reporting server faults as wallet mismatches
+
+Scope: §4's `POST /bcc/v1/pages/:id/claim` error list only. No field, route, envelope or view-model changes.
+
+- **New `bcc_unavailable` 503** on a **transient server-side** failure of a claim: an advisory-lock timeout (two submissions in quick succession), a failed write, or a database error. **Retryable.**
+- **New `bcc_not_found` 404** when the **claimed entity** cannot be found, as distinct from the page not being found.
+- **Behaviour change, and the reason for both:** these two causes used to fall through to the route's **403**, which told a legitimate operator that their connected wallet did not match the validator. A client treating 403 as "wallet is wrong" must now tell the three apart — **503 is retryable, 404 is not, and neither is about the wallet.**
+- **Correction:** the list named **`bcc_permission_denied`**, which this route has never emitted (measured: zero producers in the endpoint; its 403 is `bcc_forbidden`). Same defect class as the `/members` `bcc_validation` line corrected in v1.80.
+- **Completion:** the list was also missing `bcc_unauthorized` 401, `bcc_forbidden` 403 and `bcc_precondition_failed` 412, all of which the route has emitted since it shipped. Every entry now carries its HTTP status, matching the style of the sibling `/pages/:id/avatar` entries.
+- **Erratum recorded, not fixed:** this section's **Body** block and its **201** still describe a signature-based flow the endpoint does not implement. §1's card action descriptor carries the accurate shape (`{ entity_type, entity_id }`) and a 200. Flagged in place; correcting it is a separate change.
+- ⚠ **Coordination:** the 503 and 404 arrive with bcc-trust `fix/claim-and-sweep-failure-modes` (PR #363). **That PR merges first** — documenting a refusal the deployed route cannot yet perform is the inverse of the v1.80 problem, and this repo has been caught by that ordering before. `contract-parity-guard.php` does not police error codes (it diffs declared routes against `register_rest_route` calls), so neither order turns CI red: the ordering here is a correctness rule, not a mechanical one.
 
 ### v1.84 — 2026-11-05 — behaviour change plus additive — operator-created delegator groups
 
