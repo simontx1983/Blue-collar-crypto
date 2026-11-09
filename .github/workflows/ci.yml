@@ -77,6 +77,14 @@ jobs:
       - name: Schema-drift parity (static)
         run: php scripts/schema-drift-guard.php
 
+      # Regression cases for the schema-drift guard's inventory Status
+      # handling (#162): a declared table relabelled ORPHAN/RETIRED must fail,
+      # the Status cell is matched exactly, and RETIREMENT_WINDOW entries fail
+      # once stale. Runs a copy of the guard against a throwaway fixture root
+      # — no DB, and independent of the sibling checkouts above.
+      - name: Schema-drift guard regressions
+        run: bash scripts/tests/schema-drift-guard.test.sh
+
       # Parser regression tests for scripts/site-url-probe.sh. Runs here, in
       # the already-required guards job, rather than in site-url-guard.yml:
       # that workflow only runs daily and on dispatch, so a broken parser
