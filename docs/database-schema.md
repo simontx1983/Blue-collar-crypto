@@ -115,7 +115,7 @@ schema-install path in `tables.php` is itself routed through the same runner.
 | wp_bcc_trust_user_verifications | 2 | Per-user external verifications (GitHub/X/domain/wallet) | TableRegistry::userVerifications | Active |
 | wp_bcc_trust_quest_log | 9 | Onboarding quest completions per user | TableRegistry::questLog | Active |
 | wp_bcc_post_shortcodes | 133 | Sidecar act_id → 8-letter public shortcode for post permalinks (`/u/{handle}/post/{code}`) | PostShortcodeRepository / schema-post-shortcodes.php | Active |
-| wp_bcc_user_ranks | 0 | Awarded ranks per user — backed the never-built conferred-Foreman role | none (repo + schema deleted 2026-07-09) | **RETIRED** — dropped by `includes/database/drop-user-ranks-table.php` |
+| wp_bcc_user_ranks | 0 | Awarded ranks per user — backed the never-built conferred-Foreman role | none (repo + schema deleted 2026-07-09); dropped by `includes/database/drop-user-ranks-table.php` | RETIRED |
 | wp_bcc_page_read_model | 2777 | Denormalized page read model for discovery/search | TableRegistry::pageReadModel / schema-project.php | Active |
 | wp_bcc_rm_dirty_queue | 0 | Dirty-page queue driving read-model recompute | TableRegistry::dirtyQueue | Active |
 | wp_bcc_page_follows | 12 | User→page follow edges | TableRegistry::pageFollows | Active |
@@ -207,6 +207,17 @@ schema-install path in `tables.php` is itself routed through the same runner.
 > `RETIRED` is treated as `ORPHAN` — expected absent from code, INFO-only —
 > so a RETIRED row whose table is still declared is not flagged at all. The
 > reverse order fails from the moment bcc-trust `main` loses the declarations.
+>
+> **⚠ Guard changed after this was measured (issue #162).** The guard now
+> *fails* a documented-RETIRED (or ORPHAN) table that is still declared —
+> otherwise relabelling a live table was a static false-green. The window
+> above is still the required order, but it now has to be opened explicitly:
+> the umbrella PR that flips a row to `RETIRED` while bcc-trust `main` still
+> declares the table must also add that table, with a reason, to
+> `RETIREMENT_WINDOW` in `scripts/schema-drift-guard.php`. The follow-up
+> umbrella PR removes the entry once the drop has merged; an entry left behind
+> fails as stale. The Status cell must also be exactly `Active`, `ORPHAN` or
+> `RETIRED` — any other wording fails.
 >
 > ⚠ And it cannot be dodged by timing: `.github/workflows/ci.yml` checks the
 > plugin out with no `ref:`, so `actions/checkout` takes bcc-trust's **default

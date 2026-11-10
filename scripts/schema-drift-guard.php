@@ -59,9 +59,17 @@
  *   1 = drift detected (static and/or live)
  *   2 = setup / IO error (missing required input file, bad repo root)
  *
- * INFO-class observations (documented-ORPHAN tables still live, etc.) are
- * printed but do NOT by themselves set a non-zero exit — they are expected
- * pre-Phase-5 state.
+ * INFO-class observations (documented-ORPHAN/RETIRED tables still LIVE) are
+ * printed but do NOT by themselves set a non-zero exit — a dropped table can
+ * linger in a database until its guarded drop runs there.
+ *
+ * Still DECLARED in code is different, and static: a documented-ORPHAN or
+ * documented-RETIRED table that a CREATE TABLE / TableRegistry accessor
+ * still declares FAILS (CHECK 1c, issue #162) — except a RETIRED table named
+ * in the RETIREMENT_WINDOW allowlist (INFO), whose entries themselves fail
+ * once stale. So does any inventory row
+ * whose Status cell is not exactly `Active`, `ORPHAN` or `RETIRED`, or a
+ * table listed twice (CHECK 1d).
  */
 
 declare(strict_types=1);
@@ -547,11 +555,31 @@ if (is_readable($TABLE_REG)) {
 | (2) DOCUMENTED — parse the master-inventory table in database-schema.md
 |--------------------------------------------------------------------------
 | Row shape: | Table | ~rows | Purpose | Owning code | Status |
-| We extract the bare table name + whether Status says Active vs ORPHAN.
+| We extract the bare table name + its Status, which must be EXACTLY one of
+| DOC_STATUSES (whole cell, case-sensitive). Anything else is drift.
 */
 
-/** @return array<string, array{status: string, raw: string}>  bare => meta */
-function parse_documented(string $doc): array {
+/**
+ * The only Status values the inventory may carry. Matched against the WHOLE
+ * trimmed Status cell, case-sensitively — never by substring, so free text
+ * (in that cell or any other) cannot influence classification.
+ *
+ *   Active  — declared in code, expected live.
+ *   ORPHAN  — gone from the codebase; may linger live until dropped.
+ *   RETIRED — actively dropped by a migration; no longer declared.
+ *
+ * ORPHAN and RETIRED are kept distinct: neither may still be declared in
+ * code (CHECK 1c), but a RETIRED table may be, during an explicit
+ * RETIREMENT_WINDOW entry; an ORPHAN one never.
+ */
+const DOC_STATUSES = ['Active', 'ORPHAN', 'RETIRED'];
+
+/**
+ * @param list<string> $problems  receives one message per malformed row
+ *                                (unrecognised Status, duplicate table row)
+ * @return array<string, array{status: string, raw: string}>  bare => meta
+ */
+function parse_documented(string $doc, array &$problems = []): array {
     $lines = explode("\n", (string) file_get_contents($doc));
     $out   = [];
     foreach ($lines as $line) {
@@ -571,24 +599,36 @@ function parse_documented(string $doc): array {
             continue; // header / separator / non-table row
         }
         $statusCell = $cells[count($cells) - 1];
-        // RETIRED rows (actively dropped by a migration, e.g. user_ranks)
-        // behave like ORPHAN for parity purposes: NOT expected in code or
-        // live. Only a literal Active status counts as Active — the old
-        // "anything not orphan is Active" default silently promoted
-        // RETIRED rows and produced a permanent false parity finding.
-        if (stripos($statusCell, 'orphan') !== false || stripos($statusCell, 'retired') !== false) {
-            $status = 'ORPHAN';
+        $bare       = bare_name($tableCell);
+        // Exact whole-cell match. The previous substring classifier
+        // (`stripos(..., 'orphan')`) let any wording containing the word
+        // count, and an unrecognised cell silently defaulted to Active.
+        // Deny-by-default instead: an unknown Status is itself drift, and the
+        // row is recorded as UNKNOWN so it is neither Active (1a) nor missing
+        // (1b) — the problem is reported once, as what it is.
+        if (in_array($statusCell, DOC_STATUSES, true)) {
+            $status = $statusCell;
         } else {
-            $status = 'Active';
+            $status     = 'UNKNOWN';
+            $problems[] = "'{$tableCell}' has unrecognised Status '{$statusCell}' — the Status cell must be exactly one of: "
+                . implode(', ', DOC_STATUSES);
         }
-        $out[bare_name($tableCell)] = ['status' => $status, 'raw' => $tableCell];
+        // A second row for the same table could carry a different Status and
+        // mask the first (last one would win). Flag it rather than pick one.
+        if (isset($out[$bare])) {
+            $problems[] = "'{$tableCell}' appears more than once in the master inventory";
+        }
+        $out[$bare] = ['status' => $status, 'raw' => $tableCell];
     }
     return $out;
 }
 
-$documented = parse_documented($SCHEMA_DOC);
+/** @var list<string> $inventoryProblems */
+$inventoryProblems = [];
+$documented = parse_documented($SCHEMA_DOC, $inventoryProblems);
 $docActive  = array_filter($documented, static fn(array $m): bool => $m['status'] === 'Active');
 $docOrphan  = array_filter($documented, static fn(array $m): bool => $m['status'] === 'ORPHAN');
+$docRetired = array_filter($documented, static fn(array $m): bool => $m['status'] === 'RETIRED');
 
 /*
 |--------------------------------------------------------------------------
@@ -710,7 +750,11 @@ echo "========================================================\n";
 echo "Repo root : {$REPO_ROOT}\n";
 echo "Declared  : " . count($declaredTables) . " tables (CREATE TABLE + TableRegistry)\n";
 echo "Documented: " . count($documented) . " tables ("
-   . count($docActive) . " Active, " . count($docOrphan) . " ORPHAN)\n";
+   . count($docActive) . " Active, " . count($docOrphan) . " ORPHAN, " . count($docRetired) . " RETIRED"
+   . (count($documented) - count($docActive) - count($docOrphan) - count($docRetired) > 0
+        ? ", " . (count($documented) - count($docActive) - count($docOrphan) - count($docRetired)) . " UNRECOGNISED"
+        : '')
+   . ")\n";
 if ($liveConn instanceof mysqli) {
     echo "Live      : " . count($liveTables) . " {$livePrefix}bcc_* tables — {$live['note']}\n";
 } else {
@@ -732,7 +776,7 @@ foreach ($docActive as $bare => $meta) {
     }
 }
 
-// 1b: every DECLARED table must appear in the doc (Active or ORPHAN).
+// 1b: every DECLARED table must appear in the doc (under any Status).
 foreach ($declaredTables as $bare => $info) {
     if (!isset($documented[$bare])) {
         $msg = "declared table 'wp_{$bare}' is NOT in docs/database-schema.md (regenerate the doc) — declared in " . basename($info['file']);
@@ -741,11 +785,76 @@ foreach ($declaredTables as $bare => $info) {
     }
 }
 
-// Note: documented-ORPHAN tables are EXPECTED to be absent from declared
-// code; we do NOT flag those (that's the whole point of the orphan list).
+// 1c: a documented-ORPHAN or documented-RETIRED table must NOT still be
+// declared. Either label asserts the table is gone from the codebase; if a
+// CREATE TABLE or TableRegistry accessor still declares it, doc and code
+// disagree. Without this, relabelling a live table's Status is a static
+// false-green: the row leaves the Active set, so 1a stops asking about it,
+// and 1b is satisfied because the row still exists (issue #162).
+//
+// ORPHAN: no exception, ever.
+//
+// RETIRED: the same rule, with ONE sanctioned exception — the retirement
+// window. A drop spans two repos: this repo's inventory row has to flip to
+// RETIRED in a PRECEDING umbrella PR, because CI always reads bcc-trust
+// `main` and the reverse order fails 1a the moment the declaration goes
+// (docs/database-schema.md, "The retirement is a TWO-DEPLOY sequence").
+// During that window the table is RETIRED and still declared, legitimately.
+// It is tolerated ONLY when the table is named in RETIREMENT_WINDOW below,
+// with a reason — a reviewed edit to this script, in the same diff as the
+// relabel. Tolerating every RETIRED-but-declared table instead would make
+// "relabel to RETIRED" the same bypass under a different word.
+//
+// Window entries are policed both ways, so they cannot outlive the window:
+// an entry whose table is no longer declared (the drop landed — remove the
+// entry) or whose row is not RETIRED fails.
+
+/** @var array<string,string> bare table => reason (issue/PR + expected drop) */
+const RETIREMENT_WINDOW = [
+    // 'bcc_example' => 'Retiring in bcc-trust #NNN; declaration removed when that merges.',
+];
+
+foreach ($docOrphan + $docRetired as $bare => $meta) {
+    if (!isset($declaredTables[$bare])) {
+        continue;
+    }
+    if ($meta['status'] === 'RETIRED' && isset(RETIREMENT_WINDOW[$bare])) {
+        $infoFindings[] = "[retirement-window] RETIRED '{$meta['raw']}' still declared in "
+            . basename($declaredTables[$bare]['file']) . ' — tolerated: ' . RETIREMENT_WINDOW[$bare];
+        continue;
+    }
+    $msg = "documented-{$meta['status']} '{$meta['raw']}' is STILL declared in code — declared in "
+        . basename($declaredTables[$bare]['file'])
+        . " (the {$meta['status']} label asserts the table is gone from the codebase"
+        . ($meta['status'] === 'RETIRED' ? '; a deliberate retirement window needs a RETIREMENT_WINDOW entry' : '')
+        . ')';
+    $c1[] = $msg;
+    $failFindings[] = "[parity] {$msg}";
+}
+
+foreach (RETIREMENT_WINDOW as $bare => $reason) {
+    $status = $documented[$bare]['status'] ?? null;
+    if ($status !== 'RETIRED') {
+        $msg = "RETIREMENT_WINDOW entry 'wp_{$bare}' is stale — its inventory Status is "
+            . ($status === null ? 'absent' : "'{$status}'") . ", not RETIRED (remove the entry)";
+    } elseif (!isset($declaredTables[$bare])) {
+        $msg = "RETIREMENT_WINDOW entry 'wp_{$bare}' is stale — the table is no longer declared, so the window has closed (remove the entry)";
+    } else {
+        continue;
+    }
+    $c1[] = $msg;
+    $failFindings[] = "[parity] {$msg}";
+}
+
+// 1d: every inventory row must carry an exact, recognised Status and appear
+// once (see parse_documented()).
+foreach ($inventoryProblems as $p) {
+    $c1[] = $p;
+    $failFindings[] = "[inventory] {$p}";
+}
 
 if ($c1 === []) {
-    echo "  OK — declared and documented-Active table sets agree.\n";
+    echo "  OK — declared and documented-Active table sets agree; no ORPHAN/RETIRED table is still declared.\n";
 } else {
     foreach ($c1 as $f) {
         echo "  DRIFT: {$f}\n";
@@ -774,9 +883,9 @@ if ($liveConn instanceof mysqli) {
             $failFindings[] = "[live-table] {$msg}";
         }
     }
-    foreach ($docOrphan as $bare => $meta) {
+    foreach ($docOrphan + $docRetired as $bare => $meta) {
         if (isset($liveTables[$bare])) {
-            $msg = "ORPHAN '{$meta['raw']}' still present live (expected; Phase 5 guarded drop)";
+            $msg = "{$meta['status']} '{$meta['raw']}' still present live (expected until its guarded drop runs)";
             $c2a[] = "INFO : {$msg}";
             $infoFindings[] = "[orphan-live] {$msg}";
         }
