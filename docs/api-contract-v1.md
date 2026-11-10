@@ -5398,10 +5398,13 @@ Live holdings across the viewer's linked wallets, annotated with which are alrea
   ```
   - `refreshed_at` is keyed by `wallet_link_id` (not chain). Value is MySQL UTC datetime (`YYYY-MM-DD HH:MM:SS`); frontend normalizes to ISO at the boundary.
   - `meta.indexer_state` ∈ {`healthy`, `syncing`, `degraded`} per §3.6. `indexer_state_label` is `""` for `healthy` — the contract's "no chip" signal.
-  - `collection_verified` (v1.31) — whether the operator has verified the item's collection (Verify Collections). **Display-only**: nothing gates on this flag. *(doc corrected 2026-11-09: the previous wording described a frontend treatment that never existed and a Cosmos behaviour that PR #204 reversed — see #218.)* **Its meaning differs by chain family**, because the holdings for each arrive from a different place:
+  - `collection_verified` (v1.31) — whether the operator has verified the item's collection (Verify Collections). **Display-only**: nothing gates on this flag. *(doc corrected 2026-11-09, RE-corrected 2026-11-10 — see #218: the Cosmos behaviour was reversed by PR #204. ⚠⚠ The 2026-11-09 pass also claimed the frontend never dimmed unverified items; that was FALSE and is withdrawn below.)* **Its meaning differs by chain family**, because the holdings for each arrive from a different place:
     - **EVM and Solana** — holdings come from third-party indexers, not from our collections table, so an item can legitimately name a contract we have never verified. Those items annotate `false`, as does a contract with no collection row at all.
     - **Cosmos** — the read-time CW-721 walk iterates `CollectionRepository::listVerifiedByChainOrThrow()`, so unverified collections are excluded *before* any outbound query. The flag is therefore **always `true` for any Cosmos item that appears**, and an unverified-but-known Cosmos collection is absent from the picker rather than present-and-flagged.
-    - ⚠ **The frontend does not dim unverified items, and never did.** The only consumer is `NftPickerModal.tsx`, which uses the flag solely to append "(collection's community not yet activated)" to an item's `aria-label`. Sighted users cannot tell verified from unverified at all; only screen-reader users can, and only inside the picker modal. Tracked separately as simontx1983/bcc-frontend#156.
+    - **Frontend treatment — and a withdrawn correction.** The frontend **does** dim an unverified item, and has since bcc-frontend `53758c2` (2026-07-02), whose own subject line reads *"dim unverified-collection holdings instead of hiding"*. Measured on bcc-frontend `origin/main`, `NftPickerModal.tsx` assigns the flag to `unverifiedCollection` (`:313`) and uses it **three** ways: `opacity: 0.55` with `filter: saturate(0.35)` (`:353`), a second `opacity: 0.55` (`:360`), **and** a `"(collection's community not yet activated)"` suffix on the item's `aria-label` (`:328`).
+      ⚠⚠ **An earlier pass of this document (2026-11-09) asserted the opposite** — *"the frontend does not dim unverified items, and never did"*, and that an `aria-label` was the flag's only consumer. **Both were false and are withdrawn.** The cause was searching `NftPickerModal.tsx` for the FIELD name `collection_verified`, which appears exactly once, and stopping there — a local variable carries it to the three further uses. A single field-name hit is a starting point, never a consumer inventory.
+      ⚠ bcc-frontend issue **#156** is titled *"collection_verified has no visible frontend treatment (only an aria-label in NftPickerModal)"* and carries the same false premise.
+      ℹ The treatment is **changing**: open bcc-frontend PR **#199** (`fix/156-not-yet-active-badge`) replaces the dimming with a "Not yet active" badge. This contract deliberately does **not** pin a visual treatment — only that the flag is display-only and gates nothing.
 - **Errors:** `bcc_unauthorized 401`, `bcc_rate_limited 429` (10/60/user — shared bucket with `force=1` refreshes).
 - **Rate limit:** 10/60/user.
 - **Cache:** `no-store` (transient is server-side; the response is per-request live). React Query `staleTime: 60_000`.
@@ -10141,15 +10144,20 @@ Closes the "favorite NFT invisible → community never forms" UX hole:
   the wallet's collections via the Stargaze marketplace rollup
   (`source='discovery'`, unverified, operator-gated), and the admin Verify
   Collections queue ranks by distinct linked-wallet holders.
-- ⚠ **Two claims above are SUPERSEDED — historical only** *(noted 2026-11-09,
-  see #218)*. They are corrected in §4 and deliberately **not** rewritten
-  here, because a changelog records what a release did rather than what is
-  true now. (1) The frontend never dimmed unverified items; the flag has only
-  ever annotated an `aria-label` in the picker modal. (2) The Cosmos widening
-  was **reversed by PR #204**, which made the wallet gallery verified-only
-  again — so on Cosmos an unverified collection is once more absent from the
-  picker rather than present-and-flagged. The flag itself is unchanged and
-  still additive.
+- ⚠ **ONE claim above is SUPERSEDED — historical only** *(noted 2026-11-09,
+  corrected 2026-11-10, see #218)*. It is corrected in §4 and deliberately
+  **not** rewritten here, because a changelog records what a release did
+  rather than what is true now: the Cosmos widening was **reversed by PR
+  #204**, which made the wallet gallery verified-only again, so on Cosmos an
+  unverified collection is once more absent from the picker rather than
+  present-and-flagged. The flag itself is unchanged and still additive.
+- ⚠⚠ **A SECOND claim was wrongly marked superseded on 2026-11-09 and is
+  REINSTATED.** This entry's statement that the frontend dims unverified
+  items was **correct** when written and still describes bcc-frontend
+  `origin/main` (`NftPickerModal.tsx:313`, `:353`, `:360`). Marking it
+  superseded was the error, not the original text. ℹ Open bcc-frontend PR
+  **#199** replaces the dimming with a "Not yet active" badge; when that
+  lands, this entry still correctly records what v1.31 shipped.
 
 ### v1.30 — 2026-07-02 — Stargaze chain retired (value-level; zero shape changes)
 
