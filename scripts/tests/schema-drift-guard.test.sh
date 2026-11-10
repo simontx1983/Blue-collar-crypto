@@ -58,6 +58,12 @@ make_root() {
     printf '| Table | ~rows | Purpose | Owning code | Status |\n'
     printf '|---|---|---|---|---|\n'
     printf '%s\n' "$rows"
+    # Column blocks so CHECK 3 (column parity, #132) is satisfied; these
+    # cases are about inventory Status, not columns — see
+    # schema-column-parity.test.sh for those.
+    printf '\n## Active tables — per-table detail\n\n'
+    printf '#### wp_bcc_alpha\n- id · bigint unsigned · NO · PK auto\n\n'
+    printf '#### wp_bcc_beta\n- id · bigint unsigned · NO · PK auto\n'
   } > "$root/docs/database-schema.md"
   cat > "$root/app/public/wp-content/plugins/bcc-fixture/schema.php" <<'PHP'
 <?php

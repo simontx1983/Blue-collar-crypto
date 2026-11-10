@@ -256,10 +256,14 @@ schema-install path in `tables.php` is itself routed through the same runner.
 >    request after an S9b deploy, and a files-only rsync is enough to trigger
 >    it — there is no separate "run migrations" step.
 >
-> **⚠ CI cannot police the columns.** `scripts/schema-drift-guard.php` compares
-> table names and index tuples and has no column-level parity at all, so the
-> `cw_*` drop is invisible to it in both directions. The checks that do cover
-> it are integration tests on real engines —
+> **Columns: what CI polices now (issue #132).** When this was written, the
+> guard compared only table names and index tuples, so the `cw_*` drop was
+> invisible to it in both directions. That drift then sat in this document,
+> green, until #132. CHECK 3 now compares every documented-Active table's
+> column block with the columns its shipped schema code declares, statically
+> and in both directions. It still sees only the code and the doc, never a
+> database: whether a drop migration has actually RUN on an environment is
+> covered by the integration tests on real engines —
 > `ChainCheckpointRetiredColumnsIntegrationTest` and
 > `ChainsCapabilityColumnAnchorIntegrationTest`, both of which run the
 > projection with the retired columns present *and* dropped, on MySQL and

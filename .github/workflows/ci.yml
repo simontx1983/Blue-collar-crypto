@@ -85,6 +85,14 @@ jobs:
       - name: Schema-drift guard regressions
         run: bash scripts/tests/schema-drift-guard.test.sh
 
+      # Regression cases for the guard's column parity (CHECK 3, #132):
+      # drift fails in both directions, an Active table needs a column block,
+      # and the doc / migration idioms (name(K), multi-column rows, struck
+      # columns, OPTIONAL rows, migration-map ADD COLUMNs, comment / tests /
+      # scripts ALTERs) are each pinned. Same fixture model as above.
+      - name: Schema-drift column-parity regressions
+        run: bash scripts/tests/schema-column-parity.test.sh
+
       # Parser regression tests for scripts/site-url-probe.sh. Runs here, in
       # the already-required guards job, rather than in site-url-guard.yml:
       # that workflow only runs daily and on dispatch, so a broken parser
