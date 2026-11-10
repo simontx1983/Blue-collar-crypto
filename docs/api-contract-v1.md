@@ -5406,7 +5406,12 @@ Live holdings across the viewer's linked wallets, annotated with which are alrea
   ```
   - `refreshed_at` is keyed by `wallet_link_id` (not chain). Value is MySQL UTC datetime (`YYYY-MM-DD HH:MM:SS`); frontend normalizes to ISO at the boundary.
   - `meta.indexer_state` ∈ {`healthy`, `syncing`, `degraded`} per §3.6. `indexer_state_label` is `""` for `healthy` — the contract's "no chip" signal.
-  - `collection_verified` (v1.31) — whether the operator has verified the item's collection (Verify Collections). **Display-only**: the frontend dims unverified items (holder-community not yet activated) instead of hiding them; nothing gates on this flag. `false` when the contract has no collection row at all. Cosmos read-time items now include unverified-but-known collections (previously silently absent from the gallery).
+  - `collection_verified` (v1.31) — whether the operator has verified the item's collection (Verify Collections). **Display-only**: nothing gates on this flag. *(doc corrected 2026-11-09, RE-corrected twice on 2026-11-10 — see #218: the Cosmos behaviour was reversed by PR #204, and the frontend-treatment paragraph below has now been wrong in BOTH directions, so read that paragraph rather than this summary for the current treatment.)* **Its meaning differs by chain family**, because the holdings for each arrive from a different place:
+    - **EVM and Solana** — holdings come from third-party indexers, not from our collections table, so an item can legitimately name a contract we have never verified. Those items annotate `false`, as does a contract with no collection row at all.
+    - **Cosmos** — the read-time CW-721 walk iterates `CollectionRepository::listVerifiedByChainOrThrow()`, so unverified collections are excluded *before* any outbound query. The flag is therefore **always `true` for any Cosmos item that appears**, and an unverified-but-known Cosmos collection is absent from the picker rather than present-and-flagged.
+    - **Frontend treatment, as of 2026-11-10.** The treatment is a **label, not dimming**. Measured on bcc-frontend `origin/main` (`bfa84a08`), `src/components/onchain/NftPickerModal.tsx` assigns the flag to `unverifiedCollection` (`:322`) and uses it **twice**: a `NotYetActiveBadge` rendered on the tile (`:375`–`:377`; the component is `src/components/onchain/NotYetActiveBadge.tsx`), **and** a `"(collection's community not yet activated)"` suffix on the item's `aria-label` (`:337`). The file states the reasoning itself at `:320`: *"the treatment is a label only (NotYetActiveBadge): no dimming, which would read as disabled."* ⚠ An **absent** flag reads as verified, deliberately — badging on missing data would flash the whole grid during deploy skew (`:318`). The only `opacity` left on the tile is `:344` `opacity: disabled ? 0.5 : 1`, where `disabled` is the component's own prop (`:314`, `:339`) and is unrelated to this flag. This contract deliberately does **not** pin a visual treatment — only that the flag is display-only and gates nothing.
+      ⚠⚠ **This paragraph has now been wrong in BOTH directions, so the history is kept.** The 2026-11-09 pass claimed the frontend *never* dimmed and that an `aria-label` was the flag's only consumer. That was false: dimming had shipped in bcc-frontend `53758c2` (2026-07-02), whose subject line reads *"dim unverified-collection holdings instead of hiding"*. The cause was searching the file for the FIELD name `collection_verified`, which appears exactly once, and stopping there while a local variable carried it to the further uses — **a single field-name hit is a starting point, never a consumer inventory.** A 2026-11-10 pass then reinstated the dimming description, and *that* went stale within the hour, because bcc-frontend PR **#199** merged at 19:07Z and removed the dimming. Hence the line numbers above are pinned to a named commit rather than to “origin/main”.
+      ℹ bcc-frontend **#156** (*"collection_verified has no visible frontend treatment (only an aria-label in NftPickerModal)"*) carried the same false premise and is now **CLOSED** by #199.
 - **Errors:** `bcc_unauthorized 401`, `bcc_rate_limited 429` (10/60/user — shared bucket with `force=1` refreshes).
 - **Rate limit:** 10/60/user.
 - **Cache:** `no-store` (transient is server-side; the response is per-request live). React Query `staleTime: 60_000`.
@@ -10146,6 +10151,22 @@ Closes the "favorite NFT invisible → community never forms" UX hole:
   the wallet's collections via the Stargaze marketplace rollup
   (`source='discovery'`, unverified, operator-gated), and the admin Verify
   Collections queue ranks by distinct linked-wallet holders.
+- ⚠ **ONE claim above is SUPERSEDED — historical only** *(noted 2026-11-09,
+  corrected 2026-11-10, see #218)*. It is corrected in §4 and deliberately
+  **not** rewritten here, because a changelog records what a release did
+  rather than what is true now: the Cosmos widening was **reversed by PR
+  #204**, which made the wallet gallery verified-only again, so on Cosmos an
+  unverified collection is once more absent from the picker rather than
+  present-and-flagged. The flag itself is unchanged and still additive.
+- ⚠⚠ **A SECOND claim was wrongly marked superseded on 2026-11-09, and is
+  REINSTATED as history.** This entry's statement that the frontend dims
+  unverified items was **correct** when written and described bcc-frontend
+  `origin/main` until 2026-11-10; marking it superseded was the error, not
+  the original text. ℹ bcc-frontend PR **#199** then merged 2026-11-10
+  19:07Z (`193864ab`, an ancestor of `main` `bfa84a08`) and **replaced the
+  dimming with a "Not yet active" badge**, so the dimming is no longer
+  current — but this entry still correctly records what v1.31 shipped. The
+  live treatment is described in §4.
 
 ### v1.30 — 2026-07-02 — Stargaze chain retired (value-level; zero shape changes)
 
