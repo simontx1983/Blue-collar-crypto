@@ -15,7 +15,8 @@
 # A bare umbrella checkout (no plugin trees) turned all three green.
 #
 # These cases pin the fix: METHOD+path matching (with the one-handler
-# EDITABLE-triple exception), unresolved sites FAIL, a zero parse FAILs,
+# EDITABLE-triple exception), every verb on a multi-verb contract header
+# is read, unresolved sites FAIL, a zero parse FAILs,
 # a missing root FAILs, and a doc with no recognisable claims FAILs.
 #
 # ── NO DB, NO SIBLING REPOS ──────────────────────────────────────────────
@@ -125,6 +126,24 @@ run "$R" contract-parity-guard
 if [ "$RC" -ne 0 ] && has '  - DELETE /bcc/v1/feed/:id/stoke' && ! has '  - POST /bcc/v1/feed/:id/stoke'; then
   ok "DELETE sibling of a documented POST still FAILS"
 else bad "DELETE sibling of a documented POST still FAILS (rc=$RC)" "$OUT"; fi
+
+R="$(contract_root multi-verb-header "$ANCHOR_DOC
+#### \`POST /bcc/v1/feed/:id/stoke\` · \`DELETE /bcc/v1/feed/:id/stoke\`" \
+"register_rest_route('bcc/v1', '/feed/(?P<id>\\d+)/stoke', ['methods' => 'POST', 'callback' => 'a']);
+register_rest_route('bcc/v1', '/feed/(?P<id>\\d+)/stoke', ['methods' => 'DELETE', 'callback' => 'b']);")"
+run "$R" contract-parity-guard
+if has 'Contract endpoints parsed: 3' && ! has '  - DELETE /bcc/v1/feed/:id/stoke'; then
+  ok "second \`METHOD /path\` on a header is parsed"
+else bad "second \`METHOD /path\` on a header is parsed" "$OUT"; fi
+
+R="$(contract_root bare-method-header "$ANCHOR_DOC
+#### \`GET /bcc/v1/me/prefs\` and \`PATCH\` (v2)" \
+"register_rest_route('bcc/v1', '/me/prefs', ['methods' => 'GET', 'callback' => 'a']);
+register_rest_route('bcc/v1', '/me/prefs', ['methods' => 'PATCH', 'callback' => 'b']);")"
+run "$R" contract-parity-guard
+if has 'Contract endpoints parsed: 3' && ! has '  - PATCH /bcc/v1/me/prefs'; then
+  ok "bare \`PATCH\` on a header inherits the preceding path"
+else bad "bare \`PATCH\` on a header inherits the preceding path" "$OUT"; fi
 
 R="$(contract_root unresolved "$ANCHOR_DOC" \
 "register_rest_route('bcc/v1', \$this->path(), ['methods' => 'GET']);")"

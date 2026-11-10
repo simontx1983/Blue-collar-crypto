@@ -162,14 +162,31 @@ function parse_contract_endpoints(string $path): array {
     // are recognized as real documentation, not false-flagged as undocumented.
     $pattern = '/^####\s+(?:[^`]*\s+)?`(GET|POST|PUT|PATCH|DELETE)\s+(\/\S+?)`/';
 
+    // A header may document several verbs. Once METHOD+path matching became
+    // strict, reading only the first one turned these into false
+    // "undocumented" findings:
+    //   #### `POST /bcc/v1/feed/:id/stoke` · `DELETE /bcc/v1/feed/:id/stoke`
+    //   #### `GET /bcc/v1/me/profile-prefs` and `PATCH`
+    // So after the leading `METHOD /path`, every further backticked token on
+    // the line is read too. A `METHOD /path` token adds that pair. A bare
+    // `METHOD` token inherits the path of the nearest preceding token.
+    $tokenPattern = '/`(GET|POST|PUT|PATCH|DELETE)(?:\s+(\/\S+?))?`/';
+
     foreach ($lines as $idx => $line) {
-        if (preg_match($pattern, $line, $m) === 1) {
-            $method = strtoupper($m[1]);
-            $rawPath = $m[2];
-            $normPath = normalize_path($rawPath);
+        if (preg_match($pattern, $line) !== 1) {
+            continue;
+        }
+        preg_match_all($tokenPattern, $line, $tokens, PREG_SET_ORDER);
+        $lastRaw = null;
+        foreach ($tokens as $tok) {
+            $rawPath = isset($tok[2]) && $tok[2] !== '' ? $tok[2] : $lastRaw;
+            if ($rawPath === null) {
+                continue;
+            }
+            $lastRaw = $rawPath;
             $found[] = [
-                'method' => $method,
-                'path'   => $normPath,
+                'method' => strtoupper($tok[1]),
+                'path'   => normalize_path($rawPath),
                 'raw'    => $rawPath,
                 'lineno' => $idx + 1,
             ];
