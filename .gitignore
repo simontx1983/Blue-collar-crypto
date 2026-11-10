@@ -42,6 +42,18 @@
 # not the team.
 /.claude/settings.local.json
 
+# Session handoff notes are machine-local and can carry environment
+# details (config values, user ids, backup paths). This repo is PUBLIC,
+# and the `!/.claude/` re-allow above would otherwise surface them to
+# `git add -A`. Never commit them.
+/.claude/handoffs/
+
+# Third-party skill installed locally, not a team skill. It ships its own
+# Python tooling, whose bytecode caches must not be committed either.
+/.claude/skills/ui-ux-pro-max/
+__pycache__/
+*.pyc
+
 # Ephemeral per-agent git worktrees. These are real registered worktrees
 # (`git worktree list` shows them), so their contents are working copies
 # of the repo — committing them would nest the tree inside itself.
