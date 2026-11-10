@@ -201,16 +201,15 @@ if ($canonical === []) {
     $findings[] = 'bcc-core.php canonical subsystem map parsed as EMPTY; the extractor no longer recognises it';
 }
 
+// The floor counts COMPARED claims: those whose name is in the canonical
+// map, so a count was actually checked. A raw regex hit is not enough,
+// because the loop skips underscore-free names, so "total (5 events)" would
+// otherwise satisfy the floor while comparing nothing.
+$comparedTotal = 0;
+
 foreach ($docFiles as $absPath => $relPath) {
-    $claims = extract_doc_claims($absPath);
-    if ($claims === []) {
-        $findings[] = sprintf(
-            "%s — 0 subsystem-count claims matched (`name (N events)` / `name / N events`); the doc format drifted or the regex went blind",
-            $relPath
-        );
-        continue;
-    }
-    foreach ($claims as $claim) {
+    $compared = 0;
+    foreach (extract_doc_claims($absPath) as $claim) {
         $name  = $claim['name'];
         $count = $claim['count'];
 
@@ -228,6 +227,7 @@ foreach ($docFiles as $absPath => $relPath) {
             continue;
         }
 
+        $compared++;
         if ($canonical[$name] !== $count) {
             $findings[] = sprintf(
                 "%s:%d — '%s' claims %d events but canonical map has %d",
@@ -235,11 +235,19 @@ foreach ($docFiles as $absPath => $relPath) {
             );
         }
     }
+    if ($compared === 0) {
+        $findings[] = sprintf(
+            "%s — 0 subsystem-count claims compared against the canonical map (`name (N events)` / `name / N events`); the doc format drifted or the regex went blind",
+            $relPath
+        );
+    }
+    $comparedTotal += $compared;
 }
 
 if ($findings === []) {
     echo "PASS: subsystem counts match between bcc-core.php and docs ("
-       . count($canonical) . " subsystems checked).\n";
+       . $comparedTotal . " doc claims compared across " . count($docFiles)
+       . " docs; canonical map has " . count($canonical) . " subsystems).\n";
     exit(0);
 }
 
