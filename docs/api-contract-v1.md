@@ -106,9 +106,17 @@ Every error follows this shape (matches the canonical envelope; see §L5):
       "unlock_hint": "Pull 5 cards and visit the Floor 3 days to unlock reviews."
     }
   },
-  "_meta": { "version": "1.0" }
+  "_meta": { "version": "v1" }
 }
 ```
+
+**`_meta` is additive — not a closed key set.** Clients MUST ignore `_meta` keys they do not recognise and MUST NOT reject a response because `_meta` carries more, fewer or different keys than an example in this document. What it carries today depends on which layer built the envelope:
+
+- `ApiResponse::ok()` (success): `{ "version": "v1", "reaction_types": { … } }`, where `reaction_types` is the resolved reaction-kind → id map (§D5).
+- `ApiResponse::error()` (error): `{ "version": "v1" }`.
+- The `rest_post_dispatch` envelope safety net (`Core\REST\Envelope`), which wraps a handler's un-enveloped success payload: `{ "request_id": "…" }` — and **no `version`**. A WP-style error that it re-shapes carries no `_meta` at all.
+
+`_meta.version` is the string `"v1"` (`ApiResponse::VERSION`). No client should branch on it — nor on the presence of any `_meta` key.
 
 `code` is machine-readable (snake_case, namespaced `bcc_`). `message` is human-readable copy intended for **debugging surfaces** (logs, Sentry, dev tools) and as a **last-resort presentation fallback** — but the canonical Phase γ rule is:
 
@@ -8000,7 +8008,7 @@ POST /wp-json/bcc/v1/validators/4471/announcements
               "can_manage_comments": { "allowed": true, "unlock_hint": null, "reason_code": null },
               "can_comment":         { "allowed": false, "unlock_hint": null, "reason_code": "announcement_unavailable" },
               "can_report":          { "allowed": false, "unlock_hint": null, "reason_code": "announcement_unavailable" } } },
-  "_meta": { "version": "1.0" } }
+  "_meta": { "version": "v1" } }
 ```
 
 **Public list, active.**
@@ -8025,7 +8033,7 @@ GET /wp-json/bcc/v1/validators/4471/announcements?state=active&limit=20
         "links": { "self": "/v/blacksmith-node/a/4471" } }
     ],
     "pagination": { "next_cursor": "eyJwIjoiMjAyNi0xMC0wOSIsImkiOjQ0NzF9", "has_more": true } },
-  "_meta": { "version": "1.0" } }
+  "_meta": { "version": "v1" } }
 ```
 
 Pinned first, then newest first. **No `capabilities` on these rows, and none for
@@ -8058,7 +8066,7 @@ GET /wp-json/bcc/v1/me/validators/4471/announcements?status=draft
           "can_report":          { "allowed": false, "unlock_hint": null, "reason_code": "announcement_unavailable" } } }
     ],
     "pagination": { "next_cursor": null, "has_more": false } },
-  "_meta": { "version": "1.0" } }
+  "_meta": { "version": "v1" } }
 ```
 
 A non-operator calling this route gets `bcc_forbidden` / `not_claimer` — the same body as any
@@ -8075,7 +8083,7 @@ GET /wp-json/bcc/v1/validators/4471/announcements/rotator
 ```json
 { "data": { "items": [ "… at most 5, pinned first then newest first …" ],
             "pagination": { "next_cursor": null, "has_more": false } },
-  "_meta": { "version": "1.0" } }
+  "_meta": { "version": "v1" } }
 ```
 
 **Comments, with the gate on the page.**
@@ -8104,7 +8112,7 @@ GET /wp-json/bcc/v1/announcements/4480/comments?limit=20
     ],
     "pagination": { "next_cursor": null, "has_more": false },
     "can_comment": { "allowed": true, "unlock_hint": null, "reason_code": null } },
-  "_meta": { "version": "1.0" } }
+  "_meta": { "version": "v1" } }
 ```
 
 Oldest first. The tombstone keeps its position and counts toward `comment_count`, and carries
