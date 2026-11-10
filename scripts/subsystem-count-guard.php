@@ -191,8 +191,26 @@ $docFiles = [
 
 $findings = [];
 
+// Vacuity floor: a doc whose claims the regex no longer recognises (format
+// drift, heading rewrite, file emptied) yields zero claims and compares
+// nothing, which would PASS silently. Each doc carries claims today
+// (2026-11-10: pattern-registry 15 lines, GOLDEN_PATHS 17), so zero means
+// the check went blind, not that the docs are clean. The same applies to
+// an empty canonical map.
+if ($canonical === []) {
+    $findings[] = 'bcc-core.php canonical subsystem map parsed as EMPTY; the extractor no longer recognises it';
+}
+
 foreach ($docFiles as $absPath => $relPath) {
-    foreach (extract_doc_claims($absPath) as $claim) {
+    $claims = extract_doc_claims($absPath);
+    if ($claims === []) {
+        $findings[] = sprintf(
+            "%s — 0 subsystem-count claims matched (`name (N events)` / `name / N events`); the doc format drifted or the regex went blind",
+            $relPath
+        );
+        continue;
+    }
+    foreach ($claims as $claim) {
         $name  = $claim['name'];
         $count = $claim['count'];
 

@@ -70,6 +70,16 @@ jobs:
       - name: Dead-file scan
         run: php scripts/dead-file-scan.php
 
+      # Fail-closed regressions for the three guards above. Each must FAIL,
+      # not pass over nothing, when a plugin root is missing, a parse yields
+      # zero items, or a register_rest_route() site is unresolved. Also pins
+      # contract-parity's METHOD+path matching: only a single EDITABLE-triple
+      # config is covered by documenting one of its verbs, and a DELETE
+      # sibling of a documented POST still fails. Runs copies of the guards
+      # against throwaway fixture roots, independent of the sibling checkouts.
+      - name: Guard fail-closed regressions
+        run: bash scripts/tests/guards-fail-closed.test.sh
+
       # Static mode only (no DB env vars → the live-table/live-index checks
       # self-skip). Armed 2026-07-23 after the Tier-3 schema reconcile drove
       # the guard to zero findings (declared == documented == live). The live

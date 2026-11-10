@@ -64,6 +64,17 @@ if (!is_readable($CONTRACT_PATH)) {
     exit(2);
 }
 
+// Fail closed on a missing plugin tree. A bare umbrella checkout has no
+// plugin trees; without this check the walker below silently yields zero
+// files and the guard would PASS over nothing.
+foreach ($PLUGIN_ROOTS as $root) {
+    if (!is_dir($root)) {
+        fwrite(STDERR, "Missing plugin root: {$root}\n"
+            . "Check out bcc-core, bcc-search and bcc-trust under app/public/wp-content/plugins/ before running this guard.\n");
+        exit(2);
+    }
+}
+
 /*
 |--------------------------------------------------------------------------
 | NAMESPACES IN SCOPE
@@ -380,8 +391,9 @@ function extract_routes_from_file(string $fpath, array $crossFileConstants): arr
                 if (count($args) >= 2) {
                     $namespace = resolve_string_arg($args[0], $constants, $crossFileConstants);
                     $path      = resolve_string_arg($args[1], $constants, $crossFileConstants);
+                    $editableTriple = false;
                     $methods   = isset($args[2])
-                        ? resolve_methods_arg($args[2], $constants)
+                        ? resolve_methods_arg($args[2], $constants, $editableTriple)
                         : ['*'];
                     $unresolved = ($namespace === null) || ($path === null);
                     $found[] = [
@@ -390,6 +402,7 @@ function extract_routes_from_file(string $fpath, array $crossFileConstants): arr
                         'namespace'  => (string) ($namespace ?? '?'),
                         'path'       => (string) ($path ?? '?'),
                         'methods'    => $methods,
+                        'editable_triple' => $editableTriple,
                         'unresolved' => $unresolved,
                     ];
                 }
@@ -600,7 +613,14 @@ function resolve_string_arg(array $argTokens, array $constants, array $crossFile
  * @param array<string, string> $constants
  * @return list<string>  methods (GET / POST / etc.). Empty list = unknown.
  */
-function resolve_methods_arg(array $argTokens, array $constants): array {
+function resolve_methods_arg(array $argTokens, array $constants, bool &$editableTriple = false): array {
+    // $editableTriple is set when ONE `'methods' => …` value resolves to
+    // exactly {POST, PUT, PATCH}, i.e. WP_REST_Server::EDITABLE or that
+    // literal list. That is a single route config with a single handler,
+    // so documenting any one verb of the triple documents the registration.
+    // A union of separate configs that happens to cover the three does NOT
+    // set it: those are distinct handlers.
+    $editableTriple = false;
     // Walk the entire third-arg token stream collecting EVERY
     // `'methods' => XYZ` occurrence. Multi-config routes pass an array
     // of route configs each with their own `methods` key; a single-
@@ -637,7 +657,13 @@ function resolve_methods_arg(array $argTokens, array $constants): array {
                 $value[] = $tt;
                 $j++;
             }
-            foreach (interpret_methods_value($value) as $m) {
+            $occurrence = interpret_methods_value($value);
+            $sorted = $occurrence;
+            sort($sorted);
+            if ($sorted === ['PATCH', 'POST', 'PUT']) {
+                $editableTriple = true;
+            }
+            foreach ($occurrence as $m) {
                 $methodsList[] = $m;
             }
             $i = $j;
@@ -755,18 +781,29 @@ foreach ($contractEndpoints as $ce) {
 $undocumented = [];
 $exemptMatched = [];
 foreach ($codeSet as $key => $r) {
-    // Strip method prefix
     if (!isset($contractPathSet[$key])) {
-        // Look for any-method contract match
+        // Match on METHOD + path. Documenting `GET /x` must not also
+        // document a code-registered `DELETE /x`. Two narrow exceptions:
+        //  - a registration with no explicit methods ('*') may match any
+        //    documented method on its path, because the parser genuinely
+        //    can't see its method set;
+        //  - a POST/PUT/PATCH verb from a single EDITABLE-triple config is
+        //    documented when any verb of the triple is (one handler).
         [$m, $p] = explode(' ', $key, 2);
-        $anyMethodMatch = false;
-        foreach (['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as $candidate) {
+        $documented = false;
+        $siblings = [];
+        if ($m === '*') {
+            $siblings = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
+        } elseif (!empty($r['editable_triple']) && in_array($m, ['POST', 'PUT', 'PATCH'], true)) {
+            $siblings = ['POST', 'PUT', 'PATCH'];
+        }
+        foreach ($siblings as $candidate) {
             if (isset($contractPathSet[$candidate . ' ' . $p])) {
-                $anyMethodMatch = true;
+                $documented = true;
                 break;
             }
         }
-        if (!$anyMethodMatch) {
+        if (!$documented) {
             // Intentionally-internal (admin/machine) routes are allowlisted
             // and don't belong in the public contract. Everything else is a
             // real §γ gap.
@@ -808,6 +845,19 @@ if ($unresolved !== []) {
 echo "\n";
 
 $exit = 0;
+
+// Vacuity floor: a parse that finds nothing compares nothing. Zero contract
+// endpoints means the §4 header format drifted; zero in-scope code routes
+// means the plugin trees are empty or the extractor broke. Either way every
+// check below would trivially pass.
+if (count($contractEndpoints) === 0) {
+    $exit = 1;
+    echo "FAIL: parsed 0 contract endpoints from docs/api-contract-v1.md; the §4 `#### `METHOD /path`` header format may have changed.\n\n";
+}
+if (count($codeSet) === 0) {
+    $exit = 1;
+    echo "FAIL: parsed 0 in-scope register_rest_route() endpoints; the plugin trees are empty or the extractor broke.\n\n";
+}
 
 if ($missing !== []) {
     $exit = 1;
@@ -860,7 +910,12 @@ if ($undocumented !== []) {
 }
 
 if ($unresolved !== []) {
-    echo "\nUNRESOLVED PHP register_rest_route() sites (couldn't parse namespace or path):\n";
+    // Blocking: an unresolved site is a route the guard cannot see, so it
+    // can be neither matched against the contract nor reported as
+    // undocumented. Treating it as a pass would let any route escape review
+    // just by building its path from an expression the parser can't follow.
+    $exit = 1;
+    echo "\nFAIL: UNRESOLVED PHP register_rest_route() sites (couldn't parse namespace or path):\n";
     foreach ($unresolved as $u) {
         echo sprintf("  - %s:%d (namespace=%s, path=%s)\n",
             str_replace($REPO_ROOT, '', $u['file']), $u['lineno'], $u['namespace'], $u['path']);

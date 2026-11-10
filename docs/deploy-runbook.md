@@ -81,7 +81,13 @@ public half in the server's `~/.ssh/authorized_keys`, and update
 
 1. Validate on staging first (the whole point of the cadence).
 2. In the plugin's GitHub repo: **Actions → Deploy → Run workflow → Branch
-   `main` → `environment: production`**.
+   `main` → `environment: production`**, and set **`expected_sha`** to the
+   approved commit's full 40-character SHA, which must be `main`'s current tip.
+   A production dispatch always checks out `main`'s tip. `expected_sha` is an
+   **assertion, not a selector**: the run refuses to deploy (before any SSH)
+   if the checked-out tip differs, e.g. because `main` moved after approval.
+   You cannot use it to deploy an older commit. For rollback, see
+   [rollback-procedure.md](rollback-procedure.md) §4b.
 3. The same plugin-scoped rsync targets the production plugin dir. Confirm the
    version step at the end.
 4. Repeat per plugin as needed.
