@@ -1855,7 +1855,7 @@ Issues a single-use challenge nonce for wallet signing.
 - **Errors:** `bcc_invalid_request` (bad chain or wallet format), `bcc_rate_limited`
 - **Rate limit:** 10/min/IP, 5/min/wallet
 - **Cache:** `Cache-Control: no-store`
-- **Message (since v1.10Y, F-25):** the text to sign is `Verify your wallet on Blue Collar Crypto (<host>). This request will not trigger a transaction or cost any fees. Code: <nonce> Chain: <slug>`. `<host>` is the public site's host (the canonical `BCC_FRONTEND_ORIGIN` entry, so staging names its own host). Clients sign the returned text **as is** and never build it themselves.
+- **Message (since v1.10Y, F-25):** the text to sign is `Verify your wallet on Blue Collar Crypto (<host>). This request will not trigger a transaction or cost any fees. Code: <nonce> Chain: <slug>`. `<host>` is the public site's host: the canonical `BCC_FRONTEND_ORIGIN` entry, else `home_url()`'s host, so staging names its own host. If neither yields a host, the ` (<host>)` part is omitted (the rest of the text is unchanged). Clients sign the returned text **as is** and never build it themselves.
 
 #### `POST /bcc/v1/auth/wallet-link`
 
@@ -8820,6 +8820,7 @@ Ships with bcc-core #83 and bcc-trust #486.
 - **Signed text (F-25, user-approved wording):** wallet sign-in / sign-up (`/auth/wallet-nonce`) now asks the wallet to sign `Sign in to Blue Collar Crypto (<host>). This request will not trigger a transaction or cost any fees. Code: <nonce> Chain: <slug>`; wallet linking and validator claims (`/auth/nonce`) sign `Verify your wallet on Blue Collar Crypto (<host>). …` with the same tail. `<host>` comes from config, so staging names its own host. Clients already sign `message` as returned — no client change.
 - **`GET /auth/wallet-nonce`:** a live challenge is no longer replaced by a repeat request for the same address and chain — the same challenge comes back until it expires. Challenges are per (address, chain).
 - **`POST /auth/wallet-login` · `/auth/wallet-signup`:** the signature is verified **before** anything is consumed, and only the challenge it verified against is consumed. A wrong signature now leaves the owner's challenge intact (`401`); replay or a lost race is `400`. The `500 stored challenge malformed` case is gone (such a challenge simply never verifies). wallet-login's per-wallet bucket is now keyed on the lower-cased address alone.
+
 ### v1.99 — 2026-11-11 — behaviour change — a hidden group, post or draft answers 404, never 403
 
 Ships with bcc-trust's F-47 change (bcc-trust #460).
