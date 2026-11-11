@@ -4718,6 +4718,8 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
   - `mentor_opt_in` *(v1.62 — Rank Phase 7, spec §21.4)* → `bcc_mentor_opt_in` user_meta, "1"/"0" (via `MentorListingService`). Read/write bool. Opting in requires **no** eligibility — a non-Veteran may pre-opt-in and lists automatically the day they qualify.
 - **Read-only mentor pair (v1.62, GET response only — never writable):** `mentor_listed` (bool) — whether the user is **actively listed** in the mentor directory *right now*; the listing composes **live** as opt-in AND `can('list_as_mentor')` (**Veteran** rank AND trust tier ≥ **Trusted** AND not suspended AND not in §14.2 Rank recovery). Nothing is materialized — when any condition fails the listing **pauses automatically on the next read** (no sweep, no flag to un-stick). `mentor_eligibility_reason` (string|null) — the resolver's stable deny slug ∈ `suspended|new_member|below_veteran|below_trusted|in_recovery` so the frontend can explain a paused listing; `null` while eligible (regardless of opt-in).
 - **PATCH** is partial — missing keys are untouched.
+  - **Every field is validated before anything is written** (F-97): an invalid value (`bcc_invalid_request` 422) or PeepSo missing when `profile_visibility` is sent (`bcc_peepso_unavailable` 503) writes **nothing**.
+  - **A write that fails after validation (v1.9X)** stops the request: `bcc_internal_error` **500**, message "Some of your preferences could not be saved. Please try again.", with `error.data.saved` (list of the request's field names that DID persist, in write order: `profile_visibility`, then the user-meta fields, then `mentor_opt_in`) and `error.data.failed` (the field that did not). Earlier writes are **not** rolled back. A client must not report the save as successful, and may re-send the whole request (every write is idempotent).
 
 #### `PATCH /bcc/v1/me/account/email` (V2 Phase 2.5)
 
@@ -8805,6 +8807,14 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.9X — 2026-11-11 — additive — a profile-prefs save that fails part-way says so
+
+Placeholder version; take the next free number at merge. Ships with bcc-trust's profile-prefs write-failure change (follow-up to F-97, bcc-trust #449).
+
+- **`PATCH /me/profile-prefs` (new error):** a database failure while writing an already-validated field used to be silent, and the request still returned 200. It now returns `bcc_internal_error` 500 with `error.data.saved` (fields that persisted) and `error.data.failed` (the one that did not). Earlier writes are not rolled back.
+- Also documents F-97 (bcc-trust #449, already shipped): every field is validated before any write, so a 422 or 503 writes nothing.
+- **Clients:** treat this 500 as "not saved"; re-sending the whole request is safe.
 
 ### v1.97 — 2026-11-11 — behaviour change — sign-in throttles per identity; 2FA attempt cap
 
