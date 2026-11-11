@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.100 · 2026-11-11 · Phase 1 deliverable
+**Status:** Draft v1.102 · 2026-11-11 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -394,7 +394,7 @@ The single most important shared type. Encodes §N7 (always visible, disabled wi
   - ⚠ It is deliberately a **different** code from `messaging_unavailable`. That one is the §4.19 info-leak shield, hiding WHICH of mutual-block / DMs-off / no-such-user applies. `unavailable` states a fact about the REQUEST rather than about the pair, so it reveals nothing the shield protects — and on a failed read every candidate in a batch receives it uniformly, which is why a shared payload is safe here.
   - The matching write paths answer `bcc_unavailable` **503** (§4.19), so a client that retries gets a coherent answer from both sides.
   - **Info-leak shield:** a mutual block and a recipient with DMs turned off emit the **byte-identical** `{ allowed: false, unlock_hint: null, reason_code: "messaging_unavailable" }`. Clients must not attempt to distinguish them, and the server never does on the wire (this mirrors the §4.19 404 shield on the write path).
-- **`can_vouch` · `can_stand_behind` · `can_report` on an UNCLAIMED page card (v1.100):** a validator, project or creator page nobody has claimed (no owner yet) emits `{ allowed: false, unlock_hint: null, reason_code: "unclaimed" }` for all three, for **every** viewer, anonymous included (not "Sign in to …": signing in would not unlock it). Clients **omit** the three slots (§N7 structural carve-out) and may show Message in their place; `can_message` and `can_watch` are unaffected. This mirrors the write path: `POST /me/attestations` already refuses such a target with `bcc_not_found` 404 "Target not found.", unchanged. On a claimed page, and on member cards, the three keep their existing shapes, with `reason_code: null`.
+- **`can_vouch` · `can_stand_behind` · `can_report` on an UNCLAIMED page card (v1.102):** a validator, project or creator page nobody has claimed (no owner yet) emits `{ allowed: false, unlock_hint: null, reason_code: "unclaimed" }` for all three, for **every** viewer, anonymous included (not "Sign in to …": signing in would not unlock it). Clients **omit** the three slots (§N7 structural carve-out) and may show Message in their place; `can_message` and `can_watch` are unaffected. This mirrors the write path: `POST /me/attestations` already refuses such a target with `bcc_not_found` 404 "Target not found.", unchanged. On a claimed page, and on member cards, the three keep their existing shapes, with `reason_code: null`.
 - When `allowed: true`, `unlock_hint` is `null` (not omitted — explicit `null` so client typing is uniform).
 - When a gate is **structurally impossible** for this viewer (e.g., viewing your own card → `can_watch: false`, you can't follow yourself), `unlock_hint` is `null` and the frontend hides the action UI per §N7's "structurally impossible" carve-out (the always-visible rule applies to *gates a viewer could resolve*, not to nonsensical actions).
 
@@ -2183,6 +2183,20 @@ Silent-refresh seam: exchanges a recently-expired (or near-expiry) Bearer JWT fo
 - **Rate limit:** **per token**, 60 / 60 s — keyed on a hash of the presented token and checked **before** decode (calls arrive from the frontend server's single IP, so a per-IP bucket would be shared by every user).
 - **Cache:** `Cache-Control: no-store`, `Vary: Authorization`.
 - **Mapping:** reads the Bearer via `BearerAuth::readBearerToken` (the same header reader authentication uses), `JwtToken::decode`, `get_userdata`, `bcc_handle` meta, `AuthSupport::resolveInGoodStanding`. No writes beyond an `auth_session_rejected` audit-log line on a 401. Handler `SessionController::session`. Standard envelope per §1.4.
+
+#### `POST /bcc/v1/auth/logout`
+
+*(since v1.100)* Signs out **one** bearer token server-side — the one presented. Before this, "sign out" only cleared the browser's NextAuth cookie, and a copied bearer stayed valid until it expired. For every device at once, use `POST /auth/logout-everywhere`.
+
+- **Auth:** the token to sign out, in `Authorization: Bearer <jwt>`. Decoded in-handler with `JwtToken::decodeForRefresh`, so a token still inside its refresh-grace window is signed out too (it could otherwise be refreshed back to life).
+- **Body:** none.
+- **Response 200:** `{ "ok": true }` — **always**, and idempotent: a missing, malformed, invalid, expired or already-signed-out token also gets `200 { ok: true }` and changes nothing. Logout never fails visibly.
+- **Errors:** `bcc_rate_limited` 429 only.
+- **Rate limit:** **per token**, 30 / 60 s — keyed on a hash of the presented token, checked before decode (calls can arrive from the frontend server's single IP).
+- **Cache:** `Cache-Control: no-store`, `Vary: Authorization`.
+- **Effect:** the token's `jti` is denylisted until the token can no longer be used or refreshed (`exp` + 60 s skew + the 24 h refresh grace). From then on `JwtToken::decode` and `decodeForRefresh` reject it (`jwt_logged_out`), so every Bearer-authenticated route answers `401`, `GET /auth/session` answers `401`, and `POST /auth/refresh` answers `401`. Other tokens of the same user are unaffected.
+- **Client order:** call this **before** NextAuth `signOut()` — afterwards the client no longer holds the token.
+- **Mapping:** the denylist is user meta `bcc_jwt_denylist` (`{ sha256(jti)[0..40] => until }`), written under a per-user advisory lock, pruned of expired entries on every write and capped at the 100 latest-expiring entries per user. A `user_logout` audit-log line is written on success. Handler `SessionController::logout`. Standard envelope per §1.4.
 
 #### `POST /bcc/v1/auth/verify-email`
 
@@ -4746,7 +4760,7 @@ Body `{ "code": "123456" }`.
 
 #### `PATCH /bcc/v1/me/account/password` (V2 Phase 2.5)
 
-Change password. Body `{ "current_password": "...", "password": "..." }`. New password ≥ 10 chars (server-enforced). Server calls `wp_set_password` (which destroys all session tokens) and immediately re-issues the current session's auth cookie so the user is not kicked out mid-flow. It also bumps the per-user JWT token-version (revoking every outstanding bearer token, the bearer analogue of the session-token wipe) and mints a **fresh token** for the current session, returned below — bearer clients must swap to it.
+Change password. Body `{ "current_password": "...", "password": "..." }`. New password ≥ 10 chars (server-enforced). Server calls `wp_set_password` (which destroys all session tokens) and immediately re-issues the current session's auth cookie so the user is not kicked out mid-flow. It also bumps the per-user JWT token-version (revoking every outstanding bearer token, the bearer analogue of the session-token wipe) and mints a **fresh token** for the current session, returned below — bearer clients must swap to it. *(since v1.100)* It also deletes every Web Push subscription of the user — the caller's own included; the client re-registers push if it is enabled.
 
 - **Response 200:** `{ "ok": true, "token": "<jwt>", "expires_in": 604800, "token_type": "Bearer" }`
 
@@ -5743,6 +5757,7 @@ Both surfaces require Bearer JWT; suspended accounts → `bcc_forbidden 403`. St
   1. Audit row written: `AuditLogger::log('sessions_revoked_all', $userId, [], 'user', $userId)`. Counts toward the §4.23 GET timeline + 90-day retention.
   2. Out-of-band email: `AccountSecurityMailer::sessionsRevokedAll($userId)`. Track-F redundancy — if an attacker triggers this to lock the legitimate user out, the email channel still warns. Failure records `account_security_mail` / `sessions_revoked_all_send_failed` DegradationMetric per `project_account_security_mailer.md`.
   3. Token version bumped: `JwtToken::revokeAllForUser($userId)`. Every outstanding JWT for this user (including the bearer that authenticated THIS request) fails the `tv` check on next decode and returns `ERR_REVOKED`.
+  4. *(since v1.100)* Every Web Push subscription of the user is deleted, so the signed-out devices stop receiving pushes. Each device re-registers when it next signs in and enables push.
 - **Client-side responsibility:** the bearer is invalidated by the time the response is read. The client MUST call `signOut({ callbackUrl: "/" })` (or equivalent) immediately on 200 — any subsequent authenticated request will 401. The hook `useLogoutEverywhere()` in `useAccount.ts` does this automatically in `onSuccess`.
 - **Self-revocation note:** the user CAN sign themselves out of their own current session. The mutation is intentionally not session-aware (no "all OTHER devices" carve-out) — this is the minimal D2 per the Tier D scope decision; the per-device listing UI is deferred to a future planning session.
 - **Cache:** `no-store`.
@@ -8810,13 +8825,25 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.100 — 2026-11-11 — additive — unclaimed page cards hide vouch, back and report
+### v1.102 — 2026-11-11 — additive — unclaimed page cards hide vouch, back and report
 
-Ships with bcc-trust #469 (the version number is a placeholder; renumber at merge if another revision lands first).
+Ships with bcc-trust #469.
 
 - **§3.2 page cards:** on a page with no owner yet, `can_vouch`, `can_stand_behind` and `can_report` are `{ allowed: false, unlock_hint: null, reason_code: "unclaimed" }` for every viewer. Previously they were `allowed: true` for an eligible viewer (or "Sign in to …" for anon), and the cast then failed with 404, which the frontend rendered as "Attestation not found.".
 - **New `reason_code` value:** `unclaimed`. Hidden (no hint); clients omit the slot.
 - **Unchanged:** the `POST /me/attestations` write path (it already refused these targets), claimed pages, member cards, and the endorse gate.
+
+### v1.101 — 2026-11-11 — additive — the email-digest unsubscribe link also accepts POST
+
+Ships with bcc-trust #489 (admin-controlled email digest).
+
+- **`/bcc/v1/digest/unsubscribe` (internal route, outside §4 — `EXEMPT_INTERNAL`):** now accepts **`POST`** as well as `GET`, with the same signed `uid` / `exp` / `sig` query token and the same HTML confirmation. This is the RFC 8058 one-click request mail clients send for the new `List-Unsubscribe` + `List-Unsubscribe-Post: List-Unsubscribe=One-Click` headers every digest email now carries. The token is read from the request; a one-click body adds nothing.
+- **Clients:** nothing to change. `GET /me/notification-prefs` → `email_digest` is still the only opt-in, default `false`.
+
+### v1.100 — 2026-11-11 — additive plus one behaviour change — single-token sign-out; revoke-all drops push subscriptions
+
+- **New `POST /auth/logout` (F-120):** signs out the presented bearer token server-side (its `jti` is denylisted until it can no longer be used or refreshed). Always `200 { ok: true }`, idempotent; per-token `429`; `no-store`. Afterwards every Bearer route, `/auth/session` and `/auth/refresh` reject that token with `401`. Clients call it **before** NextAuth `signOut()`.
+- **`POST /auth/logout-everywhere` and `PATCH /me/account/password` (F-76):** now also delete every Web Push subscription of the user, so revoked devices stop receiving pushes. Devices re-register on their next sign-in. Email-change verify is unchanged.
 
 ### v1.99 — 2026-11-11 — behaviour change — a hidden group, post or draft answers 404, never 403
 
