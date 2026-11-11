@@ -6,9 +6,10 @@ name: CI
 # static guards that span the contract docs (this repo) and the code (the
 # sibling repos).
 #
-# Note: this triggers on changes to THIS repo (docs/scripts). A route change
-# in a plugin repo won't auto-trigger it — run it manually or via the
-# Actions "Run workflow" button after cross-repo changes.
+# Triggers on changes to THIS repo (docs/scripts) and, via
+# repository_dispatch:[sibling-push], on every push to a sibling plugin's
+# main. A plugin PR (not yet merged) does not trigger it — run it manually
+# with "Run workflow" if you need the check before merging.
 
 on:
   push:
@@ -115,6 +116,3 @@ jobs:
       - name: site-url probe parser regressions
         run: bash scripts/tests/site-url-probe.test.sh
 
-      # wallet-case-preservation-check.php is intentionally NOT run here — it
-      # boots WordPress (needs mysqli + a DB), so it's a live-site check, not a
-      # static gate. Run it against a running site, not in CI.

@@ -176,6 +176,7 @@ cache-isolation verification probe (a few sequential curls, not load).
 **Missing durable guards / stale docs:**
 - **No automated regression coverage for the Authorization cache-bypass rule** — no
   CI check, no smoke assertion, no scheduled probe. Protection is structural only.
+  *(Superseded: the weekly staging probe workflow has been active since e5d25b6, 2026-07-19.)*
 - No external uptime monitor confirmed pointed at `/system/ping`; no CPU-saturation
   or HTTP-error-rate alerting (DegradationAlerter covers app-level events only).
 - `docs/TODO.md:63` (media CDN) stale — fe#45 merged 2026-07-17.
@@ -390,6 +391,7 @@ Scope: **staging only**; production frozen until explicitly authorized.
    gate** plus the production-freeze note. A weekly GitHub Actions check
    (`.github/workflows/staging-cache-probe.yml`) is **prepared but
    deliberately uncommitted** — inert until committed/pushed with approval.
+   *(Superseded: committed and active since e5d25b6, 2026-07-19.)*
 4. **Capacity wording corrected** in capacity-model.md ("Population
    terminology" section): registered members ≠ DAU ≠ peak sessions ≠
    in-flight requests; 5,000 registered is the launch target; ~2,000 DAU

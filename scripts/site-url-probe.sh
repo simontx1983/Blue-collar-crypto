@@ -55,12 +55,22 @@ esac
 [ -n "${BCC_INTERNAL_SECRET:-}" ] || fail_check "BCC_INTERNAL_SECRET unset"
 command -v jq >/dev/null 2>&1     || fail_check "jq not available"
 
-response=$(curl -sS -m 20 \
+# F-44: the request below carries the internal secret, so it may only go to
+# the ONE host this environment's identity lives on, over https. Checked
+# BEFORE the request — the identity comparison further down only runs after
+# the secret has already been sent. A mistyped / swapped repo variable
+# (http://, a staging URL on the production job, a lookalike host) now
+# fails closed instead of handing the secret to the wrong origin.
+base="${BCC_IDENTITY_BASE%/}"
+[ "$base" = "$want_siteurl" ] \
+  || fail_check "BCC_IDENTITY_BASE must be exactly ${want_siteurl} for BCC_ENV=${BCC_ENV} (got '${BCC_IDENTITY_BASE}')"
+
+response=$(curl -sS -m 20 --proto '=https' \
     -H "X-Bcc-Internal: ${BCC_INTERNAL_SECRET}" \
     -H 'Cache-Control: no-cache' \
     -w '\n%{http_code}' \
-    "${BCC_IDENTITY_BASE}/wp-json/bcc/v1/internal/identity" 2>/dev/null)
-[ $? -eq 0 ] || fail_check "request to ${BCC_IDENTITY_BASE} failed"
+    "${base}/wp-json/bcc/v1/internal/identity" 2>/dev/null)
+[ $? -eq 0 ] || fail_check "request to ${base} failed"
 
 code=$(printf '%s' "$response" | tail -n1)
 json=$(printf '%s' "$response" | sed '$d')

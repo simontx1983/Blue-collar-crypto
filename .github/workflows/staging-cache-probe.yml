@@ -6,16 +6,18 @@
 # P0 cache-isolation regression; exit 1 means the cache layer could not be
 # exercised (investigate before trusting green).
 #
-# PREPARED, NOT ACTIVE: this file is intentionally uncommitted. GitHub
-# Actions only schedules workflows that exist on the default branch, so
-# nothing runs until it is committed and pushed — which requires explicit
-# operator approval. Production is out of scope for this workflow entirely.
+# ACTIVE since 2026-07-19 (e5d25b6): scheduled weekly from the default
+# branch. Production is out of scope for this workflow entirely.
 name: staging-cache-probe
 
 on:
   schedule:
     - cron: "17 6 * * 1" # Mondays 06:17 UTC
   workflow_dispatch:
+
+# Least privilege (F-43): both jobs only check out and run a probe.
+permissions:
+  contents: read
 
 jobs:
   probe:

@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.86 · 2026-11-06 · Phase 1 deliverable
+**Status:** Draft v1.96 · 2026-11-11 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -387,7 +387,12 @@ The single most important shared type. Encodes §N7 (always visible, disabled wi
 - When `allowed: false`, `unlock_hint` is a **plain-English explanation** the frontend renders verbatim as a tooltip/disabled-button helper.
 - `can_open_dispute` is the **owner vote-dispute** entry (DisputeCallout → `POST /disputes`) and mirrors the write gate exactly: page ownership only, no feature ladder (shipped 2026-06-11). It is the **sole** dispute gate — the `can_dispute` §J attestation-cast gate (`sign_dispute` ladder) was a dead scaffold (no such attestation kind existed) and was retired 2026-07-08. Non-owners get `reason_code: "not_page_owner"` with no hint — the §N7 visible-gate rule applies to gates a viewer can eventually unlock, which ownership of someone else's page is not.
   - **Member self-pages (member-disputes slice, 2026-06-30):** a member is the owner of their own self-page, so on their OWN member card/profile `can_open_dispute` is `allowed: true` when they have a contestable active downvote on their self-page, else `reason_code: "no_contestable_downvote"`. Non-owners and anonymous viewers get `reason_code: "not_applicable"` (members can't dispute votes on each other — only the subject can contest a downvote on themselves, mirroring the entity owner-contests-downvote model). Ownership resolves via the zero-DB self-page identity (`page_id = ID_BASE + user_id`).
-- `can_message` (v1.53) mirrors the DM write gates exactly — it is produced by the SAME messaging-policy evaluator the send path runs, so a rendered Message button and the `POST /me/conversations` it triggers can never disagree on a permanent rule. Only the transient rate limit is POST-only. On **validator page cards** it targets the page's resolved verified operator (or the queue, when the validator has never been claimed); on member and community cards it is `not_applicable`. Reason codes: `not_applicable` (hide) · `auth_required` (visible-disabled, sign-in copy) · `self_action_blocked` (hide — viewer is the operator) · `sender_restricted` (hide — suspended/banned sender) · `sender_chat_disabled` (visible-disabled, resolvable hint) · `messaging_unavailable` (hide) · `friends_only` (visible-disabled + hint).
+- `can_message` (v1.53) mirrors the DM write gates exactly — it is produced by the SAME messaging-policy evaluator the send path runs, so a rendered Message button and the `POST /me/conversations` it triggers can never disagree on a permanent rule. Only the transient rate limit is POST-only. On **validator page cards** it targets the page's resolved verified operator (or the queue, when the validator has never been claimed); on member and community cards it is `not_applicable`. Reason codes: `not_applicable` (hide) · `auth_required` (visible-disabled, sign-in copy) · `self_action_blocked` (hide — viewer is the operator) · `sender_restricted` (hide — suspended/banned sender) · `sender_chat_disabled` (visible-disabled, resolvable hint) · `messaging_unavailable` (hide) · `friends_only` (visible-disabled + hint) · **`unavailable` (hide — v1.92)**.
+
+  - ⚠⚠ **`unavailable` (v1.92) means "the server could not determine the block state", not "you may not message".** It is emitted when the block table cannot be READ — a transient database failure — and it exists because the alternative is worse: the previous behaviour reported an unreadable block table as "not blocked", so the client rendered a live Message button and the `POST` then refused it. Clients MUST **omit** the affordance, never render it disabled: the condition is not something the viewer can resolve, so §N7's visible-disabled rule does not apply.
+  - ⚠⚠ **It is ALWAYS paired with `unlock_hint: null`, and that pairing is load-bearing rather than cosmetic.** A client that hides on the hint rather than on the code — which is what the member-card pill did before the omit branch shipped — would render a DISABLED pill if a hint string ever accompanied this code. The server therefore guarantees the null, and a backend test asserts the pairing independently of the code.
+  - ⚠ It is deliberately a **different** code from `messaging_unavailable`. That one is the §4.19 info-leak shield, hiding WHICH of mutual-block / DMs-off / no-such-user applies. `unavailable` states a fact about the REQUEST rather than about the pair, so it reveals nothing the shield protects — and on a failed read every candidate in a batch receives it uniformly, which is why a shared payload is safe here.
+  - The matching write paths answer `bcc_unavailable` **503** (§4.19), so a client that retries gets a coherent answer from both sides.
   - **Info-leak shield:** a mutual block and a recipient with DMs turned off emit the **byte-identical** `{ allowed: false, unlock_hint: null, reason_code: "messaging_unavailable" }`. Clients must not attempt to distinguish them, and the server never does on the wire (this mirrors the §4.19 404 shield on the write path).
 - When `allowed: true`, `unlock_hint` is `null` (not omitted — explicit `null` so client typing is uniform).
 - When a gate is **structurally impossible** for this viewer (e.g., viewing your own card → `can_watch: false`, you can't follow yourself), `unlock_hint` is `null` and the frontend hides the action UI per §N7's "structurally impossible" carve-out (the always-visible rule applies to *gates a viewer could resolve*, not to nonsensical actions).
@@ -658,7 +663,10 @@ profile shows a chip (New Member · Neutral tier), not a hole.
   path — `profile_setup`, `verified_identity`,
   `qualifying_contribution` booleans plus `confirmation_due_at` (the
   24-hour confirmation clock; `null` until a qualifying contribution
-  starts it or once it resolves).
+  starts it or once it resolves). *(v1.93)* `qualifying_contribution` is
+  `false` while the confirmation is **voided**. The member's next
+  qualifying contribution re-arms the clock, after a 7-day cool-off when
+  the void was for a content reason (removed, unpublished or report upheld).
 - `confirmation_due_at`, `recovery.deadline`, and the `findings`
   datetimes (`ceiling_expires_at` / `penalty_expires_at` /
   `created_at`) are UTC `YYYY-MM-DD HH:MM:SS` datetime strings
@@ -964,7 +972,7 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
   "ux_helpers": { "...": "see §2.7 — own profile only" },
   "permissions": {
     "can_follow":     { "allowed": false, "unlock_hint": null },
-    "can_message":    { "allowed": false, "unlock_hint": null },
+    "can_message":    { "allowed": false, "unlock_hint": null, "reason_code": "messaging_unavailable" },
     "can_block":      { "allowed": false, "unlock_hint": null },
     "can_edit_profile": { "allowed": true, "unlock_hint": null }
   },
@@ -986,7 +994,12 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
 - `progression`, `capabilities`, `ux_helpers` are **omitted entirely** (not even `null`). They are own-only.
 - `privacy` block reduced to `{ watching_hidden, reviews_hidden, ... }` reflecting what the viewer can see, not what's set.
 - `permissions.can_follow` becomes meaningful (`allowed: true` if the viewer can watch this user as a member card).
-- `permissions.can_message` (v1.53) mirrors the DM write gates exactly — it runs the same messaging-policy evaluator as `POST /me/conversations` (mutual block, recipient `chat_enabled`, friends-only, sender suspension/ban). It was previously a bare chat-enabled probe, so a friends-only or mutually-blocked recipient rendered an enabled Message button that always failed on submit. The `{allowed, unlock_hint}` shape is unchanged, but `unlock_hint` may now be non-null on this surface (e.g. the friends-only copy) and `allowed` is stricter. The mutual-block and DMs-off cases remain indistinguishable to the client.
+- `permissions.can_message` (v1.53) mirrors the DM write gates exactly — it runs the same messaging-policy evaluator as `POST /me/conversations` (mutual block, recipient `chat_enabled`, friends-only, sender suspension/ban). It was previously a bare chat-enabled probe, so a friends-only or mutually-blocked recipient rendered an enabled Message button that always failed on submit. `unlock_hint` may be non-null on this surface (e.g. the friends-only copy) and `allowed` is stricter. The mutual-block and DMs-off cases remain indistinguishable to the client.
+
+  ⚠⚠ **`reason_code` IS PRESENT ON THIS SURFACE AS OF v1.92, and its absence before then was a drift rather than a design.** This entry previously described the shape as `{allowed, unlock_hint}` — two keys — while the **card** surfaces (§3.2) have emitted the full three-key permission object for `can_message` since v1.53, because they forward the policy evaluator's return verbatim and this surface destructured it. So the two surfaces disagreed, and this document recorded the disagreement. v1.92 forwards `reason_code` here too; the card shape is unchanged.
+  - It is **always present**, `null` when messaging is allowed, so a client reads `null` rather than `undefined`.
+  - ⚠ Its sibling keys on this surface (`can_follow`, `can_block`, …) remain two-key, and that is correct rather than inconsistent: they have no reason code to report. `can_message` is the only entry here produced by the messaging-policy evaluator.
+  - Without this, `/u/[handle]` could not observe `reason_code: "unavailable"` (§3.2) at all, and a client's omit branch for it would appear to work only by accident — via the `unlock_hint: null` pairing, which is a safeguard, not the signal.
 - `wallets` is **`[]`** — always, for every viewer who is not the profile owner (authenticated stranger *and* anonymous alike). Not a masked address, not a wallet-link id, no entries at all. Wallet connections are private account data; the only wallet signal that crosses a member boundary is the derived `verifications.wallets_verified` count, which remains accurate because the server sources it from the repository rather than counting this array. See [docs/wallet-privacy-policy.md](wallet-privacy-policy.md).
 - `verifications.profile_completeness` *(documented v1.64 — shipped earlier)* is the 0–100 percentage `QuestValidator` computes from filled profile fields. `verifications.profile_complete` *(v1.64)* is the server's completeness **verdict** (same `QuestValidator` code path the Apprentice-readiness check uses — the threshold never leaves PHP) and is **own-view only: the key is absent for every non-self viewer**; frontends treat absence as not-complete.
 
@@ -1324,6 +1337,8 @@ V1.5 transition rules: clients tolerant of unknown fields ride forward without c
 ```
 
 `grade` ∈ {`trust`, `neutral`, `caution`} (from `vote_type` 1/0/-1). `text` is the review body (≤ 4000 chars; falls back to the short `reason` slug for bare-vote rows). `page_kind` ∈ {`validator`, `project`, `creator`, `member`, `""`} and drives the target link prefix (`/v`|`/p`|`/c`|`/u`; `""` → no link).
+
+Only a review whose vote is **active** is emitted (v1.94). When the vote has been retracted by its author, removed by an accepted dispute, or removed by moderation, the `review` item is **omitted** from every feed surface (it is never emitted with an empty or placeholder body), and its permalink (`GET /feed/:id`) answers `bcc_not_found` 404. The omission is read-time, so a vote that is restored or re-cast brings the item back.
 
 Member-target rows (v1.48): `page_id` is the member's **self-page id** (`MemberSelfPageService::selfPageId(user_id)`), `page_name` is the member's display name, and `page_handle` is their `bcc_handle` — `""` when unset (the frontend suppresses the link; `user_login`/nicename are never projected).
 
@@ -1990,6 +2005,7 @@ Verifies a signed nonce, creates a new user (placeholder email if none supplied)
 - **Rate limit:** IP-bucketed (`WALLET_SIGNUP_RATE_LIMIT`/min/IP).
 - **Cache:** `Cache-Control: no-store`
 - **Side effects:** sets `wp_set_auth_cookie`, fires `bcc_wallet_verified` (seeds trust-engine + onchain-signals rows just like `verifyAndLink`), emits `user_signup` audit row, fires `bcc_user_signup` action. **Note:** does NOT emit the `bcc_first_wallet_link` celebration on the response — celebration delivery for wallet-signup is reserved for a future contract revision.
+- **Email state (changed in v1.88):** sets `_bcc_email_verified='0'` — a wallet signature proves control of the wallet, not of the inbox. A **caller-supplied** email gets the standard verification email (OTP + one-shot link, completed via `POST /auth/verify-email`) once the wallet link commits; a **placeholder** gets none and stays `'0'`. Previously this route set `'1'` with no inbox proof, which let a wallet signup typed with someone else's address receive that person's later Google sign-in (see `/auth/oauth-complete` → the anti-pre-registration gate). `'0'` does not affect the user's own sign-in: they sign in with the wallet.
 - **Race protection:** if a concurrent signup wins the wallet-link race between the `existsForOtherUser` check and the actual link write, the inserted user is rolled back (`wp_delete_user`) and `bcc_wallet_already_linked` is returned. No orphan user is left behind.
 
 #### `POST /bcc/v1/auth/forgot-password`
@@ -2130,7 +2146,7 @@ Completes an OAuth (Google/X) signup for a first-time user: exchanges the `provi
 - **Errors:** `bcc_invalid_request` 400 (missing provider_token) · `bcc_invalid_oauth_token` 400 (provider_token expired (15 min) or consumed — restart the OAuth flow) · `bcc_invalid_handle` 422 / `bcc_handle_reserved` 422 (§B6) · `bcc_invalid_email` 422 (email missing/invalid when the provider supplied none) · `bcc_conflict` 409 (handle or email already taken) · `bcc_rate_limited` 429 · `bcc_internal_error` 500. Validation errors leave the provider_token intact so the user corrects and retries in place.
 - **Rate limit:** IP-bucketed, 5 / 60s
 - **Cache:** `Cache-Control: no-store`
-- **Mapping:** peeks the provider_token without consuming; creates a `subscriber` `wp_users` row (`wp_insert_user`, login `u_<handle>`, random 64-char password), sets `bcc_handle` + `_bcc_oauth_<provider>` meta. Email-verified flag depends on the email's origin: provider-supplied (Google) → `_bcc_email_verified='1'` + welcome email immediately; **user-typed** (X) → `'0'` + the standard verification email (same OTP/link machinery as `/auth/signup`; the welcome email arrives via `finalizeVerification`). A `'0'` account cannot be email-matched by the `/auth/oauth` bridge (anti-pre-registration gate) nor password-login until verified — provider sign-in is unaffected (provider-ID match). Consumes the provider_token only after the user row commits, mints the JWT, emits the `user_signup` audit log (`via: oauth`), fires `do_action('bcc_user_signup', …)`. Handler `AuthEndpoint::oauthComplete` (route `AuthEndpoint.php:621`). Standard envelope per §1.4.
+- **Mapping:** peeks the provider_token without consuming; creates a `subscriber` `wp_users` row (`wp_insert_user`, login `u_<handle>`, random 64-char password), sets `bcc_handle` + `_bcc_oauth_<provider>` meta. Email-verified flag depends on the email's origin: **provider-verified** → `_bcc_email_verified='1'` + welcome email immediately — since v1.88 that means only a Google email the signed `/auth/oauth` bridge payload explicitly marked `email_verified: true` (a JSON boolean), carried server-side on the provider_token; a stored email without that bit (including any provider_token minted before v1.88) counts as unverified; **user-typed** (X) or unverified → `'0'` + the standard verification email (same OTP/link machinery as `/auth/signup`; the welcome email arrives via `finalizeVerification`). **Anti-pre-registration gate (tightened in v1.88):** the `/auth/oauth` bridge links a sign-in into an existing account by email **only when the bridge payload marks the email provider-verified (`provider: "google"` and `email_verified: true`) AND that account's `_bcc_email_verified` is exactly `'1'`** — `'0'` (pending), `''` (legacy, never verified) and any other value fail closed and the sign-in falls through to `handle_required`. On that first link-by-email, every earlier bearer token for the account is revoked before the session token is minted. A `'0'` account also cannot password-login until verified — provider sign-in is unaffected (provider-ID match). Consumes the provider_token only after the user row commits, mints the JWT, emits the `user_signup` audit log (`via: oauth`), fires `do_action('bcc_user_signup', …)`. Handler `AuthEndpoint::oauthComplete` (route `AuthEndpoint.php:621`). Standard envelope per §1.4.
 
 #### `POST /bcc/v1/auth/refresh`
 
@@ -2148,6 +2164,24 @@ Silent-refresh seam: exchanges a recently-expired (or near-expiry) Bearer JWT fo
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** decodes via `JwtToken::decodeForRefresh`, re-reads `bcc_handle` from authoritative storage (a handle change since the original mint is reflected; the JWT payload is not trusted), mints a fresh JWT, emits the `token_refreshed` audit log. No cookie set, no DB mutation beyond the audit row. Handler `AuthEndpoint::refresh` (route `AuthEndpoint.php:292`). Standard envelope per §1.4.
 
+#### `GET /bcc/v1/auth/session`
+
+*(since v1.89)* Server-side validation of a Bearer JWT: "whose session is this token?". Built for the frontend's NextAuth `bcc-verified` credentials provider, which must build its session from the **server's** answer, never from a POSTed `user_id` / `handle` (frontend F-08).
+
+- **Auth:** Bearer required — the token to check, in `Authorization: Bearer <jwt>`. The route validates **the presented token itself** with the canonical `JwtToken::decode` (signature, issuer, audience, `exp`, token-version revocation) — **no refresh grace**. It never consults the WordPress cookie session: a valid cookie with a missing or bad Bearer is still `401`.
+- **Body / query:** none.
+- **Response 200:**
+  ```json
+  { "user_id": 42, "handle": "alice", "in_good_standing": true, "expires_at": 1767225600 }
+  ```
+  - `handle` — the user's **current** handle from authoritative storage (the token's own claim goes stale after a handle change).
+  - `in_good_standing` — the same value `/auth/login` returns; it **fails open** (`true`) when the standing lookup errors, so it is display state, **never a security gate**.
+  - `expires_at` — the token's own `exp` (unix seconds). `decode` accepts a token up to **60 s past** it (the standard skew), so a client may see a `200` with `expires_at` slightly in the past.
+- **Errors:** `bcc_unauthorized` 401 for a missing, malformed, invalid, expired, revoked or deleted-user token — **one code, one message, no reason** (the reason is written to the audit log only) · `bcc_invalid_state` 409 (the user has no handle) · `bcc_rate_limited` 429.
+- **Rate limit:** **per token**, 60 / 60 s — keyed on a hash of the presented token and checked **before** decode (calls arrive from the frontend server's single IP, so a per-IP bucket would be shared by every user).
+- **Cache:** `Cache-Control: no-store`, `Vary: Authorization`.
+- **Mapping:** reads the Bearer via `BearerAuth::readBearerToken` (the same header reader authentication uses), `JwtToken::decode`, `get_userdata`, `bcc_handle` meta, `AuthSupport::resolveInGoodStanding`. No writes beyond an `auth_session_rejected` audit-log line on a 401. Handler `SessionController::session`. Standard envelope per §1.4.
+
 #### `POST /bcc/v1/auth/verify-email`
 
 Confirms email ownership and completes signup via either an OTP code or a one-shot link token, then signs the user in by returning a JWT (no separate `/auth/login` roundtrip).
@@ -2161,11 +2195,11 @@ Confirms email ownership and completes signup via either an OTP code or a one-sh
   { "token": "<64-hex one-shot token>" }
   ```
   OTP `code` = 6-digit email code (15-min TTL); `token` = self-identifying single-use link token (24-h TTL). The handler requires either `token` or both `email` and `code`.
-- **Response 200:** identical shape to `/auth/login` (`{ user_id, handle, token, expires_in, token_type, in_good_standing }`) so the frontend treats both uniformly.
+- **Response 200:** identical shape to `/auth/login` (`{ user_id, handle, token, expires_in, token_type, in_good_standing }`) so the frontend treats both uniformly, **plus `linked_wallet_count: int` (since v1.90)** — how many wallets are linked to the account whose email was just proven. When it is `> 0` the client asks "this account has a wallet linked — is it yours?", listing them with `GET /wallets` (using the fresh `token`) and removing one with `DELETE /wallets/{id}`. A count only: no wallet detail rides this auth response. If the wallet read fails the count is `0` and verification still succeeds (the prompt is advisory; wallets stay reviewable in Settings) — so **`0` can mean "read failed"**: a client must never take a destructive or irreversible action on `linked_wallet_count: 0`.
 - **Errors:** `bcc_invalid_request` 422 (neither token nor email+code) · `bcc_invalid_verify_token` 400 (token expired/used) · `bcc_invalid_otp` 400 (email unknown — generic; or code wrong/expired) · `bcc_already_verified` 409 (OTP path only) · `bcc_invalid_state` 409 (no handle) · `bcc_rate_limited` 429 · `bcc_internal_error` 500
 - **Rate limit:** IP-bucketed, 10 / 3600s
 - **Cache:** `Cache-Control: no-store`
-- **Mapping:** token path consumes the `bcc_vt_<token>` transient (single-use); OTP path resolves by email, checks `_bcc_email_verified`, timing-safely (`hash_equals`) consumes the HMAC-hashed `bcc_otp_<userId>` transient. Both converge on `finalizeVerification` → sets `_bcc_email_verified='1'`, sets the auth cookie, mints the JWT, emits `email_verified` audit, fires `do_action('bcc_email_verified', …)`. Handler `AuthEndpoint::verifyEmail` (route `AuthEndpoint.php:487`). Standard envelope per §1.4.
+- **Mapping:** token path consumes the `bcc_vt_<token>` transient (single-use); OTP path resolves by email, checks `_bcc_email_verified`, timing-safely (`hash_equals`) consumes the HMAC-hashed `bcc_otp_<userId>` transient. Both converge on `finalizeVerification` → sets `_bcc_email_verified='1'`, sets the auth cookie, **revokes every earlier bearer token for the account (JWT token-version bump, since v1.88)**, mints the JWT, emits `email_verified` audit, fires `do_action('bcc_email_verified', …)`. The revocation means a session held by whoever created the account before the address was proven does not survive the inbox owner's verification; the returned token is the caller's working session and must be stored. Handler `AuthEndpoint::verifyEmail` (route `AuthEndpoint.php:487`). Standard envelope per §1.4.
 
 #### `POST /bcc/v1/auth/resend-verification`
 
@@ -2177,7 +2211,7 @@ Re-sends a fresh verification OTP + link to an unverified account. Always return
 - **Errors:** `bcc_invalid_request` 422 (missing/malformed email) · `bcc_rate_limited` 429
 - **Rate limit:** IP-bucketed, 3 / 3600s
 - **Cache:** `Cache-Control: no-store`
-- **Mapping:** resolves by email; only when `_bcc_email_verified === '0'` generates + stores a fresh HMAC-hashed OTP (overwriting the prior `bcc_otp_<userId>` transient) + verify token, then dispatches the email. Already-verified / legacy accounts are silently skipped. Handler `AuthEndpoint::resendVerification` (route `AuthEndpoint.php:521`). Standard envelope per §1.4.
+- **Mapping:** resolves by email; only when `_bcc_email_verified` is `'0'` (pending) **or `''` (legacy, never verified — since v1.88)** and the address is not a wallet placeholder (`@noreply.bcc.local`), generates + stores a fresh HMAC-hashed OTP (overwriting the prior `bcc_otp_<userId>` transient) + verify token, then dispatches the email. Already-verified accounts and placeholders are silently skipped. A legacy account uses this to verify and so become eligible for OAuth link-by-email (`/auth/oauth-complete` → the anti-pre-registration gate). Handler `AuthEndpoint::resendVerification` (route `AuthEndpoint.php:521`). Standard envelope per §1.4.
 
 ### 4.2 Cards
 
@@ -2262,7 +2296,7 @@ Single-activity permalink read (v1.33 backfill — shipped with the post-detail 
 - **Auth:** Anonymous OR Bearer
 - **Path:** `id` (int act_id **or** 8-letter shortcode — see above)
 - **Response 200:** a single §3.3 `FeedItem` (bare object in the §1.4 envelope — NOT a `CursorEnvelope`), same hydration pipeline as `/feed`
-- **Errors:** `bcc_not_found` 404 — covers both "no such activity" and "not visible to this viewer" (§O4.1 caution/risky author exclusion, §K1 mutual-block invisibility, §K1-C moderation hide all collapse to 404; no existence oracle)
+- **Errors:** `bcc_not_found` 404 — covers both "no such activity" and "not visible to this viewer" (§O4.1 caution/risky author exclusion, §K1 mutual-block invisibility, §K1-C moderation hide, and — v1.94 — a `review` whose vote is no longer active (§3.3.2) all collapse to 404; no existence oracle)
 - **Rate limit:** none route-specific
 - **Cache:** `Cache-Control: private, max-age=15` · `Vary: Authorization, Cookie`
 - **Mapping:** `FeedEndpoint::feedItem` → `FeedRankingService::getActivityById` (same §F3 single brain + `FeedHydrationPipeline` as the list surfaces). FE post-detail page / quick-view modal.
@@ -2355,7 +2389,7 @@ Full User view-model.
 - **Auth:** Anonymous OR Bearer
 - **Path:** `handle` (lowercase, no `@` prefix)
 - **Response 200:** User view-model (§3.1) — own variant if `is_self`, others' variant otherwise
-- **Errors:** `bcc_not_found` (handle missing), `bcc_permission_denied` (account suspended; rare)
+- **Errors:** `bcc_not_found` (handle missing), `bcc_permission_denied` (account suspended; rare) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer. ⚠ Note the two distinct 403 codes on this route: `bcc_permission_denied` is about the **viewer's** standing, `bcc_forbidden` about the **owner's** privacy. A client must branch on `code` plus `data.reason`, not on the status alone.
 - **Rate limit:** 60/min/viewer
 - **Cache:** `Cache-Control: private, max-age=30` (own: `no-store`); React Query `staleTime: 30s` (own: 0)
 - **Mapping:**
@@ -2396,7 +2430,7 @@ Full User view-model.
 - **Auth:** Anonymous OR Bearer (privacy-filtered)
 - **Path:** `handle`
 - **Query:** `weeks` (optional, default 52, max 104 — **refused above 104**, not clamped)
-- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (`weeks` outside 1–104, or not a whole number). ⚠ This cap is **104**, not the 50 the list routes carry; enforcing a shared number here would halve a documented two-year window.
+- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (`weeks` outside 1–104, or not a whole number) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer. ⚠ This cap is **104**, not the 50 the list routes carry; enforcing a shared number here would halve a documented two-year window.
 - **Response 200:**
   ```json
   {
@@ -2412,10 +2446,11 @@ Full User view-model.
     }
   }
   ```
-- **Errors:** `bcc_not_found`
 - **Rate limit:** 30/min/viewer
-- **Cache:** `Cache-Control: public, max-age=300, stale-while-revalidate=600`
+- **Cache:** `Cache-Control: private, max-age=300` · `Vary: Authorization, Cookie` *(changed in v1.91 — was `public, max-age=300, stale-while-revalidate=600`)*
+  - ⚠ **This had to change with the gate, not after it.** Once the route can answer 403 for one viewer and 200 for another, a shared cache holding one viewer's 200 would replay it to viewers the gate refused — a worse leak than the ungated read being closed. The 300s window made this the most exposed of the three routes whose header moved. `Vary: Authorization` alone is insufficient: the owner/admin/friend distinctions turn on the session, and two signed-in viewers can look identical to a shared cache.
 - **Mapping:** `peepso_activities` aggregated by day, server-side bucketed; `intensity` computed server-side (`none`, `low`, `med`, `high`, `peak`) — frontend just renders the class.
+  - 📌 *Editorial, v1.91:* this block carried **two** `**Errors:**` lines (one before the 200 sample, one after), listing different sets. They are folded into the single line above rather than a third being added.
 
 #### `GET /bcc/v1/members`
 
@@ -2510,13 +2545,13 @@ Slim prefix-search endpoint backing the composer's `@`-mention autocomplete (§3
 
 The member's long-form blog posts (§D6 blog tab), newest-first, cursor-paginated.
 
-- **Auth:** Anonymous OR Bearer. ⚠⚠ **VIEWER-DEPENDENT AS OF v1.8X.** This read used to discard the viewer ("V1 blog rows are public"), which stopped being safe the moment a blog could be published into a group — a secret-group blog would have surfaced on its author's public profile. The rule is now the group's own: **a viewer sees a group blog exactly when they may see the group**, and `members_only` stays members-only **even in an OPEN group**, matching what `GET /groups/:id/feed` already does for a non-member. A blog in no group is unaffected. Reactions/permissions still hydrate as defaults.
+- **Auth:** Anonymous OR Bearer. ⚠⚠ **VIEWER-DEPENDENT AS OF v1.96.** This read used to discard the viewer ("V1 blog rows are public"), which stopped being safe the moment a blog could be published into a group — a secret-group blog would have surfaced on its author's public profile. The rule is now the group's own: **a viewer sees a group blog exactly when they may see the group**, and `members_only` stays members-only **even in an OPEN group**, matching what `GET /groups/:id/feed` already does for a non-member. A blog in no group is unaffected. Reactions/permissions still hydrate as defaults.
   **Consequence for clients:** the same handle legitimately returns DIFFERENT items to different viewers, so this response must not be cached across sessions or shared between users (see the `Cache-Control` line — `private` is load-bearing now, not decorative). The author always sees their own blogs, including after they LEAVE the group.
   ⚠ **A TRASHED OR UNPUBLISHED GROUP still counts as non-open.** The deny list the gate is built on deliberately ignores the group row's `post_status`: trashing a secret group does not make its content public, so a blog in a closed/secret group stays hidden from non-members even after the group itself is trashed or reverted to draft. A client must not treat "the group is gone" as "the post is now public". (Measured on production at the time of writing: 33 non-open groups, all published, none trashed — so this closes a reachable path rather than an observed one.)
 - **Path:** `handle`
 - **Query:** `cursor` (optional, opaque base64url `{t,id}`, same family as `/feed`) · `limit` (optional, default 20, min 1, max 50 — **refused above 50**, not clamped)
 - **Response 200:** `CursorEnvelope<FeedItem>` — same shape as `/feed`: `data = { items: FeedItem[] (§3.3), pagination: { next_cursor: string|null, has_more: bool } }`, scoped to `act_user_id = handle AND act_module_id = 'blog'`. The blog body carries the full `full_text` (the Floor variant omits it): `{ excerpt, full_text, wp_post_id, title, category (string|null), tags (string[]), chain_tags ([{id, slug, name, color, icon_url}]), disclosure ({tickers, note}|null), cover_image_url (string|null), cover_image_id (int|null), sources (string[]) }`.
-- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry)
+- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - **Mapping:** `BlogService::getUserBlog` → `PeepSoActivityRepository::getActivities` (over-fetch-by-1 `has_more`, moderation-hidden excluded per §K1-C); body via `BlogService::hydrateForPostId(..., includeFullText: true)`. Handler `UsersEndpoint::blog` (route `UsersEndpoint.php:172`).
 
@@ -2538,7 +2573,7 @@ Reviews this member has written (§V1.5 reviews-on-file tab), offset-paginated.
   `grade` ∈ `A|B|C` (from `vote_type` 1/0/-1). When the target hides reviews and the viewer isn't the owner: `items: []`, totals `0`, `hidden: true`.
 
   `scope_label` ∈ `PAGE|MEMBER` (v1.48). Member-target rows (reviews this user wrote **about another member**): `subject` = the member's display name, `subject_handle` = their `bcc_handle` (`""` when unset — the frontend suppresses the `ON @…` link; `user_login` is never projected), `scope_label` = `MEMBER`.
-- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry)
+- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - **Pagination envelope:** offset (§1.5); `total_pages` is `0` (not 1) on empty/hidden.
 - **Mapping:** `UserReviewsService::getReviews` → `VoteRepository::countByVoter` + `findByVoterPaginated` (+ `UserMiniRepository::getRowsByIds` for member-target subjects, v1.48); `posted_at_label` server-rendered (§A2). Handler `UsersEndpoint::reviews` (route `UsersEndpoint.php:203`).
@@ -2559,7 +2594,7 @@ Disputes this member has **filed** (§V1.5 disputes tab), offset-paginated. A di
   }
   ```
   `status` ∈ `open|resolved|dismissed` (mapped from `bcc_disputes.status`: `reviewing`→`open`, `accepted`/`rejected`/`timeout_no_quorum`→`resolved`, `dismissed`→`dismissed`; unknown → `open`). `status_label` carries the richer real outcome (`OPEN`/`ACCEPTED`/`REJECTED`/`NOT DECIDED`/`DISMISSED`). `subject` is the disputed page title, falling back to `"Page removed"`; `scope_label` is `PAGE`. Hidden behaves as reviews (`items: []`, totals `0`, `hidden: true`).
-- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry)
+- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - **Pagination envelope:** offset (§1.5); `total_pages` is `0` on empty/hidden.
 - **Mapping:** `UserDisputesService::getDisputes` → `DisputeRepository::countByReporter` + `getByReporterPaginated` (live `bcc_disputes`, reporter-keyed). Handler `UsersEndpoint::disputes` (route `UsersEndpoint.php:215`). *(Was `bcc_trust_flags`/FlagsRepository — a write-dead legacy table — until 2026-07-08; the shape is unchanged.)*
@@ -2572,7 +2607,7 @@ Per-member activity wall — a single-author slice of the same activity stream t
 - **Path:** `handle`
 - **Query:** `cursor` (optional, same family as `/feed`) · `limit` (optional, default 20, min 1, max 50 — **refused above 50**, not clamped)
 - **Response 200:** `CursorEnvelope<FeedItem>` — identical shape to `/feed`/`/feed/hot`/`/feed/tag`: `data = { items: FeedItem[] (§3.3), pagination: { next_cursor, has_more } }`, fully hydrated (bodies, viewer reactions, author badges/ranks, social proof, permissions, group context, comment counts).
-- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry)
+- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - **Mapping:** `FeedRankingService::getActivityForAuthor($authorId, $viewerId, …)` — the single-brain feed composition scoped to one author; `excludedGroupIds = (non-open group ids) − (viewer membership ids)` forwarded to the SQL so wall posts in groups the viewer can't see are dropped. Handler `UsersEndpoint::activity` (route `UsersEndpoint.php:228`).
 
@@ -2591,7 +2626,7 @@ Per-member activity wall — a single-author slice of the same activity stream t
   }
   ```
   Each item is a full member `Card` (§3.2, `card_kind: "member"`) — same shape as `/members`. Rows for deleted users are silently skipped (so `items.length` may momentarily be < page size while `total` reflects the raw follow-edge count).
-- **Errors:** `bcc_not_found` (slug missing) · `bcc_permission_denied` 403 (`watching_hidden`)
+- **Errors:** `bcc_not_found` (slug missing) · `bcc_permission_denied` 403 (`watching_hidden`) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer. ⚠ Two different 403s here: `watching_hidden` is the owner hiding **this list**, `profile_private` is the owner hiding **their whole profile**. The second is checked first, so a private profile never reveals whether its follow lists are also hidden.
 - **Cache:** `Cache-Control: private, max-age=30`
 - **Pagination envelope:** offset with `has_more` (§1.5) — `offset`/`limit`/`total`/`has_more`, NOT the `page`/`per_page`/`total_pages` shape.
 - **Mapping:** `UserFollowsService::listFollowers` → `PeepSoFollowerRepository::getCounts` + `getFollowers`; cards via `CardViewService::getMemberCardForList` over a `MemberSummaryPrefetcher::primeFor` batch. Handler `UserFollowsEndpoint::listFollowers` (route `UserFollowsEndpoint.php:49`).
@@ -2604,7 +2639,7 @@ Per-member activity wall — a single-author slice of the same activity stream t
 - **Path:** `slug` (sanitized via `sanitize_user`)
 - **Query:** `offset` (default 0), `limit` (default 24, max 100)
 - **Response 200:** identical envelope to `/followers` — `{ items: Card[] (§3.2, member), pagination: { offset, limit, total, has_more } }`. `total` is the *following* count.
-- **Errors:** `bcc_not_found` (slug missing) · `bcc_permission_denied` 403 (`watching_hidden`)
+- **Errors:** `bcc_not_found` (slug missing) · `bcc_permission_denied` 403 (`watching_hidden`) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer. ⚠ Two different 403s here: `watching_hidden` is the owner hiding **this list**, `profile_private` is the owner hiding **their whole profile**. The second is checked first, so a private profile never reveals whether its follow lists are also hidden.
 - **Cache:** `Cache-Control: private, max-age=30`
 - **Pagination envelope:** offset with `has_more` (§1.5)
 - **Mapping:** `UserFollowsService::listFollowing` → `PeepSoFollowerRepository::getCounts` + `getFollowing`; same card hydration as `/followers`. Handler `UserFollowsEndpoint::listFollowing` (route `UserFollowsEndpoint.php:60`).
@@ -2623,7 +2658,8 @@ The member's PeepSo photo albums (§3.1 Photos tab → Albums sub-tab), privacy-
   }
   ```
   No pagination block. `privacy` ∈ `public|site_members|friends_only|only_me`; `privacy_label` server-rendered (§A2). `cover_url` is `""` when unresolvable. System-album titles remapped to BCC vocabulary ("Stream Photos" → "Floor Photos").
-- **Errors:** `bcc_not_found` (slug missing). Albums the viewer can't see are silently filtered (never 403).
+- **Errors:** `bcc_not_found` (slug missing) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)*.
+  - ⚠ **Two layers, and only the outer one 403s.** The PROFILE gate refuses the whole route when the owner's `profile_visibility` does not admit the viewer. Per-ALBUM visibility is unchanged: albums the viewer cannot see are still **silently filtered, never 403**. So "never 403" remains true of album-level access and is no longer true of the route as a whole.
 - **Cache:** `Cache-Control: private, max-age=30`
 - **Mapping:** `PeepSoAlbumRepository::getAlbumsByOwner` filtered through `PeepSoAlbumAccess::canView` (+ `PeepSoFriendGate`); cover via `PhotoRepository::resolvePhotoUrl`. Handler `UserAlbumsEndpoint::getList` (route `UserAlbumsEndpoint.php:54`).
 
@@ -2641,7 +2677,8 @@ Photos inside a single album (§3.1 Photos drill-down). Album access is re-check
   }
   ```
   No pagination block. `photo_url` is `""` when unresolvable (S3 fallback). `source_post` is `{ id, url }` deep-linking the parent post, or `null`.
-- **Errors:** `bcc_not_found` — slug missing, `album_id` ≤ 0, album not owned by the user, OR album exists but viewer lacks access (all collapse to one 404 message to avoid leaking existence)
+- **Errors:** `bcc_not_found` — slug missing, `album_id` ≤ 0, album not owned by the user, OR album exists but viewer lacks access (all collapse to one 404 message to avoid leaking existence) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)*
+  - ⚠ **The 404-collapse is deliberately NOT extended to the profile gate, and the distinction is the point.** ALBUM existence must not leak, so every album-level failure stays a 404. PROFILE existence is already public (the member directory and the slug resolver both expose it), so the profile gate answers 403 — consistent with `GET /users/:handle` — and tells the frontend to render "this profile is private" instead of "no such person". Different objects, different disclosure rules.
 - **Cache:** `Cache-Control: private, max-age=30`
 - **Mapping:** `PeepSoAlbumRepository::findOneByIdAndOwner` → `PeepSoAlbumAccess::canView` → `PhotoRepository::findByAlbumId`; per-photo URL via `PhotoRepository::resolvePhotoUrl`. Handler `UserAlbumPhotosEndpoint::getList` (route `UserAlbumPhotosEndpoint.php:52`).
 
@@ -3189,16 +3226,19 @@ The user's holder-groups state — joined groups, eligible-to-join suggestions, 
       }
     ],
     "eligible_to_join": [ /* same item shape; user qualifies but isn't a member */ ],
-    "opted_out": [ /* same item shape; user explicitly left or was mod-removed */ ]
+    "opted_out": [ /* same item shape; user explicitly left or was mod-removed — plus "opt_out_kind" (v1.95) */ ]
   }
   ```
+- **`opted_out[].opt_out_kind` (v1.95, additive):** `"left"` | `"removed"`. Present on `opted_out` items only.
+  - `"left"`: the member left (voluntary). An explicit `POST …/join` overrides it, so a client may offer **Join** (eligibility still applies).
+  - `"removed"`: a moderator removed them (permanent). Join is refused with `opt_out_active`, so a client must not offer it.
 - **Cache:** `private, no-store` (per-viewer membership state).
 - **Mapping:** `peepso-group` posts where `_bcc_group_kind = 'holders'`, joined with `peepso_group_members` for membership and `wp_bcc_onchain_collections` for collection display. Eligibility uses `HoldingsService::ownsAnyMany` (one batched holdings call per chain). Opt-out is read from `bcc_gated_groups_optout` user_meta with TTL applied.
 - **Cold-start protection:** the `activity.heat` field is the user's escape hatch from ghost-town suggestions — frontend may sort `eligible_to_join[]` by heat to surface active rooms first.
 
 #### `POST /bcc/v1/me/holder-groups/:id/join`
 
-Explicit user-initiated join. Verifies eligibility server-side, clears any active opt-out for this group, and lands the user as a full member regardless of the group's `closed` privacy flag.
+Explicit user-initiated join. Verifies eligibility server-side, clears any active opt-out for this group, and lands the user as a full member regardless of the group's `closed` privacy flag. **Since v1.95** a *voluntary* opt-out (the member left) does not block this explicit join; it only stops automatic re-adding. A **moderator eviction** still refuses (see `opt_out_active` below).
 
 - **Auth:** Bearer (401 anonymous)
 - **Response 200:**
@@ -3210,7 +3250,7 @@ Explicit user-initiated join. Verifies eligibility server-side, clears any activ
   - `bcc_forbidden` (403) — account suspended ("Your account is suspended."). Holding the NFT is the eligibility gate, not an override of moderation; admin bypass off.
   - `bcc_invalid_request` (400) — group is not a holder group
   - `bcc_permission_denied` (403) with `unlock_hint`:
-    - opt-out cooldown active: "You opted out of this community recently. Try again later or rejoin from the discovery page."
+    - moderator eviction: "A moderator removed you from this community, so you cannot rejoin it." (v1.95; previously an opt-out-cooldown sentence that a voluntary leave also triggered — a voluntary leave no longer refuses an explicit join)
     - holder check failed: "Hold a `<CollectionName>` NFT to join this community." (or "Hold at least N NFTs from this collection..." for `min_balance > 1`)
   - `bcc_internal_error` (503) — chain unsupported (transient infra issue)
   - `bcc_upstream_unavailable` (503) — the chain provider could not verify NFT
@@ -3268,7 +3308,9 @@ Cross-kind list of all PeepSo groups a target user is an active member of: holde
 
 - **Auth:** Anonymous OR Bearer
 - **Path:** `slug` matches the canonical `[a-z0-9][a-z0-9-]{1,18}[a-z0-9]` handle pattern (lowercase alphanumeric + hyphens, 3–20 chars). 404 with `bcc_not_found` for invalid or unknown handles.
+- **Errors:** `bcc_not_found` **404** (invalid or unknown handle) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer. *(This block carried no `Errors:` line before v1.91; the 404 above was documented in prose only.)*
 - **Privacy filtering (server-authoritative):**
+  - ⚠ *v1.91:* the per-group filtering below is **unchanged and still applies**, but it is now reached only after the profile gate admits the viewer. The two are separate: the gate asks "may this viewer see this person", the filtering asks "which of their groups may this viewer see". Previously only the second question was asked, so a stranger could confirm an "only me" profile's open-group memberships.
   - `secret` groups → included **only if the viewer is also a member**
   - `closed` groups → always included; non-members see name + member_count, content stays private at PeepSo's layer
   - `open` groups → always included
@@ -3303,7 +3345,7 @@ Cross-kind list of all PeepSo groups a target user is an active member of: holde
   - `type` ∈ `nft` | `validator` | `hall` | `user` | `system`. The frontend uses this to pick the action URL and to dispatch the right mutation hook (holder / delegator / hall / plain). **`validator` added in v1.52** — treat unknown kinds gracefully.
   - `type_label` is the server-authoritative display string for the kind (defaults: `On-Chain Holders` / `Validator Delegators` / `Hall` / `System` / `Community`). Frontend renders verbatim per §A2 — no client-side enum→label mapping. Filterable via `bcc_group_type_label`. *(v1.52: the `user`-kind default and the unknown-kind fallback changed `Group` → `Community`; display-only, wire unchanged.)*
   - `privacy` ∈ `open` | `closed` | `secret`. Mirrors PeepSo's privacy flag.
-  - **`permissions.can_post_blog` (v1.8X — §D6 group blogs).** "May this viewer publish a long-form blog into this group?" — the source the blog editor's group picker reads. Same `{allowed, unlock_hint, reason_code}` shape as its siblings. `reason_code` ∈ `null` (allowed) | `read_only_member` | `not_member` | `not_self`.
+  - **`permissions.can_post_blog` (v1.96 — §D6 group blogs).** "May this viewer publish a long-form blog into this group?" — the source the blog editor's group picker reads. Same `{allowed, unlock_hint, reason_code}` shape as its siblings. `reason_code` ∈ `null` (allowed) | `read_only_member` | `not_member` | `not_self`.
     ⚠ **Computed for the viewer's OWN listing only.** On another member's profile it is always `{allowed: false, reason_code: "not_self"}`, which means **not applicable**, not refused — a viewer is never offered a composer on someone else's tab. Do not render it as a denial there.
     ⚠ **This is NOT "is a member".** The membership read admits `member_readonly`, a status that reads but cannot contribute, so a picker built on membership presence would list a group, let the author write the whole blog, and have `POST /posts` refuse it. The server compares the membership ROLE against the posting-capable set, and a test pins that this agrees with the gate `POST /posts` itself applies — including `member_readonly` → `false`.
     ⚠ **The listing is bounded, not exhaustive.** The viewer's group list is capped at 200, so a user in more than 200 groups sees a truncated picker. It fails toward FEWER groups, never more, so it is not a disclosure — but do not present it as a complete list of where someone may post.
@@ -3471,6 +3513,7 @@ Shape mirrors §4.7.1 exactly, with a `validator_stats` block replacing `collect
     "opted_out": []
   }
   ```
+- **`opted_out[].opt_out_kind` (v1.95, additive):** `"left"` | `"removed"`, with the same meaning and values as `GET /me/holder-groups`. Offer Join only on `"left"`.
 - **Cache:** `private, no-store` (every bucket is viewer-scoped).
 - **Fail-closed omission (important):** a community whose delegation check could not be completed (upstream LCD outage) is **omitted from `eligible_to_join`** rather than surfaced. A suggestion that 503s on click is worse than a suggestion that reappears one poll later. Clients must not infer ineligibility from absence.
 
@@ -3484,7 +3527,7 @@ Shape mirrors §4.7.1 exactly, with a `validator_stats` block replacing `collect
   - `bcc_rate_limited` **429** — throttled.
   - `bcc_forbidden` **403** — account suspended (holding stake is not an override of moderation).
   - `bcc_invalid_request` **400** — not a delegator community.
-  - `bcc_permission_denied` **403** — opted out recently (`error.data.reason_code` = `opt_out_active`, v1.84), **or** not eligible (`error.data.reason_code` = `not_eligible`, v1.85). Both carry a `reason_code`, so the two are told apart by its **value** and never by the presence or absence of `error.data`.
+  - `bcc_permission_denied` **403** — a moderator removed this member (`error.data.reason_code` = `opt_out_active`, v1.84; **narrowed in v1.95**: emitted ONLY for a moderator eviction, since a voluntary leave no longer blocks an explicit join), **or** not eligible (`error.data.reason_code` = `not_eligible`, v1.85). Both carry a `reason_code`, so the two are told apart by its **value** and never by the presence or absence of `error.data`.
     - **`error.data.min_stake_display` (v1.85)** — on the `not_eligible` refusal only: the same server-pre-formatted string the card and the unlock hint carry (`"10 ATOM"`, or a bare amount when the chain’s native token is unknown). `null` when the gate config or the native token is unreadable; the key is always present on this refusal, so a client can tell "unknown" from "field absent". ⚠ **This field exists because the minimum must NOT be read out of `error.message`.** §γ forbids a client rendering `error.message`, so a figure carried only in the sentence is a figure the user never sees — which is exactly what the card surfaces showed before v1.85 ("you don’t delegate enough", with no amount). Render the amount from this field, interpolated into your own code-keyed copy.
     - `error.message` remains the server-pinned sentence (e.g. `"Delegate at least 10 ATOM to Coinbase01 to join this community."`) for non-browser clients and the logs. It is **not** for display: earlier revisions of this line said to render it verbatim, which contradicted §γ and is withdrawn.
   - `bcc_upstream_unavailable` **503** — **could not verify** the delegation. This is NOT "you don't qualify": the join failed **closed** during an upstream outage. Clients MUST present it as retryable and MUST NOT render it as an eligibility failure.
@@ -4223,7 +4266,8 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
     "bcc_hall_post":              true,
     "bcc_comment_received":       true,
     "bcc_holder_community_live":  true,
-    "bcc_delegator_group_removed": true
+    "bcc_delegator_group_removed": true,
+    "bcc_content_auto_hidden":    true
   },
   "push": {
     "enabled": false,
@@ -4240,6 +4284,7 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
 
 - `bell.*` keys mirror the bell `type` taxonomy (matches §4.10's notification-shape `type` field). Defaults are all-on per §I1 baseline. The full key set is `NotificationPrefs::BELL_TYPES`, which is pinned equal to `NotificationType::ALL` by a generic registration test (v1.63) — the sample above shows the §I2 base taxonomy plus the v1.63 Rank keys; the §J.7 attestation keys and `bcc_divergence_state_warning` (documented where those events are specified) appear in the map too.
 - **v1.63 (Rank Phase 8):** eight bell keys are new in the map. Six are new bell-only notice types (`bcc_rank_recovery_started`, `bcc_rank_recovery_reminder`, `bcc_rank_decay_warning`, `bcc_rank_finding_issued`, `bcc_rank_appeal_outcome`, `bcc_rank_finding_reversed` — deliberately no push variants; none are urgent). Two are **repairs** of registration drift: `bcc_rank_demoted` (dispatched since v1.59 but absent from the type whitelist — its bell rows were silently rejected read-side and its pref key never appeared here) and `bcc_holder_community_live` (rows rendered fine but the pref key was missing from this surface, so the toggle documented at v1.32 was not actually exposed).
+- **v1.93:** new bell key `bcc_content_auto_hidden` (default on). It is the author's notice that their post was hidden **automatically** by the credible-report threshold. A self-notification: `actor` is the author, and it names no reporter, count or threshold. Message, verbatim: *"One of your posts was hidden automatically after several members reported it. A moderator will review it, and if it breaks no rule it will be restored."* `link` is `/`, because the post itself is hidden from every feed. **In-app only:** no push variant, and it is excluded from the email digest, like `bcc_delegator_group_removed`.
 - `email_digest` defaults `false` (opt-in).
 - `push.enabled` is the master toggle. Defaults `false` until the user explicitly enables it (a browser permission prompt fires on enable; no silent dispatch).
 - `push.events.*` defaults are all-on per V2 Phase 1 §P1.C3 — anti-noise carries the load via debounce + 5-min aggregation in `PushDispatcher`. The push event taxonomy is intentionally narrower than the bell ("bell shows everything; push is 'you really need to know'"). Adding a new push event requires extending `NotificationPrefs::PUSH_TYPES` server-side and the corresponding subscriber wiring.
@@ -4648,7 +4693,7 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
 - **Response 200 data shape:**
   ```json
   {
-    "profile_visibility":        "public" | "members" | "private",
+    "profile_visibility":        "public" | "members" | "friends" | "private",
     "post_visibility":           "members" | "private",
     "hide_birthday_year":        false,
     "hide_online":               false,
@@ -4660,7 +4705,10 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
   }
   ```
 - **Storage:**
-  - `profile_visibility` → `peepso_users.usr_profile_acc` column (PeepSo's user-search and feed gate join against this — writing through this endpoint keeps gating coherent).
+  - `profile_visibility` → `peepso_users.usr_profile_acc` column (PeepSo's user-search and feed gate join against this — writing through this endpoint keeps gating coherent). `public` → 10, `members` → 20, `friends` → 30, `private` → 40.
+    - **`friends` is new in v1.91.** The level existed in storage and was honoured by PeepSo's own surfaces, but this endpoint's token map had no entry for it, so a member could not select it through BCC at all — only through PeepSo's own profile UI.
+    - ⚠ **30 is `PeepSoFriendsPlugin::ACCESS_FRIENDS`, defined and enforced by the peepso-friends plugin, not by PeepSo core** (which declares only 10, 20 and 40). It means the PeepSo **friends** list, which is a mutual, request-and-accept relation — *not* BCC followers, which are one-directional. With peepso-friends inactive the level falls through PeepSo's ladder and stays **denied**, which is the fail-closed direction.
+    - 📌 `default_post_audience` deliberately keeps its three tokens. A stored `peepso_last_used_post_privacy` of 30 is still reported as `members`, so a read-modify-write round-trip through this endpoint writes 20 back and **loosens** friends to members. Pre-existing, tracked separately; the fix is to report `friends` there too now that the token exists.
   - `post_visibility` → `peepso_profile_post_acc` user_meta. PUBLIC is intentionally absent (matches PeepSo's `access-profile-post` UI which strips it).
   - `hide_birthday_year` → `peepso_hide_birthday_year` user_meta, "1"/"0".
   - `hide_online` *(documented v1.64 — shipped earlier)* → `peepso_hide_online_status` user_meta, "1"/"0" — PeepSo's presence indicators treat "1" as "hide the green dot".
@@ -4672,10 +4720,26 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
 
 #### `PATCH /bcc/v1/me/account/email` (V2 Phase 2.5)
 
-Change the user's WordPress email. Body `{ "current_password": "...", "email": "..." }`. Server re-verifies the current password via `wp_check_password` on every call — there is no session-elevation flag.
+**Request** a change of the user's WordPress email. Body `{ "current_password": "...", "email": "..." }`. Server re-verifies the current password via `wp_check_password` on every call — there is no session-elevation flag.
 
-- **Response 200:** `{ "email": "<new>" }`
-- **Errors:** `bcc_invalid_request` (422 — bad email or wrong current password; message disambiguates), `bcc_conflict` (409 — email already taken by another user).
+**Verify-before-promote (behaviour change in v1.88).** This call does **not** change the email. It holds the new address **pending** and mails a 6-digit OTP to the **new** address; `user_email` and `_bcc_email_verified` are unchanged until `POST /me/account/email/verify` confirms the code. Until then the account keeps its current address and its verification state, and nothing that matches by email (OAuth link-by-email, password login by email, password reset) can see the pending one. Previously the change applied at once and kept the old address's verified flag — so a password holder could re-point a verified account at an address they don't own, and that address's owner's later Google sign-in linked into their account.
+
+- **Response 200:** `{ "ok": true, "pending": true, "email_masked": "v*****@gmail.com", "expires_in": 900 }`. Same address as the current one (case-insensitive) → `{ "ok": true, "pending": false }`, nothing mailed.
+- **Errors:** `bcc_invalid_request` (422 — bad email or wrong current password; message disambiguates), `bcc_conflict` (409 — email already taken by another user), `bcc_unauthorized` 401, `bcc_rate_limited` 429 (5/min/user, before the password check).
+- **Side effects:** stages `{ email, otp_hash, purpose: "change" }` in the account's pending-email transient (15-min TTL, one per account — shared with the recovery-email route below, so a new request of either kind supersedes the previous one); mails the OTP via `AuthMailer::sendEmailChangeOtp` (subject "Confirm your new email address"); writes an `account_email_change_requested` audit row. The change canary goes out on **confirmation**, not here.
+- **Cache:** `Cache-Control: no-store`.
+
+#### `POST /bcc/v1/me/account/email/verify` (since v1.88)
+
+Confirms the OTP from `PATCH /me/account/email` and **promotes** the pending address to `user_email`, marking it verified (`_bcc_email_verified='1'` — the code proved the new inbox). The account's credentials just changed, so — exactly like `PATCH /me/account/password` — every earlier bearer token is revoked and a **fresh token** is returned; bearer clients must swap to it.
+
+Body `{ "code": "123456" }`.
+
+- **Auth:** required. **Rate limit:** 10/hour/user. (A 6-digit OTP under this cap + the 15-min TTL is not brute-forceable; a wrong code leaves the pending entry in place for retry.)
+- **Response 200:** `{ "ok": true, "email": "<new>", "token": "<jwt>", "expires_in": 604800, "token_type": "Bearer" }`
+- **Errors:** `bcc_unauthorized` 401; `bcc_invalid_request` **400** (no pending email change — never requested, expired, or superseded: the client returns to the request step) / 422 (missing code); **`bcc_invalid_otp` 422** (incorrect code — the pending entry is kept: the client stays on the code step and may retry); `bcc_conflict` 409 (the address was taken in the race window — the pending entry is dropped); `bcc_internal_error` 500; `bcc_rate_limited` 429. Clients branch on `error.code`, not on status alone.
+- **Cache:** `Cache-Control: no-store`.
+- **Side effects:** `wp_update_user(user_email)` + `_bcc_email_verified='1'`; clears the pending entry; JWT token-version bump; `account_email_changed` audit row; out-of-band canary via `AccountSecurityMailer::emailChanged` (both addresses) — or `::recoveryEmailConfirmed` (new address only) when the old one was a placeholder. A pending **recovery** email cannot be confirmed here, nor a pending change via the recovery verify route: each confirm accepts only its own purpose.
 
 #### `PATCH /bcc/v1/me/account/password` (V2 Phase 2.5)
 
@@ -4699,7 +4763,7 @@ Body `{ "wallet_address", "chain_slug", "signature", "email", "extra"? }`. The s
 - **Response 200:** `{ "ok": true, "email_masked": "a****@example.com", "expires_in": 900 }`
 - **Errors:** `bcc_unauthorized` 401; `bcc_invalid_request` 400 (missing fields / unknown chain / wallet not linked or not verified / challenge expired) / 422 (bad or placeholder email); `bcc_signature_invalid` 401; `bcc_conflict` 409 (email already in use); `bcc_rate_limited` 429.
 - **Cache:** `Cache-Control: no-store`.
-- **Side effects:** stages `{ email, otp_hash }` in the `bcc_recovery_email_{userId}` transient (15-min TTL); mails the OTP via `AuthMailer::sendRecoveryEmailOtp`; writes a `recovery_email_requested` audit row.
+- **Side effects:** stages `{ email, otp_hash, purpose: "recovery" }` in the `bcc_recovery_email_{userId}` transient (15-min TTL) — the account's single pending-email slot, shared with `PATCH /me/account/email` (a new request of either kind supersedes the previous one; an entry without `purpose`, written before v1.88, reads as `recovery`); mails the OTP via `AuthMailer::sendRecoveryEmailOtp`; writes a `recovery_email_requested` audit row.
 
 #### `POST /bcc/v1/me/account/recovery-email/verify` (wallet recovery, phase 2)
 
@@ -5605,8 +5669,10 @@ Anonymous-readable per §J trust-graph doctrine: attestation data is public-by-d
 - **Errors:**
   - `bcc_not_found 404` — handle does not resolve to a known user.
   - `bcc_rate_limited 429` — 30/60/IP shared throttle bucket (`users_endorsements`).
+  - `bcc_forbidden 403` *(v1.91)* — `error.data.reason: "profile_private"`; the owner's `profile_visibility` does not admit this viewer.
 - **Rate limit:** 30/60/IP (shared across all `/users/:handle/endorsements` callers — per-handle granularity isn't worth the bucket sprawl).
-- **Cache:** `public, max-age=15` with `Vary: Authorization`. Short shared cache absorbs sub-tab toggles inside the backing panel without staling on fresh endorsements. React Query `staleTime: 15_000`.
+- **Cache:** `private, max-age=15` with `Vary: Authorization, Cookie` *(changed in v1.91 — was `public, max-age=15` with `Vary: Authorization`)*. React Query `staleTime: 15_000`.
+  - ⚠ The short shared cache it used to keep is no longer available: since v1.91 this route can answer 403 for one viewer and 200 for another, and a shared cache holding the 200 would replay it to refused viewers. `Vary: Authorization` alone does not help — the owner/admin/friend distinctions turn on the session.
 - **Frontend consumer:** `BackingPanel` "Given" sub-tab on `/u/[handle]`. The "Received" sub-tab consumes `GET /entities/user_profile/:user_id/attestations` (§J.6); together they form the two faces of the operator's trust graph.
 
 ---
@@ -5737,8 +5803,10 @@ Unlinks a wallet owned by the current user. Idempotent — a double-tap unlink a
 - **Path:** `id` (integer, wallet_link row id).
 - **Response 200:**
   ```json
-  { "ok": true, "id": 142, "removed": true }
+  { "ok": true, "id": 142, "removed": true, "token": "<jwt>", "expires_in": 604800, "token_type": "Bearer" }
   ```
+  `token` / `expires_in` / `token_type` (since v1.90) are present **only** on a true removal of the caller's own wallet (`removed: true`); `removed: false` (foreign or already-gone id) carries none. **Clients must store the returned token** — see "Sessions" below.
+- **Sessions (since v1.90):** when the site option `bcc_unlink_revokes_sessions` is ON, a true removal first **revokes every earlier bearer token** for the account (JWT token-version bump) — so a wallet-login session for the removed wallet ends with the link — and the returned token is the caller's only working session. It is **OFF by default**: the fresh token is always returned, so a client can adopt it before revocation is switched on. ⚠ **Release order:** the frontend that stores the returned token on **every** unlink (Settings → Wallets and the post-verification "is this wallet yours?" prompt) must be **in production before** an operator runs `wp option update bcc_unlink_revokes_sessions 1` — otherwise every unlink signs the user out. With the option ON, the user's **other devices and tabs are signed out** on unlink — intended. Also do not switch it on until the frontend's token-swap race fix ships: an in-flight request still carrying the old bearer would otherwise refresh → `ERR_REVOKED` → end the session. After a removal, a new wallet-login with that wallet cannot reach the account either (the login lookup no longer finds the link).
 - **Errors:** `bcc_unauthorized` 401, `bcc_invalid_request` 400 (id missing), `bcc_last_recovery_method` 409 (see lockout guard below), `bcc_rate_limited` 429.
 - **Rate limit:** 10/min/user.
 - **Cache:** `Cache-Control: no-store`.
@@ -6101,7 +6169,7 @@ File a content report against a feed item or an **announcement** (§K1 Phase B).
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
 - **Body (JSON):** `target_kind` (**required**, ∈ `feed_item | announcement`) · `target_id` (**required**, int ≥ 1 — the `act_id` for `feed_item`, the **bare integer announcement id, prefix stripped** for `announcement`; see below) · `reason_code` (**required**, ∈ `spam|harassment|hate|violence|misinformation|other`) · `comment` (optional, ≤ 500 chars; **required when `reason_code = other`**)
 - **Response 200:** `{ "data": { "ok": true, "report_id": 5512, "status": "created" } }` — `status` ∈ `created | existing` (UNIQUE `(reporter, target_kind, target_id)` blocks a second row; `existing` returns `report_id: 0`).
-- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (bad kind/id/reason, comment > 500, missing comment for `other`, or self-report) · **`bcc_not_found` 404** (`announcement` only — the notice is not publicly readable; see below) · `bcc_rate_limited` 429 (FLAG limits, 5 / 5 min / reporter) · `bcc_unavailable` 503
+- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (bad kind/id/reason, comment > 500, missing comment for `other`, or self-report) · **`bcc_not_found` 404** (`announcement`: the notice is not publicly readable · `feed_item` *(v1.93)*: the reporter cannot see the post; see below) · `bcc_rate_limited` 429 (FLAG limits, 5 / 5 min / reporter) · `bcc_unavailable` 503
 - **Mapping:** `MyReportsEndpoint::create` (route `MyReportsEndpoint.php:38`) → `ContentReportService::fileReport`; fires `do_action('bcc_content_reported', …)` for async Phase C subscribers.
 
 ⚠⚠ **FOR `announcement`, THE CLIENT SENDS THE NOTICE'S OWN ID AND NOTHING
@@ -6174,6 +6242,32 @@ on an unreadable database must not look like content that does not exist.
 ⚠ **Reporting a notice has no moderation side effect beyond the row.** No
 automatic hiding (§4.32.16), no reputation, trust or fraud signal, and no change
 to the notice's state or visibility — it stays `published` and publicly readable.
+
+⚠⚠ **FOR `feed_item`, REPORTABILITY IS VISIBILITY** *(v1.93)*. A member can
+report a post exactly when they can see it in a feed, decided by the feeds' own
+gates rather than a restatement of them:
+
+| the post | reportable by |
+|---|---|
+| not group-tagged, or group-tagged with `_bcc_post_visibility = public_all` | everyone (the global feed shows it) |
+| in a group the reporter is an active member of | that member, whatever its visibility |
+| `public_group`, in an open / closed / NFT group, reporter not a member | that non-member (the group's public teaser shows it) |
+| `members_only` or no visibility marker, reporter not a member | nobody else |
+| in a **secret** group, not `public_all`, reporter not a member | nobody else |
+
+The post must also be published and not moderation-hidden. A target the reporter
+cannot see answers `404 bcc_not_found` *"Not found."*, **byte-identical** to an
+id that never existed, so a refusal never confirms that a closed or secret post
+exists. **Behaviour change:** before v1.93 a `feed_item` report was accepted for
+ANY `act_id`, including one that did not exist.
+
+⚠ **Filing a report is not the same as hiding a post** *(v1.93)*. Every report
+still files and queues for moderators, but the automatic hide at the threshold
+(3) counts only **credible** reporters: Apprentice or higher, Trust tier Neutral
+or higher, not suspended, and fraud-clear. That is the same rule that decides
+who counts as Rank evidence. After a moderator **restores** a post, every pending
+report on it closes and the post is exempt from automatic hiding for **7 days**.
+Reports filed during that window still queue for moderators.
 
 See §4.32.16 for the full reportability rules and §4.32.11 for the `can_report`
 capability that must agree with this route.
@@ -6312,12 +6406,12 @@ Create a post. The `kind` discriminator routes to one of three writers (`status`
 - **Body (`kind=status`):** `group_id` (int, optional, > 0 — §4.7.6 group-scope; viewer must be an active member, validated before throttle) · `visibility` (string, optional, default `members_only`) ∈ `members_only|public_group|public_all` (only meaningful when `group_id > 0`; unrecognized clamps to `members_only`; stored `_bcc_post_visibility`; **`public_all` is authorization-gated — see the §4.14 `visibility` rule: open → any posting member, closed/secret → owner/admin or opted-in members, else `bcc_permission_denied 403`**) · `hall_feed` (string, optional, default `main`) ∈ `main|ranked` *(v1.62 — Rank Phase 7, spec §21.3; status kind only)* — Hall feed-channel selector: `ranked` targets the Hall's second feed and is only valid when `group_id` targets a **Hall** (`ranked` with no group or a non-Hall group → `bcc_invalid_request 400` "Only Halls have a ranked feed."); anything except the literal `ranked` clamps to `main` (defense in depth — a malformed value posts to the main channel it was always allowed to post to). The write gate is `can('post_ranked_hall_feed')` (Journeyman+ AND Neutral+ AND not suspended AND not in §14.2 recovery), checked **after** membership so a Hall member below Journeyman gets the honest capability denial (`bcc_forbidden 403`, reason in `error.data.reason` ∈ `suspended|new_member|below_journeyman|below_neutral|in_recovery`), not a shape error. A ranked post is stamped `_bcc_ranked_feed = '1'` post-meta (main-channel posts carry no marker) · content 1–500 chars.
 - **Body (`kind=status`, page target, v1.83):** `target_page_id` (int, optional, > 0) writes the post for that validator page. It is still the author's own status post, on their wall and the Floor, plus a page marker that puts it on `GET /pages/:id/feed` and fills `page_context`. Refused before the content and throttle gates, so a refusal writes nothing, spends no throttle slot and fires no event: with `group_id` as well → `bcc_invalid_request` 400; author not the page's **current** verified operator → `bcc_forbidden` 403 with `error.data.reason_code` = `not_claimer`, one identical body for a stranger, another page's operator, an unclaimed, contested or non-validator page. A suspended author gets the ordinary suspended 403 first, with no `reason_code`. The `/posts/photo` and `/posts/gif` routes take no page target: page posts are text only. `target_page_id` keeps its review meaning on `kind=review`.
 - **Body (`kind=review`):** the target is **either** an entity page **or** a member. Entity: `target_page_id` (int, > 0; `group_id` ignored). Member (Slice 2, Architecture A — a person is a trust subject): `target_kind` = `user_profile` + `target_user_id` (int, > 0) — resolved server-side to the member's lazily-provisioned self-page; the self-page id scheme stays a backend detail. Always: `grade` (string, **required**) ∈ `trust|neutral|caution` (→ vote_type +1/0/−1) · content 1–4000 chars (the written reason — required for every review, incl. a down-review). A member down-review additionally fails closed (`bcc_forbidden`) when the target reported the voter within `BCC_TRUST_RETALIATION_WINDOW_DAYS`; self-reviews and the Trusted/Elite downvote gate apply identically to entity votes.
-- **Body (`kind=blog`, §D6):** `content` (**required**, full_text, 1–60000) · `excerpt` (**required**, 80–500) · `title` (optional, ≤ 120) · `category` (optional) ∈ `news|analysis|guide|opinion|tools|events` · `tags` (string[], ≤ 5; lowercase `[a-z0-9-]`, ≤ 24 each, deduped) · `chain_tags` (string[], ≤ 3 — chain **slugs** over the wire, resolved via `ChainRepository::getBySlug`) · `disclosure` ({tickers ≤ 20 uppercase `[A-Z0-9]` ≤ 12 each, note ≤ 500} | null — empty struct rejected, send `null`) · `sources` (string[], ≤ 20, ≤ 280 each, deduped) · `cover_image_id` (int, > 0 — from `POST /blog/cover-image`, must be an `attachment` owned by the author) · `status` (optional, default `publish`) ∈ `draft|publish` (a draft fires no `bcc_blog_post_created`, gets no activity row, reachable only via `GET /posts/:id`) · **`group_id` (int, optional, > 0 — v1.8X, §D6 group blogs)** publishes the blog into a PeepSo group, with **`visibility`** taking the same three values and the same per-group authorization as `kind=status`, `public_all` policy included: the service calls the identical group gate, so membership, closed/secret rules, posting permission and the `public_all` opt-in are byte-for-byte the rules a status post gets, and the gate runs **before** the content and throttle checks so a refused caller writes nothing and spends no throttle slot. A post targets a page **or** a group, never both. **`hall_feed` must be `main` for a blog** — a blog is main-feed only, and a ranked channel is refused whether or not a group is named (a wall has no ranked channel either). ⚠ **A DRAFT DOES NOT NOTIFY THE GROUP:** attaching stamps the group marker and fires `peepso_groups_new_post`, so a draft parks its intended target in sidecar meta and the attach — with its single notification — happens at the draft→publish transition. Exactly one notification per publish; re-saving a published blog fires none. *(The pre-v1.8X rule, "`group_id` is rejected for `kind=blog`", is withdrawn — it was a V1 scope fence, not a technical limit.)*
+- **Body (`kind=blog`, §D6):** `content` (**required**, full_text, 1–60000) · `excerpt` (**required**, 80–500) · `title` (optional, ≤ 120) · `category` (optional) ∈ `news|analysis|guide|opinion|tools|events` · `tags` (string[], ≤ 5; lowercase `[a-z0-9-]`, ≤ 24 each, deduped) · `chain_tags` (string[], ≤ 3 — chain **slugs** over the wire, resolved via `ChainRepository::getBySlug`) · `disclosure` ({tickers ≤ 20 uppercase `[A-Z0-9]` ≤ 12 each, note ≤ 500} | null — empty struct rejected, send `null`) · `sources` (string[], ≤ 20, ≤ 280 each, deduped) · `cover_image_id` (int, > 0 — from `POST /blog/cover-image`, must be an `attachment` owned by the author) · `status` (optional, default `publish`) ∈ `draft|publish` (a draft fires no `bcc_blog_post_created`, gets no activity row, reachable only via `GET /posts/:id`) · **`group_id` (int, optional, > 0 — v1.96, §D6 group blogs)** publishes the blog into a PeepSo group, with **`visibility`** taking the same three values and the same per-group authorization as `kind=status`, `public_all` policy included: the service calls the identical group gate, so membership, closed/secret rules, posting permission and the `public_all` opt-in are byte-for-byte the rules a status post gets, and the gate runs **before** the content and throttle checks so a refused caller writes nothing and spends no throttle slot. A post targets a page **or** a group, never both. **`hall_feed` must be `main` for a blog** — a blog is main-feed only, and a ranked channel is refused whether or not a group is named (a wall has no ranked channel either). ⚠ **A DRAFT DOES NOT NOTIFY THE GROUP:** attaching stamps the group marker and fires `peepso_groups_new_post`, so a draft parks its intended target in sidecar meta and the attach — with its single notification — happens at the draft→publish transition. Exactly one notification per publish; re-saving a published blog fires none. *(The pre-v1.96 rule, "`group_id` is rejected for `kind=blog`", is withdrawn — it was a V1 scope fence, not a technical limit.)*
 - **Rate limit:** burst seatbelt — 5 / 120s / author, keyed separately for status / blog. Reviews additionally pass through `VoteService`'s fraud/rate/coordination pipeline.
 - **Response 200 (`kind=status`):** `{ "ok": true, "feed_id": "feed_2210184", "post_id": 4012, "act_id": 2210184 }`
 - **Response 200 (`kind=review`):** `{ "ok": true, "feed_id": null, "vote_id": 9001, "page_id": 55, "grade": "trust" }` — `feed_id` is `null` (the activity row is written async by `ActivityStreamWriter` on `bcc_review_published`). For a member review `page_id` is the resolved self-page id.
 - **Response 200 (`kind=blog`):** `{ "ok": true, "post_id": 4012, "excerpt_length": 142, "full_text_length": 5300, "status": "publish" }`
-- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (unsupported kind; missing/over-length content/excerpt/title/tag/source; under-length excerpt; review missing/zero `target_page_id` (entity) or `target_user_id` (member); invalid grade; unknown category/chain_tag; malformed tags/disclosure; cover not found/owned; invalid status; **`kind=blog` with a ranked `hall_feed` — v1.8X, "Blog posts go to the main feed; they cannot target a ranked Hall channel."**; **`hall_feed=ranked` with no group or a non-Hall group — v1.62 §21.3**) · `bcc_invalid_mention_target` 400 (§3.3.12 `MentionPolicy`; echoes `{user_id}`) · `bcc_too_many_mentions` 400 (`{max: 10}`) · `bcc_forbidden` 403 (review eligibility / PeepSo `PERM_POST`; **or `hall_feed=ranked` by a Hall member failing `can('post_ranked_hall_feed')` — `error.data.reason` ∈ `suspended|new_member|below_journeyman|below_neutral|in_recovery`, v1.62 §21.3**) · `bcc_permission_denied` 403 (group-scoped status, non-member; **or `visibility=public_all` by a member not authorized to syndicate — §4.14 `visibility` rule**) · `bcc_not_found` 404 (group missing/secret) · `bcc_rate_limited` 429 · `bcc_unavailable` 503
+- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (unsupported kind; missing/over-length content/excerpt/title/tag/source; under-length excerpt; review missing/zero `target_page_id` (entity) or `target_user_id` (member); invalid grade; unknown category/chain_tag; malformed tags/disclosure; cover not found/owned; invalid status; **`kind=blog` with a ranked `hall_feed` — v1.96, "Blog posts go to the main feed; they cannot target a ranked Hall channel."**; **`hall_feed=ranked` with no group or a non-Hall group — v1.62 §21.3**) · `bcc_invalid_mention_target` 400 (§3.3.12 `MentionPolicy`; echoes `{user_id}`) · `bcc_too_many_mentions` 400 (`{max: 10}`) · `bcc_forbidden` 403 (review eligibility / PeepSo `PERM_POST`; **or `hall_feed=ranked` by a Hall member failing `can('post_ranked_hall_feed')` — `error.data.reason` ∈ `suspended|new_member|below_journeyman|below_neutral|in_recovery`, v1.62 §21.3**) · `bcc_permission_denied` 403 (group-scoped status, non-member; **or `visibility=public_all` by a member not authorized to syndicate — §4.14 `visibility` rule**) · `bcc_not_found` 404 (group missing/secret) · `bcc_rate_limited` 429 · `bcc_unavailable` 503
 - **Side effects:** `bcc_post_created` / `bcc_review_published` / `bcc_blog_post_created` (publish only) on the §A3 bus; subscribers run async via Action Scheduler.
 - **Cache:** `no-store`.
 - **Mapping:** `PostsEndpoint::create` (route `PostsEndpoint.php:75`) → `PostsService::createStatus` / `createReview` / `createBlog`.
@@ -6333,7 +6427,7 @@ Owner-only blog edit-read for the §D6 composer's `?edit=<id>` cold-load. Return
   { "excerpt": "…", "full_text": "…", "wp_post_id": 4012, "title": "…", "category": "analysis", "tags": ["staking"], "chain_tags": [{ "id": 3, "slug": "cosmos", "name": "Cosmos", "color": "#2E3148", "icon_url": "https://…" }], "disclosure": { "tickers": ["ATOM"], "note": "…" }, "cover_image_url": "https://…", "cover_image_id": 5120, "sources": ["https://… — staking paper"], "status": "draft" }
   ```
   Every field always present; unset fields resolve to `""`/`null`/`[]`. `cover_image_url` is the `large` thumbnail.
-- **`group` (v1.8X — §D6 group blogs):** the blog's group as `{ "id": 4231, "name": "Cosmos Validators", "slug": "cosmos-validators" }`, or `null` for a wall blog. The editor renders it **read-only on a published blog** (the group is immutable there — see `PATCH /posts/:id`) and editable while it is a draft. ⚠ For a DRAFT this reflects the **parked** target rather than a live group marker, because a draft is deliberately not attached yet — the parked value is the one publishing will use. No privacy gate applies: the read is already owner-only, and the name is returned even if the author has since LEFT the group, because publishing will then refuse and they need to know which group is refusing. `name`/`slug` fall back to `""` if the group row has gone.
+- **`group` (v1.96 — §D6 group blogs):** the blog's group as `{ "id": 4231, "name": "Cosmos Validators", "slug": "cosmos-validators" }`, or `null` for a wall blog. The editor renders it **read-only on a published blog** (the group is immutable there — see `PATCH /posts/:id`) and editable while it is a draft. ⚠ For a DRAFT this reflects the **parked** target rather than a live group marker, because a draft is deliberately not attached yet — the parked value is the one publishing will use. No privacy gate applies: the read is already owner-only, and the name is returned even if the author has since LEFT the group, because publishing will then refuse and they need to know which group is refusing. `name`/`slug` fall back to `""` if the group row has gone.
 - **Errors:** `bcc_unauthorized` 401 · `bcc_forbidden` 403 (not the author) · `bcc_not_found` 404 (missing / wrong type / not a blog)
 - **Cache:** `no-store`.
 - **Mapping:** `PostsEndpoint::getBlogForEdit` (route `PostsEndpoint.php:265`) → `BlogService::getBlogForEdit`. FE `blog-endpoints.ts:getBlogPost`.
@@ -6345,7 +6439,7 @@ Owner blog **partial update** (§D6 PR-B). Registered as `WP_REST_Server::EDITAB
 - **Auth:** `current_user_can('read')` at the route; service enforces `post_author === viewer`.
 - **Content-Type:** `application/json`. **Path:** `id` (int).
 - **Body (all optional):** `title`, `excerpt`, `content`, `category`, `tags`, `chain_tags`, `disclosure`, `sources`, `cover_image_id`, `status` — same per-field validation/caps as `POST /posts kind=blog`. Three-state tunnels: `tags`/`chain_tags`/`sources` omitted=unchanged, `[]`=clear, non-empty=replace; `disclosure` omitted=unchanged (internal `__noop__` sentinel), `null`=clear, object=replace; `cover_image_id` omitted=unchanged, `0`=un-pin, positive=replace; `title` omitted=unchanged, `""`=clear; `category` empty="no change"; `status` drives `transition_post_status` → `BlogStatusTransitionHandler` (draft→publish fires `bcc_blog_post_created`; publish→draft removes the activity row); `wp_save_post_revision` runs before mutation.
-- **Body (group target, v1.8X — §D6 group blogs):** `group_id` (int, optional) and `visibility` (string, optional). ⚠⚠ **THE GROUP IS IMMUTABLE ONCE PUBLISHED.** On a published blog any **change** to `group_id` is `bcc_invalid_request` 400, with the current group echoed in `error.data.group_id`. Its group decided who was notified, who may comment and who sees it on the author's profile; re-pointing it would silently re-stage all three for a different audience. **An EQUAL value is a no-op, not an error**, so a client that echoes the whole view-model back is not punished for including the field. A **draft's** group may still change — it has notified nobody and sits on no surface — and the change is re-gated. ⚠ **Absent and `0` are different:** omitted leaves the target alone, `0` takes a draft out of its group. Use `has_param` semantics, not a `0` default. **Publishing re-runs the group gate**: if the author has left the group or lost permission since saving, nothing is written — the post **stays a draft**, keeps its parked target, and the gate's own error is returned (`bcc_not_found` / `bcc_permission_denied` / `bcc_forbidden`). Surface that as "could not publish", never as "saved".
+- **Body (group target, v1.96 — §D6 group blogs):** `group_id` (int, optional) and `visibility` (string, optional). ⚠⚠ **THE GROUP IS IMMUTABLE ONCE PUBLISHED.** On a published blog any **change** to `group_id` is `bcc_invalid_request` 400, with the current group echoed in `error.data.group_id`. Its group decided who was notified, who may comment and who sees it on the author's profile; re-pointing it would silently re-stage all three for a different audience. **An EQUAL value is a no-op, not an error**, so a client that echoes the whole view-model back is not punished for including the field. A **draft's** group may still change — it has notified nobody and sits on no surface — and the change is re-gated. ⚠ **Absent and `0` are different:** omitted leaves the target alone, `0` takes a draft out of its group. Use `has_param` semantics, not a `0` default. **Publishing re-runs the group gate**: if the author has left the group or lost permission since saving, nothing is written — the post **stays a draft**, keeps its parked target, and the gate's own error is returned (`bcc_not_found` / `bcc_permission_denied` / `bcc_forbidden`). Surface that as "could not publish", never as "saved".
 - **Response 200:** `{ "ok": true, "post_id": 4012, "status": "publish" }` (`status` reflects the post-update state).
 - **Errors:** `bcc_unauthorized` 401 · `bcc_forbidden` 403 · `bcc_not_found` 404 · `bcc_invalid_request` 400 (any field validation failure; echoes `{max}`/`{category}`/`{chain_id}`) · `bcc_unavailable` 503
 - **Cache:** `no-store`.
@@ -8711,15 +8805,13 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.8X — 2026-11-11 — additive plus one behaviour change — a long-form blog can be published into a group
-
-⚠ **VERSION PLACEHOLDER.** `v1.8X` is deliberate. **v1.87 has since merged** (blocked senders plus the message-reveal route) and at least one further update was in flight behind it, so this entry takes the next free number rather than a guessed one. **At merge, renumber every `v1.8X` occurrence** — this heading, the **six** inline markers in §3/§4 (the Blog-tab auth note, `permissions.can_post_blog`, the `kind=blog` body, the `POST /posts` error list, the edit view-model's `group`, and the `PATCH` group-target body), and the "pre-v1.8X rule" reference in this entry. `grep -n 'v1\.8X' docs/api-contract-v1.md` should return nothing afterwards. Do not leave the placeholder in a merged contract.
+### v1.96 — 2026-11-11 — additive plus one behaviour change — a long-form blog can be published into a group
 
 Scope: §4.28 (`POST /posts`, `GET /posts/:id`, `PATCH /posts/:id`), `GET /users/:handle/blog`, `GET /users/:slug/groups`, and the §3.3 `group` block as it applies to blog items. No new ROUTE — the editor's group picker reuses the existing profile Groups listing, so there is no contract-parity entry to add.
 
 **Additive**
 
-- **`POST /posts` `kind=blog` accepts `group_id` and `visibility`**, with the identical per-group authorization a `kind=status` post gets, `public_all` policy included — the service calls the same gate, before the content and throttle checks. The pre-v1.8X rule, "`group_id` is rejected for `kind=blog`", is **withdrawn**: it was a V1 scope fence, not a technical limit.
+- **`POST /posts` `kind=blog` accepts `group_id` and `visibility`**, with the identical per-group authorization a `kind=status` post gets, `public_all` policy included — the service calls the same gate, before the content and throttle checks. The pre-v1.96 rule, "`group_id` is rejected for `kind=blog`", is **withdrawn**: it was a V1 scope fence, not a technical limit.
 - **A blog is main-feed only.** `hall_feed=ranked` with `kind=blog` is `bcc_invalid_request` 400, with or without a group.
 - **`PATCH /posts/:id` accepts `group_id` and `visibility`.** The group is **immutable once published** — any change is a 400 with the current group in `error.data.group_id`, while an **equal value is a no-op, not an error**. A draft's group may still change, re-gated. Absent and `0` differ: absent leaves the target alone, `0` un-groups a draft.
 - **`GET /posts/:id` gains `group`** (`{id, name, slug}` | `null`) so the editor can show the target, read-only once published. For a draft this is the **parked** group, which is the one publishing will use.
@@ -8735,6 +8827,184 @@ Scope: §4.28 (`POST /posts`, `GET /posts/:id`, `PATCH /posts/:id`), `GET /users
 
 - A **draft does not notify the group.** The attach — and its single `peepso_groups_new_post` — happen at the draft→publish transition, so exactly one notification fires per publish and re-saving a published blog fires none.
 - **Publishing re-runs the group gate.** If the author has left the group or lost permission since saving, nothing is written: the post stays a draft and the gate's error is returned. Surface that as "could not publish", never as "saved".
+### v1.95 — 2026-11-11 — behaviour change — leaving a community no longer locks you out of rejoining it
+
+Ships with bcc-trust's F-158 change (bcc-trust #409).
+
+- **`POST /me/holder-groups/{id}/join` and the delegator-community join (behaviour change):** an explicit join now **overrides a voluntary opt-out** (recorded when the member left, 90-day TTL). Eligibility is still required, and a successful join clears the opt-out, as before. The opt-out continues to stop **automatic** re-adding, and the groups lists keep showing the group in its opted-out bucket.
+- **`opt_out_active` (narrowed):** now emitted **only** for a **moderator eviction** (a permanent opt-out), which still refuses an explicit join. The holder-group 403 sentence changed to "A moderator removed you from this community, so you cannot rejoin it." The delegator 403 keeps `reason_code: opt_out_active`. The code is not removed.
+- **`opted_out[].opt_out_kind` (additive, both `GET /me/holder-groups` and `GET /me/validator-groups`):** `"left"` | `"removed"`, so a client can tell which opted-out communities it may offer Join on.
+- **Clients:** offer Join on an `opted_out` item only when `opt_out_kind` is `"left"`. An `opt_out_active` refusal means the member was removed by a moderator.
+
+### v1.94 — 2026-11-11 — behaviour change — a removed review leaves the feed
+
+**A retracted or removed review stayed on the Floor forever.** The review
+body hydrator read the vote row with no status filter, and the activity
+row is never withdrawn, so a review whose vote had been retracted by its
+author, removed by an accepted dispute, or removed by moderation kept
+rendering — text and grade included — on every feed it had been projected
+into (F-88).
+
+- **Behaviour change — §3.3.2 `review`:** only a review whose vote is
+  active is emitted. Any other review item is **omitted** from every
+  `CursorEnvelope<FeedItem>` surface (`/feed`, `/feed/hot`, `/feed/tag`,
+  walls, group feeds); it is never emitted with an empty or placeholder
+  body. A page may therefore carry fewer items than requested, exactly as
+  the existing visibility gates already cause — clients page on
+  `pagination.has_more`, never on `items` length.
+- **Behaviour change — `GET /feed/:id`:** such a review's permalink answers
+  the existing `bcc_not_found` 404 (the documented "not visible" collapse;
+  no new error code).
+- **Reversible by construction:** the check is read-time, so a vote that is
+  restored (moderation restore) or re-cast brings the item back.
+- **Latency:** the cursor-less first page of `/feed/hot` is served from a
+  5-minute server cache, so a just-removed review can linger there for up
+  to 5 minutes; every other surface reflects the change on the next read.
+- **Not changed:** no field added, removed or renamed; the `review` body
+  shape is unchanged. No route added or changed, so the §4 endpoint
+  inventory is unmoved. Mapping: `VoteRepository::findManyActiveByIds()` +
+  `FeedHydrationPipeline` (bcc-trust, paired PR).
+
+### v1.93 — 2026-11-11 — behaviour change — content reports: report what you can see; credible reporters auto-hide
+
+Scope: §4's `POST /bcc/v1/me/reports`, `feed_item` arm only. No field, route,
+envelope or view-model changes.
+
+- **New `bcc_not_found` 404 for `feed_item`.** A post the reporter cannot see in
+  a feed is answered byte-identically to a missing id; the visibility table is
+  at the route. This mirrors the existing `announcement` rule (reportability is
+  readability).
+- **Behaviour change:** a `feed_item` report used to be accepted for **any**
+  `act_id`, including closed or secret group posts the reporter could not see,
+  and ids that did not exist.
+- **Behaviour change (moderation, no wire change):** the automatic hide at 3
+  reports counts only credible reporters (Apprentice+, Neutral+ Trust, not
+  suspended, fraud-clear). Filing is unchanged. A moderator restore closes every
+  pending report on the post and starts a 7-day automatic-hide exemption.
+- **Not on the wire:** a restored report reads as dismissed rather than upheld
+  (F-72), so it no longer credits reporters or blocks the author's Apprentice
+  confirmation. A voided Apprentice confirmation is re-armed by the member's next
+  qualifying contribution, after a 7-day cool-off for content-based voids (F-71).
+  `/me/progression`'s `readiness.qualifying_contribution` reads `false` while the
+  confirmation is voided (value only, same shape).
+- **Additive:** a new bell type and preference, `bcc_content_auto_hidden`. It is
+  the author's in-app notice that their post was auto-hidden. No push, no email
+  digest, and no reporter identity. §4's preferences section carries the
+  verbatim copy.
+- **Ships with** bcc-trust #385 (F-71), #389 (F-72/F-111), #392 (F-73 restore
+  side), #416 (F-73 report side + F-56), #417 (author notice) and #410
+  (F-98/F-77), plus bcc-core #70 (the `moderation_hidden_ids` subsystem). All
+  are merged ahead of this entry.
+
+### v1.92 — 2026-11-11 — additive plus one corrected claim — an unreadable block table no longer promises a Message button
+
+**A transient database failure read as "nobody is blocked".** The block
+probes returned the same value for "no such row" and for a failed query, so
+every can-message surface reported an unreadable block table as "you may
+message this person" — and the write path then refused the send. The client
+had no way to tell, because the server could not.
+
+- **Additive — `reason_code: "unavailable"`** on the `can_message` permission
+  (§3.2), meaning *the block state could not be determined*. Clients **omit**
+  the affordance rather than disabling it: the viewer cannot resolve a
+  database fault, so §N7's visible-disabled rule does not apply. It is
+  **always** paired with `unlock_hint: null` — load-bearing, because a client
+  that hides on the hint rather than the code would otherwise render a
+  disabled control.
+- **Additive — `reason_code` on the user view-model's `can_message`**
+  (§`GET /users/:handle`). ⚠ **And a corrected claim:** that entry said "the
+  `{allowed, unlock_hint}` shape is unchanged". It was two keys there while
+  the card surfaces had carried three since v1.53, so the surfaces disagreed
+  and this document described the narrower one as settled. Corrected, not
+  merely supplemented.
+- **Not changed:** `messaging_unavailable` keeps its §4.19 info-leak meaning.
+  `unavailable` is deliberately distinct — it is a fact about the request,
+  not about the pair, so it leaks nothing the shield protects. The write
+  paths' matching refusal is `bcc_unavailable` **503**, retryable, and
+  deliberately NOT the privacy-shaped 404 a real block produces.
+- **No route added or changed**, so the §4 endpoint inventory is unmoved.
+
+### v1.91 — 2026-11-11 — behaviour change plus additive — a private profile is actually private
+
+**`profile_visibility` was a setting nothing honoured.** `usr_profile_acc` was
+written by `PATCH /me/profile-prefs` and read by no code that made an access
+decision — `PeepSoUser::is_accessible*` was called **zero times** in bcc-trust.
+So "friends" and "only me" profiles served a stranger exactly what they served
+the owner, on every per-user surface.
+
+- **Behaviour change — twelve routes can now refuse.** New `bcc_forbidden`
+  **403** carrying `error.data.reason: "profile_private"` on
+  `GET /users/:handle` and its `/blog`, `/activity`, `/endorsements`,
+  `/reviews`, `/disputes` and `/shift-log` siblings, plus
+  `/users/:slug/albums`, `/users/:slug/albums/:album_id/photos`,
+  `/users/:slug/followers`, `/users/:slug/following` and
+  `/users/:slug/groups`. A client that treated any of these as
+  always-available must handle the 403; the machine-readable `reason` is there
+  so the profile page can say "this profile is private" rather than render a
+  generic permission error.
+  - **403, not 404**, deliberately: the handle is already a public lookup via
+    the member directory and the slug resolver, so 403 discloses nothing new,
+    and 404 would force the frontend to claim the person does not exist.
+  - The ladder is **PeepSo's own** (`is_accessible_static`): owner exempt,
+    **admin exempt**, 0 and 10 public, 20 signed-in, 40 owner-only, with 30
+    delegated to peepso-friends. BCC does not restate it, so this gate cannot
+    drift away from the gates PeepSo applies on its own surfaces.
+  - Fail-closed throughout: no PeepSo, an unreadable stored level, or a failed
+    friend lookup all **deny**.
+- **Additive — `profile_visibility` gains `friends`** (level 30). See §4's
+  `/me/profile-prefs` entry for why it was previously unreachable through this
+  API and why 30 belongs to peepso-friends rather than PeepSo core.
+- **Behaviour change — two cache headers turn `private`,** both with
+  `Vary: Authorization, Cookie`: `/users/:handle/shift-log` (was
+  `public, max-age=300, stale-while-revalidate=600`) and
+  `/users/:handle/endorsements` (was `public, max-age=15`). Shared caching a
+  viewer-dependent answer would replay one viewer's 200 to viewers the gate
+  refused, so the headers moved in the same change as the gate rather than
+  after it. The other ten gated routes already sent `private`.
+  - 📌 Twelve routes, **ten** guard call sites: `/reviews` and `/disputes`
+    share one handler, and `/followers` and `/following` share another, so one
+    guard covers two routes in each case.
+- **Not changed:** `GET /creators/:slug/gallery` stays `public` and **ungated**.
+  A creator is a published NFT page, not a person's profile, so profile
+  visibility does not reach it.
+- 📌 **Erratum fixed in passing:** the `/users/:handle/shift-log` block carried
+  **two** `**Errors:**` lines listing different sets. Folded into one.
+- ⚠ **Coordination:** the 403s and the header changes arrive with bcc-trust
+  `feat/f02-profile-visibility`. **That PR merges first.** Documenting a
+  refusal the deployed routes cannot yet perform is the inverse of the v1.80
+  problem. `contract-parity-guard.php` does not police error codes or cache
+  headers — it diffs declared routes against `register_rest_route()` calls — so
+  neither order turns CI red: this ordering is a correctness rule, not a
+  mechanical one.
+
+### v1.90 — 2026-11-11 — additive — "is this wallet yours?" after verification; unlink returns a fresh token
+
+
+Follow-up to v1.88 (bcc-trust #398). In an account someone else created with your address, v1.88 stops the takeover, but their wallet stays linked — this lets the proven owner see and remove it.
+
+- **`POST /auth/verify-email` (additive):** `linked_wallet_count: int` in the response — a count only.
+- **`DELETE /wallets/{id}` (additive):** on a true removal of the caller's own wallet, returns `token`, `expires_in`, `token_type`. With the option `bcc_unlink_revokes_sessions` ON (default **OFF**) it first revokes every earlier bearer token — other devices and tabs are signed out (intended). **Release order:** switch the option on only once (1) the frontend that stores the returned token on every unlink and (2) its token-swap race fix (an in-flight old-bearer request must not refresh → `ERR_REVOKED` → end the session) are both in production.
+- `linked_wallet_count: 0` can mean the wallet read failed — never act destructively on it.
+- No new routes.
+
+### v1.89 — 2026-11-11 — additive — `GET /auth/session`
+
+
+- **New `GET /auth/session`:** validates the presented Bearer JWT (canonical decode, no refresh grace, never the cookie session) and returns `{ user_id, handle, in_good_standing, expires_at }`. One `401 bcc_unauthorized` for every rejection; `409` without a handle; per-token `429`. `in_good_standing` fails open — not a security gate. For the frontend's `bcc-verified` provider (F-08), which must stop trusting POSTed identity fields.
+
+### v1.88 — 2026-11-11 — behaviour change plus additive — an email is only "verified" once its inbox is proven
+
+Closes an account pre-hijack: an address typed by someone who doesn't own it could end up marked verified, and `/auth/oauth` then linked the address owner's Google sign-in into that account. Ships with bcc-trust's matching release; the frontend email-change step ships alongside.
+
+- **`POST /auth/wallet-signup` (behaviour change):** sets `_bcc_email_verified='0'`, not `'1'`. A caller-supplied email gets the standard verification email; a placeholder gets none.
+- **`/auth/oauth` link-by-email (behaviour change):** only when the bridge marks the email provider-verified (Google + `email_verified: true`, a new **bridge payload field** inside the HMAC-signed body) **and** into an account whose flag is exactly `'1'`. Anything else fails closed (→ `handle_required`). The first link-by-email revokes the account's earlier bearer tokens.
+- **`POST /auth/oauth-complete` (behaviour change):** `'1'` only for an email the bridge marked provider-verified (stored on the provider_token); any other stored email starts `'0'` with the verification email. A provider_token minted before this version reads as unverified.
+- **`POST /auth/verify-email` (behaviour change):** revokes the account's earlier bearer tokens before minting the returned one. Clients must store the returned token (they already do — same shape as `/auth/login`).
+- **`POST /auth/resend-verification` (behaviour change):** also serves legacy `''` accounts (so they can verify and then link by email); never mails a wallet placeholder.
+- **`PATCH /me/account/email` (BREAKING response change):** no longer changes the email. It holds the new address pending and mails an OTP to it; the response is now `{ ok, pending, email_masked, expires_in }` (was `{ email }`). Clients must add a code-entry step.
+- **`POST /me/account/email/verify` (new):** confirms that code, promotes the address (verified), revokes earlier bearer tokens and returns a fresh one (`token`, `expires_in`, `token_type`), and sends the both-address canary. A wrong code is `bcc_invalid_otp` 422 (retry); nothing pending is `bcc_invalid_request` 400 (start again).
+- **Recovery email (`/me/account/recovery-email[/verify]`):** unchanged on the wire. Its pending slot is now shared with the email change (one pending address per account; a new request supersedes; a code only completes its own flow).
+
 ### v1.87 — 2026-11-10 — behaviour change plus additive — blocked senders are withheld on read
 
 §122. A message whose author the viewer has blocked is annotated with **`sender_blocked_by_viewer`** (always present on both inbox `last_message` and thread items), withheld, excluded from both unread counts, and generates no email.
