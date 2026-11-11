@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.105 · 2026-11-11 · Phase 1 deliverable
+**Status:** Draft v1.106 · 2026-11-11 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -7047,13 +7047,13 @@ Auth **operator**. Promotes a draft to published at authoritative server time.
 
 #### `POST /bcc/v1/validators/:pageId/announcements/:id/archive`
 
-Auth **operator** or **administrator** *(v1.9X)*. Archival is **one-way** in v1 and is **not a deletion** (§4.32.6).
+Auth **operator** or **administrator** *(v1.106)*. Archival is **one-way** in v1 and is **not a deletion** (§4.32.6).
 
-**Who may archive *(v1.9X)*.** Archive is the one announcement write that is **not** limited to
+**Who may archive *(v1.106)*.** Archive is the one announcement write that is **not** limited to
 the notice's author:
 
 - the page's **current** resolved operator may archive **any published notice on that page**,
-  including one written by a **previous** operator of the page (before v1.9X that answered
+  including one written by a **previous** operator of the page (before v1.106 that answered
   `404`, so after a claim hand-over the predecessor's notices could not be taken down by anyone);
 - a **site administrator** (`manage_options`) may archive any published notice.
 
@@ -7158,7 +7158,7 @@ semantics and are **out of scope**; they are neither accepted here nor affected 
 existing collection-creator permissions on page bio and image are unchanged.
 
 **Administrators hold recovery rights plus archive** — inspect drafts, inspect removed
-comments, restore removed comments, and *(v1.9X)* archive any published notice (§4.32.6 — a
+comments, restore removed comments, and *(v1.106)* archive any published notice (§4.32.6 — a
 one-way move off the page and the feed that keeps the public record). They may not create,
 edit, schedule, publish or pin, and may not act as the operator. An administrator who is *independently* the resolved
 operator gets operator rights through the normal path, never through an override.
@@ -7968,8 +7968,8 @@ spelling is intentional, so the disabled control and the eventual `403` give the
 
 **(d) Administrator capabilities — a separate object, never merged into either scope above**
 
-`can_inspect_drafts` · `can_inspect_removed` · `can_restore_comment` · `can_archive_any` *(v1.9X)*, on the admin routes only.
-**Every owner and row capability is `false` for a non-operator administrator** (§4.32.2). The archive route itself admits an administrator *(v1.9X)*; the row's `can_archive` stays the operator's answer, and `can_archive_any` is the administrator's.
+`can_inspect_drafts` · `can_inspect_removed` · `can_restore_comment` · `can_archive_any` *(v1.106)*, on the admin routes only.
+**Every owner and row capability is `false` for a non-operator administrator** (§4.32.2). The archive route itself admits an administrator *(v1.106)*; the row's `can_archive` stays the operator's answer, and `can_archive_any` is the administrator's.
 
 ##### Field-to-consumer trace
 
@@ -8860,8 +8860,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-<<<<<<< HEAD
-### v1.9X — 2026-11-11 — behaviour change plus additive — a new operator or an administrator can archive a predecessor's announcement (number assigned at merge)
+### v1.106 — 2026-11-11 — behaviour change plus additive — a new operator or an administrator can archive a predecessor's announcement
 
 Ships with bcc-trust F-147 (bcc-trust #478).
 
@@ -8869,7 +8868,7 @@ Ships with bcc-trust F-147 (bcc-trust #478).
 - **§4.32.2:** administrators gain archive; the rest of their rights are unchanged.
 - **Additive:** administrator capability `can_archive_any` (§4.32.11 (d)). No new error codes.
 - **Clients:** a row the current operator sees with `can_archive` allowed now archives instead of answering `404`.
-=======
+
 ### v1.105 — 2026-11-11 — behaviour change — the email-verification code has an attempt cap
 
 Ships with bcc-trust #500.
@@ -8913,7 +8912,6 @@ Ships with bcc-trust #489 (admin-controlled email digest).
 
 - **New `POST /auth/logout` (F-120):** signs out the presented bearer token server-side (its `jti` is denylisted until it can no longer be used or refreshed). Always `200 { ok: true }`, idempotent; per-token `429`; `no-store`. Afterwards every Bearer route, `/auth/session` and `/auth/refresh` reject that token with `401`. Clients call it **before** NextAuth `signOut()`.
 - **`POST /auth/logout-everywhere` and `PATCH /me/account/password` (F-76):** now also delete every Web Push subscription of the user, so revoked devices stop receiving pushes. Devices re-register on their next sign-in. Email-change verify is unchanged.
->>>>>>> origin/main
 
 ### v1.99 — 2026-11-11 — behaviour change — a hidden group, post or draft answers 404, never 403
 
