@@ -42,8 +42,10 @@ Each plugin repo has `.github/workflows/deploy.yml`:
   *hidden* from the transfer with `--filter='H /…'`, so they are not shipped
   and `--delete` removes any copy already on the server:
   - all three plugins: `tests/`, `composer.json`, `composer.lock`,
-    `phpstan*.neon`, `phpstan-bootstrap.php`, `phpunit*.xml.dist`,
-    `.gitignore`, `.gitattributes`
+    `phpstan.neon`, `phpstan-bootstrap.php`, `phpunit.xml.dist`,
+    `phpunit-integration.xml.dist`, `.gitignore`, `.gitattributes` — exact
+    names, no wildcards: a NEW dev file (e.g. a `phpstan-baseline.neon`)
+    ships until it is added to the filters, the guard and the regexes below.
   - bcc-search also: `README.md`
   - bcc-trust also: `docs/`, `MIGRATED-FROM.md` — **`scripts/` IS still
     shipped** (runbooks run them with `wp eval-file`), behind a deny-all
@@ -153,13 +155,25 @@ slice.
   tracked file, compare `git cat-file blob origin/main:<f> | git hash-object --stdin`
   against `ssh … git hash-object <server>/<f>`. Zero mismatches = in sync.
   (Line-ending-safe, unlike a raw byte diff.)
-  - **Shipped = tracked minus the dev-only hide list** (F-36). Build the
-    file list with the same root-anchored filter the deploy uses, or every
-    hidden file reads as a false mismatch (it is deliberately absent):
+  - **Shipped = tracked minus what the deploy never sends** (F-36): the
+    plugin's root-anchored hide list, plus `.git`/`.github` at ANY depth
+    (the deploy's `--exclude='.git' --exclude='.github'` is unanchored, and
+    `.github/workflows/*` IS tracked). Otherwise every one of those reads as
+    a false mismatch. Run `git ls-files` **from the plugin's repo root**
+    (the patterns are root-anchored), with the regex for THAT plugin:
     ```
-    git ls-files | grep -vE '^(tests/|docs/|composer\.(json|lock)$|phpstan[^/]*\.neon$|phpstan-bootstrap\.php$|phpunit[^/]*\.xml\.dist$|\.gitignore$|\.gitattributes$|README\.md$|MIGRATED-FROM\.md$)'
+    # bcc-core
+    git ls-files | grep -vE '^(tests/|composer\.json$|composer\.lock$|phpstan\.neon$|phpstan-bootstrap\.php$|phpunit\.xml\.dist$|phpunit-integration\.xml\.dist$|\.gitignore$|\.gitattributes$)|(^|/)\.git(hub)?(/|$)'
+    # bcc-search
+    git ls-files | grep -vE '^(tests/|composer\.json$|composer\.lock$|phpstan\.neon$|phpstan-bootstrap\.php$|phpunit\.xml\.dist$|phpunit-integration\.xml\.dist$|\.gitignore$|\.gitattributes$|README\.md$)|(^|/)\.git(hub)?(/|$)'
+    # bcc-trust
+    git ls-files | grep -vE '^(tests/|composer\.json$|composer\.lock$|phpstan\.neon$|phpstan-bootstrap\.php$|phpunit\.xml\.dist$|phpunit-integration\.xml\.dist$|\.gitignore$|\.gitattributes$|docs/|MIGRATED-FROM\.md$)|(^|/)\.git(hub)?(/|$)'
     ```
-    `.git`/`.github` paths are not tracked files, so they never appear.
+    Each regex was checked to reproduce exactly the file list an rsync
+    dry-run with that plugin's deploy flags transfers (2026-11-11: 101 /
+    29 / 1607 files). Keep a plugin's regex in step with its `deploy.yml`
+    filters — and don't use one union regex: it would hide `docs/`,
+    `README.md` and `MIGRATED-FROM.md` for plugins that DO ship them.
   - **Manifest counts** (e.g. in release memos) are counts of that filtered
     list. A count taken from plain `git ls-files` is larger by exactly the
     hidden files and is not a drift signal.
