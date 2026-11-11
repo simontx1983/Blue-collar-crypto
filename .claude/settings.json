@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash .claude/hooks/block-protected-files.sh"
+            "command": "f=\"$CLAUDE_PROJECT_DIR/.claude/hooks/block-protected-files.sh\"; [ -n \"$CLAUDE_PROJECT_DIR\" ] && [ -f \"$f\" ] || { echo \"hook not found: $f (is CLAUDE_PROJECT_DIR set?)\" >&2; exit 2; }; bash \"$f\""
           }
         ]
       }
@@ -18,19 +18,19 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash .claude/hooks/php-lint.sh"
+            "command": "f=\"$CLAUDE_PROJECT_DIR/.claude/hooks/php-lint.sh\"; [ -n \"$CLAUDE_PROJECT_DIR\" ] && [ -f \"$f\" ] || { echo \"hook not found: $f (is CLAUDE_PROJECT_DIR set?)\" >&2; exit 2; }; bash \"$f\""
           },
           {
             "type": "command",
-            "command": "bash .claude/hooks/ts-check.sh"
+            "command": "f=\"$CLAUDE_PROJECT_DIR/.claude/hooks/ts-check.sh\"; [ -n \"$CLAUDE_PROJECT_DIR\" ] && [ -f \"$f\" ] || { echo \"hook not found: $f (is CLAUDE_PROJECT_DIR set?)\" >&2; exit 2; }; bash \"$f\""
           },
           {
             "type": "command",
-            "command": "bash .claude/hooks/eslint-frontend.sh"
+            "command": "f=\"$CLAUDE_PROJECT_DIR/.claude/hooks/eslint-frontend.sh\"; [ -n \"$CLAUDE_PROJECT_DIR\" ] && [ -f \"$f\" ] || { echo \"hook not found: $f (is CLAUDE_PROJECT_DIR set?)\" >&2; exit 2; }; bash \"$f\""
           },
           {
             "type": "command",
-            "command": "bash .claude/hooks/color-token-check.sh"
+            "command": "f=\"$CLAUDE_PROJECT_DIR/.claude/hooks/color-token-check.sh\"; [ -n \"$CLAUDE_PROJECT_DIR\" ] && [ -f \"$f\" ] || { echo \"hook not found: $f (is CLAUDE_PROJECT_DIR set?)\" >&2; exit 2; }; bash \"$f\""
           }
         ]
       }
@@ -40,7 +40,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash .claude/hooks/section-11-reminder.sh"
+            "command": "bash \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/section-11-reminder.sh"
           }
         ]
       }
@@ -55,9 +55,9 @@
       "Bash(bash scripts/api-contract-check.sh:*)",
       "Bash(composer dump-autoload:*)",
       "Bash(npx --no-install tsc:*)",
-      "Bash(npx tsc:*)",
-      "Bash(cd bcc-frontend && npx:*)",
-      "Bash(npm --prefix bcc-frontend:*)",
+      "Bash(npm --prefix bcc-frontend run typecheck)",
+      "Bash(npm --prefix bcc-frontend run lint)",
+      "Bash(npm --prefix bcc-frontend run test)",
       "mcp__mysql__mysql_query"
     ]
   }

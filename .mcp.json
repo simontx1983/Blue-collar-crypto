@@ -10,11 +10,11 @@
     },
     "playwright": {
       "command": "npx",
-      "args": ["-y", "@playwright/mcp@latest"]
+      "args": ["-y", "@playwright/mcp@0.0.83"]
     },
     "mysql": {
       "command": "npx",
-      "args": ["-y", "@benborla29/mcp-server-mysql"],
+      "args": ["-y", "@benborla29/mcp-server-mysql@2.0.9"],
       "env": {
         "MYSQL_HOST": "127.0.0.1",
         "MYSQL_PORT": "10014",
@@ -23,7 +23,8 @@
         "MYSQL_DB": "local",
         "ALLOW_INSERT_OPERATION": "false",
         "ALLOW_UPDATE_OPERATION": "false",
-        "ALLOW_DELETE_OPERATION": "false"
+        "ALLOW_DELETE_OPERATION": "false",
+        "ALLOW_DDL_OPERATION": "false"
       }
     },
     "sentry": {

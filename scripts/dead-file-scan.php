@@ -117,12 +117,48 @@ function enumerate_php(string $base, array $excludeDirNames): array
     return $out;
 }
 
+// Fail closed on a missing or empty tree. enumerate_php() returns [] for a
+// missing directory, so a bare umbrella checkout (no plugin trees) used to
+// scan nothing, find nothing dead, and PASS. Each root must exist and hold
+// PHP, and the total must clear a floor well below today's size. On
+// 2026-11-10 there were 781 candidate files: core/src 82, search/app 15,
+// trust/app 562, trust/includes 122.
+const MIN_CANDIDATE_FILES = 200;
+
+$setupErrors = [];
+foreach (array_unique(array_merge($PLUGIN_SOURCE_ROOTS, $PLUGIN_REFERENCE_ROOTS)) as $rel) {
+    $abs = $REPO_ROOT . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $rel);
+    if (!is_dir($abs)) {
+        $setupErrors[] = "missing root: {$rel}";
+    }
+}
+
 $candidateFiles = [];
 foreach ($PLUGIN_SOURCE_ROOTS as $rel) {
     $abs = $REPO_ROOT . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $rel);
-    foreach (enumerate_php($abs, $EXCLUDE_DIR_NAMES) as $f) {
+    $found = enumerate_php($abs, $EXCLUDE_DIR_NAMES);
+    if ($found === [] && is_dir($abs)) {
+        $setupErrors[] = "source root has no PHP files: {$rel}";
+    }
+    foreach ($found as $f) {
         $candidateFiles[$f] = true;
     }
+}
+
+if ($setupErrors === [] && count($candidateFiles) < MIN_CANDIDATE_FILES) {
+    $setupErrors[] = sprintf(
+        'only %d candidate files found (floor %d); the plugin trees look truncated',
+        count($candidateFiles), MIN_CANDIDATE_FILES
+    );
+}
+
+if ($setupErrors !== []) {
+    fwrite(STDERR, "dead-file-scan: refusing to report on an incomplete tree:\n");
+    foreach ($setupErrors as $e) {
+        fwrite(STDERR, "  - {$e}\n");
+    }
+    fwrite(STDERR, "Check out bcc-core, bcc-search and bcc-trust under app/public/wp-content/plugins/.\n");
+    exit(1);
 }
 
 $referenceFiles = [];

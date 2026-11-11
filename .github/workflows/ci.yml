@@ -6,9 +6,10 @@ name: CI
 # static guards that span the contract docs (this repo) and the code (the
 # sibling repos).
 #
-# Note: this triggers on changes to THIS repo (docs/scripts). A route change
-# in a plugin repo won't auto-trigger it — run it manually or via the
-# Actions "Run workflow" button after cross-repo changes.
+# Triggers on changes to THIS repo (docs/scripts) and, via
+# repository_dispatch:[sibling-push], on every push to a sibling plugin's
+# main. A plugin PR (not yet merged) does not trigger it — run it manually
+# with "Run workflow" if you need the check before merging.
 
 on:
   push:
@@ -70,12 +71,38 @@ jobs:
       - name: Dead-file scan
         run: php scripts/dead-file-scan.php
 
+      # Fail-closed regressions for the three guards above. Each must FAIL,
+      # not pass over nothing, when a plugin root is missing, a parse yields
+      # zero items, or a register_rest_route() site is unresolved. Also pins
+      # contract-parity's METHOD+path matching: only a single EDITABLE-triple
+      # config is covered by documenting one of its verbs, and a DELETE
+      # sibling of a documented POST still fails. Runs copies of the guards
+      # against throwaway fixture roots, independent of the sibling checkouts.
+      - name: Guard fail-closed regressions
+        run: bash scripts/tests/guards-fail-closed.test.sh
+
       # Static mode only (no DB env vars → the live-table/live-index checks
       # self-skip). Armed 2026-07-23 after the Tier-3 schema reconcile drove
       # the guard to zero findings (declared == documented == live). The live
       # check remains a manual/staging step — see the script header.
       - name: Schema-drift parity (static)
         run: php scripts/schema-drift-guard.php
+
+      # Regression cases for the schema-drift guard's inventory Status
+      # handling (#162): a declared table relabelled ORPHAN/RETIRED must fail,
+      # the Status cell is matched exactly, and RETIREMENT_WINDOW entries fail
+      # once stale. Runs a copy of the guard against a throwaway fixture root
+      # — no DB, and independent of the sibling checkouts above.
+      - name: Schema-drift guard regressions
+        run: bash scripts/tests/schema-drift-guard.test.sh
+
+      # Regression cases for the guard's column parity (CHECK 3, #132):
+      # drift fails in both directions, an Active table needs a column block,
+      # and the doc / migration idioms (name(K), multi-column rows, struck
+      # columns, OPTIONAL rows, migration-map ADD COLUMNs, comment / tests /
+      # scripts ALTERs) are each pinned. Same fixture model as above.
+      - name: Schema-drift column-parity regressions
+        run: bash scripts/tests/schema-column-parity.test.sh
 
       # Parser regression tests for scripts/site-url-probe.sh. Runs here, in
       # the already-required guards job, rather than in site-url-guard.yml:
@@ -89,6 +116,3 @@ jobs:
       - name: site-url probe parser regressions
         run: bash scripts/tests/site-url-probe.test.sh
 
-      # wallet-case-preservation-check.php is intentionally NOT run here — it
-      # boots WordPress (needs mysqli + a DB), so it's a live-site check, not a
-      # static gate. Run it against a running site, not in CI.

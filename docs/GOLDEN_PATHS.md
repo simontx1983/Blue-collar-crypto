@@ -215,15 +215,33 @@ console.log({
 
 ### 2.1 Email change — full forensic chain
 
+An email change is **two steps** (verify-before-promote): the request holds the new address pending and mails a 6-digit code to the **new** address; only the code applies the change.
+
 Browser: navigate to `http://localhost:3000/settings/account`, fill the Change Email form with a valid new email + the test user's current password, click Save email.
 
-Then inspect the trail:
+**Step 1 — the request must NOT change anything yet.** Before entering the code:
+
+```bash
+wp eval '
+global $wpdb;
+$req = $wpdb->get_row("SELECT id, user_id, created_at FROM {$wpdb->prefix}bcc_trust_activity WHERE action = \"account_email_change_requested\" ORDER BY id DESC LIMIT 1");
+echo "Latest account_email_change_requested: " . ($req ? "id={$req->id} user={$req->user_id} at={$req->created_at}" : "(none)") . PHP_EOL;
+if ($req) {
+    $u = get_userdata((int) $req->user_id);
+    echo "user_email (must still be the OLD one): " . ($u ? $u->user_email : "(user gone)") . PHP_EOL;
+}
+'
+```
+
+Expected: a `account_email_change_requested` row within the last minute, `user_email` still the **old** address, and in Mailpit one "Confirm your new email address" mail to the **new** address carrying the code. If `user_email` already changed, the pending step is broken — that is the pre-hijack hole this two-step flow closes.
+
+**Step 2 — enter the code** from that mail in the Settings form. Then inspect the trail:
 
 ```bash
 wp eval '
 global $wpdb;
 
-// 1) Audit row landed?
+// 1) Audit row landed? (written on CONFIRM, not on the request)
 $row = $wpdb->get_row("SELECT id, user_id, action, created_at FROM {$wpdb->prefix}bcc_trust_activity WHERE action = \"account_email_changed\" ORDER BY id DESC LIMIT 1");
 echo "Latest account_email_changed: " . ($row ? "id={$row->id} user={$row->user_id} at={$row->created_at}" : "(none)") . PHP_EOL;
 
@@ -241,13 +259,14 @@ echo "email_changed_send_failed in current bucket: $ev" . PHP_EOL;
 ```
 
 **Expected:**
-- `Latest account_email_changed: id=N user=U at=YYYY-...` matching the click within the last minute.
+- `Latest account_email_changed: id=N user=U at=YYYY-...` matching the code entry within the last minute.
 - `Current user_email:` matches the new email.
 - `email_changed_send_failed in current bucket: 0`.
+- The SPA stays signed in: the confirm response carries a fresh token (every earlier bearer token for the account was revoked) and the SPA must have stored it. Being signed out right after confirming means the token was not swapped in.
 
 **Failure means:**
 - Missing audit row → `AuditLogger::log` failed silently (check `DegradationMetrics::record('audit_log_swallow', 'log_write_failed')` count — see Section 4).
-- Stale `user_email` → `wp_update_user` returned WP_Error and the endpoint surfaced it without rolling back; check the response body of the PATCH.
+- Stale `user_email` → the confirm did not apply: check the response of `POST /me/account/email/verify` (`422` wrong code — the pending change is kept, retry; `400` nothing pending — expired after 15 min or superseded by a newer request, start again; `409` the address was taken meanwhile).
 - `email_changed_send_failed > 0` → `wp_mail` is failing. Check Local's Mailpit UI (typically `http://localhost:<mailpit-port>`) or `wp-content/bcc-logs/`.
 
 **Authoritative artifacts:**
@@ -526,7 +545,7 @@ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:<mailpit-port>
 
 ### 6.3 Fire a real security email
 
-Trigger an email change via the SPA (Section 2.1), then check Mailpit. Expect TWO emails:
+Trigger an email change via the SPA (Section 2.1) **and confirm it with the code** — the canary is sent on confirmation, not on the request (the request only sends the "Confirm your new email address" code mail to the new address). Then check Mailpit. Expect TWO security emails:
 
 - To OLD address: subject `[<site_name>] Your account email was changed`, body containing "AWAY from this address" + "if you did NOT make this change."
 - To NEW address: subject `[<site_name>] Email change confirmed`.
@@ -804,9 +823,9 @@ foreach (($dm["degradation_metrics"]["subsystems"] ?? []) as $name => $events) {
 - `peepso_absence` (19 events)
 - `search_lkg` (2 events)
 - `search_ft_index` (1 event — FT-eligible query served by title-prefix fallback because the FULLTEXT index is missing; added 2026-07-19)
+- `search_trust` (1 event — `enrichment_unavailable`; a search or trending result served WITHOUT trust enrichment: text-only ranking, no impersonation guard; tagged `system_degraded`, cached 10 s, never as LKG; added 2026-11-11, F-24)
 - `read_model_fallback` (1 event)
 - `audit_log_swallow` (4 events)
-- `legacy_ajax` (3 events — was 9; 6 wallet/collection AJAX handlers retired 2026-05-25)
 - `account_security_mail` (7 events — Tier D `sessions_revoked_all_send_failed` added 2026-05-16; `password_reset_requested_send_failed` added 2026-05-30)
 - `cron_dispatch` (2 events — soft wp_schedule_single_event / AsyncDispatcher enqueue failures on the unrecoverable trust async surface)
 - `post_commit_task` (1 event — `vote_subtask_failed`; a post-commit trust step threw during execution and was swallowed; NOT a wp_options signal. `dispute_backfill_failed` retired with the §D5 backfill, Rank Phase 6)
@@ -817,6 +836,9 @@ foreach (($dm["degradation_metrics"]["subsystems"] ?? []) as $name => $events) {
 - `elite_eligibility` (4 events — `event_recompute_failed` (per cast/revoke/reaffirm) + `dispute_recompute_failed` (dispute resolved) + `tier_celebration_failed` (promotion notification) + `schema_unavailable` (code ahead of dbDelta; verdict not persisted, retryable); §J.12 cross-table gate on the top tier; sustained = FAIL-OPEN, unevaluated pages stay grandfathered as elite — trust-integrity alarm)
 - `validator_messaging` (5 events — `ambiguous_operator` (>1 verified operator claim on one validator page; surface fails closed, any occurrence is an incident), `schedule_failed` (backlog-delivery enqueue soft-failed at first activation; recurring sweep re-enqueues), `delivery_failed_terminal` (queued message exhausted MAX_ATTEMPTS; durably parked, needs `wp bcc-trust vmq` recovery), `lease_reaped` (expired processing lease returned to retryable; delivery worker died mid-row), `delivery_context_unsupported` (delivery ran where PeepSo's Chat writer is not booted — canonically WP-CLI; nothing delivered, no row touched, cooldown-throttled; sustained = delivery is being run via WP-CLI cron instead of the HTTP Action Scheduler / WP-Cron runner))
 - `rank_scoring` (4 events — `tier_snapshot_failed` (the daily per-user tier-day snapshot sweep threw; the §13.1 trust-window history develops gaps — fail-safe strict, a gap can only delay a promotion, never grant one, but sustained activation means promotions will resolve conservatively) + `login_write_failed` (a RankLoginListener login-day write threw; that member's login day may be missing from the time-credit / inactivity clocks) + `evidence_ingest_failed` (a Phase 4 rank_events ledger subscriber threw; that evidence event is missing from the member's ledger — fail-safe strict, but sustained activation means the ledger is silently under-recording) + `poll_close_failed` (the hourly Phase 6 meaningful-vote poll-close sweep threw; due polls stop closing, so disputes stall open in `reviewing` — fail-safe strict, no outcome is ever applied early, recovers when the sweep next succeeds); Rank redesign Phases 1+4+6, 2026-08-04)
+- `collection_persist` (3 events — `write_failed` (a `CollectionPersistBatch::persist()` batch lost at least one collection row; partial loss, and the failed row keeps its old `expires_at` so the chain-refresh cron re-selects it — sustained activation means the retry is not catching up) + `batch_total_failure` (`failed === total` with `total > 0`: the wallet made no progress at all, which usually means the table or the connection rather than the data) + `watermark_withheld` (⚠⚠ **declared in the map but NOT WIRED** — it was specified as the gallery refresh declining to advance `markHoldingsRefreshed()` after a failed batch, and no such path exists; the only withholding is `HoldingsService:1039` on an incomplete provider walk, a holdings-read concern that never sees a persist batch, so a zero for this event is vacuous until it has a writer); two call sites — `WalletSeedService:140` and `ChainRefreshService:1112` — not the three bcc-trust #221 names; bcc-core #61 + bcc-trust #221, 2026-11-10)
+- `moderation_hidden_ids` (5 events — `exists_read_failed` (a single-row hidden check errored and was answered "hidden", failing closed) + `list_read_failed` (the full hidden-id list read errored; never cached) + `served_last_good` (the persisted last-known-good list was served instead; the paired error log carries `last_good_age_seconds`) + `no_last_good` (a failed read with no last-good list: the request fails rather than show hidden posts) + `ceiling_reached` (more than the 50,000-row read ceiling, so the OLDEST hidden posts beyond it are not excluded); bcc-trust `HiddenActivityRepository`, F-98/F-77, 2026-11-10; expected steady state zero, not yet baked)
+- `auth_throttle` (2 events — `wallet_login_ceiling` + `oauth_login_ceiling` (the 300/min route-wide ceiling on `/auth/wallet-login` or `/auth/oauth` tripped, so every identity on that route is refused for the rest of the minute: a flood, or the ceiling set too low for real traffic); bcc-trust `AuthSupport::allowIdentityAttempt()`, F-123/F-131, 2026-11-11; expected steady state zero, any activation is worth a look)
 
 **Failure means:** A registered subsystem dropped out of the canonical map in `bcc-core/bcc-core.php`. New subsystems wired into `DegradationMetrics::record()` MUST register here — the map is the only place future agents discover which events are even possible.
 

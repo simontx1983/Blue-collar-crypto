@@ -191,7 +191,24 @@ $docFiles = [
 
 $findings = [];
 
+// Vacuity floor: a doc whose claims the regex no longer recognises (format
+// drift, heading rewrite, file emptied) yields zero claims and compares
+// nothing, which would PASS silently. Each doc carries claims today
+// (2026-11-10: pattern-registry 15 lines, GOLDEN_PATHS 17), so zero means
+// the check went blind, not that the docs are clean. The same applies to
+// an empty canonical map.
+if ($canonical === []) {
+    $findings[] = 'bcc-core.php canonical subsystem map parsed as EMPTY; the extractor no longer recognises it';
+}
+
+// The floor counts COMPARED claims: those whose name is in the canonical
+// map, so a count was actually checked. A raw regex hit is not enough,
+// because the loop skips underscore-free names, so "total (5 events)" would
+// otherwise satisfy the floor while comparing nothing.
+$comparedTotal = 0;
+
 foreach ($docFiles as $absPath => $relPath) {
+    $compared = 0;
     foreach (extract_doc_claims($absPath) as $claim) {
         $name  = $claim['name'];
         $count = $claim['count'];
@@ -210,6 +227,7 @@ foreach ($docFiles as $absPath => $relPath) {
             continue;
         }
 
+        $compared++;
         if ($canonical[$name] !== $count) {
             $findings[] = sprintf(
                 "%s:%d — '%s' claims %d events but canonical map has %d",
@@ -217,11 +235,19 @@ foreach ($docFiles as $absPath => $relPath) {
             );
         }
     }
+    if ($compared === 0) {
+        $findings[] = sprintf(
+            "%s — 0 subsystem-count claims compared against the canonical map (`name (N events)` / `name / N events`); the doc format drifted or the regex went blind",
+            $relPath
+        );
+    }
+    $comparedTotal += $compared;
 }
 
 if ($findings === []) {
     echo "PASS: subsystem counts match between bcc-core.php and docs ("
-       . count($canonical) . " subsystems checked).\n";
+       . $comparedTotal . " doc claims compared across " . count($docFiles)
+       . " docs; canonical map has " . count($canonical) . " subsystems).\n";
     exit(0);
 }
 

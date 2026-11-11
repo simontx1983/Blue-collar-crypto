@@ -95,7 +95,7 @@ schema-install path in `tables.php` is itself routed through the same runner.
 | wp_bcc_trust_rank_events | 0 | Append-only Rank evidence ledger (Rank Phase 4, shadow; one row per event×category; reversal = status flip; NEVER pruned) | TableRegistry::rankEvents / schema-rank-events.php / RankEventsRepository | Active |
 | wp_bcc_trust_cluster_findings | 0 | Formal non-independence determinations (Rank Phase 4, R3; representative-member semantics; distinct from patterns/fraud_analysis signal stores) | TableRegistry::clusterFindings / schema-cluster-findings.php / ClusterFindingsRepository | Active |
 | wp_bcc_trust_rank_state | 0 | Canonical Rank progression row (Rank Phase 5; one row per RANKED member — missing row = New Member fail-safe; column is rank_slug because RANK is a MySQL 8 reserved word) | TableRegistry::rankState / schema-rank-state.php / RankStateRepository | Active |
-| wp_bcc_trust_rank_pending | 0 | 24h Apprentice confirmation clock (Rank Phase 5, R1; states pending/confirmed/voided) | TableRegistry::rankPending / schema-rank-pending.php / RankPendingRepository | Active |
+| wp_bcc_trust_rank_pending | 0 | 24h Apprentice confirmation clock (Rank Phase 5, R1; states pending/confirmed/voided; voided re-arms on a new contribution, F-71) | TableRegistry::rankPending / schema-rank-pending.php / RankPendingRepository | Active |
 | wp_bcc_trust_community_ownership_log | 0 | Append-only custody ledger for User-kind communities (Rank Phase 7, §21.2; events create/receive/transfer_out; cooldown = MAX(created_at) per user, read live; rows never mutate) | TableRegistry::communityOwnershipLog / schema-community-ownership-log.php / CommunityOwnershipLogRepository | Active |
 | wp_bcc_trust_findings | 0 | Formal misconduct findings per member (Rank Phase 8, §15; wp-admin issuance ONLY; penalty/ceiling values are issuance-time snapshots; status active/reversed; once-only appeal gate on appeal_status; distinct from cluster_findings) | TableRegistry::findings / schema-findings.php / FindingsRepository | Active |
 | wp_bcc_trust_finding_decisions | 0 | Append-only decision history per finding (Rank Phase 8, §15.5; issued + upheld/reduced/reversed/remanded rows; no update, no delete — original penalty snapshot survives in the issued row) | TableRegistry::findingDecisions / schema-finding-decisions.php / FindingDecisionsRepository | Active |
@@ -115,7 +115,7 @@ schema-install path in `tables.php` is itself routed through the same runner.
 | wp_bcc_trust_user_verifications | 2 | Per-user external verifications (GitHub/X/domain/wallet) | TableRegistry::userVerifications | Active |
 | wp_bcc_trust_quest_log | 9 | Onboarding quest completions per user | TableRegistry::questLog | Active |
 | wp_bcc_post_shortcodes | 133 | Sidecar act_id → 8-letter public shortcode for post permalinks (`/u/{handle}/post/{code}`) | PostShortcodeRepository / schema-post-shortcodes.php | Active |
-| wp_bcc_user_ranks | 0 | Awarded ranks per user — backed the never-built conferred-Foreman role | none (repo + schema deleted 2026-07-09) | **RETIRED** — dropped by `includes/database/drop-user-ranks-table.php` |
+| wp_bcc_user_ranks | 0 | Awarded ranks per user — backed the never-built conferred-Foreman role | none (repo + schema deleted 2026-07-09); dropped by `includes/database/drop-user-ranks-table.php` | RETIRED |
 | wp_bcc_page_read_model | 2777 | Denormalized page read model for discovery/search | TableRegistry::pageReadModel / schema-project.php | Active |
 | wp_bcc_rm_dirty_queue | 0 | Dirty-page queue driving read-model recompute | TableRegistry::dirtyQueue | Active |
 | wp_bcc_page_follows | 12 | User→page follow edges | TableRegistry::pageFollows | Active |
@@ -133,13 +133,15 @@ schema-install path in `tables.php` is itself routed through the same runner.
 | wp_bcc_push_subscriptions | 3 | Web-push VAPID subscriptions per user/device | TableRegistry::pushSubscriptions | Active |
 | wp_bcc_chains | 21 | Supported chains registry (RPC/REST/explorer config); also carries the three per-chain NFT flags — `cosmwasm_nft_discovery_enabled` (CosmWasm-scanner opt-in, 2026-08), plus `bcc_supports_nft_collections` and `manual_collection_discovery_enabled` (per-chain NFT capability model, 2026-08 — the latter is misleadingly named and gates ONE-contract manual intake, not chain-wide discovery; see its column entry). All three are DEFAULT 0 with no backfill — installing or updating opts in exactly zero chains | schema-chains.php (Onchain) | Active |
 | wp_bcc_chain_nft_capabilities | 0 | Per-chain NFT driver OVERRIDES: one row per (chain, operation, driver) that DISABLES or REORDERS a driver the code registry already offers. Narrow-only — a row can never grant a driver operation the code does not implement, and an absent row means "registry default applies". Empty on every install | schema-chain-nft-capabilities.php / ChainNftCapabilityRepository | Active |
-| wp_bcc_chain_checkpoints | 8 | Per-chain indexer checkpoint + CU budget; also carries the `cw_*` CosmWasm-discovery state (backfill cursor, code-id watermark, pause, per-pass timestamps) added 2026-08 | schema-chain-checkpoints.php | Active |
+| wp_bcc_chain_checkpoints | 8 | Per-chain indexer checkpoint + CU budget (the 2026-08 `cw_*` CosmWasm-discovery columns were dropped with the scanner schema in S9b) | schema-chain-checkpoints.php | Active |
 | wp_bcc_discovery_runs | 0 prod · dropped on stage (was 10) | PR 7A durable run ledger for administrator-requested discovery scans (status, lease, attempts, bounded stop reason, work counts). PR 7.3 adds `chunks_used`, bounding one authorized multi-chunk session. Execution HISTORY only — it holds no cursor, so it is not a second progress table. ⛔ **DORMANT since the 2026-09-18 scanner freeze (bcc-trust #261)**: no new run can be created, claimed or executed, and `bcc_discovery_run_maintenance` no longer prunes, so existing history is retained rather than aged out. ⛔ **DROPPED ON STAGING 2026-10-09** by `drop_scanner_schema_v1` (bcc-trust #290, merge `04f18244`, migration COMPLETE at 13:40:19Z, marker `bcc_trust_scanner_schema_dropped`). No longer declared anywhere in `main`: its `schema-*.php` file is deleted, so dbDelta neither creates nor re-creates it. ⚠ **STILL PRESENT ON PRODUCTION**, which runs `d84c2ac1` (S1–S6, deployed 2026-10-07) — there the table is still declared, still created by dbDelta and still holds its rows, because the drop migration is not deployed there. Production cleanup is UNAUTHORIZED and pending. Not orphaned | schema-discovery-runs.php | RETIRED |
 | wp_bcc_cosmwasm_code_families | 102 prod · dropped on stage (was 742) | CosmWasm code-family inventory: one row per (chain, code id) with its CW-721 classification, bounded probe evidence, retry/backoff state and contract-enumeration cursor (CosmWasm discovery 2026-08; `not_cw721` is terminal and never routinely re-classified). ⛔ **DORMANT since the 2026-09-18 scanner freeze (bcc-trust #261)** — the scanner that discovers, classifies and enumerates is frozen, so **no new row can be created**. ⚠ Not write-inert, though: the **unfrozen** Cosmos endpoint switch (`ChainsPage::ACTION_ENDPOINT_SWITCH` → `CosmosEndpointTransition::execute()`) still calls `CosmwasmCodeFamilyRepository::clearContractCursors()` on EXISTING rows, so the table is maintained, not abandoned. ⛔ **DROPPED ON STAGING 2026-10-09** by `drop_scanner_schema_v1` (bcc-trust #290, merge `04f18244`, migration COMPLETE at 13:40:19Z, marker `bcc_trust_scanner_schema_dropped`). No longer declared anywhere in `main`: its `schema-*.php` file is deleted, so dbDelta neither creates nor re-creates it. ⚠ **STILL PRESENT ON PRODUCTION**, which runs `d84c2ac1` (S1–S6, deployed 2026-10-07) — there the table is still declared, still created by dbDelta and still holds its rows, because the drop migration is not deployed there. Production cleanup is UNAUTHORIZED and pending. Not orphaned | schema-cosmwasm-code-families.php / CosmwasmCodeFamilyRepository | RETIRED |
 | wp_bcc_cosmwasm_contracts | 36 prod · dropped on stage (was 3,762) | CosmWasm contract candidate ledger: one row per (chain, contract address) with classification, retry state, cached operator-deny flag and emit marker (CosmWasm discovery 2026-08; this durable row IS the memory that stops previously-inspected contracts being reprocessed). ⛔ **DORMANT since the 2026-09-18 scanner freeze (bcc-trust #261)** — the scanner is the only thing that discovers contracts, so **no new row can be created**. Manual Add Collection does not touch this table at all: `ManualCollectionIntakeService` uses `ChainRepository` and `CollectionRepository::addManual()` only. ⚠ Not write-inert, though: the **unfrozen** Hide/Unhide stance actions (`VerifyCollectionsPage::ACTION_HIDE` / `ACTION_UNHIDE` → `CosmwasmDiscoveryService::syncDenyFlags()` → `CosmwasmContractRepository::setDenied()`) still UPDATE the `denied` column on an EXISTING row. That path inserts nothing — `syncDenyFlags()` skips an address with no row. ⛔ **DROPPED ON STAGING 2026-10-09** by `drop_scanner_schema_v1` (bcc-trust #290, merge `04f18244`, migration COMPLETE at 13:40:19Z, marker `bcc_trust_scanner_schema_dropped`). No longer declared anywhere in `main`: its `schema-*.php` file is deleted, so dbDelta neither creates nor re-creates it. ⚠ **STILL PRESENT ON PRODUCTION**, which runs `d84c2ac1` (S1–S6, deployed 2026-10-07) — there the table is still declared, still created by dbDelta and still holds its rows, because the drop migration is not deployed there. Production cleanup is UNAUTHORIZED and pending. Not orphaned | schema-cosmwasm-contracts.php / CosmwasmContractRepository | RETIRED |
 | wp_bcc_wallet_links | 9 | User↔wallet links per chain | schema-wallets.php / WalletRepository | Active |
 | wp_bcc_onchain_signals | 3 | Unified on-chain trust signals (wallet age/tx/role boost) | schema-core.php / OnchainSignalRepository | Active |
 | wp_bcc_onchain_claims | 0 | Entity claims (incl. page claims via entity_type='page') | schema-claims.php | Active |
+| wp_bcc_operator_profiles | 0 | One shared public branding/profile record per validator operator account (brand name, bio, links, logo attachment) | schema-operator-profiles.php / OperatorProfileRepository | Active |
+| wp_bcc_operator_profile_overrides | 0 | Optional per-validator-page profile overrides; null inherits the operator's shared value | schema-operator-profiles.php / OperatorProfileRepository | Active |
 | wp_bcc_onchain_collections | 314 | NFT collection metadata cache (TTL) | schema-collections.php | Active |
 | wp_bcc_collection_signals | 2 | Per-(user,collection) demand/verify stance signals (airdrop-proof demand queue) | schema-collection-signals.php / CollectionSignalRepository | Active |
 | wp_bcc_onchain_collection_pieces | 0 | Individual NFT pieces within a collection (TTL) | schema-collection-pieces.php | Active |
@@ -206,6 +208,17 @@ schema-install path in `tables.php` is itself routed through the same runner.
 > so a RETIRED row whose table is still declared is not flagged at all. The
 > reverse order fails from the moment bcc-trust `main` loses the declarations.
 >
+> **⚠ Guard changed after this was measured (issue #162).** The guard now
+> *fails* a documented-RETIRED (or ORPHAN) table that is still declared —
+> otherwise relabelling a live table was a static false-green. The window
+> above is still the required order, but it now has to be opened explicitly:
+> the umbrella PR that flips a row to `RETIRED` while bcc-trust `main` still
+> declares the table must also add that table, with a reason, to
+> `RETIREMENT_WINDOW` in `scripts/schema-drift-guard.php`. The follow-up
+> umbrella PR removes the entry once the drop has merged; an entry left behind
+> fails as stale. The Status cell must also be exactly `Active`, `ORPHAN` or
+> `RETIRED` — any other wording fails.
+>
 > ⚠ And it cannot be dodged by timing: `.github/workflows/ci.yml` checks the
 > plugin out with no `ref:`, so `actions/checkout` takes bcc-trust's **default
 > branch**. This repo's CI always compares its docs against bcc-trust `main`,
@@ -243,10 +256,14 @@ schema-install path in `tables.php` is itself routed through the same runner.
 >    request after an S9b deploy, and a files-only rsync is enough to trigger
 >    it — there is no separate "run migrations" step.
 >
-> **⚠ CI cannot police the columns.** `scripts/schema-drift-guard.php` compares
-> table names and index tuples and has no column-level parity at all, so the
-> `cw_*` drop is invisible to it in both directions. The checks that do cover
-> it are integration tests on real engines —
+> **Columns: what CI polices now (issue #132).** When this was written, the
+> guard compared only table names and index tuples, so the `cw_*` drop was
+> invisible to it in both directions. That drift then sat in this document,
+> green, until #132. CHECK 3 now compares every documented-Active table's
+> column block with the columns its shipped schema code declares, statically
+> and in both directions. It still sees only the code and the doc, never a
+> database: whether a drop migration has actually RUN on an environment is
+> covered by the integration tests on real engines —
 > `ChainCheckpointRetiredColumnsIntegrationTest` and
 > `ChainsCapabilityColumnAnchorIntegrationTest`, both of which run the
 > projection with the retired columns present *and* dropped, on MySQL and
@@ -264,6 +281,8 @@ schema-install path in `tables.php` is itself routed through the same runner.
 ## Active tables — per-table detail
 
 Legend: column rows are `name · type · null · key` (key: PK / UQ unique / K indexed; FK·generated·auto noted inline).
+`OPTIONAL` in a row marks a column that **no schema install creates**. Only a hand-run script, named on that row, adds it, so code must not assume it exists.
+A bullet beginning `*Column dropped:*` or `*Columns dropped:*` is history, not a column row.
 Indexes listed as `name (cols) [unique]`.
 
 ### Core / trust engine
@@ -283,7 +302,7 @@ Per-(voter,page,category) trust vote with weight + vesting lifecycle.
 - weight_corrected_at · datetime · YES · K
 - reason · varchar(100) · YES
 - explanation · text · YES
-- status · tinyint · NO
+- status · tinyint · NO — `0` retracted by the voter (re-casting restores the row; purged after `BCC_TRUST_CLEANUP_VOTES` days) · `1` active (the only value any score, feed or count reads) · `2` removed by accepted dispute (re-vote blocked; never purged by the cleanup sweep) · `3` removed by moderation — admin clear, ring invalidation, account deletion (re-vote blocked; restorable via `VoteRemovalService::restoreModeratedVotes()` for `MODERATION_RESTORE_WINDOW_DAYS` = 90 days, then purged). Constants on `VoteRepository::STATUS_*`. Bulk removal only ever moves `1 → 3` (bcc-trust #428)
 - ip_address · varbinary(16) · YES · K
 - created_at · datetime · NO · K
 - updated_at · datetime · NO
@@ -295,7 +314,7 @@ Per-(page,category) aggregate score row. Self-page tier is the page row here.
 - category_id · bigint unsigned · NO · PK
 - page_owner_id · bigint unsigned · NO · K
 - total_score · decimal(5,2) · NO
-- onchain_bonus / endorsement_bonus · decimal(10,2) · NO
+- onchain_bonus / attestation_bonus · decimal(10,2) · NO — `attestation_bonus` is the trust-attestation (vouch) synthesis term in `TrustScoreService`. It replaced `endorsement_bonus`, which `includes/database/drop-endorsement-bonus.php` dropped from both score tables (Slice E follow-up, 2026-06-28)
 - positive_score / negative_score · decimal(5,2) · NO
 - vote_count / unique_voters · int unsigned · NO
 - confidence_score · decimal(3,2) · NO · K
@@ -425,7 +444,11 @@ started the §5.2 confirmation. The 5-minute sweep
 (`bcc_rank_confirmation_sweep`) awards Apprentice at `due_at` iff the
 six R1 conditions hold; pending reports and report-volume auto-hide
 never pause, reset, or extend the clock. States: pending → confirmed |
-voided. `content_act_id` sits alongside the wp_posts id because content
+voided, and voided → pending when a NEW qualifying contribution re-arms the
+clock (`RankPendingRepository::restartIfVoided`, F-71). A void for a content
+reason (`content_removed`, `content_unpublished`, `report_upheld`) re-arms only
+7 days after the void (`resolved_at`); `suspended` re-arms immediately. No
+column change. `content_act_id` sits alongside the wp_posts id because content
 reports key feed items by activity id (the R1 report-resolution check
 needs it).
 - user_id · bigint unsigned · NO · PK
@@ -661,6 +684,8 @@ Per-user external verifications (GitHub/X/domain/wallet).
 - type · varchar(50) · NO · K
 - provider_id / provider_username / provider_avatar · varchar(255) · YES
 - meta · text · YES; access_token · text · YES
+- refresh_token · text · YES — OAuth refresh token, stored ENCRYPTED like `access_token` (`XRepository` writes both through `encryptToken()`); NULL when the provider issued none
+- token_expires_at · datetime · YES — UTC (`gmdate`) expiry of `access_token`, from the provider's `expires_in`; NULL when not supplied
 - trust_boost · float · YES · K; fraud_reduction · int · YES
 - status · varchar(20) · NO · K
 - verified_at · datetime · YES · K; last_synced · datetime · YES
@@ -675,6 +700,36 @@ Onboarding quest completions per user.
 - completed_at · datetime · NO
 - Indexes: PRIMARY (id) [uq]; uq_user_quest (user_id,quest_slug) [uq]; idx_user (user_id)
 
+#### wp_bcc_trust_helpful_marks
+The §9.2 deliberate "Mark helpful" store (`schema-helpful-marks.php`). One row per (act_id, user_id). The row's existence IS the mark: there is no counter, and un-marking hard-deletes the row. This is NOT a cosmetic reaction. A credible marker's mark credits the content author's Rank `helping` evidence, which is why it is kept apart from `wp_bcc_trust_stokes` and PeepSo's reactions.
+- id · bigint unsigned · NO · PK auto — the STABLE source id the Rank evidence ledger keys on (`helpful_mark:{id}:{author}`), so un-marking reverses exactly the evidence the mark minted
+- act_id · bigint unsigned · NO · K (peepso_activities.act_id)
+- user_id · bigint unsigned · NO — the marker
+- created_at · datetime · NO
+- Indexes: PRIMARY (id) [uq]; uq_act_user (act_id,user_id) [uq]; idx_act_id (act_id)
+
+#### wp_bcc_trust_stokes
+One row per (act_id, user_id) stoke (`schema-stokes.php`, `TableRegistry::stokes`). The row's existence is the stoke. It feeds feed `heat_stage` and the public `stoke_count`, is cosmetic for trust, and is never written to a score.
+- id · bigint unsigned · NO · PK auto
+- act_id · bigint unsigned · NO · K (peepso_activities.act_id)
+- user_id · bigint unsigned · NO
+- stoke_count · tinyint unsigned · NO — vestigial, always 1. `StokeRepository` inserts it once via `INSERT IGNORE` and never increments it. Presence and `COUNT(*)` are the signal
+- last_stoked_at · datetime · YES · K
+- created_at · datetime · YES
+- Indexes: PRIMARY (id) [uq]; uq_act_user (act_id,user_id) [uq]; idx_act_id (act_id); idx_last_stoked_at (last_stoked_at)
+
+#### wp_bcc_attestor_reliability_cache
+§J.3.2 per-attestor memoization of `AttestationOutcomeClassifier::classifyForAttestor` (`schema-attestor-reliability-cache.php`, `TableRegistry::attestorReliabilityCache`). This is a RECOMPUTE CACHE, not a source of truth. The daily `bcc_attestor_reliability_sweep` cron owns every write. Readers (`/me/reliability`, `ReliabilityStandingComputer`) fall back to a live compute on a miss and never write.
+- user_id · bigint unsigned · NO · PK — the attestor
+- operator_reliability / consensus_reliability / early_read_accuracy · decimal(4,3) · NO — the two §J.3.2.1 sub-tracks (`consensus_reliability`, `early_read_accuracy`) stay at their defaults until Slice 4 populates them
+- reliability_standing · varchar(20) · NO — default `newly_active`
+- attestation_count · int unsigned · NO
+- trend · varchar(10) · NO — default `steady`
+- reliability_baseline · decimal(4,3) · NO; baseline_at · datetime · YES
+- targets_disputed_and_upheld / targets_disputed_and_dismissed / targets_received_further_attestations / targets_clean_and_active · int unsigned · NO — the classifier's track-record breakdown, populated by the sweep so that a cache hit and a miss serve the same `track_record`
+- computed_at · datetime · NO · K
+- Indexes: PRIMARY (user_id) [uq]; idx_computed (computed_at)
+
 #### wp_bcc_post_shortcodes
 Sidecar mapping `peepso_activities.act_id` → the 8-letter public shortcode used in post
 permalinks (`/u/{handle}/post/{code}`). Codes mint lazily on first feed emission
@@ -688,7 +743,9 @@ Sidecar (not a column) because PeepSo owns `peepso_activities`.
 #### wp_bcc_search_terms (bcc-search)
 Search-analytics aggregate: one row per (norm_term, vertical, day), UPSERT-collided on the
 unique key by `SearchTermsRepository::record()`. Self-heal installed (option-guarded,
-advisory-locked); rows past the 120-day retention window pruned daily
+advisory-locked); rows past the 30-day retention window pruned daily (was 120 days
+until F-53, 2026-11-11; the users vertical — names of people searched — is never
+recorded)
 (`bcc_search_terms_prune` cron). The only bcc-search-owned table.
 - id · bigint unsigned · NO · PK auto
 - norm_term · varchar(100) · NO
@@ -728,14 +785,15 @@ Denormalized page read model for discovery/search reads (updated via score/vote/
 - follower_count · int unsigned · NO · K
 - page_type · varchar(50) · NO · K
 - is_verified · tinyint(1) · NO · K
-- last_updated · datetime · NO
+- has_verified_claim · tinyint(1) · NO · K — 1 when the page has a primary verified on-chain claim (`ClaimRepository::getPrimaryClaimsByPageIds`). Feeds the claim-verified term of the discovery ranking score (`ScoreReadService::computeRankingScore`, filter `bcc_rank_claim_verified_bonus`)
 - positive_score / negative_score / onchain_bonus · decimal(5,2) · NO
+- attestation_bonus · decimal(10,2) · NO — mirror of `wp_bcc_trust_page_scores.attestation_bonus`. The former `endorsement_bonus` was dropped by `includes/database/drop-endorsement-bonus.php`
 - github_username · varchar(100) · YES; github_followers · int unsigned · NO
 - x_username · varchar(100) · YES; x_followers · int unsigned · NO
 - has_wallet · tinyint(1) · NO
 - last_vote_at / last_endorsement_at · datetime · YES
-- updated_at · datetime · NO; endorsement_bonus · decimal(10,2) · NO
-- Indexes: PRIMARY (page_id) [uq]; idx_trust_sort (trust_score); idx_tier_trust (reputation_tier,trust_score); idx_type_trust (page_type,trust_score); idx_verified_trust (is_verified,trust_score); idx_endorsement_sort (endorsement_count); idx_follower_sort (follower_count); idx_owner (owner_id); idx_confidence (confidence_score)
+- updated_at · datetime · NO — the row timestamp (`ON UPDATE CURRENT_TIMESTAMP`). There is no `last_updated` column on this table
+- Indexes: PRIMARY (page_id) [uq]; idx_trust_sort (trust_score); idx_tier_trust (reputation_tier,trust_score); idx_type_trust (page_type,trust_score); idx_verified_trust (is_verified,trust_score); idx_claim_verified_trust (has_verified_claim,trust_score); idx_endorsement_sort (endorsement_count); idx_follower_sort (follower_count); idx_owner (owner_id); idx_confidence (confidence_score)
 
 #### wp_bcc_rm_dirty_queue
 Dirty-page queue driving read-model recompute.
@@ -941,23 +999,22 @@ Supported chains registry (RPC/REST/explorer config).
 - native_token · varchar(20) · YES; color · char(7) · YES
 - is_testnet · tinyint(1) · NO
 - is_active · tinyint(1) · NO · K
-- cosmwasm_nft_discovery_enabled · tinyint(1) · NO — per-chain operator opt-in for the CosmWasm CW-721 scanner (added 2026-08, post-install migration). ⛔ **Inert since the 2026-09-18 scanner freeze (bcc-trust #261)**: the two routes that write it (`admin_post_bcc_chain_cw_discovery_enable` / `_disable`) are frozen entry points, the button is replaced by a `Scanner frozen` label, and the only code that READS it is the frozen scanner. A chain already at 1 scans nothing. ⚠ Do not confuse it with the two manual capability columns below, which are **not** frozen and keep their own unfrozen routes. **DEFAULT 0 with no backfill**, so installing or updating the plugin opts in exactly zero chains; enabling a chain is an explicit operator act. Distinct from `wp_bcc_chain_checkpoints.cw_discovery_state = 'unsupported'`, which is a MEASURED fact (the chain answered the code listing with HTTP 501) rather than an intent — the scanner requires both, and an operator cannot assert a wasm module that is not there. Not a gate on anything else: wallet linking, holdings, validators and Halls all read this table without it.
+- description · text · YES — the "About this chain" copy, edited in the admin Chains ▸ Identity editor (`ChainRepository`). Fresh installs get it from the CREATE TABLE and existing databases from the guarded ALTER in `schema-chains.php`
 - bcc_supports_nft_collections · tinyint(1) · NO — **BCC's PRODUCT decision**: "we support NFT collections on this chain." Never a claim about the blockchain; a chain can be perfectly CW-721 capable and still sit at 0 because BCC has not taken it on. Added 2026-08 with the per-chain NFT capability model. **DEFAULT 0 with no backfill**, so no chain gains NFT product support by installing or updating.
 - manual_collection_discovery_enabled · tinyint(1) · NO — **PERMISSION** for an administrator to submit ONE contract address on ONE chain through manual intake. ⚠ **The name is historical and now misleading: despite the word "discovery" this column does NOT authorize, start, resume or unfreeze chain-wide discovery, and never re-arms the frozen scanner.** It is read through `NftChainCapability::manualDiscoveryState()` by exactly one consumer — `ManualCollectionIntakeService`, which refuses with `manual_discovery_disabled` when it is not `1` — and it gates the intake of a single submitted chain + contract. **No cron reads it**: every recurring discovery hook was retired in 2026-08 and cannot re-arm, so this column can only ever be consulted by a human-initiated action. It is deliberately NOT renamed in this documentation PR. **DEFAULT 0 with no backfill.** Kept separate from `bcc_supports_nft_collections` because the two answer to different people — fusing them would mean an operator granting permission implicitly asserted product support, and a product decision implicitly armed a button. ⚠ Several bcc-trust source comments still describe it as permission to start a chain-wide discovery (`NftCapabilityEditor`, `NftChainCapability`, `NftDiscoveryPage`); those are the origin of this wording and are not corrected by an umbrella docs change.
 - created_at · datetime · NO
 - decimals · tinyint unsigned · NO; bech32_prefix · varchar(20) · YES
 - marketplace_template · text · YES
 - Indexes: PRIMARY (id) [uq]; slug [uq]; chain_type; is_active
+- *Column dropped:* `cosmwasm_nft_discovery_enabled` (the frozen CosmWasm scanner's per-chain opt-in) was dropped by `includes/database/drop-scanner-schema.php` (scanner retirement S9b) and is no longer in the CREATE TABLE.
 
-> **Authored vs measured vs derived.** These three tinyint flags are the only
-> AUTHORED part of the NFT capability model. Technical capability is never
-> authored: it is either MEASURED
-> (`wp_bcc_chain_checkpoints.cw_discovery_state = 'unsupported'`, an observed
-> HTTP 501 — meaningful on Cosmos rows only) or DERIVED at read time (the
-> code-owned driver registry, and per-driver provider readiness, which is
-> deliberately NOT stored because a column would be stale the moment a key
-> rotated). Collapsing them into one hand-maintained column would let an
-> operator assert a wasm module that is not there.
+> **Authored vs derived.** These two tinyint flags are the only AUTHORED part
+> of the NFT capability model. Technical capability is never authored: it is
+> DERIVED at read time (the code-owned driver registry, and per-driver
+> provider readiness, which is deliberately NOT stored because a column would
+> be stale the moment a key rotated). The MEASURED half, the scanner's
+> `wp_bcc_chain_checkpoints.cw_discovery_state = 'unsupported'`, was dropped
+> with the scanner schema in S9b.
 
 #### wp_bcc_chain_nft_capabilities
 Per-chain NFT driver overrides — one row per (chain, operation, driver).
@@ -994,8 +1051,8 @@ partially.
 
 #### wp_bcc_chain_checkpoints
 Per-chain indexer checkpoint + compute-unit budget. Shared "where is each
-chain-walking worker up to" primitive — the CosmWasm scanner extends it with
-`cw_*` columns rather than growing a parallel twin table.
+chain-walking worker up to" primitive, read by the EVM indexer, the circuit
+breaker and the daily CU budget.
 - chain_id · bigint unsigned · NO · PK
 - last_processed_block / head_block · bigint unsigned · NO
 - state · varchar(20) · NO
@@ -1003,12 +1060,8 @@ chain-walking worker up to" primitive — the CosmWasm scanner extends it with
 - cu_budget_reset_at · date · NO
 - last_run_at · datetime · YES; last_error · varchar(255) · YES
 - block_progression_history · varchar(500) · YES
-- cw_discovery_state · varchar(20) · NO — idle | backfilling | backfilled | unsupported | paused. `unsupported` is durable (the chain has no wasm module); `paused` is the operator switch the worker honours.
-- cw_code_cursor · varchar(255) · YES — opaque `pagination.key` for the resumable code-listing walk; cleared on completion and whenever a stale key is rejected
-- cw_max_code_id · bigint unsigned · NO — CONTIGUOUS high-water mark ("every code id at or below this is inventoried"); only advanced when a reverse tail walk actually met it
-- cw_backfill_completed_at / cw_last_discovery_at / cw_metadata_refreshed_at · datetime · YES — the last of these is the ≥30-day elapsed guard that makes the "monthly" pass monthly on a daily hook
-- cw_last_error · varchar(255) · YES — the LAST enumeration outcome, last-writer-wins. Holds either a bounded token from `CosmwasmEnumerationFailure::codes()` (every enumeration failure, code listing and contract listing alike) or a BCC-authored state sentence from `setCwDiscoveryState()` / `requestCwBackfillRestart()`. **Never a provider-chosen string** — not a response body, header, URL or exception message; the token writer validates against the vocabulary and the mapper only ever reads an error kind and an HTTP status. Cleared by the next successful enumeration read of either kind
 - Indexes: PRIMARY (chain_id) [uq]
+- *Columns dropped:* the CosmWasm scanner had extended this table with seven `cw_*` columns (`cw_discovery_state`, `cw_code_cursor`, `cw_max_code_id`, `cw_backfill_completed_at`, `cw_last_discovery_at`, `cw_metadata_refreshed_at`, `cw_last_error`) and the `idx_cw_discovery` index. `includes/database/drop-scanner-schema.php` (scanner retirement S9b) dropped all of them, index first, and they are no longer in the CREATE TABLE.
 
 #### wp_bcc_discovery_runs
 
@@ -1603,7 +1656,7 @@ User↔wallet links per chain.
 - Indexes: PRIMARY (id) [uq]; uq_chain_address (chain_id,wallet_address) [uq]; user_chain_wallet (user_id,chain_id,wallet_address) [uq]; user_id; post_id; chain_id; wallet_address; wallet_type
 
 #### wp_bcc_onchain_signals
-Unified on-chain trust signals (wallet age/tx/role boost). Supersedes the orphan bcc_wallet_signals.
+Unified on-chain trust signals (wallet age/tx/role). Supersedes the orphan bcc_wallet_signals.
 - id · bigint unsigned · NO · PK auto
 - user_id · bigint unsigned · NO · K
 - wallet_address · varchar(255) · NO · K
@@ -1615,11 +1668,10 @@ Unified on-chain trust signals (wallet age/tx/role boost). Supersedes the orphan
 - raw_data · longtext · YES
 - fetched_at · datetime · NO
 - role · varchar(20) · NO
-- trust_boost · decimal(6,2) · NO · K
-- fraud_reduction · int · NO
 - contract_address · varchar(128) · YES
 - meta · text · YES; last_synced · datetime · YES
-- Indexes: PRIMARY (id) [uq]; uq_wallet_chain (wallet_address,chain) [uq]; idx_user; idx_trust_boost
+- Indexes: PRIMARY (id) [uq]; uq_wallet_chain (wallet_address(191),chain) [uq]; idx_user
+- *Columns dropped:* `trust_boost`, `fraud_reduction` and the `idx_trust_boost` index backed the role-based wallet trust boost, which had no scoring consumer. They were dropped 2026-07-07 by `includes/database/drop-onchain-role-boost-columns.php`. The working claim-bonus path (`score_contribution` → BonusService) never read them.
 
 #### wp_bcc_onchain_claims
 Entity claims (incl. page claims via entity_type='page' — absorbed bcc_page_claims).
@@ -1634,6 +1686,7 @@ Entity claims (incl. page claims via entity_type='page' — absorbed bcc_page_cl
 - verified_at · datetime · YES
 - created_at · datetime · NO
 - recovery_pending · tinyint(1) · NO · K
+- verified_operator_slot · varchar(41) STORED generated · YES · UQ · OPTIONAL — **not part of the schema install**. **As of 2026-11-10, production has it and staging does not** (an out-of-band check of the live databases; neither environment's install created it). The CREATE TABLE never declares it. It exists only where someone has hand-run `bcc-trust/scripts/claims-verified-operator-constraint.php apply` (deliberately not wired into activation or the schema-version hook). That script adds the column, `CASE WHEN claim_role='operator' AND status='verified' THEN CONCAT(entity_type, ':', entity_id) END`, together with `uq_verified_operator (verified_operator_slot) [uq]`, a DB backstop for "at most one verified operator claim per entity". Rollback is in the script's header. Code must not assume the column exists.
 - Indexes: PRIMARY (id) [uq]; uq_user_entity (user_id,entity_type,entity_id) [uq]; idx_entity (entity_type,entity_id); idx_user; idx_status; idx_recovery_pending
 
 #### wp_bcc_onchain_collections
@@ -2342,7 +2395,7 @@ Validator registry + enrichment (Cosmos/etc.).
 - commission_rate · decimal(5,2) · YES
 - total_stake / self_stake · decimal(30,8) · YES
 - delegator_count · int unsigned · YES
-- uptime_30d / governance_participation · decimal(5,2) · YES
+- uptime_30d · decimal(5,2) · YES — there is no `governance_participation` column, and no CREATE TABLE in bcc-trust's history has ever declared one. Two display paths used to read it as an always-absent property; bcc-trust `8221d3c` (M1.5) removed them, and nothing references it now
 - jailed_count · int unsigned · YES
 - voting_power_rank · int unsigned · YES · K
 - fetched_at · datetime · NO; expires_at · datetime · NO
@@ -2412,6 +2465,69 @@ Solana Helius webhook dedup (seen signatures).
 - signature · varchar(96) · NO · PK
 - seen_at · datetime · NO · K
 - Indexes: PRIMARY (signature) [uq]; idx_seen_at
+
+#### wp_bcc_collection_signals
+One row per (user, chain, contract): the user's declared stance on a discovered collection (`schema-collection-signals.php`, `CollectionSignalRepository`). A user holds exactly ONE stance per collection. It can be switched but not stacked, and the unique key enforces this. The row is kept after the user joins a live community, for the demand-tally history.
+- id · bigint unsigned · NO · PK auto
+- user_id · bigint unsigned · NO · K
+- chain_id · bigint unsigned · NO · K
+- contract_address · varchar(128) · NO · K
+- stance · varchar(10) · NO · K — `waitlist` ("give this collection a community and count me in", the airdrop-proof demand signal behind the Verify Collections queue) or `spam` ("airdropped junk", tallied for the soft-hide threshold and the admin queue's red-flag count)
+- notified_at · datetime · YES — stamps the go-live bell, so provisioning re-runs cannot re-notify
+- created_at / updated_at · datetime · NO
+- Indexes: PRIMARY (id) [uq]; uq_user_collection (user_id,chain_id,contract_address) [uq]; collection_stance (chain_id,contract_address,stance); user_id (user_id)
+
+#### wp_bcc_operator_profiles
+One shared public branding record per validator-operator account: brand name, bio, links and logo (`schema-operator-profiles.php`, `OperatorProfileRepository`). Per-page overrides live in `wp_bcc_operator_profile_overrides`.
+- user_id · bigint unsigned · NO · PK — the operator account
+- brand_name · varchar(100) · NO — default `''`
+- bio · text · NO
+- website_url / x_url / discord_url / telegram_url · varchar(255) · NO — default `''`
+- logo_attachment_id · bigint unsigned · YES — the logo's WP attachment id. Not overridable per page
+- created_at · datetime · NO
+- updated_at · datetime · NO · K
+- Indexes: PRIMARY (user_id) [uq]; idx_updated_at (updated_at)
+
+#### wp_bcc_operator_profile_overrides
+Optional per-validator-page overrides of `wp_bcc_operator_profiles` (same schema file and repository). Every branding field is nullable, and **NULL inherits** the operator's shared value.
+- page_id · bigint unsigned · NO · PK — the validator page the override applies to
+- user_id · bigint unsigned · NO · K — the operator account
+- brand_name · varchar(100) · YES
+- bio · text · YES
+- website_url / x_url / discord_url / telegram_url · varchar(255) · YES
+- created_at / updated_at · datetime · NO
+- Indexes: PRIMARY (page_id) [uq]; idx_user_page (user_id,page_id)
+
+#### wp_bcc_validator_msg_activation
+Validator-messaging first-activation record (`schema-validator-msg-activation.php`). There is one row per validator page, created atomically the FIRST time the page gains a verified operator claim. The pre-claim backlog belongs to this activation alone. A later claim transfer never replays it, and a previously activated page that is currently unclaimed does not reopen the first-claim queue. All timestamps are UTC.
+- id · bigint unsigned · NO · PK auto
+- page_id · bigint unsigned · NO · UQ
+- entity_id · bigint unsigned · NO — the claimed validator
+- first_operator_user_id · bigint unsigned · NO
+- first_activated_at · datetime · NO
+- backlog_status · varchar(16) · NO · K — `scheduled` → `running` → `completed` | `failed` (the vmq sweep's recovery pass may return `failed` to `running`)
+- backlog_started_at / backlog_completed_at · datetime · YES
+- last_error_code · varchar(40) · YES — a CODE only: never a message body, never free text
+- sweep_attempts · int unsigned · NO
+- updated_at · datetime · NO
+- Indexes: PRIMARY (id) [uq]; uq_page (page_id) [uq]; idx_backlog_status (backlog_status)
+
+#### wp_bcc_validator_msg_queue
+Validator-messaging pre-claim queue (`schema-validator-msg-queue.php`, `ValidatorMsgQueueRepository`): messages to a validator page that has never had a verified operator. Rows are durable. An accepted message is never silently deleted and never expires. It leaves the queue only by being delivered, suppressed with a `reason_code`, or parked as `failed_terminal`. **PRIVACY: `body` lives here and, after delivery, in the PeepSo message post. It never goes into logs, metrics, audit meta or error text.** All timestamps are UTC.
+- id · bigint unsigned · NO · PK auto
+- page_id · bigint unsigned · NO · K
+- sender_user_id · bigint unsigned · NO · K
+- body · text · NO
+- created_at · datetime · NO · K
+- status · varchar(16) · NO · K — `queued` | `processing` | `delivered` | `retryable` | `suppressed` | `failed_terminal`. The three terminal states are `delivered`, `suppressed` and `failed_terminal`
+- lease_token · char(36) · YES; lease_expires_at · datetime · YES · K — a worker leases a row with one atomic UPDATE, and every later write on that row carries the token. The sweep returns an expired lease to `retryable`, so rows never stick in `processing`
+- attempt_count · int unsigned · NO; next_retry_at · datetime · YES · K
+- resolved_operator_user_id / delivered_conversation_id / delivered_message_id · bigint unsigned · YES
+- delivered_at / suppressed_at · datetime · YES
+- reason_code · varchar(40) · YES
+- idempotency_key · char(36) · NO · UQ — a UUIDv4 minted at accept time and never rewritten. It is mirrored onto the delivered PeepSo message as post_meta `_bcc_vmq_idem`, which proves at-most-once delivery across crashes
+- updated_at · datetime · NO
+- Indexes: PRIMARY (id) [uq]; uq_idem (idempotency_key) [uq]; idx_page_status (page_id,status); idx_status_retry (status,next_retry_at); idx_sender_created (sender_user_id,created_at); idx_lease (status,lease_expires_at)
 
 ### Infra / notifications
 

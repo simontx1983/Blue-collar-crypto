@@ -32,7 +32,7 @@ Moves the Next.js app onto `bluecollarcrypto.io` and re-homes WordPress at
 ## 0 Why this is not just a DNS edit
 
 `bluecollarcrypto.io` **is already production WordPress** (Hostinger,
-`193.203.176.141`). The apex can only point one place, so putting the frontend
+origin IP: see host panel). The apex can only point one place, so putting the frontend
 there means evicting WordPress from it — a WordPress hostname migration with a DB
 rewrite, not a record swap.
 
@@ -43,10 +43,10 @@ Current state, verified by live DNS:
 | `bluecollarcrypto.io` + `www` | Hostinger | production WordPress |
 | `stage.bluecollarcrypto.io` | Hostinger | staging WordPress |
 | `app.stage.bluecollarcrypto.io` | Vercel | staging frontend (already custom-domained) |
-| `cms.bluecollarcrypto.io` | Hostinger origin `193.203.176.141` | production WordPress REST — **already live** |
+| `cms.bluecollarcrypto.io` | Hostinger origin (IP: see host panel) | production WordPress REST — **already live** |
 
 **CL-7B is closed.** `cms.` was briefly CDN-fronted (`Server: hcdn`, edge IPs
-`147.79.72.241`/`88.223.87.94`), which would have put authenticated REST behind
+not recorded here; see host panel), which would have put authenticated REST behind
 an edge that may cache on URL alone — the exact shape of the documented P0
 cache-isolation leak, since the `.htaccess` bypass (§1.3) is a *LiteSpeed-at-origin*
 rule. **The CDN was disabled 2026-08-19**; `cms.` now resolves to the same origin

@@ -13,10 +13,20 @@ input="$(cat)"
 file_path=$(printf '%s' "$input" | sed -n 's/.*"file_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
 
 [[ -z "$file_path" ]] && exit 0
-[[ "$file_path" != *.php ]] && exit 0
+
+# JSON escapes backslashes; normalize Windows separators to forward slashes so
+# the vendor/ glob below matches regardless of how the path was serialized.
+# Same normalization as color-token-check.sh.
+file_path="${file_path//\\\\//}"
+file_path="${file_path//\\//}"
+
+# Scope on a LOWERCASED copy (case-insensitive filesystems): `X.PHP` must be
+# linted and `Vendor/` must be skipped.
+lc="${file_path,,}"
+[[ "$lc" != *.php ]] && exit 0
 
 # Skip vendor/ — composer-managed, not ours to lint.
-case "$file_path" in
+case "$lc" in
   */vendor/*) exit 0 ;;
 esac
 

@@ -33,12 +33,30 @@ Each plugin repo has `.github/workflows/deploy.yml`:
   **successfully** on a **push to `main`** (i.e. a merge), it deploys that
   commit to **staging**.
 - **`workflow_dispatch`** trigger — manual; pick `staging` or `production`.
-- The deploy step is a **plugin-scoped `rsync -az --delete`** of the checked-
-  out tree (minus `.git`/`.github`) into that plugin's directory on the
-  server. `vendor/` is committed, so there is **no build step** — the
-  checkout *is* the artifact. A final step greps the deployed `Version:`
-  header back over SSH as a confirmation.
-- **The environment selects the docroot** (`deploy.yml:57-61`): staging
+- The deploy step is a **plugin-scoped `rsync -az --delete --delete-delay
+  --delay-updates`** of the checked-out tree (minus `.git`/`.github`, and minus
+  the **dev-only files** below) into that plugin's directory on the server.
+  `vendor/` is committed, so there is **no build step** — the checkout *is*
+  the artifact.
+- **Dev-only files are not deployed (F-36).** These root-level paths are
+  *hidden* from the transfer with `--filter='H /…'`, so they are not shipped
+  and `--delete` removes any copy already on the server:
+  - all three plugins: `tests/`, `composer.json`, `composer.lock`,
+    `phpstan.neon`, `phpstan-bootstrap.php`, `phpunit.xml.dist`,
+    `phpunit-integration.xml.dist`, `.gitignore`, `.gitattributes` — exact
+    names, no wildcards: a NEW dev file (e.g. a `phpstan-baseline.neon`)
+    ships until it is added to the filters, the guard and the regexes below.
+  - bcc-search also: `README.md`
+  - bcc-trust also: `docs/`, `MIGRATED-FROM.md` — **`scripts/` IS still
+    shipped** (runbooks run them with `wp eval-file`), behind a deny-all
+    `scripts/.htaccess`.
+  Root-anchored on purpose: `vendor/*/tests/` and `vendor/*/docs/` still ship.
+  The deploy's final guard fails if any of these is still in the target.
+- After the rsync: the deployed `Version:` header is grepped back over SSH, a
+  **health probe** runs, and (bcc-core, bcc-trust) a **stranded-path guard**
+  refuses a target that still holds `.git`/`.github`. A production dispatch
+  also refuses any commit other than its `expected_sha`.
+- **The environment selects the docroot** (the `SUBPATH` logic in `deploy.yml`): staging
   targets `…/stage/wp-content/plugins/<plugin>/`, production targets
   `…/wp-content/plugins/<plugin>/` — same account, different tree.
 
@@ -50,12 +68,17 @@ for staging, `…/wp-content/plugins/<plugin>/` for production. That means the
 hand-added LSCache Authorization-bypass block (see
 [testnet-deploy-checklist.md](testnet-deploy-checklist.md) §1.6 and the
 closed bug in [TODO.md](TODO.md)). Likewise `uploads/`, `wp-config.php`, and
-every other plugin are untouched. `--delete` only removes files that were
-deleted from the repo, within the one plugin dir.
+every other plugin are untouched. Within the one plugin dir, `--delete`
+removes **every file not in the commit** — including server-only files —
+**except excluded paths**: anything matching an `--exclude` (`.git`, `.github`,
+at any depth) is *protected* on the server, never updated and never removed.
+That is how stale `.git` trees were stranded (bcc-trust #286), and why the
+stranded-path guard exists. The dev-only files above are the opposite case:
+*hidden* (`H`), not excluded, so `--delete` does remove them.
 
 ## Secrets (per repo)
 
-Five Actions secrets, identical across `bcc-trust`, `bcc-core`, `bcc-search`:
+Seven Actions secrets, identical across `bcc-trust`, `bcc-core`, `bcc-search`:
 
 | Secret | Value / meaning |
 |---|---|
@@ -64,6 +87,8 @@ Five Actions secrets, identical across `bcc-trust`, `bcc-core`, `bcc-search`:
 | `DEPLOY_PORT` | SSH port. |
 | `DEPLOY_USER` | Server (account) user. |
 | `DEPLOY_BASE` | **Home-relative** path to the webroot, e.g. `domains/<site>/public_html` — **no leading slash**. |
+| `DEPLOY_HOST_KEY` | The server's SSH host key line(s), written to `known_hosts` (no keyscan / trust-on-first-use). |
+| `DISPATCH_TOKEN` | Used by `notify-root.yml` to trigger the umbrella cross-repo guards on push to `main`. |
 
 > **`DEPLOY_BASE` gotcha:** set it as a *relative* path. Under Git Bash on
 > Windows, `gh secret set --body "/home/…"` triggers MSYS path conversion and
@@ -81,7 +106,13 @@ public half in the server's `~/.ssh/authorized_keys`, and update
 
 1. Validate on staging first (the whole point of the cadence).
 2. In the plugin's GitHub repo: **Actions → Deploy → Run workflow → Branch
-   `main` → `environment: production`**.
+   `main` → `environment: production`**, and set **`expected_sha`** to the
+   approved commit's full 40-character SHA, which must be `main`'s current tip.
+   A production dispatch always checks out `main`'s tip. `expected_sha` is an
+   **assertion, not a selector**: the run refuses to deploy (before any SSH)
+   if the checked-out tip differs, e.g. because `main` moved after approval.
+   You cannot use it to deploy an older commit. For rollback, see
+   [rollback-procedure.md](rollback-procedure.md) §4b.
 3. The same plugin-scoped rsync targets the production plugin dir. Confirm the
    version step at the end.
 4. Repeat per plugin as needed.
@@ -120,7 +151,31 @@ slice.
 - **`rsync: mkdir … failed: No such file or directory`** — `DEPLOY_BASE` is
   wrong (often the MSYS mangling above). Verify the resolved path exists over
   SSH; re-set the secret relative.
-- **Verify staging == GitHub** — blob-hash manifest: for each tracked file,
-  compare `git cat-file blob origin/main:<f> | git hash-object --stdin`
+- **Verify staging == GitHub** — blob-hash manifest: for each **shipped**
+  tracked file, compare `git cat-file blob origin/main:<f> | git hash-object --stdin`
   against `ssh … git hash-object <server>/<f>`. Zero mismatches = in sync.
   (Line-ending-safe, unlike a raw byte diff.)
+  - **Shipped = tracked minus what the deploy never sends** (F-36): the
+    plugin's root-anchored hide list, plus `.git`/`.github` at ANY depth
+    (the deploy's `--exclude='.git' --exclude='.github'` is unanchored, and
+    `.github/workflows/*` IS tracked). Otherwise every one of those reads as
+    a false mismatch. Run `git ls-files` **from the plugin's repo root**
+    (the patterns are root-anchored), with the regex for THAT plugin:
+    ```
+    # bcc-core
+    git ls-files | grep -vE '^(tests/|composer\.json$|composer\.lock$|phpstan\.neon$|phpstan-bootstrap\.php$|phpunit\.xml\.dist$|phpunit-integration\.xml\.dist$|\.gitignore$|\.gitattributes$)|(^|/)\.git(hub)?(/|$)'
+    # bcc-search
+    git ls-files | grep -vE '^(tests/|composer\.json$|composer\.lock$|phpstan\.neon$|phpstan-bootstrap\.php$|phpunit\.xml\.dist$|phpunit-integration\.xml\.dist$|\.gitignore$|\.gitattributes$|README\.md$)|(^|/)\.git(hub)?(/|$)'
+    # bcc-trust
+    git ls-files | grep -vE '^(tests/|composer\.json$|composer\.lock$|phpstan\.neon$|phpstan-bootstrap\.php$|phpunit\.xml\.dist$|phpunit-integration\.xml\.dist$|\.gitignore$|\.gitattributes$|docs/|MIGRATED-FROM\.md$)|(^|/)\.git(hub)?(/|$)'
+    ```
+    Each regex was checked to reproduce exactly the file list an rsync
+    dry-run with that plugin's deploy flags transfers (2026-11-11: 101 /
+    29 / 1607 files). Keep a plugin's regex in step with its `deploy.yml`
+    filters — and don't use one union regex: it would hide `docs/`,
+    `README.md` and `MIGRATED-FROM.md` for plugins that DO ship them.
+  - **Manifest counts** (e.g. in release memos) are counts of that filtered
+    list. A count taken from plain `git ls-files` is larger by exactly the
+    hidden files and is not a drift signal.
+  - Before a plugin's first deploy with the hide filters, the hidden files
+    are still on the server; the filtered comparison simply skips them.

@@ -20,7 +20,16 @@
  *     indexes (e.g. wp_bcc_trust_votes carries both idx_voter_history and
  *     an exact-duplicate idx_voter_created over (voter_user_id,created_at));
  *   - tables added in code but never written into the doc;
- *   - documented-Active tables missing from live.
+ *   - documented-Active tables missing from live;
+ *   - COLUMN drift (CHECK 3, issue #132, static): each documented-Active
+ *     table's column block in docs/database-schema.md must match the column
+ *     set its shipped schema code produces (CREATE TABLE ± ALTER ADD / DROP
+ *     / rename, migration maps resolved), in both directions, and every
+ *     such table must have a block. tests/ and scripts/ files and PHP
+ *     comments never declare a column; a column only a hand-run script adds
+ *     is documented `OPTIONAL`. Run against the doc as it stood before the
+ *     #132 docs fix, it reports exactly the 20 real drifts plus the 8
+ *     missing blocks, and nothing else.
  *
  * ── PHASE STATUS ──────────────────────────────────────────────────────
  * ARMED AND BLOCKING. Phase 5 reconciled live == declared == documented
@@ -59,9 +68,17 @@
  *   1 = drift detected (static and/or live)
  *   2 = setup / IO error (missing required input file, bad repo root)
  *
- * INFO-class observations (documented-ORPHAN tables still live, etc.) are
- * printed but do NOT by themselves set a non-zero exit — they are expected
- * pre-Phase-5 state.
+ * INFO-class observations (documented-ORPHAN/RETIRED tables still LIVE) are
+ * printed but do NOT by themselves set a non-zero exit — a dropped table can
+ * linger in a database until its guarded drop runs there.
+ *
+ * Still DECLARED in code is different, and static: a documented-ORPHAN or
+ * documented-RETIRED table that a CREATE TABLE / TableRegistry accessor
+ * still declares FAILS (CHECK 1c, issue #162) — except a RETIRED table named
+ * in the RETIREMENT_WINDOW allowlist (INFO), whose entries themselves fail
+ * once stale. So does any inventory row
+ * whose Status cell is not exactly `Active`, `ORPHAN` or `RETIRED`, or a
+ * table listed twice (CHECK 1d).
  */
 
 declare(strict_types=1);
@@ -382,6 +399,35 @@ function parse_indexes(string $body): array {
 }
 
 /**
+ * Resolve the table an `ALTER TABLE <expr>` at $offset in $src names.
+ *
+ * Variable table expressions (`{$table}`) resolve against the NEAREST
+ * PRECEDING assignment of that variable — a file-global var map would pick
+ * the LAST `$table = …` in the file, which in a repository with several
+ * migrations (DisputeRepository assigns `$table` per method) attributes the
+ * ALTER to the wrong table.
+ */
+function resolve_alter_table(string $src, int $offset, string $rawExpr, array $symbols, array $varMap, array $localMethods): ?string {
+    $tableExpr = preg_replace('/[{}]/', '', $rawExpr) ?? $rawExpr;
+    $tableExpr = ltrim($tableExpr);
+
+    if (preg_match('/^\$([a-z0-9_]+)$/i', $tableExpr, $vm)) {
+        // Nearest-preceding assignment of this variable.
+        if (preg_match_all(
+            '/\$' . preg_quote($vm[1], '/') . '\s*=\s*([^;]+);/i',
+            substr($src, 0, $offset),
+            $pm,
+            PREG_SET_ORDER
+        ) && $pm !== []) {
+            $last = $pm[count($pm) - 1][1];
+            return resolve_expr_to_bare($last, $symbols, $varMap, $localMethods);
+        }
+        return null;
+    }
+    return resolve_expr_to_bare($tableExpr, $symbols, $varMap, $localMethods);
+}
+
+/**
  * Scan a file for CREATE TABLE statements; return declared tables with indexes.
  *
  * @return array<string, array{file: string, indexes: array<string,string>}>
@@ -469,25 +515,7 @@ function scan_declared_in_file(string $file, array $symbols): array {
         PREG_SET_ORDER | PREG_OFFSET_CAPTURE
     )) {
         foreach ($tm as $t) {
-            $tableExpr = preg_replace('/[{}]/', '', $t[1][0]) ?? $t[1][0];
-            $tableExpr = ltrim($tableExpr);
-            $offset    = (int) $t[0][1];
-
-            $bare = null;
-            if (preg_match('/^\$([a-z0-9_]+)$/i', $tableExpr, $vm)) {
-                // Nearest-preceding assignment of this variable.
-                if (preg_match_all(
-                    '/\$' . preg_quote($vm[1], '/') . '\s*=\s*([^;]+);/i',
-                    substr($src, 0, $offset),
-                    $pm,
-                    PREG_SET_ORDER
-                ) && $pm !== []) {
-                    $last = $pm[count($pm) - 1][1];
-                    $bare = resolve_expr_to_bare($last, $symbols, $varMap, $localMethods);
-                }
-            } else {
-                $bare = resolve_expr_to_bare($tableExpr, $symbols, $varMap, $localMethods);
-            }
+            $bare = resolve_alter_table($src, (int) $t[0][1], $t[1][0], $symbols, $varMap, $localMethods);
             if ($bare === null) {
                 continue;
             }
@@ -544,14 +572,467 @@ if (is_readable($TABLE_REG)) {
 
 /*
 |--------------------------------------------------------------------------
+| (1b) DECLARED COLUMNS — the column set each table's schema code produces
+|--------------------------------------------------------------------------
+| Feeds CHECK 3 (issue #132). Deliberately STRICTER about its inputs than the
+| table/index scan above, which is left exactly as it was:
+|
+|   - Only shipped schema code counts. Files under a plugin's tests/ or
+|     scripts/ directory are excluded: a test fixture's CREATE/ALTER is not
+|     the schema, and scripts/ holds HAND-RUN tools that no install executes
+|     (a column only they add is documented OPTIONAL — see the doc legend).
+|   - Comments are blanked first (same length, newlines kept), so an ALTER
+|     quoted in a docblock is not read as a migration.
+|
+| Final set per table = its CREATE TABLE columns
+|                       + columns an ALTER … ADD [COLUMN] adds
+|                       − columns an ALTER … DROP [COLUMN] drops
+|                       ± CHANGE / RENAME COLUMN renames.
+| An ADD whose column is a VARIABLE (`ADD COLUMN {$column} {$ddl}`, or a whole
+| `{$clause}` of `ADD COLUMN …` fragments) is resolved through the enclosing
+| `foreach (X as $k => $v)` to the keys of X — an array literal assigned in
+| the same file, or the `return [...]` of a named function. That is how the
+| migration-map idiom (schema-collections.php) declares columns. An ADD that
+| cannot be resolved is a FAILURE, never a skip: an unreadable migration must
+| not make its columns silently undeclared.
+| `CREATE TABLE x LIKE y` inherits y's final set.
+*/
+
+/** Leading words of a CREATE TABLE body line that are NOT a column. */
+const NON_COLUMN_LEADS = ['PRIMARY', 'KEY', 'UNIQUE', 'INDEX', 'CONSTRAINT', 'FULLTEXT', 'SPATIAL', 'FOREIGN', 'CHECK'];
+
+/** Blank out PHP comments, keeping every byte offset and newline. */
+function strip_php_comments(string $src): string {
+    $out = '';
+    foreach (token_get_all($src) as $tok) {
+        if (is_array($tok) && ($tok[0] === T_COMMENT || $tok[0] === T_DOC_COMMENT)) {
+            $out .= (string) preg_replace('/[^\n]/', ' ', $tok[1]);
+            continue;
+        }
+        $out .= is_array($tok) ? $tok[1] : $tok;
+    }
+    return $out;
+}
+
+/** 1-based line number of byte $offset in $src. */
+function line_at(string $src, int $offset): int {
+    return substr_count(substr($src, 0, $offset), "\n") + 1;
+}
+
+/** Whether $file is a test fixture or a hand-run script (excluded from 1b). */
+function is_test_or_script(string $file): bool {
+    return preg_match('#/bcc-[^/]+/(?:tests|scripts)/#', str_replace('\\', '/', $file)) === 1;
+}
+
+/**
+ * The bracketed array literal starting at the `[` at $open, or null.
+ * Quote-aware, so brackets inside string literals do not count.
+ */
+function bracket_literal(string $src, int $open): ?string {
+    $depth = 0;
+    $len   = strlen($src);
+    for ($i = $open; $i < $len; $i++) {
+        $ch = $src[$i];
+        if ($ch === '"' || $ch === "'") {
+            // Advance the SAME cursor past the string literal.
+            for ($i++; $i < $len && $src[$i] !== $ch; $i++) {
+                if ($src[$i] === '\\') {
+                    $i++;
+                }
+            }
+            continue;
+        }
+        if ($ch === '[') {
+            $depth++;
+        } elseif ($ch === ']') {
+            $depth--;
+            if ($depth === 0) {
+                return substr($src, $open, $i - $open + 1);
+            }
+        }
+    }
+    return null;
+}
+
+/** @return array<string, string> string key => string value ('' when not a string) */
+function array_literal_pairs(string $literal): array {
+    $out = [];
+    preg_match_all(
+        '/([\'"])([a-z_][a-z0-9_]*)\1\s*=>\s*(?:([\'"])((?:\\\\.|(?!\3).)*)\3)?/is',
+        $literal,
+        $m,
+        PREG_SET_ORDER
+    );
+    foreach ($m as $x) {
+        $out[strtolower($x[2])] = $x[4] ?? '';
+    }
+    return $out;
+}
+
+/**
+ * `function name(...)` => the pairs of the first `return [...]` in its body,
+ * across every shipped file — the migration-map functions
+ * (`bcc_onchain_metadata_state_columns()` etc.).
+ *
+ * @return array<string, array<string,string>>
+ */
+function function_return_arrays(array $files): array {
+    $out = [];
+    foreach ($files as $file) {
+        if (is_test_or_script($file)) {
+            continue;
+        }
+        $src = strip_php_comments((string) file_get_contents($file));
+        if (!preg_match_all('/\bfunction\s+([a-z0-9_]+)\s*\(/i', $src, $fm, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
+            continue;
+        }
+        foreach ($fm as $k => $f) {
+            $start = (int) $f[0][1];
+            $end   = isset($fm[$k + 1]) ? (int) $fm[$k + 1][0][1] : strlen($src);
+            $body  = substr($src, $start, $end - $start);
+            if (preg_match('/\breturn\s*\[/', $body, $rm, PREG_OFFSET_CAPTURE)) {
+                $lit = bracket_literal($body, (int) $rm[0][1] + strlen($rm[0][0]) - 1);
+                if ($lit !== null) {
+                    $out[strtolower($f[1][0])] = array_literal_pairs($lit);
+                }
+            }
+        }
+    }
+    return $out;
+}
+
+/** @return array<string,int> column (lower-case) => line in $src */
+function parse_create_columns(string $body, int $baseLine): array {
+    $out = [];
+    foreach (explode("\n", $body) as $i => $line) {
+        if (!preg_match('/^\s*`?([a-z_][a-z0-9_]*)`?\s+[a-z]/i', $line, $m)) {
+            continue;
+        }
+        if (in_array(strtoupper($m[1]), NON_COLUMN_LEADS, true)) {
+            continue;
+        }
+        $out[strtolower($m[1])] = $baseLine + $i;
+    }
+    return $out;
+}
+
+/**
+ * Columns a variable in an ALTER resolves to, through the nearest preceding
+ * `foreach (X as $k => $v)` that binds it. Null = unresolvable.
+ *
+ * @param bool $clause  true when the variable is the WHOLE clause (each value
+ *                      must then be an `ADD COLUMN <key> …` fragment)
+ * @return list<string>|null
+ */
+function resolve_column_variable(string $src, int $offset, string $var, bool $clause, array $funcArrays): ?array {
+    $before = substr($src, 0, $offset);
+    if (!preg_match_all(
+        '/\bforeach\s*\(\s*(.+?)\s+as\s+\$([a-z0-9_]+)\s*(?:=>\s*\$([a-z0-9_]+)\s*)?\)/is',
+        $before,
+        $fm,
+        PREG_SET_ORDER | PREG_OFFSET_CAPTURE
+    )) {
+        return null;
+    }
+    for ($k = count($fm) - 1; $k >= 0; $k--) {
+        $f     = $fm[$k];
+        $first = $f[2][0];
+        $value = isset($f[3]) && $f[3][1] >= 0 ? $f[3][0] : null;
+        $isKey = $value !== null && $first === $var;
+        $isVal = $value === null ? $first === $var : $value === $var;
+        if (!$isKey && !$isVal) {
+            continue;
+        }
+        $expr  = trim($f[1][0]);
+        $pairs = null;
+        if (preg_match('/^\$([a-z0-9_]+)$/i', $expr, $vm)) {
+            $upto = substr($src, 0, (int) $f[0][1]);
+            if (preg_match_all('/\$' . preg_quote($vm[1], '/') . '\s*=\s*\[/', $upto, $am, PREG_OFFSET_CAPTURE) && $am[0] !== []) {
+                $last = $am[0][count($am[0]) - 1];
+                $lit  = bracket_literal($upto, (int) $last[1] + strlen($last[0]) - 1);
+                $pairs = $lit === null ? null : array_literal_pairs($lit);
+            }
+        } elseif (preg_match('/^\\\\?([a-z0-9_]+)\s*\(\s*\)$/i', $expr, $cm)) {
+            $pairs = $funcArrays[strtolower($cm[1])] ?? null;
+        }
+        if ($pairs === null || $pairs === []) {
+            return null;
+        }
+        if ($isKey && !$clause) {
+            return array_keys($pairs); // ADD COLUMN {$key} {$ddl}
+        }
+        if ($clause && !$isKey) {
+            // {$clause} = 'ADD COLUMN <key> …': every fragment must add its key.
+            foreach ($pairs as $key => $fragment) {
+                if (!preg_match('/^\s*ADD\s+(?:COLUMN\s+)?`?' . preg_quote($key, '/') . '`?\s/i', $fragment)) {
+                    return null;
+                }
+            }
+            return array_keys($pairs);
+        }
+        return null;
+    }
+    return null;
+}
+
+/**
+ * @return array{
+ *   creates: array<string, list<array{cols: array<string,int>, file: string}>>,
+ *   like: array<string, ?string>,
+ *   ops: array<string, list<array{op: string, col: string, to?: string, where: string}>>,
+ *   problems: list<string>
+ * }
+ */
+function scan_declared_columns_in_file(string $file, array $symbols, array $funcArrays, string $relBase): array {
+    $res = ['creates' => [], 'like' => [], 'ops' => [], 'problems' => []];
+    $src = strip_php_comments((string) file_get_contents($file));
+    $rel = ltrim(str_replace([str_replace('\\', '/', $relBase), '\\'], ['', '/'], str_replace('\\', '/', $file)), '/');
+
+    $localMethods = file_methods($file);
+    $varMap = [];
+    if (preg_match_all('/\$([a-z0-9_]+)\s*=\s*([^;]+);/i', $src, $am, PREG_SET_ORDER)) {
+        for ($pass = 0; $pass < 2; $pass++) {
+            foreach ($am as $a) {
+                $bare = resolve_expr_to_bare($a[2], $symbols, $varMap, $localMethods);
+                if ($bare !== null) {
+                    $varMap[$a[1]] = $bare;
+                }
+            }
+        }
+    }
+
+    // Same CREATE TABLE shape the table scan uses, with the body's offset.
+    if (preg_match_all(
+        '/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\{?\$?[a-z0-9_\\\\>{}\'"\(\): .-]*?)\s*\((.*?)\n\s*\)\s*(?:ENGINE|[\$\{]|;)/is',
+        $src,
+        $cm,
+        PREG_SET_ORDER | PREG_OFFSET_CAPTURE
+    )) {
+        foreach ($cm as $c) {
+            $tableExpr = preg_replace('/[{}]/', '', $c[1][0]) ?? $c[1][0];
+            $bare = resolve_expr_to_bare(ltrim($tableExpr), $symbols, $varMap, $localMethods);
+            if ($bare === null) {
+                continue;
+            }
+            $res['creates'][$bare][] = [
+                'cols' => parse_create_columns($c[2][0], line_at($src, (int) $c[2][1])),
+                'file' => $rel,
+            ];
+        }
+    }
+
+    if (preg_match_all(
+        '/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\$?[a-z0-9_]+)\s+LIKE\s+(\$?[a-z0-9_]+)/i',
+        $src,
+        $lm,
+        PREG_SET_ORDER
+    )) {
+        foreach ($lm as $l) {
+            $bare = $varMap[ltrim($l[1], '$')] ?? resolve_expr_to_bare($l[1], $symbols, $varMap, $localMethods);
+            if ($bare !== null) {
+                $res['like'][$bare] = $varMap[ltrim($l[2], '$')] ?? resolve_expr_to_bare($l[2], $symbols, $varMap, $localMethods);
+            }
+        }
+    }
+
+    $kw = '(?:UNIQUE|KEY|INDEX|PRIMARY|CONSTRAINT|FULLTEXT|SPATIAL|FOREIGN|CHECK|COLUMN|PARTITION)\b';
+    if (preg_match_all(
+        '/ALTER\s+TABLE\s+(\{?\$?[a-z0-9_\\\\>{}\'"\(\): .-]+?)\s+((?:(?!ALTER\s+TABLE)[^;"])*)/is',
+        $src,
+        $tm,
+        PREG_SET_ORDER | PREG_OFFSET_CAPTURE
+    )) {
+        foreach ($tm as $t) {
+            $offset = (int) $t[0][1];
+            $clause = $t[2][0];
+            $where  = $rel . ':' . line_at($src, $offset);
+
+            $adds = [];
+            $unresolved = false;
+            // ADD [COLUMN] <literal> <type>
+            if (preg_match_all('/\bADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?(?!' . $kw . ')`?([a-z_][a-z0-9_]*)`?\s+[a-z]/i', $clause, $m)) {
+                foreach ($m[1] as $col) {
+                    $adds[] = strtolower($col);
+                }
+            }
+            // ADD [COLUMN] {$var} …, and a whole-clause variable
+            // (`ALTER TABLE {$t} {$clause}`) — each resolved through its foreach.
+            $varAdds = [];
+            if (preg_match_all('/\bADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?\{?\$([a-z0-9_]+)\}?/i', $clause, $vm)) {
+                foreach ($vm[1] as $var) {
+                    $varAdds[] = [$var, false];
+                }
+            }
+            if (preg_match('/^\s*\{?\$([a-z0-9_]+)\}?\s*$/i', $clause, $wm)) {
+                $varAdds[] = [$wm[1], true];
+            }
+            foreach ($varAdds as [$var, $isClause]) {
+                $cols = resolve_column_variable($src, $offset, $var, $isClause, $funcArrays);
+                if ($cols === null) {
+                    $unresolved = true;
+                } else {
+                    array_push($adds, ...$cols);
+                }
+            }
+
+            $drops = [];
+            if (preg_match_all('/\bDROP\s+(?:COLUMN\s+)?(?:IF\s+EXISTS\s+)?(?!' . $kw . ')`?([a-z_][a-z0-9_]*)`?/i', $clause, $m)) {
+                foreach ($m[1] as $col) {
+                    $drops[] = strtolower($col);
+                }
+            }
+            $renames = [];
+            if (preg_match_all('/\bCHANGE\s+(?:COLUMN\s+)?`?([a-z_][a-z0-9_]*)`?\s+`?([a-z_][a-z0-9_]*)`?/i', $clause, $m, PREG_SET_ORDER)) {
+                foreach ($m as $x) {
+                    $renames[] = [strtolower($x[1]), strtolower($x[2])];
+                }
+            }
+            if (preg_match_all('/\bRENAME\s+COLUMN\s+`?([a-z_][a-z0-9_]*)`?\s+TO\s+`?([a-z_][a-z0-9_]*)`?/i', $clause, $m, PREG_SET_ORDER)) {
+                foreach ($m as $x) {
+                    $renames[] = [strtolower($x[1]), strtolower($x[2])];
+                }
+            }
+
+            if ($adds === [] && $drops === [] && $renames === [] && !$unresolved) {
+                continue; // index-only ALTER, or nothing column-shaped
+            }
+
+            $bare = resolve_alter_table($src, $offset, $t[1][0], $symbols, $varMap, $localMethods);
+            if ($bare === null) {
+                // A DROP on an unresolved table cannot ADD anything, so it
+                // cannot hide a column; only an unresolved ADD is a gap.
+                if ($adds !== [] || $unresolved) {
+                    $res['problems'][] = "ALTER TABLE at {$where} adds a column but its table could not be resolved";
+                }
+                continue;
+            }
+            if ($unresolved) {
+                $res['problems'][] = "ALTER TABLE wp_{$bare} at {$where} adds a column named by a variable that could not be resolved to a literal column list";
+            }
+            foreach ($adds as $col) {
+                $res['ops'][$bare][] = ['op' => 'add', 'col' => $col, 'where' => $where];
+            }
+            foreach ($drops as $col) {
+                $res['ops'][$bare][] = ['op' => 'drop', 'col' => $col, 'where' => $where];
+            }
+            foreach ($renames as [$from, $to]) {
+                $res['ops'][$bare][] = ['op' => 'rename', 'col' => $from, 'to' => $to, 'where' => $where];
+            }
+        }
+    }
+    return $res;
+}
+
+/**
+ * @return array{cols: array<string, array<string,string>>, problems: list<string>}
+ *         cols: bare table => column => "file:line" evidence
+ */
+function collect_declared_columns(array $files, array $symbols, string $relBase): array {
+    $funcArrays = function_return_arrays($files);
+    $creates = $like = $ops = [];
+    $problems = [];
+    foreach ($files as $file) {
+        if (is_test_or_script($file)) {
+            continue;
+        }
+        $r = scan_declared_columns_in_file($file, $symbols, $funcArrays, $relBase);
+        foreach ($r['creates'] as $bare => $list) {
+            foreach ($list as $c) {
+                $creates[$bare][] = $c;
+            }
+        }
+        $like += $r['like'];
+        foreach ($r['ops'] as $bare => $list) {
+            foreach ($list as $o) {
+                $ops[$bare][] = $o;
+            }
+        }
+        array_push($problems, ...$r['problems']);
+    }
+
+    $cols = [];
+    foreach ($creates as $bare => $list) {
+        foreach ($list[0]['cols'] as $col => $line) {
+            $cols[$bare][$col] = "{$list[0]['file']}:{$line}";
+        }
+        for ($k = 1; $k < count($list); $k++) {
+            $a = array_keys($list[0]['cols']);
+            $b = array_keys($list[$k]['cols']);
+            sort($a);
+            sort($b);
+            if ($a !== $b) {
+                $problems[] = "wp_{$bare} has two CREATE TABLE statements with DIFFERENT column sets ({$list[0]['file']} and {$list[$k]['file']})";
+            }
+        }
+    }
+    foreach ($ops as $bare => $list) {
+        $created = $cols[$bare] ?? [];
+        $added   = [];
+        foreach ($list as $o) {
+            if ($o['op'] === 'add') {
+                $added[$o['col']] = true;
+                $cols[$bare][$o['col']] = $cols[$bare][$o['col']] ?? "{$o['where']} (ALTER ADD)";
+            }
+        }
+        foreach ($list as $o) {
+            if ($o['op'] === 'drop') {
+                // A migration that drops a column the shipped schema still
+                // creates or adds is self-contradicting: dbDelta / the adder
+                // re-creates it on the next schema pass.
+                if (isset($created[$o['col']]) || isset($added[$o['col']])) {
+                    $problems[] = "wp_{$bare}.{$o['col']} is dropped at {$o['where']} but the shipped schema still creates or adds it";
+                }
+                // Otherwise: dropping a column that is already gone — the
+                // normal shape of a retired-column migration. No-op.
+            } elseif ($o['op'] === 'rename' && isset($cols[$bare][$o['col']])) {
+                unset($cols[$bare][$o['col']]);
+                $cols[$bare][$o['to']] = "{$o['where']} (ALTER rename)";
+            }
+        }
+    }
+    foreach ($like as $bare => $src) {
+        if ($src !== null && isset($cols[$src])) {
+            $cols[$bare] = $cols[$src];
+        } else {
+            $problems[] = "wp_{$bare} is created LIKE a table whose columns could not be resolved";
+        }
+    }
+    return ['cols' => $cols, 'problems' => $problems];
+}
+
+$declaredColumnScan = collect_declared_columns($declaredFiles, $SYMBOLS, $PLUGINS_DIR);
+$declaredColumns    = $declaredColumnScan['cols'];
+
+/*
+|--------------------------------------------------------------------------
 | (2) DOCUMENTED — parse the master-inventory table in database-schema.md
 |--------------------------------------------------------------------------
 | Row shape: | Table | ~rows | Purpose | Owning code | Status |
-| We extract the bare table name + whether Status says Active vs ORPHAN.
+| We extract the bare table name + its Status, which must be EXACTLY one of
+| DOC_STATUSES (whole cell, case-sensitive). Anything else is drift.
 */
 
-/** @return array<string, array{status: string, raw: string}>  bare => meta */
-function parse_documented(string $doc): array {
+/**
+ * The only Status values the inventory may carry. Matched against the WHOLE
+ * trimmed Status cell, case-sensitively — never by substring, so free text
+ * (in that cell or any other) cannot influence classification.
+ *
+ *   Active  — declared in code, expected live.
+ *   ORPHAN  — gone from the codebase; may linger live until dropped.
+ *   RETIRED — actively dropped by a migration; no longer declared.
+ *
+ * ORPHAN and RETIRED are kept distinct: neither may still be declared in
+ * code (CHECK 1c), but a RETIRED table may be, during an explicit
+ * RETIREMENT_WINDOW entry; an ORPHAN one never.
+ */
+const DOC_STATUSES = ['Active', 'ORPHAN', 'RETIRED'];
+
+/**
+ * @param list<string> $problems  receives one message per malformed row
+ *                                (unrecognised Status, duplicate table row)
+ * @return array<string, array{status: string, raw: string}>  bare => meta
+ */
+function parse_documented(string $doc, array &$problems = []): array {
     $lines = explode("\n", (string) file_get_contents($doc));
     $out   = [];
     foreach ($lines as $line) {
@@ -571,24 +1052,152 @@ function parse_documented(string $doc): array {
             continue; // header / separator / non-table row
         }
         $statusCell = $cells[count($cells) - 1];
-        // RETIRED rows (actively dropped by a migration, e.g. user_ranks)
-        // behave like ORPHAN for parity purposes: NOT expected in code or
-        // live. Only a literal Active status counts as Active — the old
-        // "anything not orphan is Active" default silently promoted
-        // RETIRED rows and produced a permanent false parity finding.
-        if (stripos($statusCell, 'orphan') !== false || stripos($statusCell, 'retired') !== false) {
-            $status = 'ORPHAN';
+        $bare       = bare_name($tableCell);
+        // Exact whole-cell match. The previous substring classifier
+        // (`stripos(..., 'orphan')`) let any wording containing the word
+        // count, and an unrecognised cell silently defaulted to Active.
+        // Deny-by-default instead: an unknown Status is itself drift, and the
+        // row is recorded as UNKNOWN so it is neither Active (1a) nor missing
+        // (1b) — the problem is reported once, as what it is.
+        if (in_array($statusCell, DOC_STATUSES, true)) {
+            $status = $statusCell;
         } else {
-            $status = 'Active';
+            $status     = 'UNKNOWN';
+            $problems[] = "'{$tableCell}' has unrecognised Status '{$statusCell}' — the Status cell must be exactly one of: "
+                . implode(', ', DOC_STATUSES);
         }
-        $out[bare_name($tableCell)] = ['status' => $status, 'raw' => $tableCell];
+        // A second row for the same table could carry a different Status and
+        // mask the first (last one would win). Flag it rather than pick one.
+        if (isset($out[$bare])) {
+            $problems[] = "'{$tableCell}' appears more than once in the master inventory";
+        }
+        $out[$bare] = ['status' => $status, 'raw' => $tableCell];
     }
     return $out;
 }
 
-$documented = parse_documented($SCHEMA_DOC);
+/** @var list<string> $inventoryProblems */
+$inventoryProblems = [];
+$documented = parse_documented($SCHEMA_DOC, $inventoryProblems);
 $docActive  = array_filter($documented, static fn(array $m): bool => $m['status'] === 'Active');
 $docOrphan  = array_filter($documented, static fn(array $m): bool => $m['status'] === 'ORPHAN');
+$docRetired = array_filter($documented, static fn(array $m): bool => $m['status'] === 'RETIRED');
+
+/*
+|--------------------------------------------------------------------------
+| (2b) DOCUMENTED COLUMNS — the per-table blocks under
+|      "## Active tables — per-table detail"
+|--------------------------------------------------------------------------
+| One `#### wp_bcc_x` heading per block; `#### wp_bcc_a / wp_bcc_b` covers
+| tables with an IDENTICAL column set (an archive created LIKE its source).
+| A heading carrying `— RETIRED` is history and is not parsed.
+|
+| Column rows are top-level bullets `- name · type · null · key [— prose]`.
+| Accepted variants, all in use in the doc:
+|   - `a / b · type`                     several columns share one type
+|   - `a · t; b · t`                     several columns on one bullet
+|   - `a · t1 / b · t2`                  several columns, each with its type
+|   - `name(K)`                          a key flag glued to the name
+|   - `~~name~~ · …`                     retired IN PLACE: no longer used, but
+|                                        still in the CREATE TABLE, so it IS
+|                                        documented and must stay declared
+|   - `… · OPTIONAL …`                   no schema install creates it (only a
+|                                        hand-run script); exempt from
+|                                        documented ⇒ declared, and must NOT
+|                                        be declared by shipped schema code
+| Not column rows: `- Indexes…`, `- *Column(s) dropped:* …` (history), and
+| any bullet with no `name ·` lead (prose).
+*/
+
+/**
+ * @param list<string> $problems
+ * @return array<string, array{line: int, cols: array<string, array{line: int, optional: bool}>}>
+ */
+function parse_documented_columns(string $doc, array &$problems = []): array {
+    $lines  = explode("\n", str_replace("\r\n", "\n", (string) file_get_contents($doc)));
+    $in     = false;
+    $cur    = [];
+    $blocks = [];
+    $ident  = '[a-z_][a-z0-9_]*';
+    foreach ($lines as $i => $line) {
+        $n = $i + 1;
+        if (strpos($line, '## ') === 0) {
+            $in  = strpos($line, '## Active tables') === 0;
+            $cur = [];
+            continue;
+        }
+        if (!$in) {
+            continue;
+        }
+        if (strpos($line, '### ') === 0) {
+            $cur = [];
+            continue;
+        }
+        if (preg_match('/^#### (.*)$/', $line, $h)) {
+            $cur = [];
+            if (preg_match('/—\s*RETIRED\b/', $h[1])) {
+                continue;
+            }
+            $names = preg_split('/\s+—\s+|\s+\(/', $h[1])[0];
+            foreach (preg_split('/\s*\/\s*/', $names) as $nm) {
+                $nm = trim($nm, " `");
+                if (!preg_match('/^wp_bcc_[a-z0-9_]+$/', $nm)) {
+                    continue;
+                }
+                $bare = bare_name($nm);
+                if (isset($blocks[$bare])) {
+                    $problems[] = "'{$nm}' has more than one column block (doc:{$blocks[$bare]['line']} and doc:{$n})";
+                    continue;
+                }
+                $blocks[$bare] = ['line' => $n, 'cols' => []];
+                $cur[] = $bare;
+            }
+            continue;
+        }
+        if ($cur === [] || !preg_match('/^- (.*)$/', $line, $b)) {
+            continue;
+        }
+        $text = $b[1];
+        if (preg_match('/^(Indexes\b|\*)/', $text)) {
+            continue;
+        }
+        $text = preg_split('/\s+—\s+/', $text)[0];
+        foreach (preg_split('/;\s*/', $text) as $seg) {
+            $optional = preg_match('/·\s*OPTIONAL\b/', $seg) === 1;
+            // Split on ' / ' and keep each piece's NAME: a piece is either a
+            // bare name (sharing the type that follows) or `name · type…`.
+            $pieces = preg_split('/\s+\/\s+/', $seg);
+            $names  = [];
+            $typed  = false;
+            foreach ($pieces as $p) {
+                $p = trim($p);
+                if (!preg_match('/^(~~)?`?(' . $ident . ')`?(~~)?(?:\([A-Z]+\))?(\s+·\s+|$)/', $p, $m)) {
+                    break; // the rest of the segment is type / key prose
+                }
+                if ($typed && $m[4] === '') {
+                    break; // after `a · type`, only `b · type` continues the list
+                }
+                $names[] = strtolower($m[2]);
+                if ($m[4] !== '') {
+                    $typed = true;
+                }
+            }
+            if (!$typed) {
+                continue; // no `name ·` lead — prose, not a column row
+            }
+            foreach ($names as $col) {
+                foreach ($cur as $t) {
+                    $blocks[$t]['cols'][$col] = $blocks[$t]['cols'][$col] ?? ['line' => $n, 'optional' => $optional];
+                }
+            }
+        }
+    }
+    return $blocks;
+}
+
+/** @var list<string> $docColumnProblems */
+$docColumnProblems = [];
+$docColumns = parse_documented_columns($SCHEMA_DOC, $docColumnProblems);
 
 /*
 |--------------------------------------------------------------------------
@@ -710,7 +1319,11 @@ echo "========================================================\n";
 echo "Repo root : {$REPO_ROOT}\n";
 echo "Declared  : " . count($declaredTables) . " tables (CREATE TABLE + TableRegistry)\n";
 echo "Documented: " . count($documented) . " tables ("
-   . count($docActive) . " Active, " . count($docOrphan) . " ORPHAN)\n";
+   . count($docActive) . " Active, " . count($docOrphan) . " ORPHAN, " . count($docRetired) . " RETIRED"
+   . (count($documented) - count($docActive) - count($docOrphan) - count($docRetired) > 0
+        ? ", " . (count($documented) - count($docActive) - count($docOrphan) - count($docRetired)) . " UNRECOGNISED"
+        : '')
+   . ")\n";
 if ($liveConn instanceof mysqli) {
     echo "Live      : " . count($liveTables) . " {$livePrefix}bcc_* tables — {$live['note']}\n";
 } else {
@@ -732,7 +1345,7 @@ foreach ($docActive as $bare => $meta) {
     }
 }
 
-// 1b: every DECLARED table must appear in the doc (Active or ORPHAN).
+// 1b: every DECLARED table must appear in the doc (under any Status).
 foreach ($declaredTables as $bare => $info) {
     if (!isset($documented[$bare])) {
         $msg = "declared table 'wp_{$bare}' is NOT in docs/database-schema.md (regenerate the doc) — declared in " . basename($info['file']);
@@ -741,11 +1354,76 @@ foreach ($declaredTables as $bare => $info) {
     }
 }
 
-// Note: documented-ORPHAN tables are EXPECTED to be absent from declared
-// code; we do NOT flag those (that's the whole point of the orphan list).
+// 1c: a documented-ORPHAN or documented-RETIRED table must NOT still be
+// declared. Either label asserts the table is gone from the codebase; if a
+// CREATE TABLE or TableRegistry accessor still declares it, doc and code
+// disagree. Without this, relabelling a live table's Status is a static
+// false-green: the row leaves the Active set, so 1a stops asking about it,
+// and 1b is satisfied because the row still exists (issue #162).
+//
+// ORPHAN: no exception, ever.
+//
+// RETIRED: the same rule, with ONE sanctioned exception — the retirement
+// window. A drop spans two repos: this repo's inventory row has to flip to
+// RETIRED in a PRECEDING umbrella PR, because CI always reads bcc-trust
+// `main` and the reverse order fails 1a the moment the declaration goes
+// (docs/database-schema.md, "The retirement is a TWO-DEPLOY sequence").
+// During that window the table is RETIRED and still declared, legitimately.
+// It is tolerated ONLY when the table is named in RETIREMENT_WINDOW below,
+// with a reason — a reviewed edit to this script, in the same diff as the
+// relabel. Tolerating every RETIRED-but-declared table instead would make
+// "relabel to RETIRED" the same bypass under a different word.
+//
+// Window entries are policed both ways, so they cannot outlive the window:
+// an entry whose table is no longer declared (the drop landed — remove the
+// entry) or whose row is not RETIRED fails.
+
+/** @var array<string,string> bare table => reason (issue/PR + expected drop) */
+const RETIREMENT_WINDOW = [
+    // 'bcc_example' => 'Retiring in bcc-trust #NNN; declaration removed when that merges.',
+];
+
+foreach ($docOrphan + $docRetired as $bare => $meta) {
+    if (!isset($declaredTables[$bare])) {
+        continue;
+    }
+    if ($meta['status'] === 'RETIRED' && isset(RETIREMENT_WINDOW[$bare])) {
+        $infoFindings[] = "[retirement-window] RETIRED '{$meta['raw']}' still declared in "
+            . basename($declaredTables[$bare]['file']) . ' — tolerated: ' . RETIREMENT_WINDOW[$bare];
+        continue;
+    }
+    $msg = "documented-{$meta['status']} '{$meta['raw']}' is STILL declared in code — declared in "
+        . basename($declaredTables[$bare]['file'])
+        . " (the {$meta['status']} label asserts the table is gone from the codebase"
+        . ($meta['status'] === 'RETIRED' ? '; a deliberate retirement window needs a RETIREMENT_WINDOW entry' : '')
+        . ')';
+    $c1[] = $msg;
+    $failFindings[] = "[parity] {$msg}";
+}
+
+foreach (RETIREMENT_WINDOW as $bare => $reason) {
+    $status = $documented[$bare]['status'] ?? null;
+    if ($status !== 'RETIRED') {
+        $msg = "RETIREMENT_WINDOW entry 'wp_{$bare}' is stale — its inventory Status is "
+            . ($status === null ? 'absent' : "'{$status}'") . ", not RETIRED (remove the entry)";
+    } elseif (!isset($declaredTables[$bare])) {
+        $msg = "RETIREMENT_WINDOW entry 'wp_{$bare}' is stale — the table is no longer declared, so the window has closed (remove the entry)";
+    } else {
+        continue;
+    }
+    $c1[] = $msg;
+    $failFindings[] = "[parity] {$msg}";
+}
+
+// 1d: every inventory row must carry an exact, recognised Status and appear
+// once (see parse_documented()).
+foreach ($inventoryProblems as $p) {
+    $c1[] = $p;
+    $failFindings[] = "[inventory] {$p}";
+}
 
 if ($c1 === []) {
-    echo "  OK — declared and documented-Active table sets agree.\n";
+    echo "  OK — declared and documented-Active table sets agree; no ORPHAN/RETIRED table is still declared.\n";
 } else {
     foreach ($c1 as $f) {
         echo "  DRIFT: {$f}\n";
@@ -774,9 +1452,9 @@ if ($liveConn instanceof mysqli) {
             $failFindings[] = "[live-table] {$msg}";
         }
     }
-    foreach ($docOrphan as $bare => $meta) {
+    foreach ($docOrphan + $docRetired as $bare => $meta) {
         if (isset($liveTables[$bare])) {
-            $msg = "ORPHAN '{$meta['raw']}' still present live (expected; Phase 5 guarded drop)";
+            $msg = "{$meta['status']} '{$meta['raw']}' still present live (expected until its guarded drop runs)";
             $c2a[] = "INFO : {$msg}";
             $infoFindings[] = "[orphan-live] {$msg}";
         }
@@ -867,6 +1545,78 @@ if ($liveConn instanceof mysqli) {
     mysqli_close($liveConn);
 } else {
     echo "\n--- CHECK 2 (live drift): SKIPPED — running static-only ---\n";
+}
+
+/* ---- CHECK 3: static column parity (DECLARED vs DOCUMENTED) ----------- */
+//
+// Issue #132. For every documented-Active, declared table:
+//   3a  it has a column block in "## Active tables — per-table detail";
+//   3b  every DECLARED column is documented;
+//   3c  every DOCUMENTED column is declared (an OPTIONAL row is exempt —
+//       only a hand-run script adds it);
+//   3d  an OPTIONAL row is NOT declared by shipped schema code (if it is,
+//       it is a real column and the marker is wrong);
+//   3e  its column set could be read at all — a declared table with no
+//       parseable CREATE TABLE is a gap, not a pass;
+// plus every coverage problem the two parsers raised (an unresolvable
+// column-adding ALTER, conflicting CREATE TABLEs, a duplicate block).
+// RETIRED/ORPHAN tables are skipped: their blocks are kept as history.
+
+echo "\n--- CHECK 3: static column parity (DECLARED vs DOCUMENTED) ---\n";
+
+$c3 = [];
+$c3Tables = 0;
+$c3Columns = 0;
+foreach ($docActive as $bare => $meta) {
+    if (!isset($declaredTables[$bare])) {
+        continue; // already a 1a failure
+    }
+    $raw = $meta['raw'];
+    $c3Tables++;
+    $c3Columns += count($declaredColumns[$bare] ?? []);
+    if (!isset($declaredColumns[$bare]) || $declaredColumns[$bare] === []) {
+        $c3[] = "'{$raw}' is declared (" . basename($declaredTables[$bare]['file'])
+            . ") but no column set could be read from shipped schema code (no parseable CREATE TABLE outside tests/ and scripts/)";
+        continue;
+    }
+    if (!isset($docColumns[$bare]) || $docColumns[$bare]['cols'] === []) {
+        $c3[] = "'{$raw}' has no column block in docs/database-schema.md (add `#### {$raw}` with its columns under \"## Active tables — per-table detail\")";
+        continue;
+    }
+    $doc = $docColumns[$bare]['cols'];
+    foreach ($declaredColumns[$bare] as $col => $where) {
+        if (!isset($doc[$col])) {
+            $c3[] = "declared column '{$raw}.{$col}' is NOT documented — declared at {$where}";
+        } elseif ($doc[$col]['optional']) {
+            $c3[] = "'{$raw}.{$col}' is documented OPTIONAL (doc:{$doc[$col]['line']}) but shipped schema code declares it at {$where} — drop the OPTIONAL marker";
+        }
+    }
+    foreach ($doc as $col => $d) {
+        if (!$d['optional'] && !isset($declaredColumns[$bare][$col])) {
+            $c3[] = "documented column '{$raw}.{$col}' (doc:{$d['line']}) is NOT declared by any CREATE TABLE or schema migration";
+        }
+    }
+}
+// A block for a table the inventory does not know (a typo'd heading, or a
+// table removed from the inventory but not from the detail section) is
+// compared against nothing — so the real table's block would read as
+// missing only by luck. Name it. `— RETIRED` headings were never parsed.
+foreach ($docColumns as $bare => $blk) {
+    if (!isset($documented[$bare])) {
+        $c3[] = "column block 'wp_{$bare}' (doc:{$blk['line']}) is for a table that is not in the master inventory (typo'd heading? a retired table's block needs `— RETIRED` in its heading)";
+    }
+}
+foreach (array_merge($declaredColumnScan['problems'], $docColumnProblems) as $p) {
+    $c3[] = $p;
+}
+
+if ($c3 === []) {
+    echo "  OK — {$c3Tables} documented-Active tables / {$c3Columns} declared columns compared; every table has a column block and its columns match in both directions.\n";
+} else {
+    foreach ($c3 as $f) {
+        echo "  DRIFT: {$f}\n";
+        $failFindings[] = "[columns] {$f}";
+    }
 }
 
 /*
