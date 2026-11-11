@@ -4837,7 +4837,8 @@ Paginated list of the viewer's conversations, ordered by `mpart_last_activity DE
           "id": 4032,
           "author": { "id": 25, "handle": "admin", "display_name": "admin", "avatar_url": "..." },
           "preview": "first 200 chars of the last message…",
-          "posted_at": "2026-05-08T14:12:00Z"
+          "posted_at": "2026-05-08T14:12:00Z",
+          "sender_blocked_by_viewer": false
         },
         "unread_count": 3,
         "last_activity": "2026-05-08T14:12:00Z"
@@ -4847,6 +4848,8 @@ Paginated list of the viewer's conversations, ordered by `mpart_last_activity DE
   }
   ```
 - `peer` is the OTHER participant for 1-on-1 conversations and `null` for groups (where `is_group === true`); the frontend uses `peer` for the inbox-row title and falls back to a participant list when null.
+- `sender_blocked_by_viewer` (v1.87) — `true` when the viewer has blocked `last_message.author`. **Always present**, never absent, so a client reads `false` rather than `undefined`. When it is `true`, `preview` is **already** the fixed string `Message from someone you have blocked` — the real preview text is not in the payload at all. See **Blocked senders** below.
+- `unread_count` excludes messages whose author the viewer has blocked (v1.87).
 - **Errors:** `bcc_unauthorized 401`.
 - **Cache:** `private, no-store`. DM state mutates per-viewer on every read.
 
@@ -4918,16 +4921,58 @@ Paginated message history. `{id}` is either the conversation root msg id OR any 
         "author": { "id": 132, "handle": "phillips", "display_name": "Phillip", "avatar_url": "..." },
         "body": "hey, what's up?",
         "posted_at": "2026-05-08T14:00:00Z",
-        "is_inline_notice": false
+        "is_inline_notice": false,
+        "sender_blocked_by_viewer": false
       }
     ],
     "pagination": { "page": 1, "per_page": 30, "total": null, "has_more": true }
   }
   ```
 - `is_inline_notice` is `true` for system rows (`peepso-message-notic` post_type) — "Phillip joined the conversation," "Admin left." Frontend renders these with an austere centered treatment (no avatar, no bubble).
+- `sender_blocked_by_viewer` (v1.87) — `true` when the viewer has blocked that message's author. **Always present.**
+- ⚠ **When it is `true`, `body` is the fixed string `Message from someone you have blocked`, NOT the real text** (v1.87). `id`, `author`, `posted_at` and `is_inline_notice` are unaffected. The real text is reachable only through `GET …/messages/{message_id}/reveal` below, on an explicit per-message request — so a blocked sender's words never enter the viewer's browser unless the viewer asks for them. See **Blocked senders** below for why this changed within v1.87's own development.
 - **Side effect:** marks every unread message in the conversation as viewed for the viewer (`mrec_viewed = 1`). Equivalent to a `POST /me/conversations/{id}/read` riding on the same request — keeps the typical "open thread → mark read" flow to one round-trip.
 - **Errors:** `bcc_unauthorized 401`, `bcc_not_found 404`.
 - **Cache:** `private, no-store`.
+
+#### `GET /bcc/v1/me/conversations/{id}/messages/{message_id}/reveal` (v1.87)
+
+The real body of ONE message — the explicit tap-to-reveal fetch behind the substituted thread `body`.
+
+- **Auth:** required.
+- **Response 200:** `{ "id": 4051, "body": "the real message text" }`
+- **Errors:** `bcc_unauthorized 401`, `bcc_not_found 404`.
+- ⚠⚠ **THE GOVERNING INVARIANT: a reveal returns no more than the thread read would have returned to the same viewer.** The route is an id-addressed read of private text, so it is defined by that ceiling rather than by its own list of checks. Concretely it requires a **recipient row for (viewer, message)** — the same predicate `GET …/messages` applies — **in addition to** the viewer participating in the conversation and the message belonging to it. Participation alone is NOT sufficient: a participant can legitimately have no recipient row for a message, and a message with no recipient row for them never appeared in their thread.
+- ⚠ **The three ordinary ways a participant lacks that row**, all of them normal states and not error cases: the other party had blocked them when the message was sent (see **Blocked senders** — no recipient row is created for the blocked side); the message predates their joining a group conversation; or they deleted that one message from their own view. The first is the one that matters most here, because it is the mirror of this version's own feature: a route built to withhold a blocked sender's text must not disclose text the platform already withheld from that same viewer.
+- ⚠ The predicate deliberately does **not** filter the soft-delete flag, because the thread read does not either — a conversation removed from the inbox is still readable by id. Being stricter than the thread read would break the invariant in the other direction, producing a message the viewer can read in the thread but cannot reveal.
+- ⚠⚠ **Every refusal is the SAME `404 bcc_not_found` with the same message.** "You are not a participant", "that message belongs to another conversation", "that message was never delivered to you", "no such message" and "no such conversation" are **indistinguishable by design**. Clients MUST NOT branch on the reason, because there is none to branch on: a differentiated refusal would let anyone walk message ids and learn which exist and which conversation they belong to. The "never delivered to you" case is the sharpest of the five — a distinguishable response there would tell a viewer that a message exists in their own conversation which they were not sent, which is precisely the fact a block is keeping from them.
+- It returns the body **whether or not the sender is blocked**. It is the viewer asking for one specific message whose metadata they can already see. Gating it on the block would leak block state through a status code and would stop working the moment the viewer unblocked someone.
+- **Side effects: none.** It does **not** mark anything read — unlike `GET …/messages`, which clears the conversation's unread state as a side effect of serving a page. Revealing one message is not reading the thread, and a reveal must never silently dismiss unread messages the viewer has not seen.
+- **Not rate-limited**, matching the sibling `/me/conversations` reads. The 30-per-5-minutes limit in §4.19 is a **send** limit and applies to no read on this surface.
+- **Cache:** `private, no-store`, plus `Vary: Authorization, Cookie` on **both** the 200 and the 404 — the same message id answers a body to a participant and a 404 to everybody else, so a cache keyed without the credential could hand one viewer another's answer.
+
+#### Blocked senders (v1.87)
+
+A message whose author **the viewer has blocked** is annotated, withheld from the thread body, dropped from the unread counts, and generates no email or live ping. It stays visible to every other participant, and the sender is never told.
+
+⚠⚠ **CORRECTION, made within v1.87's own development: this treatment applies to PRE-BLOCK HISTORY, not to new messages.** An earlier draft of this section said a blocked sender's message "is still delivered". It is not. Traced in PeepSo rather than assumed:
+
+- `PeepSoMessageRecipients::add_message()` builds the per-recipient rows from `PeepSoMessageParticipants::get_participants($parentId, $currentUserId)`, and **that two-argument overload LEFT JOINs the block table in BOTH directions and keeps only unblocked pairs**. So for a message sent after the block, **no recipient row is created for the blocked side at all** — it never enters their thread, their inbox or their counts, with or without this feature.
+- Separately, BCC's own send gate refuses a 1-on-1 send outright when a block exists in **either** direction (`PeepSoBlockRepository::isMutuallyBlocked`, despite its name, is an either-direction probe), so that path does not even reach PeepSo.
+
+⇒ `sender_blocked_by_viewer` is therefore `true` for messages the viewer **received before they blocked the sender**. That is the real population: a thread whose history the viewer no longer wishes to read, not a live channel the sender still has.
+
+⚠ **The notification fan-out is a genuine exception, and it is why the two vetoes below exist.** The loop that writes the live ping and queues the email iterates `get_participants($parentId)` — the **one-argument** overload, which has **no block join** — so without the vetoes a blocker would be emailed and pinged about a message they can never read. Delivery is block-filtered; notification is not.
+
+- ⚠ **The predicate is one-directional and viewer-relative:** *the viewer blocked the author*. It is **not** a mutual-block test. "The sender blocked me" must not hide that sender's message **from me** — that is a different field (`viewer_blocking`, below) and a different question.
+- ⚠ **This is a display and notification treatment, not a security boundary.** The annotated messages are ones the viewer already received and may still reveal at will; they remain readable by every other participant. Nothing here revokes access the viewer already has, and nothing here is load-bearing for confidentiality against the viewer. (What IS load-bearing is the reveal route's recipient-row requirement above — that one stops a viewer reaching text they were never sent.)
+- **Write paths are unchanged by v1.87**, and were already block-aware before it. The pre-existing either-direction re-check on `POST /me/conversations/{id}/messages` refuses a 1-on-1 send; in a **group** thread the send is accepted and the other participants receive it normally, while PeepSo's own recipient-row join omits the blocking participant. v1.87 added no gate and removed none. Adding a *new* refusal was considered and rejected on the original grounds, which still hold: it would tell the blocked user they are blocked, and in a group it would cost the other participants a message.
+- **Email:** suppressed per recipient, through PeepSo's own `peepso_mailqueue_allowed` veto, scoped to the one send.
+- **Live notification:** suppressed per recipient. The blocker's client is not told to refetch.
+  - ⚠ **What is suppressed is NOT SSE, because SSE fires for nobody.** `PeepSoSSEEvents::trigger()` — the only definition of that class — returns at its first statement with the comment *"SSE is not working yet"*, so all of its call sites are no-ops and `peepso/sse/` is a separate Node service that nothing starts. Recorded here so a future reader does not mistake the absence of an SSE suppression for an oversight, and so nobody writes a test asserting "no SSE event" that would pass vacuously.
+  - The live signal PeepSo actually uses is the **`peepso_should_get_chats` user option**, written per participant on every send and polled by the client. v1.87 vetoes that write for a recipient who has blocked the sender, through WordPress's own `update_user_metadata` short-circuit, scoped to the one send.
+  - ⚠ **The two vetoes have OPPOSITE "allow" values, which is worth knowing before anyone edits either.** `peepso_mailqueue_allowed` filters the recipient id, so allowing means returning that id. `update_metadata` short-circuits on **any** non-null return, so allowing means returning the incoming `$check` — normally `null`. Returning `true` from the second would make every user-meta write in the process report success without writing, for the duration of a send.
+- ℹ **Pre-existing and previously undocumented:** `viewer_blocking` (boolean) has shipped on the user view-model since the §K1 block surface, emitted by `UserViewService::getSummary` and consumed by the frontend's block toggle. It is the SAME one-directional predicate as `sender_blocked_by_viewer` ("the viewer blocks this user"), on a user rather than a message. It was absent from this document until v1.87; noting it rather than leaving the drift.
 
 #### `POST /bcc/v1/me/conversations/{id}/messages`
 
@@ -4954,7 +4999,9 @@ Explicitly mark a conversation viewed without fetching the thread. Used by the i
 
 #### `GET /bcc/v1/me/messages/unread-count`
 
-Slim header-badge endpoint — returns the total count of conversations with unread messages for the viewer (mirrors PeepSo's own header-badge logic, which excludes muted conversations and conversations involving deleted users).
+Slim header-badge endpoint — returns the total count of conversations with unread messages for the viewer. Muted conversations and conversations involving deleted users are excluded, and as of v1.87 so are messages whose author the viewer has blocked.
+
+⚠ The muted and deleted-user exclusions were previously inherited by wrapping PeepSo's own helper. v1.87 replaced that wrapper with BCC-owned SQL, because the helper exposes no filter and the blocked-sender exclusion could not be applied from outside it. Both exclusions are reproduced deliberately and remain contract. The count is **conversation-level**: a conversation holding one unread message from a blocked sender and one from anybody else still counts once.
 
 - **Auth:** required.
 - **Response 200:** `{ "count": 3 }`
@@ -8653,6 +8700,23 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.87 — 2026-11-10 — behaviour change plus additive — blocked senders are withheld on read
+
+§122. A message whose author the viewer has blocked is annotated with **`sender_blocked_by_viewer`** (always present on both inbox `last_message` and thread items), withheld, excluded from both unread counts, and generates no email.
+
+**Additive:** the flag on both row types; the new `GET /me/conversations/{id}/messages/{message_id}/reveal`.
+
+**Behaviour change, and clients must handle it:**
+- `last_message.preview` is the fixed string `Message from someone you have blocked` when the flag is true.
+- ⚠ **The thread `body` is that same string too**, which is a reversal *within this version's own development* and is recorded rather than tidied away. The first implementation sent the real text and expected the client to collapse it — fewer round trips, but it left the text in the viewer's browser whether they revealed it or not. The decision became "fetch only when tapped", so the thread now carries the placeholder and the new reveal route is the only path to the real text. A client built against the intermediate shape must switch from collapsing a local body to fetching on tap.
+- `unread_count` and `GET /me/messages/unread-count` both exclude blocked senders. The header-badge endpoint's implementation moved from a PeepSo wrapper to BCC-owned SQL to make that possible; its muted and deleted-user exclusions are preserved deliberately.
+
+**Not changed:** no write path, no send gate. In a group thread a blocked user's reply is still accepted and still reaches the other participants. ⚠ It does NOT reach the blocking viewer — PeepSo creates no recipient row for a blocked pair — so this feature annotates **pre-block history**, not new messages; an earlier draft of this entry said "still delivered" and was wrong. See §4.19 **Blocked senders**.
+
+**Also suppressed:** the live `peepso_should_get_chats` ping, per recipient, through WordPress's `update_user_metadata` short-circuit. ⚠ This is **not** SSE: PeepSo's SSE trigger is inert — it returns at its first statement — so there was never an SSE event to suppress, and a test asserting otherwise would pass vacuously. ⚠ The mail veto and the ping veto allow by returning **different** values (the recipient id, versus the incoming `$check`/null); see **Blocked senders** in §4.19.
+
+**Documented, not added:** `viewer_blocking` on the user view-model, which has shipped since §K1 and was missing from this document.
 
 ### v1.86 — 2026-11-06 — behaviour change plus correction — the claim route stops reporting server faults as wallet mismatches
 
