@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.110 · 2026-11-11 · Phase 1 deliverable
+**Status:** Draft v1.111 · 2026-11-11 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -6077,7 +6077,8 @@ Upload a custom avatar. PeepSo owns the image pipeline; this route wraps `PeepSo
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized 401`.
 - **Body (`multipart/form-data`):** `avatar` (**required**, file) — size ≤ **2 MB**; MIME detected from file contents via `wp_check_filetype_and_ext` (request Content-Type never trusted); must be `image/jpeg|png|webp`.
 - **Response 200:** full updated **User view-model** (§3.1, own variant).
-- **Errors:** `bcc_unauthorized` (401) · `bcc_peepso_unavailable` (503, PeepSo not loaded) · `bcc_invalid_request` (422, field missing / empty / > 2 MB / bad MIME) · `bcc_upload_failed` (422 PHP upload error; 500 on PeepSo throw)
+- **Errors:** `bcc_unauthorized` (401) · `bcc_rate_limited` (429, v1.111: see below) · `bcc_forbidden` (403, account suspended) · `bcc_peepso_unavailable` (503, PeepSo not loaded) · `bcc_invalid_request` (422, field missing / empty / > 2 MB / bad MIME) · `bcc_upload_failed` (422 PHP upload error; 500 on PeepSo throw)
+- **Rate limit (v1.111):** avatar and cover uploads share one per-user budget: **5 per 60 s** and **20 per hour**. It's checked before the suspension check and before the file is read, so a refused upload writes nothing. Message: "Too many image uploads. Try again in a few minutes."
 - **Mapping:** `MyProfileEndpoint::uploadAvatar` (route `MyProfileEndpoint.php:103`, CREATABLE). FE `profile-endpoints.ts:uploadAvatar`.
 
 #### `DELETE /bcc/v1/me/profile/avatar`
@@ -6096,7 +6097,7 @@ Upload a cover photo. Wraps `PeepSoUser::move_cover_file` (resize + write + meta
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized 401`.
 - **Body (`multipart/form-data`):** `cover` (**required**, file) — size ≤ **5 MB**; MIME detected from contents; must be `image/jpeg|png|webp`.
 - **Response 200:** full updated **User view-model** (§3.1, own variant).
-- **Errors:** same set as `POST /me/profile/avatar` (only the `cover` field name + 5 MB cap differ): `bcc_unauthorized` (401) · `bcc_peepso_unavailable` (503) · `bcc_invalid_request` (422) · `bcc_upload_failed` (422/500)
+- **Errors:** same set as `POST /me/profile/avatar` (only the `cover` field name + 5 MB cap differ): `bcc_unauthorized` (401) · `bcc_rate_limited` (429, v1.111; the **same** per-user budget as the avatar upload) · `bcc_forbidden` (403, account suspended) · `bcc_peepso_unavailable` (503) · `bcc_invalid_request` (422) · `bcc_upload_failed` (422/500)
 - **Mapping:** `MyProfileEndpoint::uploadCover` (route `MyProfileEndpoint.php:125`, CREATABLE). FE `profile-endpoints.ts:uploadCover`.
 
 #### `DELETE /bcc/v1/me/profile/cover`
@@ -8891,6 +8892,14 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.111 — 2026-11-11 — behaviour change — profile image uploads are rate limited
+
+Ships with bcc-trust's F-58 change (bcc-trust #524).
+
+- **`POST /me/profile/avatar` · `POST /me/profile/cover`:** now return `bcc_rate_limited` **429** past one shared per-user budget of **5 per 60 s** and **20 per hour**. Both routes were unthrottled, so a script could fill the uploads directory. The limit is checked before the file is read, so a refused upload writes nothing.
+- Also documents the existing `bcc_forbidden` 403 for a suspended account on both routes (F-109, already shipped).
+- **Clients:** show the 429 as "try again in a few minutes"; no retry loop. No shape change.
 
 ### v1.110 — 2026-11-11 — behaviour change — member search no longer matches login names
 
