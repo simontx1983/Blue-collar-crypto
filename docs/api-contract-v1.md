@@ -6388,8 +6388,10 @@ the gate.
 - **Response 200:** `{ "data": { "ok": true, "feed_id": "feed_2210184" } }`
 - **Errors:** `bcc_unauthorized` 401 · `bcc_feature_disabled` 403 ·
   `bcc_rate_limited` 429 (10 / 10 min / viewer) · `bcc_invalid_request`
-  400 · `bcc_not_found` 404 · `bcc_forbidden` 403 (not owner, not
-  admin) · `bcc_internal_error` 500 (trash failure)
+  400 · `bcc_not_found` 404 (missing, **or (v1.9X) not owner, not
+  admin, and the caller cannot see the post at all**; same "Post not
+  found." body) · `bcc_forbidden` 403 (not owner, not admin, on a post
+  the caller can see) · `bcc_internal_error` 500 (trash failure)
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** `PostsEndpoint::deleteFeedPost` → `PostsService::deletePost`.
 
@@ -8816,6 +8818,7 @@ Several routes answered **403** for an id the caller could not see but **404** f
 - **`GET` · `POST /posts/:feed_id/comments`:** gate failure on a post the viewer cannot see at all (secret group; members-only post in a group they are not in) → `bcc_not_found` 404 "Post not found." (was `bcc_forbidden` 403). A post they can see keeps the 403.
 - **`DELETE /posts/:feed_id/comments/:comment_id`:** someone else's comment on a post the viewer cannot see, or under a `feed_id` that is not its parent → `bcc_not_found` 404 "Comment not found." (was 403).
 - **`GET` · `PATCH /posts/:id` (blog edit):** not the author → `bcc_not_found` 404 "Blog post not found." (was `bcc_forbidden` 403), drafts included.
+- **`DELETE /feed/:feed_id`:** not owner, not admin, on a post the caller cannot see at all → `bcc_not_found` 404 "Post not found." (was `bcc_forbidden` 403). A post they can see keeps the 403.
 - **Clients:** treat these 404s as "not available", which the existing `bcc_not_found` copy already does. No new codes, no shape changes.
 
 ### v1.97 — 2026-11-11 — behaviour change — sign-in throttles per identity; 2FA attempt cap
