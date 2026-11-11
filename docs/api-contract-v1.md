@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.108 · 2026-11-11 · Phase 1 deliverable
+**Status:** Draft v1.109 · 2026-11-11 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2300,8 +2300,33 @@ Anonymous-friendly trending feed (§F2 zero-follow fallback).
 - **Response 200:** `CursorEnvelope<FeedItem>` (same shape as `/feed`)
 - **Errors:** `bcc_invalid_request`
 - **Rate limit:** 60/min/IP (anon), 60/min/user (authed)
-- **Cache:** `Cache-Control: public, max-age=15, stale-while-revalidate=30`
-- **Mapping:** `BccFeedRankingService` with global trending profile. The same service serves all feed surfaces (§F3) — no separate hot-feed code path.
+- **Cache (v1.109 — NOW VARIES BY VIEWER):**
+  - Anonymous: `Cache-Control: public, max-age=60, stale-while-revalidate=120`
+  - Signed in: `Cache-Control: private, max-age=15`
+  - **Both:** `Vary: Authorization, Cookie`
+
+  ⚠⚠ **A signed-in response is never shareable, and this is a security
+  property rather than a tuning choice.** As of v1.109 the hot feed applies
+  §K1 mutual invisibility for a signed-in reader, so the body depends on who
+  is asking. Served under the old `public` header, a shared cache (CDN or
+  reverse proxy) could store ONE viewer's filtered feed and serve it to
+  everyone else, including logged-out visitors, for up to three minutes —
+  leaking which authors that viewer blocks, by absence.
+
+  ⚠ `Vary` is sent on the ANONYMOUS response too. Without it a shared cache
+  does not know the response depends on credentials and may hand the cached
+  anonymous copy to a signed-in request; that leaks nothing but silently
+  defeats the filter.
+
+  ⚠ The anonymous posture is otherwise UNCHANGED, so the public,
+  SEO-relevant cacheability this route exists for is preserved. Logged-out
+  responses are byte-identical to the revision before this one.
+
+  ⚠ **Correction, not a change:** this line previously documented
+  `public, max-age=15, stale-while-revalidate=30`. The shipped values have
+  been `max-age=60, stale-while-revalidate=120`; the anonymous row above
+  records what the route actually sends.
+- **Mapping:** `BccFeedRankingService` with global trending profile. The same service serves all feed surfaces (§F3) — no separate hot-feed code path. ⚠ The shared, globally cached payload is still built with the ANONYMOUS posture; the per-viewer §K1 filter is applied AFTER that cache is read and is never written back into it, so one viewer's filtered feed cannot reach another.
 
 #### `GET /bcc/v1/feed/tag`
 
@@ -8867,6 +8892,50 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
+### v1.109 — 2026-11-11 — behaviour change — `/feed/hot` varies by viewer and is no longer shared-cacheable when signed in
+
+Ships with bcc-trust's hot-feed per-viewer block filter, stacked on
+bcc-trust #487.
+
+- **`GET /feed/hot` now applies §K1 mutual invisibility for a SIGNED-IN
+  reader.** Authors the viewer has blocked, and authors who have blocked the
+  viewer, are dropped from the page. Previously this route was the one feed
+  surface where a blocked author still appeared, because it is built once
+  with the anonymous posture and cached for everyone. Logged-out responses
+  are unchanged.
+- **Cache posture — and this is a security property, not tuning:**
+  - signed in → `Cache-Control: private, max-age=15` (matching `/feed/tag`,
+    which already had this problem and solved it the same way)
+  - anonymous → `Cache-Control: public, max-age=60, stale-while-revalidate=120`, **unchanged**
+  - **both** → `Vary: Authorization, Cookie`
+
+  ⚠⚠ A signed-in response must never be shareable. Served under the old
+  `public` header, a shared cache (CDN or reverse proxy) could store ONE
+  viewer's filtered feed and serve it to everyone else, including logged-out
+  visitors, for up to three minutes — leaking which authors that viewer
+  blocks, by their absence. That would be strictly worse than the unfiltered
+  feed this replaces.
+
+  ⚠ `Vary` is sent on the ANONYMOUS response too. Without it a shared cache
+  does not know the response depends on credentials and may hand the cached
+  anonymous copy to a signed-in request; that leaks nothing but silently
+  defeats the filter, so the feature would look implemented and not work.
+- **Correction on the same §4 row:** it previously documented
+  `public, max-age=15, stale-while-revalidate=30`. The route has been sending
+  `max-age=60, stale-while-revalidate=120`; the anonymous row now records
+  what the code actually sends. Called out rather than folded in silently.
+- **Clients:** nothing to change. The payload shape is untouched — a
+  `CursorEnvelope<FeedItem>` either way.
+
+  ⚠ But a signed-in page can now be **shorter than `limit`, or EMPTY if the
+  block state cannot be checked right now**, and neither means the feed has
+  ended. The filter is applied after the page is assembled, so blocked
+  authors are removed rather than back-filled; and an unreadable block table
+  fails CLOSED, withholding the page rather than risking a blocked author.
+  `pagination.has_more` remains the only end-of-feed signal — true on every
+  surface already, but newly reachable here, and a client that treats "fewer
+  items than I asked for" or "no items" as the end will stop paginating
+  early.
 ### v1.108 — 2026-11-11 — additive — a profile-prefs save that fails part-way says so
 
 Ships with bcc-trust's profile-prefs write-failure change (bcc-trust #467, follow-up to F-97 / #449).
