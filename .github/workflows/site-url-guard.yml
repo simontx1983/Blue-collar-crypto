@@ -21,6 +21,10 @@ on:
     - cron: "23 5 * * *" # daily 05:23 UTC
   workflow_dispatch:
 
+# Least privilege (F-43): both jobs only check out and run a probe.
+permissions:
+  contents: read
+
 jobs:
   # Two separate jobs rather than one matrix with a ternary base URL.
   # `A && x || y` in Actions is truthiness-based: an empty PROD_HEALTH_BASE

@@ -3,7 +3,7 @@
 # auth-cache-isolation-probe.sh — verify the LiteSpeed Authorization cache-bypass
 # rule still holds (testnet-deploy-checklist.md §1.6, "BCC AUTH CACHE BYPASS").
 #
-# What it checks, in order (sequential requests, >=1s apart — NOT a load test):
+# What it checks, in order (sequential requests, >=2s apart — NOT a load test):
 #   1. anon GET on a fresh REST URL        -> stored at the edge (miss)
 #   2. anon GET, same URL                  -> must be an edge HIT (proves caching is live)
 #   3. GET, same URL, dummy Bearer header  -> must NOT be a cache HIT
@@ -37,14 +37,24 @@ ENDPOINT="${ENDPOINT:-/wp-json/bcc/v1/cards?per_page=5}"
 SPACING_SECONDS="${SPACING_SECONDS:-2}"
 DUMMY_BEARER="bcc-cache-isolation-probe-dummy-token"
 
-case "$BASE_URL" in
-  https://stage.bluecollarcrypto.io*) ;;
-  http://blue-collar-crypto-custom.local*|http://localhost*|http://127.0.0.1*) ;;
-  *)
-    echo "REFUSED: target '$BASE_URL' is not staging or local dev." >&2
-    echo "Production probing requires explicit operator authorization." >&2
-    exit 3
-    ;;
+# Host scope (F-44): an EXACT origin, not a prefix. The old `stage...io*`
+# glob also accepted https://stage.bluecollarcrypto.io.evil.com,
+# ...io@evil.com/ and http://localhost.evil.com. Local dev may carry a
+# numeric port; nothing else (no path, userinfo or trailing junk).
+BASE_URL="${BASE_URL%/}"
+if ! [[ "$BASE_URL" =~ ^(https://stage\.bluecollarcrypto\.io|http://blue-collar-crypto-custom\.local|http://(localhost|127\.0\.0\.1)(:[0-9]{1,5})?)$ ]]; then
+  echo "REFUSED: target '$BASE_URL' is not staging or local dev." >&2
+  echo "Production probing requires explicit operator authorization." >&2
+  exit 3
+fi
+
+# ENDPOINT is concatenated straight onto BASE_URL, so it must be a PATH:
+# a value like '.evil.com/x?' or '@evil.com/' would otherwise move the host
+# after the origin check above had passed.
+case "$ENDPOINT" in
+  //*|*@*) echo "REFUSED: ENDPOINT must be a path ('/...'), got '$ENDPOINT'." >&2; exit 3 ;;
+  /*) ;;
+  *) echo "REFUSED: ENDPOINT must be a path ('/...'), got '$ENDPOINT'." >&2; exit 3 ;;
 esac
 
 # Unique query param so request #1 is a genuine store, not a pre-existing entry.

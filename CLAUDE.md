@@ -139,8 +139,7 @@ background audits, worktree-based parallelism), see
   `docs/database-schema.md` turns umbrella CI red.**
 
 Also present in `scripts/` but not documentation-load-bearing:
-`wallet-case-preservation-check.php` (throwaway
-live-DB check, deliberately excluded from CI), `bcc-query-floor-probe.php`
+`bcc-query-floor-probe.php`
 (temporary boot-floor diagnostic), `auth-cache-isolation-probe.sh`
 (staging Authorization-cache probe; weekly via
 `.github/workflows/staging-cache-probe.yml`), and `perf/` (k6 harness).
@@ -168,9 +167,9 @@ live-DB check, deliberately excluded from CI), `bcc-query-floor-probe.php`
 - **PostToolUse** — `php-lint.sh` runs `php -l` on PHP edits;
   `ts-check.sh` runs `tsc --noEmit` and `eslint-frontend.sh` runs ESLint
   on `bcc-frontend/` TypeScript edits; `color-token-check.sh` blocks
-  hardcoded colors and cardstock-token leaks outside `cards/` in
-  `bcc-frontend/` (whole-file guard; see bcc-frontend/CLAUDE.md ▸ Color
-  rule — note the hook script itself is not yet committed).
+  hardcoded colors and brand-namespace (`--bcc-*`) token names outside
+  `src/components/cards/` in `bcc-frontend/` (whole-file guard; see
+  bcc-frontend/CLAUDE.md ▸ Color rule).
 - **UserPromptSubmit** — `section-11-reminder.sh` injects a §11 reminder
   when the prompt looks like new-code work.
 

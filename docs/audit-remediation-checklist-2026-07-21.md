@@ -252,7 +252,7 @@ trail it. Land contract-file edits **after PR #77 merges** to avoid touching the
 - **Acceptance:** figures consistent across docs; sampler in runbook.
 - **Deps:** — · **Risk:** low (docs) · **Size:** small · **Tracker:** performance-review-2026-07-19.md · **Evidence:** —.
 
-### ☐ CL-45 — Probe-workflow "inactive" staleness — **OPEN**
+### ☑ CL-45 — Probe-workflow "inactive" staleness — **DONE (F-46)**
 - **Priority:** P2/P3 · **Timing:** before-production · **Type:** docs · **Surface:** umbrella
 - **F-IDs:** F007, F165, F184, F232, F274, F185, F233, F275
 - **Location:** `.github/workflows/staging-cache-probe.yml:9`; `performance-review-2026-07-19.md:177/391`
@@ -408,7 +408,7 @@ trail it. Land contract-file edits **after PR #77 merges** to avoid touching the
 ### ☐ CL-64 — Infrastructure under version control — **OPEN**
 - **Priority:** P2/P3 · **Timing:** before-production / n/a · **Type:** operator + code · **Surface:** umbrella + local
 - **F-IDs:** F005, F039, F202, F090, F278, F089, F095, F096
-- **Location:** `.claude/hooks/color-token-check.sh` (untracked) + `.claude/settings.json`; `app/public/wp-content/mu-plugins/bcc-disable-wp-cron.php:26`; `.gitignore:19`; `wp-content/.claude/`; `~/bcc-smoke`
+- **Location:** `.claude/hooks/color-token-check.sh` (**now committed**, 0d385cc, and wired in `.claude/settings.json` — that part is done) ; `app/public/wp-content/mu-plugins/bcc-disable-wp-cron.php:26`; `.gitignore:19`; `wp-content/.claude/`; `~/bcc-smoke`
 - **Current:** the color guard + mu-plugins exist only per-machine under a deny-all `.gitignore`; the committed CLAUDE.md documents the guard as active; a wp-content `.claude/` holds a plaintext credential.
 - **Outcome:** commit the hook + settings; allowlist the BCC mu-plugins (guard the false admin notice, F089); `git init` the smoke harness; delete/rotate the leaked credential.
 - **Acceptance:** guard fires on other checkouts; mu-plugins tracked; credential rotated.

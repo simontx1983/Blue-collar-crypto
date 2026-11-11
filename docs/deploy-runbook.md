@@ -33,12 +33,15 @@ Each plugin repo has `.github/workflows/deploy.yml`:
   **successfully** on a **push to `main`** (i.e. a merge), it deploys that
   commit to **staging**.
 - **`workflow_dispatch`** trigger — manual; pick `staging` or `production`.
-- The deploy step is a **plugin-scoped `rsync -az --delete`** of the checked-
-  out tree (minus `.git`/`.github`) into that plugin's directory on the
-  server. `vendor/` is committed, so there is **no build step** — the
-  checkout *is* the artifact. A final step greps the deployed `Version:`
-  header back over SSH as a confirmation.
-- **The environment selects the docroot** (`deploy.yml:57-61`): staging
+- The deploy step is a **plugin-scoped `rsync -az --delete --delete-delay
+  --delay-updates`** of the checked-out tree (minus `.git`/`.github`) into that
+  plugin's directory on the server. `vendor/` is committed, so there is **no
+  build step** — the checkout *is* the artifact.
+- After the rsync: the deployed `Version:` header is grepped back over SSH, a
+  **health probe** runs, and (bcc-core, bcc-trust) a **stranded-path guard**
+  refuses a target that still holds `.git`/`.github`. A production dispatch
+  also refuses any commit other than its `expected_sha`.
+- **The environment selects the docroot** (the `SUBPATH` logic in `deploy.yml`): staging
   targets `…/stage/wp-content/plugins/<plugin>/`, production targets
   `…/wp-content/plugins/<plugin>/` — same account, different tree.
 
@@ -50,12 +53,16 @@ for staging, `…/wp-content/plugins/<plugin>/` for production. That means the
 hand-added LSCache Authorization-bypass block (see
 [testnet-deploy-checklist.md](testnet-deploy-checklist.md) §1.6 and the
 closed bug in [TODO.md](TODO.md)). Likewise `uploads/`, `wp-config.php`, and
-every other plugin are untouched. `--delete` only removes files that were
-deleted from the repo, within the one plugin dir.
+every other plugin are untouched. Within the one plugin dir, `--delete`
+removes **every file not in the commit** — including server-only files —
+**except excluded paths**: anything matching an `--exclude` (`.git`, `.github`,
+at any depth) is *protected* on the server, never updated and never removed.
+That is how stale `.git` trees were stranded (bcc-trust #286), and why the
+stranded-path guard exists.
 
 ## Secrets (per repo)
 
-Five Actions secrets, identical across `bcc-trust`, `bcc-core`, `bcc-search`:
+Seven Actions secrets, identical across `bcc-trust`, `bcc-core`, `bcc-search`:
 
 | Secret | Value / meaning |
 |---|---|
@@ -64,6 +71,8 @@ Five Actions secrets, identical across `bcc-trust`, `bcc-core`, `bcc-search`:
 | `DEPLOY_PORT` | SSH port. |
 | `DEPLOY_USER` | Server (account) user. |
 | `DEPLOY_BASE` | **Home-relative** path to the webroot, e.g. `domains/<site>/public_html` — **no leading slash**. |
+| `DEPLOY_HOST_KEY` | The server's SSH host key line(s), written to `known_hosts` (no keyscan / trust-on-first-use). |
+| `DISPATCH_TOKEN` | Used by `notify-root.yml` to trigger the umbrella cross-repo guards on push to `main`. |
 
 > **`DEPLOY_BASE` gotcha:** set it as a *relative* path. Under Git Bash on
 > Windows, `gh secret set --body "/home/…"` triggers MSYS path conversion and
