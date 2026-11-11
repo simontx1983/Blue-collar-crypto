@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.88 · 2026-11-11 · Phase 1 deliverable
+**Status:** Draft v1.89 · 2026-11-11 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2148,6 +2148,24 @@ Silent-refresh seam: exchanges a recently-expired (or near-expiry) Bearer JWT fo
 - **Rate limit:** IP-bucketed, 30 / 60s
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** decodes via `JwtToken::decodeForRefresh`, re-reads `bcc_handle` from authoritative storage (a handle change since the original mint is reflected; the JWT payload is not trusted), mints a fresh JWT, emits the `token_refreshed` audit log. No cookie set, no DB mutation beyond the audit row. Handler `AuthEndpoint::refresh` (route `AuthEndpoint.php:292`). Standard envelope per §1.4.
+
+#### `GET /bcc/v1/auth/session`
+
+*(since v1.89)* Server-side validation of a Bearer JWT: "whose session is this token?". Built for the frontend's NextAuth `bcc-verified` credentials provider, which must build its session from the **server's** answer, never from a POSTed `user_id` / `handle` (frontend F-08).
+
+- **Auth:** Bearer required — the token to check, in `Authorization: Bearer <jwt>`. The route validates **the presented token itself** with the canonical `JwtToken::decode` (signature, issuer, audience, `exp`, token-version revocation) — **no refresh grace**. It never consults the WordPress cookie session: a valid cookie with a missing or bad Bearer is still `401`.
+- **Body / query:** none.
+- **Response 200:**
+  ```json
+  { "user_id": 42, "handle": "alice", "in_good_standing": true, "expires_at": 1767225600 }
+  ```
+  - `handle` — the user's **current** handle from authoritative storage (the token's own claim goes stale after a handle change).
+  - `in_good_standing` — the same value `/auth/login` returns; it **fails open** (`true`) when the standing lookup errors, so it is display state, **never a security gate**.
+  - `expires_at` — the token's own `exp` (unix seconds). `decode` accepts a token up to **60 s past** it (the standard skew), so a client may see a `200` with `expires_at` slightly in the past.
+- **Errors:** `bcc_unauthorized` 401 for a missing, malformed, invalid, expired, revoked or deleted-user token — **one code, one message, no reason** (the reason is written to the audit log only) · `bcc_invalid_state` 409 (the user has no handle) · `bcc_rate_limited` 429.
+- **Rate limit:** **per token**, 60 / 60 s — keyed on a hash of the presented token and checked **before** decode (calls arrive from the frontend server's single IP, so a per-IP bucket would be shared by every user).
+- **Cache:** `Cache-Control: no-store`, `Vary: Authorization`.
+- **Mapping:** reads the Bearer via `BearerAuth::readBearerToken` (the same header reader authentication uses), `JwtToken::decode`, `get_userdata`, `bcc_handle` meta, `AuthSupport::resolveInGoodStanding`. No writes beyond an `auth_session_rejected` audit-log line on a 401. Handler `SessionController::session`. Standard envelope per §1.4.
 
 #### `POST /bcc/v1/auth/verify-email`
 
@@ -8717,6 +8735,11 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.89 — 2026-11-11 — additive — `GET /auth/session`
+
+
+- **New `GET /auth/session`:** validates the presented Bearer JWT (canonical decode, no refresh grace, never the cookie session) and returns `{ user_id, handle, in_good_standing, expires_at }`. One `401 bcc_unauthorized` for every rejection; `409` without a handle; per-token `429`. `in_good_standing` fails open — not a security gate. For the frontend's `bcc-verified` provider (F-08), which must stop trusting POSTed identity fields.
 
 ### v1.88 — 2026-11-11 — behaviour change plus additive — an email is only "verified" once its inbox is proven
 
