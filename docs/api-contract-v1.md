@@ -8813,7 +8813,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 Ships with bcc-trust #489 (admin-controlled email digest).
 
-- **`/bcc/v1/digest/unsubscribe` (internal route, outside §4 — `EXEMPT_INTERNAL`):** now accepts **`POST`** as well as `GET`, with the same signed `uid` / `exp` / `sig` query token and the same HTML confirmation. This is the RFC 8058 one-click request mail clients send for the new `List-Unsubscribe` + `List-Unsubscribe-Post: List-Unsubscribe=One-Click` headers every digest email now carries. The request body is ignored.
+- **`/bcc/v1/digest/unsubscribe` (internal route, outside §4 — `EXEMPT_INTERNAL`):** now accepts **`POST`** as well as `GET`, with the same signed `uid` / `exp` / `sig` query token and the same HTML confirmation. This is the RFC 8058 one-click request mail clients send for the new `List-Unsubscribe` + `List-Unsubscribe-Post: List-Unsubscribe=One-Click` headers every digest email now carries. The token is read from the request; a one-click body adds nothing.
 - **Clients:** nothing to change. `GET /me/notification-prefs` → `email_digest` is still the only opt-in, default `false`.
 
 ### v1.99 — 2026-11-11 — behaviour change — a hidden group, post or draft answers 404, never 403
