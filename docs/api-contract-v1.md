@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.91 · 2026-11-11 · Phase 1 deliverable
+**Status:** Draft v1.92 · 2026-11-11 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -387,7 +387,12 @@ The single most important shared type. Encodes §N7 (always visible, disabled wi
 - When `allowed: false`, `unlock_hint` is a **plain-English explanation** the frontend renders verbatim as a tooltip/disabled-button helper.
 - `can_open_dispute` is the **owner vote-dispute** entry (DisputeCallout → `POST /disputes`) and mirrors the write gate exactly: page ownership only, no feature ladder (shipped 2026-06-11). It is the **sole** dispute gate — the `can_dispute` §J attestation-cast gate (`sign_dispute` ladder) was a dead scaffold (no such attestation kind existed) and was retired 2026-07-08. Non-owners get `reason_code: "not_page_owner"` with no hint — the §N7 visible-gate rule applies to gates a viewer can eventually unlock, which ownership of someone else's page is not.
   - **Member self-pages (member-disputes slice, 2026-06-30):** a member is the owner of their own self-page, so on their OWN member card/profile `can_open_dispute` is `allowed: true` when they have a contestable active downvote on their self-page, else `reason_code: "no_contestable_downvote"`. Non-owners and anonymous viewers get `reason_code: "not_applicable"` (members can't dispute votes on each other — only the subject can contest a downvote on themselves, mirroring the entity owner-contests-downvote model). Ownership resolves via the zero-DB self-page identity (`page_id = ID_BASE + user_id`).
-- `can_message` (v1.53) mirrors the DM write gates exactly — it is produced by the SAME messaging-policy evaluator the send path runs, so a rendered Message button and the `POST /me/conversations` it triggers can never disagree on a permanent rule. Only the transient rate limit is POST-only. On **validator page cards** it targets the page's resolved verified operator (or the queue, when the validator has never been claimed); on member and community cards it is `not_applicable`. Reason codes: `not_applicable` (hide) · `auth_required` (visible-disabled, sign-in copy) · `self_action_blocked` (hide — viewer is the operator) · `sender_restricted` (hide — suspended/banned sender) · `sender_chat_disabled` (visible-disabled, resolvable hint) · `messaging_unavailable` (hide) · `friends_only` (visible-disabled + hint).
+- `can_message` (v1.53) mirrors the DM write gates exactly — it is produced by the SAME messaging-policy evaluator the send path runs, so a rendered Message button and the `POST /me/conversations` it triggers can never disagree on a permanent rule. Only the transient rate limit is POST-only. On **validator page cards** it targets the page's resolved verified operator (or the queue, when the validator has never been claimed); on member and community cards it is `not_applicable`. Reason codes: `not_applicable` (hide) · `auth_required` (visible-disabled, sign-in copy) · `self_action_blocked` (hide — viewer is the operator) · `sender_restricted` (hide — suspended/banned sender) · `sender_chat_disabled` (visible-disabled, resolvable hint) · `messaging_unavailable` (hide) · `friends_only` (visible-disabled + hint) · **`unavailable` (hide — v1.92)**.
+
+  - ⚠⚠ **`unavailable` (v1.92) means "the server could not determine the block state", not "you may not message".** It is emitted when the block table cannot be READ — a transient database failure — and it exists because the alternative is worse: the previous behaviour reported an unreadable block table as "not blocked", so the client rendered a live Message button and the `POST` then refused it. Clients MUST **omit** the affordance, never render it disabled: the condition is not something the viewer can resolve, so §N7's visible-disabled rule does not apply.
+  - ⚠⚠ **It is ALWAYS paired with `unlock_hint: null`, and that pairing is load-bearing rather than cosmetic.** A client that hides on the hint rather than on the code — which is what the member-card pill did before the omit branch shipped — would render a DISABLED pill if a hint string ever accompanied this code. The server therefore guarantees the null, and a backend test asserts the pairing independently of the code.
+  - ⚠ It is deliberately a **different** code from `messaging_unavailable`. That one is the §4.19 info-leak shield, hiding WHICH of mutual-block / DMs-off / no-such-user applies. `unavailable` states a fact about the REQUEST rather than about the pair, so it reveals nothing the shield protects — and on a failed read every candidate in a batch receives it uniformly, which is why a shared payload is safe here.
+  - The matching write paths answer `bcc_unavailable` **503** (§4.19), so a client that retries gets a coherent answer from both sides.
   - **Info-leak shield:** a mutual block and a recipient with DMs turned off emit the **byte-identical** `{ allowed: false, unlock_hint: null, reason_code: "messaging_unavailable" }`. Clients must not attempt to distinguish them, and the server never does on the wire (this mirrors the §4.19 404 shield on the write path).
 - When `allowed: true`, `unlock_hint` is `null` (not omitted — explicit `null` so client typing is uniform).
 - When a gate is **structurally impossible** for this viewer (e.g., viewing your own card → `can_watch: false`, you can't follow yourself), `unlock_hint` is `null` and the frontend hides the action UI per §N7's "structurally impossible" carve-out (the always-visible rule applies to *gates a viewer could resolve*, not to nonsensical actions).
@@ -964,7 +969,7 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
   "ux_helpers": { "...": "see §2.7 — own profile only" },
   "permissions": {
     "can_follow":     { "allowed": false, "unlock_hint": null },
-    "can_message":    { "allowed": false, "unlock_hint": null },
+    "can_message":    { "allowed": false, "unlock_hint": null, "reason_code": "messaging_unavailable" },
     "can_block":      { "allowed": false, "unlock_hint": null },
     "can_edit_profile": { "allowed": true, "unlock_hint": null }
   },
@@ -986,7 +991,12 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
 - `progression`, `capabilities`, `ux_helpers` are **omitted entirely** (not even `null`). They are own-only.
 - `privacy` block reduced to `{ watching_hidden, reviews_hidden, ... }` reflecting what the viewer can see, not what's set.
 - `permissions.can_follow` becomes meaningful (`allowed: true` if the viewer can watch this user as a member card).
-- `permissions.can_message` (v1.53) mirrors the DM write gates exactly — it runs the same messaging-policy evaluator as `POST /me/conversations` (mutual block, recipient `chat_enabled`, friends-only, sender suspension/ban). It was previously a bare chat-enabled probe, so a friends-only or mutually-blocked recipient rendered an enabled Message button that always failed on submit. The `{allowed, unlock_hint}` shape is unchanged, but `unlock_hint` may now be non-null on this surface (e.g. the friends-only copy) and `allowed` is stricter. The mutual-block and DMs-off cases remain indistinguishable to the client.
+- `permissions.can_message` (v1.53) mirrors the DM write gates exactly — it runs the same messaging-policy evaluator as `POST /me/conversations` (mutual block, recipient `chat_enabled`, friends-only, sender suspension/ban). It was previously a bare chat-enabled probe, so a friends-only or mutually-blocked recipient rendered an enabled Message button that always failed on submit. `unlock_hint` may be non-null on this surface (e.g. the friends-only copy) and `allowed` is stricter. The mutual-block and DMs-off cases remain indistinguishable to the client.
+
+  ⚠⚠ **`reason_code` IS PRESENT ON THIS SURFACE AS OF v1.92, and its absence before then was a drift rather than a design.** This entry previously described the shape as `{allowed, unlock_hint}` — two keys — while the **card** surfaces (§3.2) have emitted the full three-key permission object for `can_message` since v1.53, because they forward the policy evaluator's return verbatim and this surface destructured it. So the two surfaces disagreed, and this document recorded the disagreement. v1.92 forwards `reason_code` here too; the card shape is unchanged.
+  - It is **always present**, `null` when messaging is allowed, so a client reads `null` rather than `undefined`.
+  - ⚠ Its sibling keys on this surface (`can_follow`, `can_block`, …) remain two-key, and that is correct rather than inconsistent: they have no reason code to report. `can_message` is the only entry here produced by the messaging-policy evaluator.
+  - Without this, `/u/[handle]` could not observe `reason_code: "unavailable"` (§3.2) at all, and a client's omit branch for it would appear to work only by accident — via the `unlock_hint: null` pairing, which is a safeguard, not the signal.
 - `wallets` is **`[]`** — always, for every viewer who is not the profile owner (authenticated stranger *and* anonymous alike). Not a masked address, not a wallet-link id, no entries at all. Wallet connections are private account data; the only wallet signal that crosses a member boundary is the derived `verifications.wallets_verified` count, which remains accurate because the server sources it from the repository rather than counting this array. See [docs/wallet-privacy-policy.md](wallet-privacy-policy.md).
 - `verifications.profile_completeness` *(documented v1.64 — shipped earlier)* is the 0–100 percentage `QuestValidator` computes from filled profile fields. `verifications.profile_complete` *(v1.64)* is the server's completeness **verdict** (same `QuestValidator` code path the Apprentice-readiness check uses — the threshold never leaves PHP) and is **own-view only: the key is absent for every non-self viewer**; frontends treat absence as not-complete.
 
@@ -8747,6 +8757,34 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.92 — 2026-11-11 — additive plus one corrected claim — an unreadable block table no longer promises a Message button
+
+**A transient database failure read as "nobody is blocked".** The block
+probes returned the same value for "no such row" and for a failed query, so
+every can-message surface reported an unreadable block table as "you may
+message this person" — and the write path then refused the send. The client
+had no way to tell, because the server could not.
+
+- **Additive — `reason_code: "unavailable"`** on the `can_message` permission
+  (§3.2), meaning *the block state could not be determined*. Clients **omit**
+  the affordance rather than disabling it: the viewer cannot resolve a
+  database fault, so §N7's visible-disabled rule does not apply. It is
+  **always** paired with `unlock_hint: null` — load-bearing, because a client
+  that hides on the hint rather than the code would otherwise render a
+  disabled control.
+- **Additive — `reason_code` on the user view-model's `can_message`**
+  (§`GET /users/:handle`). ⚠ **And a corrected claim:** that entry said "the
+  `{allowed, unlock_hint}` shape is unchanged". It was two keys there while
+  the card surfaces had carried three since v1.53, so the surfaces disagreed
+  and this document described the narrower one as settled. Corrected, not
+  merely supplemented.
+- **Not changed:** `messaging_unavailable` keeps its §4.19 info-leak meaning.
+  `unavailable` is deliberately distinct — it is a fact about the request,
+  not about the pair, so it leaks nothing the shield protects. The write
+  paths' matching refusal is `bcc_unavailable` **503**, retryable, and
+  deliberately NOT the privacy-shaped 404 a real block produces.
+- **No route added or changed**, so the §4 endpoint inventory is unmoved.
 
 ### v1.91 — 2026-11-11 — behaviour change plus additive — a private profile is actually private
 
