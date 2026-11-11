@@ -36,8 +36,9 @@ Capture two things so "roll back" has a concrete target:
    git -C <repo> tag -f last-good-<date> <sha> && git -C <repo> push origin last-good-<date>
    ```
    The repos: `bcc-core`, `bcc-trust`, `bcc-search` (under `app/public/wp-content/plugins/`),
-   `bcc-frontend`, and the umbrella. Roll back is a **pipeline re-deploy at that SHA** (§4b) —
-   not a git operation on the server.
+   `bcc-frontend`, and the umbrella. For production, the recorded SHA is a reference
+   point, not a dispatch target. Production only deploys `main`'s tip, so rollback is a revert
+   on `main` or a tarball restore (§4b). It is never a git operation on the server.
 2. **Database.** Take the pre-deploy snapshot in §2.
 
 ---
@@ -90,12 +91,30 @@ Deployments → the last-good build → "Promote to Production"), or `vercel rol
 
 ### 4b. Backend (CI pipeline) — code only
 The deployed tree is an **rsync target, not a git checkout** — never `git checkout` on the
-server. Redeploy the last-good commit through the pipeline, per affected plugin repo:
-1. Point a ref at the last-good SHA from §1 (use the tag, or `git branch rollback/<date> <sha>`
-   pushed to origin).
-2. **Actions → Deploy → Run workflow** → select that ref → pick the environment. The
-   plugin-scoped rsync (with `--delete`) makes the server tree match that commit exactly.
-3. After the run's version-confirm step passes: `wp cache flush` on the box (over SSH).
+server.
+
+> ⚠ **You cannot dispatch an old SHA to production.** The Deploy workflow refuses a
+> production dispatch from any ref other than `refs/heads/main`, and it always checks out
+> **main's tip**. The `expected_sha` input is an **assertion, not a selector**: the run fails
+> unless the checked-out tip equals it. A rollback branch, a tag, or an old SHA in
+> `expected_sha` therefore cannot redeploy last-good code to production.
+
+Production code rollback has two routes, per affected plugin repo:
+
+1. **Revert on `main` (the normal route).** Open a PR that `git revert`s the bad merge(s) and
+   merge it once CI is green. **This also rolls staging back:** the merge triggers the staging
+   auto-deploy. Then **Actions → Deploy → Run workflow → Branch `main` →
+   `environment: production`**, with `expected_sha` = the new tip's full 40-character SHA.
+   The plugin-scoped rsync (with `--delete`) makes the server tree match that commit exactly.
+2. **Restore a pre-deploy tarball (fast path, out of band).** If you took a tarball of the
+   plugin directory before deploying, restore it on the box over SSH. This is faster, but
+   leaves `main` ahead of production. Follow up with a revert on `main` before the next
+   production dispatch, or that dispatch will redeploy the bad code.
+
+After either route: `wp cache flush` on the box (over SSH).
+
+Staging is not restricted this way: a manual staging dispatch deploys whatever ref it is
+run from. So a staging-only rollback can still use a ref pointed at the last-good SHA.
 
 Re-run the §3 health gates. If the bad deploy ran a schema migration, also do §4c.
 

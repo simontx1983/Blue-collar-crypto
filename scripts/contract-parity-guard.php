@@ -64,6 +64,17 @@ if (!is_readable($CONTRACT_PATH)) {
     exit(2);
 }
 
+// Fail closed on a missing plugin tree. A bare umbrella checkout has no
+// plugin trees; without this check the walker below silently yields zero
+// files and the guard would PASS over nothing.
+foreach ($PLUGIN_ROOTS as $root) {
+    if (!is_dir($root)) {
+        fwrite(STDERR, "Missing plugin root: {$root}\n"
+            . "Check out bcc-core, bcc-search and bcc-trust under app/public/wp-content/plugins/ before running this guard.\n");
+        exit(2);
+    }
+}
+
 /*
 |--------------------------------------------------------------------------
 | NAMESPACES IN SCOPE
@@ -151,14 +162,31 @@ function parse_contract_endpoints(string $path): array {
     // are recognized as real documentation, not false-flagged as undocumented.
     $pattern = '/^####\s+(?:[^`]*\s+)?`(GET|POST|PUT|PATCH|DELETE)\s+(\/\S+?)`/';
 
+    // A header may document several verbs. Once METHOD+path matching became
+    // strict, reading only the first one turned these into false
+    // "undocumented" findings:
+    //   #### `POST /bcc/v1/feed/:id/stoke` · `DELETE /bcc/v1/feed/:id/stoke`
+    //   #### `GET /bcc/v1/me/profile-prefs` and `PATCH`
+    // So after the leading `METHOD /path`, every further backticked token on
+    // the line is read too. A `METHOD /path` token adds that pair. A bare
+    // `METHOD` token inherits the path of the nearest preceding token.
+    $tokenPattern = '/`(GET|POST|PUT|PATCH|DELETE)(?:\s+(\/\S+?))?`/';
+
     foreach ($lines as $idx => $line) {
-        if (preg_match($pattern, $line, $m) === 1) {
-            $method = strtoupper($m[1]);
-            $rawPath = $m[2];
-            $normPath = normalize_path($rawPath);
+        if (preg_match($pattern, $line) !== 1) {
+            continue;
+        }
+        preg_match_all($tokenPattern, $line, $tokens, PREG_SET_ORDER);
+        $lastRaw = null;
+        foreach ($tokens as $tok) {
+            $rawPath = isset($tok[2]) && $tok[2] !== '' ? $tok[2] : $lastRaw;
+            if ($rawPath === null) {
+                continue;
+            }
+            $lastRaw = $rawPath;
             $found[] = [
-                'method' => $method,
-                'path'   => $normPath,
+                'method' => strtoupper($tok[1]),
+                'path'   => normalize_path($rawPath),
                 'raw'    => $rawPath,
                 'lineno' => $idx + 1,
             ];
@@ -380,16 +408,27 @@ function extract_routes_from_file(string $fpath, array $crossFileConstants): arr
                 if (count($args) >= 2) {
                     $namespace = resolve_string_arg($args[0], $constants, $crossFileConstants);
                     $path      = resolve_string_arg($args[1], $constants, $crossFileConstants);
-                    $methods   = isset($args[2])
-                        ? resolve_methods_arg($args[2], $constants)
-                        : ['*'];
-                    $unresolved = ($namespace === null) || ($path === null);
+                    // '*' ONLY when the third argument is genuinely absent.
+                    // A present argument whose methods can't be read is
+                    // unresolved, never a wildcard.
+                    $configs = isset($args[2])
+                        ? resolve_methods_arg($args[2], $constants, $crossFileConstants)
+                        : [['methods' => ['*'], 'triple' => false]];
+                    $methods = [];
+                    foreach ($configs ?? [] as $c) {
+                        foreach ($c['methods'] as $m) {
+                            $methods[] = $m;
+                        }
+                    }
+                    $unresolved = ($namespace === null) || ($path === null) || ($configs === null);
                     $found[] = [
                         'file'       => $fpath,
                         'lineno'     => is_array($t) ? (int) $t[2] : 0,
                         'namespace'  => (string) ($namespace ?? '?'),
                         'path'       => (string) ($path ?? '?'),
-                        'methods'    => $methods,
+                        'methods'    => array_values(array_unique($methods)),
+                        'configs'    => $configs ?? [],
+                        'methods_unresolved' => $configs === null,
                         'unresolved' => $unresolved,
                     ];
                 }
@@ -596,17 +635,33 @@ function resolve_string_arg(array $argTokens, array $constants, array $crossFile
 }
 
 /**
+ * Resolve the third register_rest_route() argument into its route configs.
+ *
+ * Returns one entry per `'methods' => …` occurrence, i.e. per route config,
+ * with that config's method list and whether it is exactly the EDITABLE
+ * triple {POST, PUT, PATCH}. A triple config has one handler, so
+ * documenting any one of its verbs documents the config. The flag is
+ * per-config: a separate POST config on the same path is NOT covered by
+ * a sibling triple.
+ *
+ * Returns NULL (unresolved) when the argument is present but its methods
+ * cannot be read: no `'methods'` key at all (a variable or helper-built
+ * config), or any occurrence whose value the parser doesn't understand.
+ * An unresolved method set must never degrade into a wildcard that
+ * matches every documented verb.
+ *
  * @param list<mixed> $argTokens
  * @param array<string, string> $constants
- * @return list<string>  methods (GET / POST / etc.). Empty list = unknown.
+ * @param array<string, array<string, string>> $crossFileConstants
+ * @return list<array{methods: list<string>, triple: bool}>|null
  */
-function resolve_methods_arg(array $argTokens, array $constants): array {
+function resolve_methods_arg(array $argTokens, array $constants, array $crossFileConstants = []): ?array {
+    $configs = [];
     // Walk the entire third-arg token stream collecting EVERY
     // `'methods' => XYZ` occurrence. Multi-config routes pass an array
     // of route configs each with their own `methods` key; a single-
     // config route has just one. Union the results.
     $tokenStream = $argTokens;
-    $methodsList = [];
     $n = count($tokenStream);
     $i = 0;
 
@@ -637,56 +692,123 @@ function resolve_methods_arg(array $argTokens, array $constants): array {
                 $value[] = $tt;
                 $j++;
             }
-            foreach (interpret_methods_value($value) as $m) {
-                $methodsList[] = $m;
+            $occurrence = interpret_methods_value($value, $constants, $crossFileConstants);
+            if ($occurrence === null) {
+                return null;
             }
+            $sorted = $occurrence;
+            sort($sorted);
+            $configs[] = [
+                'methods' => $occurrence,
+                'triple'  => $sorted === ['PATCH', 'POST', 'PUT'],
+            ];
             $i = $j;
             continue;
         }
         $i++;
     }
 
-    return array_values(array_unique($methodsList));
+    return $configs === [] ? null : $configs;
 }
 
 /**
  * Interpret the value side of `'methods' => XYZ`.
- * Accepts: string literal, WP_REST_Server::CONSTANT, array.
  *
- * `$constants` is not consulted today — methods come from string
- * literals or well-known WP_REST_Server constants. Kept off the
- * signature to avoid lying about a dependency the function doesn't
- * have.
+ * Understands: a string literal ('GET' or 'POST, PUT, PATCH'), an array of
+ * those, `WP_REST_Server::CONST` (with or without a leading backslash), and
+ * a class constant (`self::X` / `static::X` from this file, `Other::X` from
+ * the cross-file map) whose value is a method string.
+ *
+ * Returns NULL for anything else (a variable, a function call, an unknown
+ * constant, an unrecognised verb, or nothing at all), so the caller can
+ * mark the site unresolved instead of guessing.
  *
  * @param list<mixed> $tokens
- * @return list<string>
+ * @param array<string, string> $constants
+ * @param array<string, array<string, string>> $crossFileConstants
+ * @return list<string>|null
  */
-function interpret_methods_value(array $tokens): array {
+function interpret_methods_value(array $tokens, array $constants = [], array $crossFileConstants = []): ?array {
+    $verbs = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
+    $classTokens = [T_STRING, T_STATIC];
+    if (defined('T_NAME_FULLY_QUALIFIED')) {
+        $classTokens[] = T_NAME_FULLY_QUALIFIED;
+        $classTokens[] = T_NAME_QUALIFIED;
+    }
+
     $methods = [];
-    $i = 0;
+    $addLiteral = static function (string $literal) use (&$methods, $verbs): bool {
+        foreach (explode(',', $literal) as $m) {
+            $m = strtoupper(trim($m));
+            if ($m === '') {
+                continue;
+            }
+            if (!in_array($m, $verbs, true)) {
+                return false;
+            }
+            $methods[] = $m;
+        }
+        return true;
+    };
+
     $n = count($tokens);
+    $i = 0;
     while ($i < $n) {
         $t = $tokens[$i];
-        if (is_array($t)) {
-            if ($t[0] === T_CONSTANT_ENCAPSED_STRING) {
-                $literal = trim($t[1], "'\"");
-                // 'POST, PUT, PATCH' style
-                foreach (explode(',', $literal) as $m) {
-                    $m = trim($m);
-                    if ($m !== '') $methods[] = strtoupper($m);
+
+        // Structural tokens of an array literal: [ ] ( ) , array
+        if (in_array($t, ['[', ']', '(', ')', ','], true)
+            || (is_array($t) && in_array($t[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT, T_ARRAY], true))) {
+            $i++;
+            continue;
+        }
+
+        if (is_array($t) && $t[0] === T_CONSTANT_ENCAPSED_STRING) {
+            if (!$addLiteral(trim($t[1], "'\""))) {
+                return null;
+            }
+            $i++;
+            continue;
+        }
+
+        // Qualifier :: CONST
+        if (is_array($t) && in_array($t[0], $classTokens, true)) {
+            $j = skip_ws($tokens, $i + 1, $n);
+            $k = ($j < $n && is_array($tokens[$j]) && $tokens[$j][0] === T_DOUBLE_COLON)
+                ? skip_ws($tokens, $j + 1, $n)
+                : $n;
+            if ($k >= $n || !is_array($tokens[$k]) || $tokens[$k][0] !== T_STRING) {
+                return null;
+            }
+            $qualifier = ltrim($t[1], '\\');
+            $constName = $tokens[$k][1];
+
+            if ($qualifier === 'WP_REST_Server') {
+                $mapped = wp_rest_method_constant_to_methods($constName);
+                if ($mapped === []) {
+                    return null;
                 }
-            } elseif ($t[0] === T_STRING) {
-                $name = $t[1];
-                // WP_REST_Server::READABLE etc.
-                $mapped = wp_rest_method_constant_to_methods($name);
-                if ($mapped !== []) {
-                    foreach ($mapped as $m) $methods[] = $m;
+                foreach ($mapped as $m) {
+                    $methods[] = $m;
+                }
+            } else {
+                $short = substr((string) strrchr('\\' . $qualifier, '\\'), 1);
+                $value = ($qualifier === 'self' || $qualifier === 'static')
+                    ? ($constants[$constName] ?? null)
+                    : ($crossFileConstants[$short][$constName] ?? null);
+                if ($value === null || !$addLiteral($value)) {
+                    return null;
                 }
             }
+            $i = $k + 1;
+            continue;
         }
-        $i++;
+
+        // Variable, function call, bare identifier, anything else.
+        return null;
     }
-    return array_values(array_unique($methods));
+
+    return $methods === [] ? null : array_values(array_unique($methods));
 }
 
 /**
@@ -709,6 +831,13 @@ function wp_rest_method_constant_to_methods(string $token): array {
 |--------------------------------------------------------------------------
 */
 
+// Fixture-only switch for scripts/tests/guards-fail-closed.test.sh. The
+// real allowlist names routes a fixture doesn't register, so every fixture
+// run would fail on stale entries and no positive case could assert exit 0.
+// The switch can only TIGHTEN the guard: an empty allowlist turns every
+// exempt route into an undocumented FAIL. It cannot turn a red tree green.
+$EXEMPT = getenv('BCC_CONTRACT_PARITY_EMPTY_ALLOWLIST') === '1' ? [] : EXEMPT_INTERNAL;
+
 $contractEndpoints   = parse_contract_endpoints($CONTRACT_PATH);
 $crossFileConstants  = collect_all_class_constants($PLUGIN_ROOTS);
 $phpRoutes           = parse_php_routes($PLUGIN_ROOTS, $crossFileConstants);
@@ -717,20 +846,33 @@ $phpRoutes           = parse_php_routes($PLUGIN_ROOTS, $crossFileConstants);
 // where full-path = /{namespace}/{path-normalized}, restricted to
 // IN_SCOPE_NAMESPACES.
 $codeSet = [];
+// $editableKey[KEY] is true only when EVERY config that registers KEY is
+// an EDITABLE triple. One plain POST config on the path makes it false.
+$editableKey = [];
 $unresolved = [];
 foreach ($phpRoutes as $r) {
-    if ($r['unresolved']) {
+    // An unresolved namespace/path can't be scoped, so it always fails.
+    // An unresolved method set only matters for an in-scope route.
+    $pathUnresolved = $r['namespace'] === '?' || $r['path'] === '?';
+    if ($pathUnresolved) {
         $unresolved[] = $r;
         continue;
     }
     if (!in_array($r['namespace'], IN_SCOPE_NAMESPACES, true)) {
         continue;
     }
+    if ($r['methods_unresolved']) {
+        $unresolved[] = $r;
+        continue;
+    }
     $fullPath = '/' . $r['namespace'] . normalize_path($r['path']);
     $fullPath = rtrim($fullPath, '/');
-    foreach ($r['methods'] !== [] ? $r['methods'] : ['*'] as $m) {
-        $key = $m . ' ' . $fullPath;
-        $codeSet[$key] = $r;
+    foreach ($r['configs'] as $c) {
+        foreach ($c['methods'] as $m) {
+            $key = $m . ' ' . $fullPath;
+            $codeSet[$key] = $r;
+            $editableKey[$key] = ($editableKey[$key] ?? true) && $c['triple'];
+        }
     }
 }
 
@@ -755,22 +897,33 @@ foreach ($contractEndpoints as $ce) {
 $undocumented = [];
 $exemptMatched = [];
 foreach ($codeSet as $key => $r) {
-    // Strip method prefix
     if (!isset($contractPathSet[$key])) {
-        // Look for any-method contract match
+        // Match on METHOD + path. Documenting `GET /x` must not also
+        // document a code-registered `DELETE /x`. Two narrow exceptions:
+        //  - a registration with no explicit methods ('*') may match any
+        //    documented method on its path, because the parser genuinely
+        //    can't see its method set;
+        //  - a POST/PUT/PATCH verb from a single EDITABLE-triple config is
+        //    documented when any verb of the triple is (one handler).
         [$m, $p] = explode(' ', $key, 2);
-        $anyMethodMatch = false;
-        foreach (['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as $candidate) {
+        $documented = false;
+        $siblings = [];
+        if ($m === '*') {
+            $siblings = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
+        } elseif (($editableKey[$key] ?? false) && in_array($m, ['POST', 'PUT', 'PATCH'], true)) {
+            $siblings = ['POST', 'PUT', 'PATCH'];
+        }
+        foreach ($siblings as $candidate) {
             if (isset($contractPathSet[$candidate . ' ' . $p])) {
-                $anyMethodMatch = true;
+                $documented = true;
                 break;
             }
         }
-        if (!$anyMethodMatch) {
+        if (!$documented) {
             // Intentionally-internal (admin/machine) routes are allowlisted
             // and don't belong in the public contract. Everything else is a
             // real §γ gap.
-            if (array_key_exists($key, EXEMPT_INTERNAL)) {
+            if (array_key_exists($key, $EXEMPT)) {
                 $exemptMatched[$key] = true;
             } else {
                 $undocumented[] = $key;
@@ -784,7 +937,7 @@ foreach ($codeSet as $key => $r) {
 // contract (redundant). Either way the entry should be pruned so the list
 // keeps meaning what it says.
 $staleExempt = [];
-foreach (EXEMPT_INTERNAL as $exemptKey => $_reason) {
+foreach ($EXEMPT as $exemptKey => $_reason) {
     $registered = isset($codeSet[$exemptKey]);
     $documented = isset($contractPathSet[$exemptKey]);
     if (!$registered) {
@@ -808,6 +961,19 @@ if ($unresolved !== []) {
 echo "\n";
 
 $exit = 0;
+
+// Vacuity floor: a parse that finds nothing compares nothing. Zero contract
+// endpoints means the §4 header format drifted; zero in-scope code routes
+// means the plugin trees are empty or the extractor broke. Either way every
+// check below would trivially pass.
+if (count($contractEndpoints) === 0) {
+    $exit = 1;
+    echo "FAIL: parsed 0 contract endpoints from docs/api-contract-v1.md; the §4 `#### `METHOD /path`` header format may have changed.\n\n";
+}
+if (count($codeSet) === 0) {
+    $exit = 1;
+    echo "FAIL: parsed 0 in-scope register_rest_route() endpoints; the plugin trees are empty or the extractor broke.\n\n";
+}
 
 if ($missing !== []) {
     $exit = 1;
@@ -860,10 +1026,16 @@ if ($undocumented !== []) {
 }
 
 if ($unresolved !== []) {
-    echo "\nUNRESOLVED PHP register_rest_route() sites (couldn't parse namespace or path):\n";
+    // Blocking: an unresolved site is a route the guard cannot see, so it
+    // can be neither matched against the contract nor reported as
+    // undocumented. Treating it as a pass would let any route escape review
+    // just by building its path from an expression the parser can't follow.
+    $exit = 1;
+    echo "\nFAIL: UNRESOLVED PHP register_rest_route() sites (couldn't parse namespace or path):\n";
     foreach ($unresolved as $u) {
-        echo sprintf("  - %s:%d (namespace=%s, path=%s)\n",
-            str_replace($REPO_ROOT, '', $u['file']), $u['lineno'], $u['namespace'], $u['path']);
+        echo sprintf("  - %s:%d (namespace=%s, path=%s%s)\n",
+            str_replace($REPO_ROOT, '', $u['file']), $u['lineno'], $u['namespace'], $u['path'],
+            $u['methods_unresolved'] ? ', methods=UNRESOLVED' : '');
     }
     echo "\nThese sites use cross-file constants or non-string expressions; the parser couldn't resolve.\n";
     echo "Add same-file `const NAME = 'literal'` if the site is in-scope.\n";
