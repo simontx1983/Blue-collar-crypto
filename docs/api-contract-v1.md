@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.99 · 2026-11-11 · Phase 1 deliverable
+**Status:** Draft v1.105 · 2026-11-11 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -258,13 +258,24 @@ Two styles, **never mixed within an endpoint**:
 }
 ```
 
-**Cursor format (locked):** the server encodes `(timestamp, id, rank_score_at_emit)` as a base64-encoded JSON token, e.g.,
+**Cursor format — the FEED cursor, and illustrative rather than universal:** the feed server encodes `(timestamp, id, rank_score_at_emit)` as a base64url-encoded JSON token, e.g.,
 
 ```
 base64({"t":"2026-04-27T11:14:00Z","id":98712,"rs":0.873})
 ```
 
 Including `rank_score_at_emit` lets the server preserve scroll order across re-ranks at the cost of slight duplication risk. The cursor is **opaque to the client** — never decode, parse, or modify it; round-trip it verbatim. Default `limit` = 20, max = 50.
+
+⚠⚠ **The payload is an implementation detail of the EMITTING SURFACE, not a wire contract.** It follows from the cursor being opaque: a client that never decodes it cannot depend on its fields, so each paginated collection may carry whatever its own ordering requires. `rank_score_at_emit` exists for re-ranked feeds and has no analogue on a collection ordered by a plain timestamp.
+
+What **is** normative for every cursor:
+
+- it carries a **unique tiebreak** — the row id — alongside its sort key, because a timestamp alone is not a total order and two rows sharing a second would page unstably;
+- it is **base64url** (no `+`, `/` or `=`), since it travels in a query string;
+- a malformed, truncated or foreign cursor **resets to the first page** rather than erroring — a bad cursor is a navigation accident (a stale bookmark, a copied URL), not a client fault worth a `400`;
+- it **cannot widen visibility**: it only adds a `(sort_key, id)` comparison to a query whose authorization and visibility predicates are applied independently. That is why cursors are unsigned.
+
+⚠ This paragraph was added because the word "locked" above had been read as pinning the *bytes*, which the contract itself does not do: §4.32.14's announcement example decodes to `{"p":…,"i":…}` and the announcement surfaces mint `{v,s,k,id}` — three shapes, none of them wrong. A surface that **tags** its payload and refuses a foreign one is preferred, because it makes cross-surface decoding impossible rather than merely unlikely; see the note under §4.32.12.
 
 **Offset (directories, static lists, admin tools):**
 
@@ -394,6 +405,7 @@ The single most important shared type. Encodes §N7 (always visible, disabled wi
   - ⚠ It is deliberately a **different** code from `messaging_unavailable`. That one is the §4.19 info-leak shield, hiding WHICH of mutual-block / DMs-off / no-such-user applies. `unavailable` states a fact about the REQUEST rather than about the pair, so it reveals nothing the shield protects — and on a failed read every candidate in a batch receives it uniformly, which is why a shared payload is safe here.
   - The matching write paths answer `bcc_unavailable` **503** (§4.19), so a client that retries gets a coherent answer from both sides.
   - **Info-leak shield:** a mutual block and a recipient with DMs turned off emit the **byte-identical** `{ allowed: false, unlock_hint: null, reason_code: "messaging_unavailable" }`. Clients must not attempt to distinguish them, and the server never does on the wire (this mirrors the §4.19 404 shield on the write path).
+- **`can_vouch` · `can_stand_behind` · `can_report` on an UNCLAIMED page card (v1.102):** a validator, project or creator page nobody has claimed (no owner yet) emits `{ allowed: false, unlock_hint: null, reason_code: "unclaimed" }` for all three, for **every** viewer, anonymous included (not "Sign in to …": signing in would not unlock it). Clients **omit** the three slots (§N7 structural carve-out) and may show Message in their place; `can_message` and `can_watch` are unaffected. This mirrors the write path: `POST /me/attestations` already refuses such a target with `bcc_not_found` 404 "Target not found.", unchanged. On a claimed page, and on member cards, the three keep their existing shapes, with `reason_code: null`.
 - When `allowed: true`, `unlock_hint` is `null` (not omitted — explicit `null` so client typing is uniform).
 - When a gate is **structurally impossible** for this viewer (e.g., viewing your own card → `can_watch: false`, you can't follow yourself), `unlock_hint` is `null` and the frontend hides the action UI per §N7's "structurally impossible" carve-out (the always-visible rule applies to *gates a viewer could resolve*, not to nonsensical actions).
 
@@ -2183,6 +2195,20 @@ Silent-refresh seam: exchanges a recently-expired (or near-expiry) Bearer JWT fo
 - **Cache:** `Cache-Control: no-store`, `Vary: Authorization`.
 - **Mapping:** reads the Bearer via `BearerAuth::readBearerToken` (the same header reader authentication uses), `JwtToken::decode`, `get_userdata`, `bcc_handle` meta, `AuthSupport::resolveInGoodStanding`. No writes beyond an `auth_session_rejected` audit-log line on a 401. Handler `SessionController::session`. Standard envelope per §1.4.
 
+#### `POST /bcc/v1/auth/logout`
+
+*(since v1.100)* Signs out **one** bearer token server-side — the one presented. Before this, "sign out" only cleared the browser's NextAuth cookie, and a copied bearer stayed valid until it expired. For every device at once, use `POST /auth/logout-everywhere`.
+
+- **Auth:** the token to sign out, in `Authorization: Bearer <jwt>`. Decoded in-handler with `JwtToken::decodeForRefresh`, so a token still inside its refresh-grace window is signed out too (it could otherwise be refreshed back to life).
+- **Body:** none.
+- **Response 200:** `{ "ok": true }` — **always**, and idempotent: a missing, malformed, invalid, expired or already-signed-out token also gets `200 { ok: true }` and changes nothing. Logout never fails visibly.
+- **Errors:** `bcc_rate_limited` 429 only.
+- **Rate limit:** **per token**, 30 / 60 s — keyed on a hash of the presented token, checked before decode (calls can arrive from the frontend server's single IP).
+- **Cache:** `Cache-Control: no-store`, `Vary: Authorization`.
+- **Effect:** the token's `jti` is denylisted until the token can no longer be used or refreshed (`exp` + 60 s skew + the 24 h refresh grace). From then on `JwtToken::decode` and `decodeForRefresh` reject it (`jwt_logged_out`), so every Bearer-authenticated route answers `401`, `GET /auth/session` answers `401`, and `POST /auth/refresh` answers `401`. Other tokens of the same user are unaffected.
+- **Client order:** call this **before** NextAuth `signOut()` — afterwards the client no longer holds the token.
+- **Mapping:** the denylist is user meta `bcc_jwt_denylist` (`{ sha256(jti)[0..40] => until }`), written under a per-user advisory lock, pruned of expired entries on every write and capped at the 100 latest-expiring entries per user. A `user_logout` audit-log line is written on success. Handler `SessionController::logout`. Standard envelope per §1.4.
+
 #### `POST /bcc/v1/auth/verify-email`
 
 Confirms email ownership and completes signup via either an OTP code or a one-shot link token, then signs the user in by returning a JWT (no separate `/auth/login` roundtrip).
@@ -2199,6 +2225,7 @@ Confirms email ownership and completes signup via either an OTP code or a one-sh
 - **Response 200:** identical shape to `/auth/login` (`{ user_id, handle, token, expires_in, token_type, in_good_standing }`) so the frontend treats both uniformly, **plus `linked_wallet_count: int` (since v1.90)** — how many wallets are linked to the account whose email was just proven. When it is `> 0` the client asks "this account has a wallet linked — is it yours?", listing them with `GET /wallets` (using the fresh `token`) and removing one with `DELETE /wallets/{id}`. A count only: no wallet detail rides this auth response. If the wallet read fails the count is `0` and verification still succeeds (the prompt is advisory; wallets stay reviewable in Settings) — so **`0` can mean "read failed"**: a client must never take a destructive or irreversible action on `linked_wallet_count: 0`.
 - **Errors:** `bcc_invalid_request` 422 (neither token nor email+code) · `bcc_invalid_verify_token` 400 (token expired/used) · `bcc_invalid_otp` 400 (email unknown — generic; or code wrong/expired) · `bcc_already_verified` 409 (OTP path only) · `bcc_invalid_state` 409 (no handle) · `bcc_rate_limited` 429 · `bcc_internal_error` 500
 - **Rate limit:** IP-bucketed, 10 / 3600s
+- **Attempt cap (since v1.105, F-48):** at most **5 wrong codes per (account, current code)**; the 5th burns that code. Because a correct code signs the caller in, the per-IP bucket alone did not bound guesses spread across addresses. The answer stays the generic `400 bcc_invalid_otp` "Invalid or expired code." (no new code, no enumeration signal); the user requests a new code via `/auth/resend-verification`, which starts a fresh count, or uses the emailed link — the **token path is not capped and not affected**.
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** token path consumes the `bcc_vt_<token>` transient (single-use); OTP path resolves by email, checks `_bcc_email_verified`, timing-safely (`hash_equals`) consumes the HMAC-hashed `bcc_otp_<userId>` transient. Both converge on `finalizeVerification` → sets `_bcc_email_verified='1'`, sets the auth cookie, **revokes every earlier bearer token for the account (JWT token-version bump, since v1.88)**, mints the JWT, emits `email_verified` audit, fires `do_action('bcc_email_verified', …)`. The revocation means a session held by whoever created the account before the address was proven does not survive the inbox owner's verification; the returned token is the caller's working session and must be stored. Handler `AuthEndpoint::verifyEmail` (route `AuthEndpoint.php:487`). Standard envelope per §1.4.
 
@@ -4745,7 +4772,7 @@ Body `{ "code": "123456" }`.
 
 #### `PATCH /bcc/v1/me/account/password` (V2 Phase 2.5)
 
-Change password. Body `{ "current_password": "...", "password": "..." }`. New password ≥ 10 chars (server-enforced). Server calls `wp_set_password` (which destroys all session tokens) and immediately re-issues the current session's auth cookie so the user is not kicked out mid-flow. It also bumps the per-user JWT token-version (revoking every outstanding bearer token, the bearer analogue of the session-token wipe) and mints a **fresh token** for the current session, returned below — bearer clients must swap to it.
+Change password. Body `{ "current_password": "...", "password": "..." }`. New password ≥ 10 chars (server-enforced). Server calls `wp_set_password` (which destroys all session tokens) and immediately re-issues the current session's auth cookie so the user is not kicked out mid-flow. It also bumps the per-user JWT token-version (revoking every outstanding bearer token, the bearer analogue of the session-token wipe) and mints a **fresh token** for the current session, returned below — bearer clients must swap to it. *(since v1.100)* It also deletes every Web Push subscription of the user — the caller's own included; the client re-registers push if it is enabled.
 
 - **Response 200:** `{ "ok": true, "token": "<jwt>", "expires_in": 604800, "token_type": "Bearer" }`
 
@@ -5624,8 +5651,9 @@ Set new display order for the viewer's selections.
   { "ok": true, "updated": 3 }
   ```
   `updated` is the number of rows actually written; can be less than `ordered_ids.length` if some ids were unowned (local cache lagged a remote delete).
-- **Errors:** `bcc_invalid_request 422` (missing or non-array `ordered_ids`).
-- **Rate limit:** unthrottled in V1 — UI is button-driven and naturally bounded by user pacing. Worth a throttle if abuse appears.
+- **Errors:** `bcc_invalid_request 422` (missing or non-array `ordered_ids`, **or (v1.104) more than 200 ids**: "ordered_ids may contain at most 200 ids."; nothing is written). `bcc_rate_limited 429` (v1.104, throttled; see below).
+- **Limits (v1.104):** `ordered_ids` holds at most **200** ids, the most selections the profile list ever loads. The write is one row update per id, so the cap bounds a single request.
+- **Rate limit (v1.104):** 30 requests / 60 s per user (`nft_reorder` bucket, like the sibling select/deselect routes). Over it → `bcc_rate_limited 429`, nothing written. (Was unthrottled before v1.104.)
 - **Side effects:** bumps the per-user selections generation counter when `updated > 0`.
 
 ---
@@ -5742,6 +5770,7 @@ Both surfaces require Bearer JWT; suspended accounts → `bcc_forbidden 403`. St
   1. Audit row written: `AuditLogger::log('sessions_revoked_all', $userId, [], 'user', $userId)`. Counts toward the §4.23 GET timeline + 90-day retention.
   2. Out-of-band email: `AccountSecurityMailer::sessionsRevokedAll($userId)`. Track-F redundancy — if an attacker triggers this to lock the legitimate user out, the email channel still warns. Failure records `account_security_mail` / `sessions_revoked_all_send_failed` DegradationMetric per `project_account_security_mailer.md`.
   3. Token version bumped: `JwtToken::revokeAllForUser($userId)`. Every outstanding JWT for this user (including the bearer that authenticated THIS request) fails the `tv` check on next decode and returns `ERR_REVOKED`.
+  4. *(since v1.100)* Every Web Push subscription of the user is deleted, so the signed-out devices stop receiving pushes. Each device re-registers when it next signs in and enables push.
 - **Client-side responsibility:** the bearer is invalidated by the time the response is read. The client MUST call `signOut({ callbackUrl: "/" })` (or equivalent) immediately on 200 — any subsequent authenticated request will 401. The hook `useLogoutEverywhere()` in `useAccount.ts` does this automatically in `onSuccess`.
 - **Self-revocation note:** the user CAN sign themselves out of their own current session. The mutation is intentionally not session-aware (no "all OTHER devices" carve-out) — this is the minimal D2 per the Tier D scope decision; the per-device listing UI is deferred to a future planning session.
 - **Cache:** `no-store`.
@@ -7990,6 +8019,13 @@ closes.
 **Pinning promotes on the validator page only** and never reorders the general feed
 (§4.32.8).
 
+⚠ **The cursor payloads in §4.32.14 are illustrative.** Per §1.5 the bytes are an
+implementation detail of the emitting surface, so a reader must not treat an example token as
+a shape to reproduce. Each announcement collection **tags** its cursor with its own surface and
+refuses a cursor minted for another — necessary because the four collections order by
+DIFFERENT columns (`published_at` for the active list, `archived_at` for the archived one), so
+applying one to the other would skip or repeat rows with nothing in the response to show it.
+
 ⚠ **Cursor stability.** `?state=active` is ordered by a field the operator can change (pinning
 moves a row to the front), so a cursor page boundary can shift under a reader mid-scroll. The
 cursor must therefore carry a **unique tiebreak** (the row id) alongside its sort key, exactly
@@ -8824,6 +8860,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
+<<<<<<< HEAD
 ### v1.9X — 2026-11-11 — behaviour change plus additive — a new operator or an administrator can archive a predecessor's announcement (number assigned at merge)
 
 Ships with bcc-trust F-147 (bcc-trust #478).
@@ -8832,6 +8869,51 @@ Ships with bcc-trust F-147 (bcc-trust #478).
 - **§4.32.2:** administrators gain archive; the rest of their rights are unchanged.
 - **Additive:** administrator capability `can_archive_any` (§4.32.11 (d)). No new error codes.
 - **Clients:** a row the current operator sees with `can_archive` allowed now archives instead of answering `404`.
+=======
+### v1.105 — 2026-11-11 — behaviour change — the email-verification code has an attempt cap
+
+Ships with bcc-trust #500.
+
+- **`POST /auth/verify-email` (F-48), OTP path:** 5 wrong codes per (account, current code) burn that code. Same `400 bcc_invalid_otp` answer as any wrong code; a resend starts a fresh count; the emailed link (token path) keeps working. 2FA is unchanged — `/auth/2fa/verify` already has its per-challenge cap (v1.97).
+
+### v1.104 — 2026-11-11 — behaviour change — NFT reorder is capped and throttled
+
+Ships with bcc-trust's F-30 change.
+
+`POST /nft-selections/reorder` had no size or rate limit, and it writes one row per id, so a single request could issue an unbounded number of updates.
+
+- **Cap:** more than **200** ids in `ordered_ids` → `bcc_invalid_request` 422, nothing written. 200 is the most selections the profile list loads, so a real reorder never hits it.
+- **Throttle:** 30 requests / 60 s per user → `bcc_rate_limited` 429, nothing written.
+- **Clients:** no change for normal use. Both codes are existing ones with existing copy. Response shape unchanged.
+
+### v1.103 — 2026-11-11 — docs-only clarification — a cursor's payload is per-surface; the tiebreak is what binds
+
+No behaviour, route or field change.
+
+- **§1.5:** the "Cursor format (locked)" example is the **feed's** cursor and is illustrative. The payload bytes belong to the emitting surface; a client must treat every cursor as opaque.
+- **What is normative for every cursor:** a unique `id` tiebreak beside the sort key; base64url; a malformed or foreign cursor resets to the first page instead of erroring; a cursor can never widen visibility.
+- **§4.32.14:** the announcement cursor examples are illustrative. Each collection tags its cursor with its surface and refuses another's, because they order by different columns.
+
+### v1.102 — 2026-11-11 — additive — unclaimed page cards hide vouch, back and report
+
+Ships with bcc-trust #469.
+
+- **§3.2 page cards:** on a page with no owner yet, `can_vouch`, `can_stand_behind` and `can_report` are `{ allowed: false, unlock_hint: null, reason_code: "unclaimed" }` for every viewer. Previously they were `allowed: true` for an eligible viewer (or "Sign in to …" for anon), and the cast then failed with 404, which the frontend rendered as "Attestation not found.".
+- **New `reason_code` value:** `unclaimed`. Hidden (no hint); clients omit the slot.
+- **Unchanged:** the `POST /me/attestations` write path (it already refused these targets), claimed pages, member cards, and the endorse gate.
+
+### v1.101 — 2026-11-11 — additive — the email-digest unsubscribe link also accepts POST
+
+Ships with bcc-trust #489 (admin-controlled email digest).
+
+- **`/bcc/v1/digest/unsubscribe` (internal route, outside §4 — `EXEMPT_INTERNAL`):** now accepts **`POST`** as well as `GET`, with the same signed `uid` / `exp` / `sig` query token and the same HTML confirmation. This is the RFC 8058 one-click request mail clients send for the new `List-Unsubscribe` + `List-Unsubscribe-Post: List-Unsubscribe=One-Click` headers every digest email now carries. The token is read from the request; a one-click body adds nothing.
+- **Clients:** nothing to change. `GET /me/notification-prefs` → `email_digest` is still the only opt-in, default `false`.
+
+### v1.100 — 2026-11-11 — additive plus one behaviour change — single-token sign-out; revoke-all drops push subscriptions
+
+- **New `POST /auth/logout` (F-120):** signs out the presented bearer token server-side (its `jti` is denylisted until it can no longer be used or refreshed). Always `200 { ok: true }`, idempotent; per-token `429`; `no-store`. Afterwards every Bearer route, `/auth/session` and `/auth/refresh` reject that token with `401`. Clients call it **before** NextAuth `signOut()`.
+- **`POST /auth/logout-everywhere` and `PATCH /me/account/password` (F-76):** now also delete every Web Push subscription of the user, so revoked devices stop receiving pushes. Devices re-register on their next sign-in. Email-change verify is unchanged.
+>>>>>>> origin/main
 
 ### v1.99 — 2026-11-11 — behaviour change — a hidden group, post or draft answers 404, never 403
 
