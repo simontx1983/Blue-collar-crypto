@@ -95,7 +95,7 @@ schema-install path in `tables.php` is itself routed through the same runner.
 | wp_bcc_trust_rank_events | 0 | Append-only Rank evidence ledger (Rank Phase 4, shadow; one row per event×category; reversal = status flip; NEVER pruned) | TableRegistry::rankEvents / schema-rank-events.php / RankEventsRepository | Active |
 | wp_bcc_trust_cluster_findings | 0 | Formal non-independence determinations (Rank Phase 4, R3; representative-member semantics; distinct from patterns/fraud_analysis signal stores) | TableRegistry::clusterFindings / schema-cluster-findings.php / ClusterFindingsRepository | Active |
 | wp_bcc_trust_rank_state | 0 | Canonical Rank progression row (Rank Phase 5; one row per RANKED member — missing row = New Member fail-safe; column is rank_slug because RANK is a MySQL 8 reserved word) | TableRegistry::rankState / schema-rank-state.php / RankStateRepository | Active |
-| wp_bcc_trust_rank_pending | 0 | 24h Apprentice confirmation clock (Rank Phase 5, R1; states pending/confirmed/voided) | TableRegistry::rankPending / schema-rank-pending.php / RankPendingRepository | Active |
+| wp_bcc_trust_rank_pending | 0 | 24h Apprentice confirmation clock (Rank Phase 5, R1; states pending/confirmed/voided; voided re-arms on a new contribution, F-71) | TableRegistry::rankPending / schema-rank-pending.php / RankPendingRepository | Active |
 | wp_bcc_trust_community_ownership_log | 0 | Append-only custody ledger for User-kind communities (Rank Phase 7, §21.2; events create/receive/transfer_out; cooldown = MAX(created_at) per user, read live; rows never mutate) | TableRegistry::communityOwnershipLog / schema-community-ownership-log.php / CommunityOwnershipLogRepository | Active |
 | wp_bcc_trust_findings | 0 | Formal misconduct findings per member (Rank Phase 8, §15; wp-admin issuance ONLY; penalty/ceiling values are issuance-time snapshots; status active/reversed; once-only appeal gate on appeal_status; distinct from cluster_findings) | TableRegistry::findings / schema-findings.php / FindingsRepository | Active |
 | wp_bcc_trust_finding_decisions | 0 | Append-only decision history per finding (Rank Phase 8, §15.5; issued + upheld/reduced/reversed/remanded rows; no update, no delete — original penalty snapshot survives in the issued row) | TableRegistry::findingDecisions / schema-finding-decisions.php / FindingDecisionsRepository | Active |
@@ -444,7 +444,11 @@ started the §5.2 confirmation. The 5-minute sweep
 (`bcc_rank_confirmation_sweep`) awards Apprentice at `due_at` iff the
 six R1 conditions hold; pending reports and report-volume auto-hide
 never pause, reset, or extend the clock. States: pending → confirmed |
-voided. `content_act_id` sits alongside the wp_posts id because content
+voided, and voided → pending when a NEW qualifying contribution re-arms the
+clock (`RankPendingRepository::restartIfVoided`, F-71). A void for a content
+reason (`content_removed`, `content_unpublished`, `report_upheld`) re-arms only
+7 days after the void (`resolved_at`); `suspended` re-arms immediately. No
+column change. `content_act_id` sits alongside the wp_posts id because content
 reports key feed items by activity id (the R1 report-resolution check
 needs it).
 - user_id · bigint unsigned · NO · PK

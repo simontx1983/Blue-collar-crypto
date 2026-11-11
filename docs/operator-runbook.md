@@ -92,7 +92,7 @@ The Health page is structured the same way every time. Match the failing section
 
 ## §4 — DegradationMetric subsystem firing
 
-Bottom of Health page shows the 18-subsystem table. Hot rows (nonzero current OR previous hour) get a pink background.
+Bottom of Health page shows the degradation table: one row per event of every subsystem in bcc-core's canonical map (`bcc-core.php`). Hot rows (nonzero current OR previous hour) get a red-tinted background.
 
 | Subsystem | What nonzero means | First action |
 |---|---|---|
