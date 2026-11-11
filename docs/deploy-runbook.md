@@ -34,9 +34,24 @@ Each plugin repo has `.github/workflows/deploy.yml`:
   commit to **staging**.
 - **`workflow_dispatch`** trigger — manual; pick `staging` or `production`.
 - The deploy step is a **plugin-scoped `rsync -az --delete --delete-delay
-  --delay-updates`** of the checked-out tree (minus `.git`/`.github`) into that
-  plugin's directory on the server. `vendor/` is committed, so there is **no
-  build step** — the checkout *is* the artifact.
+  --delay-updates`** of the checked-out tree (minus `.git`/`.github`, and minus
+  the **dev-only files** below) into that plugin's directory on the server.
+  `vendor/` is committed, so there is **no build step** — the checkout *is*
+  the artifact.
+- **Dev-only files are not deployed (F-36).** These root-level paths are
+  *hidden* from the transfer with `--filter='H /…'`, so they are not shipped
+  and `--delete` removes any copy already on the server:
+  - all three plugins: `tests/`, `composer.json`, `composer.lock`,
+    `phpstan.neon`, `phpstan-bootstrap.php`, `phpunit.xml.dist`,
+    `phpunit-integration.xml.dist`, `.gitignore`, `.gitattributes` — exact
+    names, no wildcards: a NEW dev file (e.g. a `phpstan-baseline.neon`)
+    ships until it is added to the filters, the guard and the regexes below.
+  - bcc-search also: `README.md`
+  - bcc-trust also: `docs/`, `MIGRATED-FROM.md` — **`scripts/` IS still
+    shipped** (runbooks run them with `wp eval-file`), behind a deny-all
+    `scripts/.htaccess`.
+  Root-anchored on purpose: `vendor/*/tests/` and `vendor/*/docs/` still ship.
+  The deploy's final guard fails if any of these is still in the target.
 - After the rsync: the deployed `Version:` header is grepped back over SSH, a
   **health probe** runs, and (bcc-core, bcc-trust) a **stranded-path guard**
   refuses a target that still holds `.git`/`.github`. A production dispatch
@@ -58,7 +73,8 @@ removes **every file not in the commit** — including server-only files —
 **except excluded paths**: anything matching an `--exclude` (`.git`, `.github`,
 at any depth) is *protected* on the server, never updated and never removed.
 That is how stale `.git` trees were stranded (bcc-trust #286), and why the
-stranded-path guard exists.
+stranded-path guard exists. The dev-only files above are the opposite case:
+*hidden* (`H`), not excluded, so `--delete` does remove them.
 
 ## Secrets (per repo)
 
@@ -135,7 +151,31 @@ slice.
 - **`rsync: mkdir … failed: No such file or directory`** — `DEPLOY_BASE` is
   wrong (often the MSYS mangling above). Verify the resolved path exists over
   SSH; re-set the secret relative.
-- **Verify staging == GitHub** — blob-hash manifest: for each tracked file,
-  compare `git cat-file blob origin/main:<f> | git hash-object --stdin`
+- **Verify staging == GitHub** — blob-hash manifest: for each **shipped**
+  tracked file, compare `git cat-file blob origin/main:<f> | git hash-object --stdin`
   against `ssh … git hash-object <server>/<f>`. Zero mismatches = in sync.
   (Line-ending-safe, unlike a raw byte diff.)
+  - **Shipped = tracked minus what the deploy never sends** (F-36): the
+    plugin's root-anchored hide list, plus `.git`/`.github` at ANY depth
+    (the deploy's `--exclude='.git' --exclude='.github'` is unanchored, and
+    `.github/workflows/*` IS tracked). Otherwise every one of those reads as
+    a false mismatch. Run `git ls-files` **from the plugin's repo root**
+    (the patterns are root-anchored), with the regex for THAT plugin:
+    ```
+    # bcc-core
+    git ls-files | grep -vE '^(tests/|composer\.json$|composer\.lock$|phpstan\.neon$|phpstan-bootstrap\.php$|phpunit\.xml\.dist$|phpunit-integration\.xml\.dist$|\.gitignore$|\.gitattributes$)|(^|/)\.git(hub)?(/|$)'
+    # bcc-search
+    git ls-files | grep -vE '^(tests/|composer\.json$|composer\.lock$|phpstan\.neon$|phpstan-bootstrap\.php$|phpunit\.xml\.dist$|phpunit-integration\.xml\.dist$|\.gitignore$|\.gitattributes$|README\.md$)|(^|/)\.git(hub)?(/|$)'
+    # bcc-trust
+    git ls-files | grep -vE '^(tests/|composer\.json$|composer\.lock$|phpstan\.neon$|phpstan-bootstrap\.php$|phpunit\.xml\.dist$|phpunit-integration\.xml\.dist$|\.gitignore$|\.gitattributes$|docs/|MIGRATED-FROM\.md$)|(^|/)\.git(hub)?(/|$)'
+    ```
+    Each regex was checked to reproduce exactly the file list an rsync
+    dry-run with that plugin's deploy flags transfers (2026-11-11: 101 /
+    29 / 1607 files). Keep a plugin's regex in step with its `deploy.yml`
+    filters — and don't use one union regex: it would hide `docs/`,
+    `README.md` and `MIGRATED-FROM.md` for plugins that DO ship them.
+  - **Manifest counts** (e.g. in release memos) are counts of that filtered
+    list. A count taken from plain `git ls-files` is larger by exactly the
+    hidden files and is not a drift signal.
+  - Before a plugin's first deploy with the hide filters, the hidden files
+    are still on the server; the filtered comparison simply skips them.
