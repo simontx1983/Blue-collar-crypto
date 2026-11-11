@@ -215,15 +215,33 @@ console.log({
 
 ### 2.1 Email change — full forensic chain
 
+An email change is **two steps** (verify-before-promote): the request holds the new address pending and mails a 6-digit code to the **new** address; only the code applies the change.
+
 Browser: navigate to `http://localhost:3000/settings/account`, fill the Change Email form with a valid new email + the test user's current password, click Save email.
 
-Then inspect the trail:
+**Step 1 — the request must NOT change anything yet.** Before entering the code:
+
+```bash
+wp eval '
+global $wpdb;
+$req = $wpdb->get_row("SELECT id, user_id, created_at FROM {$wpdb->prefix}bcc_trust_activity WHERE action = \"account_email_change_requested\" ORDER BY id DESC LIMIT 1");
+echo "Latest account_email_change_requested: " . ($req ? "id={$req->id} user={$req->user_id} at={$req->created_at}" : "(none)") . PHP_EOL;
+if ($req) {
+    $u = get_userdata((int) $req->user_id);
+    echo "user_email (must still be the OLD one): " . ($u ? $u->user_email : "(user gone)") . PHP_EOL;
+}
+'
+```
+
+Expected: a `account_email_change_requested` row within the last minute, `user_email` still the **old** address, and in Mailpit one "Confirm your new email address" mail to the **new** address carrying the code. If `user_email` already changed, the pending step is broken — that is the pre-hijack hole this two-step flow closes.
+
+**Step 2 — enter the code** from that mail in the Settings form. Then inspect the trail:
 
 ```bash
 wp eval '
 global $wpdb;
 
-// 1) Audit row landed?
+// 1) Audit row landed? (written on CONFIRM, not on the request)
 $row = $wpdb->get_row("SELECT id, user_id, action, created_at FROM {$wpdb->prefix}bcc_trust_activity WHERE action = \"account_email_changed\" ORDER BY id DESC LIMIT 1");
 echo "Latest account_email_changed: " . ($row ? "id={$row->id} user={$row->user_id} at={$row->created_at}" : "(none)") . PHP_EOL;
 
@@ -241,13 +259,14 @@ echo "email_changed_send_failed in current bucket: $ev" . PHP_EOL;
 ```
 
 **Expected:**
-- `Latest account_email_changed: id=N user=U at=YYYY-...` matching the click within the last minute.
+- `Latest account_email_changed: id=N user=U at=YYYY-...` matching the code entry within the last minute.
 - `Current user_email:` matches the new email.
 - `email_changed_send_failed in current bucket: 0`.
+- The SPA stays signed in: the confirm response carries a fresh token (every earlier bearer token for the account was revoked) and the SPA must have stored it. Being signed out right after confirming means the token was not swapped in.
 
 **Failure means:**
 - Missing audit row → `AuditLogger::log` failed silently (check `DegradationMetrics::record('audit_log_swallow', 'log_write_failed')` count — see Section 4).
-- Stale `user_email` → `wp_update_user` returned WP_Error and the endpoint surfaced it without rolling back; check the response body of the PATCH.
+- Stale `user_email` → the confirm did not apply: check the response of `POST /me/account/email/verify` (`422` wrong code — the pending change is kept, retry; `400` nothing pending — expired after 15 min or superseded by a newer request, start again; `409` the address was taken meanwhile).
 - `email_changed_send_failed > 0` → `wp_mail` is failing. Check Local's Mailpit UI (typically `http://localhost:<mailpit-port>`) or `wp-content/bcc-logs/`.
 
 **Authoritative artifacts:**
@@ -526,7 +545,7 @@ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:<mailpit-port>
 
 ### 6.3 Fire a real security email
 
-Trigger an email change via the SPA (Section 2.1), then check Mailpit. Expect TWO emails:
+Trigger an email change via the SPA (Section 2.1) **and confirm it with the code** — the canary is sent on confirmation, not on the request (the request only sends the "Confirm your new email address" code mail to the new address). Then check Mailpit. Expect TWO security emails:
 
 - To OLD address: subject `[<site_name>] Your account email was changed`, body containing "AWAY from this address" + "if you did NOT make this change."
 - To NEW address: subject `[<site_name>] Email change confirmed`.
