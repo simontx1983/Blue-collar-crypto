@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.102 · 2026-11-11 · Phase 1 deliverable
+**Status:** Draft v1.103 · 2026-11-11 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -8843,7 +8843,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.9X — 2026-11-11 — docs-only clarification — a cursor's payload is per-surface; the tiebreak is what binds (number assigned at merge)
+### v1.103 — 2026-11-11 — docs-only clarification — a cursor's payload is per-surface; the tiebreak is what binds
 
 No behaviour, route or field change.
 
