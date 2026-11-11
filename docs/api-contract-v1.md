@@ -1958,7 +1958,7 @@ Verifies a signed nonce, looks up the BCC user the wallet is linked to, mints + 
   - `bcc_invalid_state` 409 — account is missing a handle (created outside BCC signup); routes through handle-claim surface.
   - `bcc_rate_limited` 429.
   - `bcc_internal_error` 500 — stored challenge malformed.
-- **Rate limit:** IP-bucketed (`WALLET_LOGIN_RATE_LIMIT`/min/IP). Throttle gates the route **before** the CPU-bound verify step.
+- **Rate limit (changed in v1.9X):** **per wallet** — `WALLET_LOGIN_RATE_LIMIT` (5) / min per (chain + lower-cased address) — plus a route-wide ceiling of 300 / min; **no longer per IP** (this route is called server-side by the frontend, so every request shares one IP and a per-IP bucket let anyone lock out all wallet logins). The check runs **after** the nonce is consumed (only a request carrying a server-issued nonce for that address counts, so junk cannot drain someone else's bucket) and **before** the CPU-bound verify step. Case-variant base58/SS58 addresses share a bucket (fail-closed).
 - **Cache:** `Cache-Control: no-store`
 - **Side effects:** sets `wp_set_auth_cookie`, emits `user_login` audit row, fires `bcc_user_login` action.
 
@@ -2110,10 +2110,11 @@ Second factor: exchanges the `/auth/login` challenge token + emailed 6-digit cod
   { "user_id": 42, "handle": "alice", "token": "<JWT>", "expires_in": 604800, "token_type": "Bearer", "in_good_standing": true }
   ```
   `expires_in` is the 7-day JWT TTL (`JwtToken::TTL_SECONDS`). `in_good_standing` per §A2.
-- **Errors:** `bcc_invalid_request` 422 (missing challenge_token or code) · `bcc_invalid_2fa_token` 401 (challenge expired/unknown — restart login) · `bcc_invalid_2fa_code` 401 (wrong/expired code — challenge preserved, retry in place) · `bcc_invalid_state` 404/409 (account vanished / no handle) · `bcc_rate_limited` 429
-- **Rate limit:** IP-bucketed, 10 / 60s (brute-force fence; the 10-min challenge TTL is the outer bound)
+- **Errors:** `bcc_invalid_request` 422 (missing challenge_token or code) · `bcc_invalid_2fa_token` 401 (challenge expired/unknown, **superseded by a newer login**, or **burned after 5 wrong codes** — restart login) · `bcc_invalid_2fa_code` 401 (wrong/expired code — challenge preserved, retry in place, up to the attempt cap) · `bcc_invalid_state` 404/409 (account vanished / no handle) · `bcc_rate_limited` 429
+- **Attempt cap (since v1.9X):** at most **5 wrong codes per (user, challenge)**. Wrong codes 1–4 → `bcc_invalid_2fa_code`; the 5th burns that challenge's code **and** the challenge → `401 bcc_invalid_2fa_token` "Too many incorrect codes. Please sign in again." The code is bound to its challenge, and only the user's **most recent** challenge is live — a new `/auth/login` supersedes any earlier one (so a second concurrent sign-in cancels the first's pending 2FA), and `/auth/2fa/resend` re-sends a code for the same challenge without resetting its count.
+- **Rate limit:** IP-bucketed, 10 / 60s (a second fence; the per-challenge attempt cap above is the primary one, the 10-min challenge TTL the outer bound)
 - **Cache:** `Cache-Control: no-store`
-- **Mapping:** peeks `bcc_2fa_ct_<token>`, timing-safely consumes `bcc_2fa_otp_<userId>` (`hash_equals`), consumes the challenge token only after the OTP matches, sets the WP auth cookie, mints the JWT (`JwtToken::encode`), emits the `user_login` audit log (`via: 2fa`), fires `do_action('bcc_user_login', …)`. Handler `AuthEndpoint::twoFaVerify` (route `AuthEndpoint.php:546`). Standard envelope per §1.4.
+- **Mapping:** peeks `bcc_2fa_ct_<token>` (and that it is the user's current challenge), timing-safely consumes the challenge-bound `bcc_2fa_otp_<sha256(token)>` (`hash_equals`), consumes the challenge token only after the OTP matches, sets the WP auth cookie, mints the JWT (`JwtToken::encode`), emits the `user_login` audit log (`via: 2fa`), fires `do_action('bcc_user_login', …)`. Handler `AuthEndpoint::twoFaVerify` (route `AuthEndpoint.php:546`). Standard envelope per §1.4.
 
 #### `POST /bcc/v1/auth/2fa/resend`
 
@@ -8757,6 +8758,14 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.9X — <merge date> — behaviour change — sign-in throttles per identity; 2FA attempt cap
+
+> Version placeholder: the coordinator assigns the number at merge; replace every `v1.9X` (here and in §4) and `<merge date>`.
+
+- **`POST /auth/2fa/verify` (F-124):** at most 5 wrong codes per (user, challenge); the 5th burns the code and the challenge (`401 bcc_invalid_2fa_token` → sign in again). Codes are bound to their challenge and only the most recent challenge per user is live (a new login supersedes earlier ones). No new error code. One-time effect at deploy: a sign-in mid-2FA must restart.
+- **`POST /auth/wallet-login` (F-123):** rate limit is now per wallet (5 / min per chain + address) plus a 300 / min route ceiling — no longer per IP, which the frontend's server-side calls had turned into one shared bucket.
+- **`POST /auth/oauth` (F-131, internal BFF bridge, not in §4):** rate limit is now per provider identity (10 / min per provider + provider_id, checked after the signed-bridge gate) plus a 300 / min route ceiling — no longer per IP.
 
 ### v1.92 — 2026-11-11 — additive plus one corrected claim — an unreadable block table no longer promises a Message button
 
