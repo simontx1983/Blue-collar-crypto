@@ -663,7 +663,10 @@ profile shows a chip (New Member · Neutral tier), not a hole.
   path — `profile_setup`, `verified_identity`,
   `qualifying_contribution` booleans plus `confirmation_due_at` (the
   24-hour confirmation clock; `null` until a qualifying contribution
-  starts it or once it resolves).
+  starts it or once it resolves). *(v1.93)* `qualifying_contribution` is
+  `false` while the confirmation is **voided**. The member's next
+  qualifying contribution re-arms the clock, after a 7-day cool-off when
+  the void was for a content reason (removed, unpublished or report upheld).
 - `confirmation_due_at`, `recovery.deadline`, and the `findings`
   datetimes (`ceiling_expires_at` / `penalty_expires_at` /
   `created_at`) are UTC `YYYY-MM-DD HH:MM:SS` datetime strings
@@ -4251,7 +4254,8 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
     "bcc_hall_post":              true,
     "bcc_comment_received":       true,
     "bcc_holder_community_live":  true,
-    "bcc_delegator_group_removed": true
+    "bcc_delegator_group_removed": true,
+    "bcc_content_auto_hidden":    true
   },
   "push": {
     "enabled": false,
@@ -4268,6 +4272,7 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
 
 - `bell.*` keys mirror the bell `type` taxonomy (matches §4.10's notification-shape `type` field). Defaults are all-on per §I1 baseline. The full key set is `NotificationPrefs::BELL_TYPES`, which is pinned equal to `NotificationType::ALL` by a generic registration test (v1.63) — the sample above shows the §I2 base taxonomy plus the v1.63 Rank keys; the §J.7 attestation keys and `bcc_divergence_state_warning` (documented where those events are specified) appear in the map too.
 - **v1.63 (Rank Phase 8):** eight bell keys are new in the map. Six are new bell-only notice types (`bcc_rank_recovery_started`, `bcc_rank_recovery_reminder`, `bcc_rank_decay_warning`, `bcc_rank_finding_issued`, `bcc_rank_appeal_outcome`, `bcc_rank_finding_reversed` — deliberately no push variants; none are urgent). Two are **repairs** of registration drift: `bcc_rank_demoted` (dispatched since v1.59 but absent from the type whitelist — its bell rows were silently rejected read-side and its pref key never appeared here) and `bcc_holder_community_live` (rows rendered fine but the pref key was missing from this surface, so the toggle documented at v1.32 was not actually exposed).
+- **v1.93:** new bell key `bcc_content_auto_hidden` (default on). It is the author's notice that their post was hidden **automatically** by the credible-report threshold. A self-notification: `actor` is the author, and it names no reporter, count or threshold. Message, verbatim: *"One of your posts was hidden automatically after several members reported it. A moderator will review it, and if it breaks no rule it will be restored."* `link` is `/`, because the post itself is hidden from every feed. **In-app only:** no push variant, and it is excluded from the email digest, like `bcc_delegator_group_removed`.
 - `email_digest` defaults `false` (opt-in).
 - `push.enabled` is the master toggle. Defaults `false` until the user explicitly enables it (a browser permission prompt fires on enable; no silent dispatch).
 - `push.events.*` defaults are all-on per V2 Phase 1 §P1.C3 — anti-noise carries the load via debounce + 5-min aggregation in `PushDispatcher`. The push event taxonomy is intentionally narrower than the bell ("bell shows everything; push is 'you really need to know'"). Adding a new push event requires extending `NotificationPrefs::PUSH_TYPES` server-side and the corresponding subscriber wiring.
@@ -6152,7 +6157,7 @@ File a content report against a feed item or an **announcement** (§K1 Phase B).
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
 - **Body (JSON):** `target_kind` (**required**, ∈ `feed_item | announcement`) · `target_id` (**required**, int ≥ 1 — the `act_id` for `feed_item`, the **bare integer announcement id, prefix stripped** for `announcement`; see below) · `reason_code` (**required**, ∈ `spam|harassment|hate|violence|misinformation|other`) · `comment` (optional, ≤ 500 chars; **required when `reason_code = other`**)
 - **Response 200:** `{ "data": { "ok": true, "report_id": 5512, "status": "created" } }` — `status` ∈ `created | existing` (UNIQUE `(reporter, target_kind, target_id)` blocks a second row; `existing` returns `report_id: 0`).
-- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (bad kind/id/reason, comment > 500, missing comment for `other`, or self-report) · **`bcc_not_found` 404** (`announcement` only — the notice is not publicly readable; see below) · `bcc_rate_limited` 429 (FLAG limits, 5 / 5 min / reporter) · `bcc_unavailable` 503
+- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (bad kind/id/reason, comment > 500, missing comment for `other`, or self-report) · **`bcc_not_found` 404** (`announcement`: the notice is not publicly readable · `feed_item` *(v1.93)*: the reporter cannot see the post; see below) · `bcc_rate_limited` 429 (FLAG limits, 5 / 5 min / reporter) · `bcc_unavailable` 503
 - **Mapping:** `MyReportsEndpoint::create` (route `MyReportsEndpoint.php:38`) → `ContentReportService::fileReport`; fires `do_action('bcc_content_reported', …)` for async Phase C subscribers.
 
 ⚠⚠ **FOR `announcement`, THE CLIENT SENDS THE NOTICE'S OWN ID AND NOTHING
@@ -6225,6 +6230,32 @@ on an unreadable database must not look like content that does not exist.
 ⚠ **Reporting a notice has no moderation side effect beyond the row.** No
 automatic hiding (§4.32.16), no reputation, trust or fraud signal, and no change
 to the notice's state or visibility — it stays `published` and publicly readable.
+
+⚠⚠ **FOR `feed_item`, REPORTABILITY IS VISIBILITY** *(v1.93)*. A member can
+report a post exactly when they can see it in a feed, decided by the feeds' own
+gates rather than a restatement of them:
+
+| the post | reportable by |
+|---|---|
+| not group-tagged, or group-tagged with `_bcc_post_visibility = public_all` | everyone (the global feed shows it) |
+| in a group the reporter is an active member of | that member, whatever its visibility |
+| `public_group`, in an open / closed / NFT group, reporter not a member | that non-member (the group's public teaser shows it) |
+| `members_only` or no visibility marker, reporter not a member | nobody else |
+| in a **secret** group, not `public_all`, reporter not a member | nobody else |
+
+The post must also be published and not moderation-hidden. A target the reporter
+cannot see answers `404 bcc_not_found` *"Not found."*, **byte-identical** to an
+id that never existed, so a refusal never confirms that a closed or secret post
+exists. **Behaviour change:** before v1.93 a `feed_item` report was accepted for
+ANY `act_id`, including one that did not exist.
+
+⚠ **Filing a report is not the same as hiding a post** *(v1.93)*. Every report
+still files and queues for moderators, but the automatic hide at the threshold
+(3) counts only **credible** reporters: Apprentice or higher, Trust tier Neutral
+or higher, not suspended, and fraud-clear. That is the same rule that decides
+who counts as Rank evidence. After a moderator **restores** a post, every pending
+report on it closes and the post is exempt from automatic hiding for **7 days**.
+Reports filed during that window still queue for moderators.
 
 See §4.32.16 for the full reportability rules and §4.32.11 for the `can_report`
 capability that must agree with this route.
@@ -8788,6 +8819,37 @@ into (F-88).
   shape is unchanged. No route added or changed, so the §4 endpoint
   inventory is unmoved. Mapping: `VoteRepository::findManyActiveByIds()` +
   `FeedHydrationPipeline` (bcc-trust, paired PR).
+
+### v1.93 — 2026-11-11 — behaviour change — content reports: report what you can see; credible reporters auto-hide
+
+Scope: §4's `POST /bcc/v1/me/reports`, `feed_item` arm only. No field, route,
+envelope or view-model changes.
+
+- **New `bcc_not_found` 404 for `feed_item`.** A post the reporter cannot see in
+  a feed is answered byte-identically to a missing id; the visibility table is
+  at the route. This mirrors the existing `announcement` rule (reportability is
+  readability).
+- **Behaviour change:** a `feed_item` report used to be accepted for **any**
+  `act_id`, including closed or secret group posts the reporter could not see,
+  and ids that did not exist.
+- **Behaviour change (moderation, no wire change):** the automatic hide at 3
+  reports counts only credible reporters (Apprentice+, Neutral+ Trust, not
+  suspended, fraud-clear). Filing is unchanged. A moderator restore closes every
+  pending report on the post and starts a 7-day automatic-hide exemption.
+- **Not on the wire:** a restored report reads as dismissed rather than upheld
+  (F-72), so it no longer credits reporters or blocks the author's Apprentice
+  confirmation. A voided Apprentice confirmation is re-armed by the member's next
+  qualifying contribution, after a 7-day cool-off for content-based voids (F-71).
+  `/me/progression`'s `readiness.qualifying_contribution` reads `false` while the
+  confirmation is voided (value only, same shape).
+- **Additive:** a new bell type and preference, `bcc_content_auto_hidden`. It is
+  the author's in-app notice that their post was auto-hidden. No push, no email
+  digest, and no reporter identity. §4's preferences section carries the
+  verbatim copy.
+- **Ships with** bcc-trust #385 (F-71), #389 (F-72/F-111), #392 (F-73 restore
+  side), #416 (F-73 report side + F-56), #417 (author notice) and #410
+  (F-98/F-77), plus bcc-core #70 (the `moderation_hidden_ids` subsystem). All
+  are merged ahead of this entry.
 
 ### v1.92 — 2026-11-11 — additive plus one corrected claim — an unreadable block table no longer promises a Message button
 
