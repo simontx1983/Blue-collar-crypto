@@ -2356,7 +2356,7 @@ Full User view-model.
 - **Auth:** Anonymous OR Bearer
 - **Path:** `handle` (lowercase, no `@` prefix)
 - **Response 200:** User view-model (§3.1) — own variant if `is_self`, others' variant otherwise
-- **Errors:** `bcc_not_found` (handle missing), `bcc_permission_denied` (account suspended; rare)
+- **Errors:** `bcc_not_found` (handle missing), `bcc_permission_denied` (account suspended; rare) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.8Z)* — the owner's `profile_visibility` does not admit this viewer. ⚠ Note the two distinct 403 codes on this route: `bcc_permission_denied` is about the **viewer's** standing, `bcc_forbidden` about the **owner's** privacy. A client must branch on `code` plus `data.reason`, not on the status alone.
 - **Rate limit:** 60/min/viewer
 - **Cache:** `Cache-Control: private, max-age=30` (own: `no-store`); React Query `staleTime: 30s` (own: 0)
 - **Mapping:**
@@ -2397,7 +2397,7 @@ Full User view-model.
 - **Auth:** Anonymous OR Bearer (privacy-filtered)
 - **Path:** `handle`
 - **Query:** `weeks` (optional, default 52, max 104 — **refused above 104**, not clamped)
-- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (`weeks` outside 1–104, or not a whole number). ⚠ This cap is **104**, not the 50 the list routes carry; enforcing a shared number here would halve a documented two-year window.
+- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (`weeks` outside 1–104, or not a whole number) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.8Z)* — the owner's `profile_visibility` does not admit this viewer. ⚠ This cap is **104**, not the 50 the list routes carry; enforcing a shared number here would halve a documented two-year window.
 - **Response 200:**
   ```json
   {
@@ -2413,10 +2413,11 @@ Full User view-model.
     }
   }
   ```
-- **Errors:** `bcc_not_found`
 - **Rate limit:** 30/min/viewer
-- **Cache:** `Cache-Control: public, max-age=300, stale-while-revalidate=600`
+- **Cache:** `Cache-Control: private, max-age=300` · `Vary: Authorization, Cookie` *(changed in v1.8Z — was `public, max-age=300, stale-while-revalidate=600`)*
+  - ⚠ **This had to change with the gate, not after it.** Once the route can answer 403 for one viewer and 200 for another, a shared cache holding one viewer's 200 would replay it to viewers the gate refused — a worse leak than the ungated read being closed. The 300s window made this the most exposed of the three routes whose header moved. `Vary: Authorization` alone is insufficient: the owner/admin/friend distinctions turn on the session, and two signed-in viewers can look identical to a shared cache.
 - **Mapping:** `peepso_activities` aggregated by day, server-side bucketed; `intensity` computed server-side (`none`, `low`, `med`, `high`, `peak`) — frontend just renders the class.
+  - 📌 *Editorial, v1.8Z:* this block carried **two** `**Errors:**` lines (one before the 200 sample, one after), listing different sets. They are folded into the single line above rather than a third being added.
 
 #### `GET /bcc/v1/members`
 
@@ -2515,7 +2516,7 @@ The member's long-form blog posts (§D6 blog tab), newest-first, cursor-paginate
 - **Path:** `handle`
 - **Query:** `cursor` (optional, opaque base64url `{t,id}`, same family as `/feed`) · `limit` (optional, default 20, min 1, max 50 — **refused above 50**, not clamped)
 - **Response 200:** `CursorEnvelope<FeedItem>` — same shape as `/feed`: `data = { items: FeedItem[] (§3.3), pagination: { next_cursor: string|null, has_more: bool } }`, scoped to `act_user_id = handle AND act_module_id = 'blog'`. The blog body carries the full `full_text` (the Floor variant omits it): `{ excerpt, full_text, wp_post_id, title, category (string|null), tags (string[]), chain_tags ([{id, slug, name, color, icon_url}]), disclosure ({tickers, note}|null), cover_image_url (string|null), cover_image_id (int|null), sources (string[]) }`.
-- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry)
+- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.8Z)* — the owner's `profile_visibility` does not admit this viewer
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - **Mapping:** `BlogService::getUserBlog` → `PeepSoActivityRepository::getActivities` (over-fetch-by-1 `has_more`, moderation-hidden excluded per §K1-C); body via `BlogService::hydrateForPostId(..., includeFullText: true)`. Handler `UsersEndpoint::blog` (route `UsersEndpoint.php:172`).
 
@@ -2537,7 +2538,7 @@ Reviews this member has written (§V1.5 reviews-on-file tab), offset-paginated.
   `grade` ∈ `A|B|C` (from `vote_type` 1/0/-1). When the target hides reviews and the viewer isn't the owner: `items: []`, totals `0`, `hidden: true`.
 
   `scope_label` ∈ `PAGE|MEMBER` (v1.48). Member-target rows (reviews this user wrote **about another member**): `subject` = the member's display name, `subject_handle` = their `bcc_handle` (`""` when unset — the frontend suppresses the `ON @…` link; `user_login` is never projected), `scope_label` = `MEMBER`.
-- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry)
+- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.8Z)* — the owner's `profile_visibility` does not admit this viewer
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - **Pagination envelope:** offset (§1.5); `total_pages` is `0` (not 1) on empty/hidden.
 - **Mapping:** `UserReviewsService::getReviews` → `VoteRepository::countByVoter` + `findByVoterPaginated` (+ `UserMiniRepository::getRowsByIds` for member-target subjects, v1.48); `posted_at_label` server-rendered (§A2). Handler `UsersEndpoint::reviews` (route `UsersEndpoint.php:203`).
@@ -2558,7 +2559,7 @@ Disputes this member has **filed** (§V1.5 disputes tab), offset-paginated. A di
   }
   ```
   `status` ∈ `open|resolved|dismissed` (mapped from `bcc_disputes.status`: `reviewing`→`open`, `accepted`/`rejected`/`timeout_no_quorum`→`resolved`, `dismissed`→`dismissed`; unknown → `open`). `status_label` carries the richer real outcome (`OPEN`/`ACCEPTED`/`REJECTED`/`NOT DECIDED`/`DISMISSED`). `subject` is the disputed page title, falling back to `"Page removed"`; `scope_label` is `PAGE`. Hidden behaves as reviews (`items: []`, totals `0`, `hidden: true`).
-- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry)
+- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.8Z)* — the owner's `profile_visibility` does not admit this viewer
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - **Pagination envelope:** offset (§1.5); `total_pages` is `0` on empty/hidden.
 - **Mapping:** `UserDisputesService::getDisputes` → `DisputeRepository::countByReporter` + `getByReporterPaginated` (live `bcc_disputes`, reporter-keyed). Handler `UsersEndpoint::disputes` (route `UsersEndpoint.php:215`). *(Was `bcc_trust_flags`/FlagsRepository — a write-dead legacy table — until 2026-07-08; the shape is unchanged.)*
@@ -2571,7 +2572,7 @@ Per-member activity wall — a single-author slice of the same activity stream t
 - **Path:** `handle`
 - **Query:** `cursor` (optional, same family as `/feed`) · `limit` (optional, default 20, min 1, max 50 — **refused above 50**, not clamped)
 - **Response 200:** `CursorEnvelope<FeedItem>` — identical shape to `/feed`/`/feed/hot`/`/feed/tag`: `data = { items: FeedItem[] (§3.3), pagination: { next_cursor, has_more } }`, fully hydrated (bodies, viewer reactions, author badges/ranks, social proof, permissions, group context, comment counts).
-- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry)
+- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.8Z)* — the owner's `profile_visibility` does not admit this viewer
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - **Mapping:** `FeedRankingService::getActivityForAuthor($authorId, $viewerId, …)` — the single-brain feed composition scoped to one author; `excludedGroupIds = (non-open group ids) − (viewer membership ids)` forwarded to the SQL so wall posts in groups the viewer can't see are dropped. Handler `UsersEndpoint::activity` (route `UsersEndpoint.php:228`).
 
@@ -2590,7 +2591,7 @@ Per-member activity wall — a single-author slice of the same activity stream t
   }
   ```
   Each item is a full member `Card` (§3.2, `card_kind: "member"`) — same shape as `/members`. Rows for deleted users are silently skipped (so `items.length` may momentarily be < page size while `total` reflects the raw follow-edge count).
-- **Errors:** `bcc_not_found` (slug missing) · `bcc_permission_denied` 403 (`watching_hidden`)
+- **Errors:** `bcc_not_found` (slug missing) · `bcc_permission_denied` 403 (`watching_hidden`) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.8Z)* — the owner's `profile_visibility` does not admit this viewer. ⚠ Two different 403s here: `watching_hidden` is the owner hiding **this list**, `profile_private` is the owner hiding **their whole profile**. The second is checked first, so a private profile never reveals whether its follow lists are also hidden.
 - **Cache:** `Cache-Control: private, max-age=30`
 - **Pagination envelope:** offset with `has_more` (§1.5) — `offset`/`limit`/`total`/`has_more`, NOT the `page`/`per_page`/`total_pages` shape.
 - **Mapping:** `UserFollowsService::listFollowers` → `PeepSoFollowerRepository::getCounts` + `getFollowers`; cards via `CardViewService::getMemberCardForList` over a `MemberSummaryPrefetcher::primeFor` batch. Handler `UserFollowsEndpoint::listFollowers` (route `UserFollowsEndpoint.php:49`).
@@ -2603,7 +2604,7 @@ Per-member activity wall — a single-author slice of the same activity stream t
 - **Path:** `slug` (sanitized via `sanitize_user`)
 - **Query:** `offset` (default 0), `limit` (default 24, max 100)
 - **Response 200:** identical envelope to `/followers` — `{ items: Card[] (§3.2, member), pagination: { offset, limit, total, has_more } }`. `total` is the *following* count.
-- **Errors:** `bcc_not_found` (slug missing) · `bcc_permission_denied` 403 (`watching_hidden`)
+- **Errors:** `bcc_not_found` (slug missing) · `bcc_permission_denied` 403 (`watching_hidden`) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.8Z)* — the owner's `profile_visibility` does not admit this viewer. ⚠ Two different 403s here: `watching_hidden` is the owner hiding **this list**, `profile_private` is the owner hiding **their whole profile**. The second is checked first, so a private profile never reveals whether its follow lists are also hidden.
 - **Cache:** `Cache-Control: private, max-age=30`
 - **Pagination envelope:** offset with `has_more` (§1.5)
 - **Mapping:** `UserFollowsService::listFollowing` → `PeepSoFollowerRepository::getCounts` + `getFollowing`; same card hydration as `/followers`. Handler `UserFollowsEndpoint::listFollowing` (route `UserFollowsEndpoint.php:60`).
@@ -2622,7 +2623,8 @@ The member's PeepSo photo albums (§3.1 Photos tab → Albums sub-tab), privacy-
   }
   ```
   No pagination block. `privacy` ∈ `public|site_members|friends_only|only_me`; `privacy_label` server-rendered (§A2). `cover_url` is `""` when unresolvable. System-album titles remapped to BCC vocabulary ("Stream Photos" → "Floor Photos").
-- **Errors:** `bcc_not_found` (slug missing). Albums the viewer can't see are silently filtered (never 403).
+- **Errors:** `bcc_not_found` (slug missing) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.8Z)*.
+  - ⚠ **Two layers, and only the outer one 403s.** The PROFILE gate refuses the whole route when the owner's `profile_visibility` does not admit the viewer. Per-ALBUM visibility is unchanged: albums the viewer cannot see are still **silently filtered, never 403**. So "never 403" remains true of album-level access and is no longer true of the route as a whole.
 - **Cache:** `Cache-Control: private, max-age=30`
 - **Mapping:** `PeepSoAlbumRepository::getAlbumsByOwner` filtered through `PeepSoAlbumAccess::canView` (+ `PeepSoFriendGate`); cover via `PhotoRepository::resolvePhotoUrl`. Handler `UserAlbumsEndpoint::getList` (route `UserAlbumsEndpoint.php:54`).
 
@@ -2640,7 +2642,8 @@ Photos inside a single album (§3.1 Photos drill-down). Album access is re-check
   }
   ```
   No pagination block. `photo_url` is `""` when unresolvable (S3 fallback). `source_post` is `{ id, url }` deep-linking the parent post, or `null`.
-- **Errors:** `bcc_not_found` — slug missing, `album_id` ≤ 0, album not owned by the user, OR album exists but viewer lacks access (all collapse to one 404 message to avoid leaking existence)
+- **Errors:** `bcc_not_found` — slug missing, `album_id` ≤ 0, album not owned by the user, OR album exists but viewer lacks access (all collapse to one 404 message to avoid leaking existence) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.8Z)*
+  - ⚠ **The 404-collapse is deliberately NOT extended to the profile gate, and the distinction is the point.** ALBUM existence must not leak, so every album-level failure stays a 404. PROFILE existence is already public (the member directory and the slug resolver both expose it), so the profile gate answers 403 — consistent with `GET /users/:handle` — and tells the frontend to render "this profile is private" instead of "no such person". Different objects, different disclosure rules.
 - **Cache:** `Cache-Control: private, max-age=30`
 - **Mapping:** `PeepSoAlbumRepository::findOneByIdAndOwner` → `PeepSoAlbumAccess::canView` → `PhotoRepository::findByAlbumId`; per-photo URL via `PhotoRepository::resolvePhotoUrl`. Handler `UserAlbumPhotosEndpoint::getList` (route `UserAlbumPhotosEndpoint.php:52`).
 
@@ -3267,7 +3270,9 @@ Cross-kind list of all PeepSo groups a target user is an active member of: holde
 
 - **Auth:** Anonymous OR Bearer
 - **Path:** `slug` matches the canonical `[a-z0-9][a-z0-9-]{1,18}[a-z0-9]` handle pattern (lowercase alphanumeric + hyphens, 3–20 chars). 404 with `bcc_not_found` for invalid or unknown handles.
+- **Errors:** `bcc_not_found` **404** (invalid or unknown handle) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.8Z)* — the owner's `profile_visibility` does not admit this viewer. *(This block carried no `Errors:` line before v1.8Z; the 404 above was documented in prose only.)*
 - **Privacy filtering (server-authoritative):**
+  - ⚠ *v1.8Z:* the per-group filtering below is **unchanged and still applies**, but it is now reached only after the profile gate admits the viewer. The two are separate: the gate asks "may this viewer see this person", the filtering asks "which of their groups may this viewer see". Previously only the second question was asked, so a stranger could confirm an "only me" profile's open-group memberships.
   - `secret` groups → included **only if the viewer is also a member**
   - `closed` groups → always included; non-members see name + member_count, content stays private at PeepSo's layer
   - `open` groups → always included
@@ -4641,7 +4646,7 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
 - **Response 200 data shape:**
   ```json
   {
-    "profile_visibility":        "public" | "members" | "private",
+    "profile_visibility":        "public" | "members" | "friends" | "private",
     "post_visibility":           "members" | "private",
     "hide_birthday_year":        false,
     "hide_online":               false,
@@ -4653,7 +4658,10 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
   }
   ```
 - **Storage:**
-  - `profile_visibility` → `peepso_users.usr_profile_acc` column (PeepSo's user-search and feed gate join against this — writing through this endpoint keeps gating coherent).
+  - `profile_visibility` → `peepso_users.usr_profile_acc` column (PeepSo's user-search and feed gate join against this — writing through this endpoint keeps gating coherent). `public` → 10, `members` → 20, `friends` → 30, `private` → 40.
+    - **`friends` is new in v1.8Z.** The level existed in storage and was honoured by PeepSo's own surfaces, but this endpoint's token map had no entry for it, so a member could not select it through BCC at all — only through PeepSo's own profile UI.
+    - ⚠ **30 is `PeepSoFriendsPlugin::ACCESS_FRIENDS`, defined and enforced by the peepso-friends plugin, not by PeepSo core** (which declares only 10, 20 and 40). It means the PeepSo **friends** list, which is a mutual, request-and-accept relation — *not* BCC followers, which are one-directional. With peepso-friends inactive the level falls through PeepSo's ladder and stays **denied**, which is the fail-closed direction.
+    - 📌 `default_post_audience` deliberately keeps its three tokens. A stored `peepso_last_used_post_privacy` of 30 is still reported as `members`, so a read-modify-write round-trip through this endpoint writes 20 back and **loosens** friends to members. Pre-existing, tracked separately; the fix is to report `friends` there too now that the token exists.
   - `post_visibility` → `peepso_profile_post_acc` user_meta. PUBLIC is intentionally absent (matches PeepSo's `access-profile-post` UI which strips it).
   - `hide_birthday_year` → `peepso_hide_birthday_year` user_meta, "1"/"0".
   - `hide_online` *(documented v1.64 — shipped earlier)* → `peepso_hide_online_status` user_meta, "1"/"0" — PeepSo's presence indicators treat "1" as "hide the green dot".
@@ -5614,8 +5622,10 @@ Anonymous-readable per §J trust-graph doctrine: attestation data is public-by-d
 - **Errors:**
   - `bcc_not_found 404` — handle does not resolve to a known user.
   - `bcc_rate_limited 429` — 30/60/IP shared throttle bucket (`users_endorsements`).
+  - `bcc_forbidden 403` *(v1.8Z)* — `error.data.reason: "profile_private"`; the owner's `profile_visibility` does not admit this viewer.
 - **Rate limit:** 30/60/IP (shared across all `/users/:handle/endorsements` callers — per-handle granularity isn't worth the bucket sprawl).
-- **Cache:** `public, max-age=15` with `Vary: Authorization`. Short shared cache absorbs sub-tab toggles inside the backing panel without staling on fresh endorsements. React Query `staleTime: 15_000`.
+- **Cache:** `private, max-age=15` with `Vary: Authorization, Cookie` *(changed in v1.8Z — was `public, max-age=15` with `Vary: Authorization`)*. React Query `staleTime: 15_000`.
+  - ⚠ The short shared cache it used to keep is no longer available: since v1.8Z this route can answer 403 for one viewer and 200 for another, and a shared cache holding the 200 would replay it to refused viewers. `Vary: Authorization` alone does not help — the owner/admin/friend distinctions turn on the session.
 - **Frontend consumer:** `BackingPanel` "Given" sub-tab on `/u/[handle]`. The "Received" sub-tab consumes `GET /entities/user_profile/:user_id/attestations` (§J.6); together they form the two faces of the operator's trust graph.
 
 ---
@@ -8717,6 +8727,63 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.8Z — &lt;merge date&gt; — behaviour change plus additive — a private profile is actually private
+
+> ⚠ **`v1.8Z` and `<merge date>` are PLACEHOLDERS.** v1.88 is already dated
+> 2026-11-11, so the real number depends on merge order against other pending
+> contract changes. Both are assigned at merge; do not cite v1.8Z anywhere else.
+
+**`profile_visibility` was a setting nothing honoured.** `usr_profile_acc` was
+written by `PATCH /me/profile-prefs` and read by no code that made an access
+decision — `PeepSoUser::is_accessible*` was called **zero times** in bcc-trust.
+So "friends" and "only me" profiles served a stranger exactly what they served
+the owner, on every per-user surface.
+
+- **Behaviour change — twelve routes can now refuse.** New `bcc_forbidden`
+  **403** carrying `error.data.reason: "profile_private"` on
+  `GET /users/:handle` and its `/blog`, `/activity`, `/endorsements`,
+  `/reviews`, `/disputes` and `/shift-log` siblings, plus
+  `/users/:slug/albums`, `/users/:slug/albums/:album_id/photos`,
+  `/users/:slug/followers`, `/users/:slug/following` and
+  `/users/:slug/groups`. A client that treated any of these as
+  always-available must handle the 403; the machine-readable `reason` is there
+  so the profile page can say "this profile is private" rather than render a
+  generic permission error.
+  - **403, not 404**, deliberately: the handle is already a public lookup via
+    the member directory and the slug resolver, so 403 discloses nothing new,
+    and 404 would force the frontend to claim the person does not exist.
+  - The ladder is **PeepSo's own** (`is_accessible_static`): owner exempt,
+    **admin exempt**, 0 and 10 public, 20 signed-in, 40 owner-only, with 30
+    delegated to peepso-friends. BCC does not restate it, so this gate cannot
+    drift away from the gates PeepSo applies on its own surfaces.
+  - Fail-closed throughout: no PeepSo, an unreadable stored level, or a failed
+    friend lookup all **deny**.
+- **Additive — `profile_visibility` gains `friends`** (level 30). See §4's
+  `/me/profile-prefs` entry for why it was previously unreachable through this
+  API and why 30 belongs to peepso-friends rather than PeepSo core.
+- **Behaviour change — two cache headers turn `private`,** both with
+  `Vary: Authorization, Cookie`: `/users/:handle/shift-log` (was
+  `public, max-age=300, stale-while-revalidate=600`) and
+  `/users/:handle/endorsements` (was `public, max-age=15`). Shared caching a
+  viewer-dependent answer would replay one viewer's 200 to viewers the gate
+  refused, so the headers moved in the same change as the gate rather than
+  after it. The other ten gated routes already sent `private`.
+  - 📌 Twelve routes, **ten** guard call sites: `/reviews` and `/disputes`
+    share one handler, and `/followers` and `/following` share another, so one
+    guard covers two routes in each case.
+- **Not changed:** `GET /creators/:slug/gallery` stays `public` and **ungated**.
+  A creator is a published NFT page, not a person's profile, so profile
+  visibility does not reach it.
+- 📌 **Erratum fixed in passing:** the `/users/:handle/shift-log` block carried
+  **two** `**Errors:**` lines listing different sets. Folded into one.
+- ⚠ **Coordination:** the 403s and the header changes arrive with bcc-trust
+  `feat/f02-profile-visibility`. **That PR merges first.** Documenting a
+  refusal the deployed routes cannot yet perform is the inverse of the v1.80
+  problem. `contract-parity-guard.php` does not police error codes or cache
+  headers — it diffs declared routes against `register_rest_route()` calls — so
+  neither order turns CI red: this ordering is a correctness rule, not a
+  mechanical one.
 
 ### v1.88 — 2026-11-11 — behaviour change plus additive — an email is only "verified" once its inbox is proven
 
