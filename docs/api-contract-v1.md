@@ -1855,6 +1855,7 @@ Issues a single-use challenge nonce for wallet signing.
 - **Errors:** `bcc_invalid_request` (bad chain or wallet format), `bcc_rate_limited`
 - **Rate limit:** 10/min/IP, 5/min/wallet
 - **Cache:** `Cache-Control: no-store`
+- **Message (since v1.10Y, F-25):** the text to sign is `Verify your wallet on Blue Collar Crypto (<host>). This request will not trigger a transaction or cost any fees. Code: <nonce> Chain: <slug>`. `<host>` is the public site's host (the canonical `BCC_FRONTEND_ORIGIN` entry, so staging names its own host). Clients sign the returned text **as is** and never build it themselves.
 
 #### `POST /bcc/v1/auth/wallet-link`
 
@@ -1919,8 +1920,8 @@ Issues a single-use challenge nonce for **anonymous** wallet signing. Public sib
 - **Response 200:**
   ```json
   {
-    "nonce": "8f3a7b2e9c1d4f6a",
-    "message": "Sign this to verify you control this wallet on Blue Collar Crypto.\n\nNonce: 8f3a7b2e9c1d4f6a\nIssued: 2026-04-27T14:23:00Z\nExpires: 2026-04-27T14:33:00Z",
+    "nonce": "8f3a7b2e9c1d4f6a8f3a7b2e9c1d4f6a",
+    "message": "Sign in to Blue Collar Crypto (bluecollarcrypto.io). This request will not trigger a transaction or cost any fees. Code: 8f3a7b2e9c1d4f6a8f3a7b2e9c1d4f6a Chain: cosmos",
     "chain_slug": "cosmos",
     "chain_id": 4,
     "wallet_address": "cosmos1abcdef…",
@@ -1929,6 +1930,8 @@ Issues a single-use challenge nonce for **anonymous** wallet signing. Public sib
   ```
 - **Errors:** `bcc_invalid_request` (missing chain/address, unsupported chain, bad address format), `bcc_rate_limited`
 - **Rate limit:** IP-bucketed (`WALLET_NONCE_RATE_LIMIT`/min/IP). Disjoint from `/auth/nonce`'s user-keyed bucket — the two routes never starve each other under partial DoS.
+- **Message (since v1.10Y, F-25):** `Sign in to Blue Collar Crypto (<host>). This request will not trigger a transaction or cost any fees. Code: <nonce> Chain: <slug>` — `<host>` as for `/auth/nonce`. Clients sign `message` **as returned**.
+- **One live challenge per (address, chain) (since v1.10Y, F-25):** while a challenge is live (5 min), a repeat request for the same address and chain returns **the same challenge** instead of replacing it, so a stranger requesting a nonce for someone else's address can no longer invalidate the one they are about to sign. A request for another chain gets its own challenge and leaves the first live.
 - **Cache:** `Cache-Control: no-store`
 
 #### `POST /bcc/v1/auth/wallet-login`
@@ -1957,13 +1960,13 @@ Verifies a signed nonce, looks up the BCC user the wallet is linked to, mints + 
   }
   ```
 - **Errors:**
-  - `bcc_invalid_request` 400 — missing field, expired nonce, unsupported chain.
-  - `bcc_signature_invalid` 401 — signature verification failed.
+  - `bcc_invalid_request` 400 — missing field; no live challenge for the address (expired, never issued, or already used — including a replayed signature, or a concurrent duplicate that lost).
+  - `bcc_signature_invalid` 401 — the signature verifies against none of the address's live challenges.
   - `bcc_wallet_not_linked` 404 — no BCC account is bound to this wallet. Frontend should route the user to `/signup` (or the wallet-signup flow) with the wallet pre-attached. **Distinct, recoverable code** — never auto-promotes.
   - `bcc_invalid_state` 409 — account is missing a handle (created outside BCC signup); routes through handle-claim surface.
   - `bcc_rate_limited` 429.
-  - `bcc_internal_error` 500 — stored challenge malformed.
-- **Rate limit (changed in v1.97):** **per wallet** — `WALLET_LOGIN_RATE_LIMIT` (5) / min per (chain + lower-cased address) — plus a route-wide ceiling of 300 / min; **no longer per IP** (this route is called server-side by the frontend, so every request shares one IP and a per-IP bucket let anyone lock out all wallet logins). The check runs **after** the nonce is consumed (only a request carrying a server-issued nonce for that address counts, so junk cannot drain someone else's bucket) and **before** the CPU-bound verify step. Case-variant base58/SS58 addresses share a bucket (fail-closed).
+- **Rate limit (changed in v1.97; keyed per address since v1.10Y):** **per wallet** — `WALLET_LOGIN_RATE_LIMIT` (5) / min per lower-cased address (the chain is only known once a signature verifies) — plus a route-wide ceiling of 300 / min; **no longer per IP** (this route is called server-side by the frontend, so every request shares one IP and a per-IP bucket let anyone lock out all wallet logins). The check runs **after** a live challenge for the address is found (a bare junk request for an address with none does not count) and **before** the CPU-bound verify step. Case-variant base58/SS58 addresses share a bucket (fail-closed).
+- **Verify before consume (since v1.10Y, F-25):** the signature is checked against the address's live challenges (at most one per chain, each against its own stored message), and **only the challenge it verifies against is consumed** — atomically, so a replay or a concurrent duplicate gets `400`. A wrong signature consumes nothing, so a stranger can no longer burn the challenge the wallet owner is about to sign.
 - **Cache:** `Cache-Control: no-store`
 - **Side effects:** sets `wp_set_auth_cookie`, emits `user_login` audit row, fires `bcc_user_login` action.
 
@@ -1996,13 +1999,14 @@ Verifies a signed nonce, creates a new user (placeholder email if none supplied)
   }
   ```
 - **Errors:**
-  - `bcc_invalid_request` 400 — missing field, expired nonce, unsupported chain, bad address.
+  - `bcc_invalid_request` 400 — missing field, bad address; no live challenge for the address (expired, never issued, or already used).
   - `bcc_invalid_handle` 400 / `bcc_handle_reserved` 409 / `bcc_conflict` 409 — handle validation per §B6.
   - `bcc_signature_invalid` 401 — signature verification failed.
   - `bcc_wallet_already_linked` 409 — wallet is already bound to an account. Frontend should route to `/login`.
   - `bcc_rate_limited` 429.
-  - `bcc_internal_error` 500 — stored challenge malformed, or `wp_insert_user` failed.
+  - `bcc_internal_error` 500 — `wp_insert_user` failed.
 - **Rate limit:** IP-bucketed (`WALLET_SIGNUP_RATE_LIMIT`/min/IP).
+- **Verify before consume (since v1.10Y, F-25):** as `/auth/wallet-login` — the signature picks the live challenge it was made for (which also fixes the chain), nothing is consumed until the handle, address and wallet-collision checks pass, and a wrong signature consumes nothing.
 - **Cache:** `Cache-Control: no-store`
 - **Side effects:** sets `wp_set_auth_cookie`, fires `bcc_wallet_verified` (seeds trust-engine + onchain-signals rows just like `verifyAndLink`), emits `user_signup` audit row, fires `bcc_user_signup` action. **Note:** does NOT emit the `bcc_first_wallet_link` celebration on the response — celebration delivery for wallet-signup is reserved for a future contract revision.
 - **Email state (changed in v1.88):** sets `_bcc_email_verified='0'` — a wallet signature proves control of the wallet, not of the inbox. A **caller-supplied** email gets the standard verification email (OTP + one-shot link, completed via `POST /auth/verify-email`) once the wallet link commits; a **placeholder** gets none and stays `'0'`. Previously this route set `'1'` with no inbox proof, which let a wallet signup typed with someone else's address receive that person's later Google sign-in (see `/auth/oauth-complete` → the anti-pre-registration gate). `'0'` does not affect the user's own sign-in: they sign in with the wallet.
@@ -8809,6 +8813,13 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
+### v1.10Y — 2026-11-11 — behaviour change — wallet sign-in names the site; its challenge can't be replaced or burned
+
+Ships with bcc-core #83 and bcc-trust #486.
+
+- **Signed text (F-25, user-approved wording):** wallet sign-in / sign-up (`/auth/wallet-nonce`) now asks the wallet to sign `Sign in to Blue Collar Crypto (<host>). This request will not trigger a transaction or cost any fees. Code: <nonce> Chain: <slug>`; wallet linking and validator claims (`/auth/nonce`) sign `Verify your wallet on Blue Collar Crypto (<host>). …` with the same tail. `<host>` comes from config, so staging names its own host. Clients already sign `message` as returned — no client change.
+- **`GET /auth/wallet-nonce`:** a live challenge is no longer replaced by a repeat request for the same address and chain — the same challenge comes back until it expires. Challenges are per (address, chain).
+- **`POST /auth/wallet-login` · `/auth/wallet-signup`:** the signature is verified **before** anything is consumed, and only the challenge it verified against is consumed. A wrong signature now leaves the owner's challenge intact (`401`); replay or a lost race is `400`. The `500 stored challenge malformed` case is gone (such a challenge simply never verifies). wallet-login's per-wallet bucket is now keyed on the lower-cased address alone.
 ### v1.99 — 2026-11-11 — behaviour change — a hidden group, post or draft answers 404, never 403
 
 Ships with bcc-trust's F-47 change (bcc-trust #460).
