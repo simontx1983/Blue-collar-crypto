@@ -4717,7 +4717,7 @@ Confirms the OTP from the request above and **promotes** the pending address to 
 Body `{ "code": "123456" }`.
 
 - **Auth:** required. **Rate limit:** 10/hour/user. (A 6-digit OTP under this cap + the 15-min TTL is not brute-forceable; a wrong code leaves the pending transient in place for retry.)
-- **Response 200:** `{ "ok": true, "email": "<new>" }`
+- **Response 200:** `{ "ok": true, "email": "<new>", "token": "<jwt>", "expires_in": 604800, "token_type": "Bearer" }`. **Since v1.8Z** a successful confirm **revokes every earlier bearer token** for the account (JWT token-version bump — the email credential just changed, same as `PATCH /me/account/password` and `POST /me/account/email/verify`) and returns a **fresh token**; clients must store it. A wrong code, nothing pending, or a conflict revokes nothing and returns no token. ⚠ **Release order:** the frontend that stores this token must ship **with or before** the backend, otherwise a successful confirm signs the user out of the session that made it.
 - **Errors:** `bcc_unauthorized` 401; `bcc_invalid_request` 400 (no pending email) / 422 (missing or incorrect/expired code); `bcc_conflict` 409 (email taken in the race window); `bcc_internal_error` 500; `bcc_rate_limited` 429.
 - **Cache:** `Cache-Control: no-store`.
 - **Side effects:** `wp_update_user(user_email)` + `_bcc_email_verified='1'`; clears the pending transient; `recovery_email_confirmed` audit row; out-of-band notice via `AccountSecurityMailer::recoveryEmailConfirmed` (new address only, when replacing the placeholder) or `::emailChanged` (both addresses, when replacing a real email).
@@ -8717,6 +8717,12 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.8Z — <merge date> — behaviour change plus additive — confirming a recovery email ends earlier sessions
+
+> Version placeholder: the coordinator assigns the number at merge; replace every `v1.8Z` (here and in §4) and `<merge date>`.
+
+- **`POST /me/account/recovery-email/verify`:** a successful confirm now revokes every earlier bearer token and returns a fresh one (`token`, `expires_in`, `token_type`) — the last credential-change route that did not (F-118). **Release order:** ship the frontend that stores the token with or before the backend.
 
 ### v1.88 — 2026-11-11 — behaviour change plus additive — an email is only "verified" once its inbox is proven
 
