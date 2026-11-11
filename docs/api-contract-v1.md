@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.97 · 2026-11-11 · Phase 1 deliverable
+**Status:** Draft v1.100 · 2026-11-11 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2185,7 +2185,7 @@ Silent-refresh seam: exchanges a recently-expired (or near-expiry) Bearer JWT fo
 
 #### `POST /bcc/v1/auth/logout`
 
-*(since v1.9Z)* Signs out **one** bearer token server-side — the one presented. Before this, "sign out" only cleared the browser's NextAuth cookie, and a copied bearer stayed valid until it expired. For every device at once, use `POST /auth/logout-everywhere`.
+*(since v1.100)* Signs out **one** bearer token server-side — the one presented. Before this, "sign out" only cleared the browser's NextAuth cookie, and a copied bearer stayed valid until it expired. For every device at once, use `POST /auth/logout-everywhere`.
 
 - **Auth:** the token to sign out, in `Authorization: Bearer <jwt>`. Decoded in-handler with `JwtToken::decodeForRefresh`, so a token still inside its refresh-grace window is signed out too (it could otherwise be refreshed back to life).
 - **Body:** none.
@@ -2196,6 +2196,7 @@ Silent-refresh seam: exchanges a recently-expired (or near-expiry) Bearer JWT fo
 - **Effect:** the token's `jti` is denylisted until the token can no longer be used or refreshed (`exp` + 60 s skew + the 24 h refresh grace). From then on `JwtToken::decode` and `decodeForRefresh` reject it (`jwt_logged_out`), so every Bearer-authenticated route answers `401`, `GET /auth/session` answers `401`, and `POST /auth/refresh` answers `401`. Other tokens of the same user are unaffected.
 - **Client order:** call this **before** NextAuth `signOut()` — afterwards the client no longer holds the token.
 - **Mapping:** the denylist is user meta `bcc_jwt_denylist` (`{ sha256(jti)[0..40] => until }`), written under a per-user advisory lock, pruned of expired entries on every write and capped at the 100 latest-expiring entries per user. A `user_logout` audit-log line is written on success. Handler `SessionController::logout`. Standard envelope per §1.4.
+
 #### `POST /bcc/v1/auth/verify-email`
 
 Confirms email ownership and completes signup via either an OTP code or a one-shot link token, then signs the user in by returning a JWT (no separate `/auth/login` roundtrip).
@@ -3388,11 +3389,11 @@ For non-gated, non-Hall PeepSo groups (the residual case: user/system groups cre
 - **Response 200:** `{ "joined": true, "group_id": 4231 }`
 - **Errors:**
   - `bcc_forbidden` (403) — account suspended ("Your account is suspended."). Checked before everything else; admin bypass off — a suspended account is blocked regardless of role.
-  - `bcc_invalid_request` (404) — group not found
+  - `bcc_invalid_request` (404) — group not found, **or (v1.99) a `secret` group the caller is not an active member of**. The two are byte-identical, so the response never confirms that an id is a secret group.
   - `bcc_invalid_request` (400) — group is a holder group or Hall; use the dedicated endpoint
   - `bcc_permission_denied` (403):
     - `closed` group: "This community requires admin approval. Visit the group page to request access."
-    - `secret` group: "This community is invite-only."
+    - `secret` group, caller already a member: "This community is invite-only." *(v1.99: a non-member gets the 404 above instead)*
   - `bcc_unavailable` (503) — the membership write failed or was refused (PeepSo unavailable, or the writer refused a banned membership row). Fail-closed; nothing was joined. Same surface as the Halls join.
 - **Mapping:** Resolves `GroupContext`; if `type` is `nft` or `hall` rejects (use the dedicated endpoint); for `open` groups calls `PeepSoGroupWriter::join` and honors its verdict — a `false` return is surfaced as `bcc_unavailable`, never as `joined: true`. Closed/secret are not joined here — PeepSo's request-flow / invitation machinery is not replicated by this endpoint.
 
@@ -3401,7 +3402,7 @@ For non-gated, non-Hall PeepSo groups (the residual case: user/system groups cre
 - **Auth:** Bearer (401 anonymous)
 - **Response 200:** `{ "left": true, "group_id": 4231 }`
 - **Errors:**
-  - `bcc_invalid_request` (404) — group not found
+  - `bcc_invalid_request` (404) — group not found, **or (v1.99) a `secret` group the caller is not an active member of** (previously a `200` no-op). Nothing is written.
   - `bcc_invalid_request` (400) — group is a holder group or Hall
   - `bcc_permission_denied` (403) — caller is the group owner
 - **Mapping:** `PeepSoGroupWriter::leave` (refuses owners; PeepSo's `member_leave` recomputes `peepso_group_members_count` internally).
@@ -4038,6 +4039,7 @@ Direct bcc-search project search and trending mode — the upstream that `cards/
     ]
   }
   ```
+- **Optional degradation fields (v1.98):** `stale: true` marks a response served from the last-known-good mirror while the upstream is unavailable; `system_degraded: true` marks one served from that mirror, or (F-24) built WITHOUT trust enrichment — text-only ranking, no impersonation guard — because the trust engine is unbound. Both are absent on a normal response; a client may show a "results may be incomplete" hint but must not treat either as an error. A trust-less response is cached only 10 s and never mirrored to LKG.
 - **`categories` scope (v1.46):** the full category list ships only on result-bearing responses. Empty-result short-circuits (query under 2 / over 100 chars, junk-gate rejection, unknown `type`) return `categories: []` — autocomplete fires these per keystroke and nothing reads categories off an empty response.
 - **Errors (legacy WP shape — not §L5 envelope):**
   - `bcc_rate_limited` (HTTP 429) — `10 req / 5s` per subnet *(doc corrected 2026-08-05: the previously listed `rate_limit_exceeded` never existed in code)*
@@ -4463,7 +4465,7 @@ Three endpoints under `/bcc/v1/posts/:feed_id/comments`. Comments are a hybrid P
 Paginated list of visible comments on the parent post.
 
 - **Auth:** optional. Anonymous viewers get the same list on non-gated posts.
-- **Holder-Groups gate:** when the parent post is in a PeepSo group (post-meta `peepso_group_id` set), the viewer MUST be a member (`gm_user_status` ∈ `member`, `member_owner`, `member_manager`, `member_moderator`, `member_readonly`). Non-members get `bcc_forbidden 403`.
+- **Holder-Groups gate:** when the parent post is in a PeepSo group (post-meta `peepso_group_id` set), the viewer MUST be a member (`gm_user_status` ∈ `member`, `member_owner`, `member_manager`, `member_moderator`, `member_readonly`). Non-members get `bcc_forbidden 403`, unless they cannot see the post at all, which is `bcc_not_found 404` (v1.99).
 - **Query params:**
   - `limit` (int, optional, default 20, max 50)
   - `sort` (string, optional, v1.40) — `relevant` (**default**) | `top` | `new`. `relevant` = lean stoke×recency-decay heuristic (server-owned; frontend never re-sorts); `top` = most-stoked; `new` = chronological newest-first (the pre-v1.40 behavior — note the default CHANGED from chronological to relevant). Unknown values fall back to `relevant`.
@@ -4477,8 +4479,8 @@ Paginated list of visible comments on the parent post.
   ```
 - **Errors:**
   - `bcc_invalid_request 400` — malformed `feed_id`.
-  - `bcc_not_found 404` — feed_id resolves to no activity.
-  - `bcc_forbidden 403` — viewer fails the holder-groups gate.
+  - `bcc_not_found 404` — feed_id resolves to no activity, **or (v1.99) the viewer fails the holder-groups gate on a post they cannot see at all** (a secret group, or a members-only post in a group they are not in). Same body as the missing case ("Post not found."), so it never confirms the post exists.
+  - `bcc_forbidden 403` — viewer fails the holder-groups gate on a post they **can** see (e.g. a group-teaser post), so the "join the group" hint reveals nothing new.
 - **Cache:** `private, no-store`. Per-viewer (delete permission depends on identity).
 
 #### `POST /bcc/v1/posts/:feed_id/comments`
@@ -4495,7 +4497,7 @@ Create a comment on the parent post.
   - `gif_url` (string, optional, v1.41) — a remote Giphy CDN URL. Host-validated server-side (`giphy.com` or a subdomain, parsed host — not a substring match); the GIF stays on Giphy's CDN, nothing is staged locally. Resolves to `kind: "gif"`.
   - `attachment_id` XOR `gif_url` — **one attachment per comment**; if both are sent, the photo wins and `gif_url` is ignored. Attachment validation runs BEFORE the comment write: a rejected attachment fails the whole request and no comment is created. Media-only comments are supported since v1.44: PeepSo's own non-empty-body requirement is satisfied internally by a zero-width-space placeholder (`PeepSoCommentWriter::EMPTY_BODY_PLACEHOLDER`) that `CommentRepository` strips back out on read — the placeholder is a write-path internal and never appears in any API response (`body` reads back as `""`).
   - `parent_id` (string, optional, v1.42) — the `comment_<int>` id of the comment being replied to; omit for a top-level comment. Validated BEFORE the write: it MUST resolve to a live comment on the **same** parent post, else `bcc_invalid_request 400` (invalid id form, a deleted/missing parent, or a parent belonging to a different post all reject and no comment is created). Stored as a sidecar on the reply's own wp_post and echoed back as `parent_id` on the §3.5 response row.
-- **Holder-Groups gate:** writes require write-grade membership (`gm_user_status` ∈ `member`, `member_owner`, `member_manager`, `member_moderator`). `member_readonly` can read but not create. Non-members get `bcc_forbidden 403`.
+- **Holder-Groups gate:** writes require write-grade membership (`gm_user_status` ∈ `member`, `member_owner`, `member_manager`, `member_moderator`). `member_readonly` can read but not create. Non-members get `bcc_forbidden 403`, unless they cannot see the post at all, which is `bcc_not_found 404` (v1.99).
 - **Rate limit:** burst seatbelt — `BCC_TRUST_RATE_LIMIT_COMMENT` (20) per `BCC_TRUST_RATE_WINDOW_COMMENT` (300s) per author.
 - **Response 200 data shape:**
   ```json
@@ -4506,11 +4508,11 @@ Create a comment on the parent post.
 - **Errors:**
   - `bcc_invalid_request 400` — malformed `feed_id`, empty body **with no media** (v1.44 — a body-less comment carrying `attachment_id`/`gif_url` is valid), body over cap; (v1.41) `attachment_id` resolves to no attachment / a non-image attachment, or `gif_url` is not a Giphy-host URL; (v1.42) `parent_id` is malformed, resolves to no live comment, or points at a comment on a different post.
   - `bcc_unauthorized 401` — anonymous.
-  - `bcc_forbidden 403` — gate fails OR PeepSo refused (parent has `peepso_disable_comments`, parent owner blocked the commenter); (v1.41) `attachment_id` exists but is not owned by the caller.
+  - `bcc_forbidden 403` — gate fails on a post the caller can see, OR PeepSo refused (parent has `peepso_disable_comments`, parent owner blocked the commenter); (v1.41) `attachment_id` exists but is not owned by the caller. *(v1.99: gate failure on a post the caller cannot see at all is the `bcc_not_found 404` below.)*
   - `bcc_invalid_mention_target 400` — body contains `@peepso_user_<id>(name)` token for a user_id that fails the §3.3.12 `MentionPolicy` privacy filter. Error payload echoes `{user_id: <int>}` but does NOT leak the failure reason (privacy posture).
   - `bcc_too_many_mentions 400` — body contains more than `max` mention tokens. Error payload echoes `{max: 10}`.
   - `bcc_rate_limited 429` — burst seatbelt fired.
-  - `bcc_not_found 404` — feed_id resolves to no activity.
+  - `bcc_not_found 404` — feed_id resolves to no activity, **or (v1.99) the caller fails the gate on a post they cannot see at all**. Same body ("Post not found.") either way.
   - `bcc_unavailable 503` — PeepSo `add_comment` returned a falsey result for any other reason.
 - **Side effects:**
   - PeepSo notifications fire to the parent post author + post followers + every surviving (post-policy) mention via `Tags::after_save_comment`.
@@ -4530,8 +4532,8 @@ Delete the viewer's own comment. Cross-author + admin moderation deletes are NOT
 - **Errors:**
   - `bcc_invalid_request 400` — malformed feed_id or comment_id.
   - `bcc_unauthorized 401` — anonymous.
-  - `bcc_forbidden 403` — viewer is not the author.
-  - `bcc_not_found 404` — comment doesn't exist or already trashed.
+  - `bcc_forbidden 403` — viewer is not the author, and can see the parent post.
+  - `bcc_not_found 404` — comment doesn't exist or already trashed, **or (v1.99) it is someone else's comment on a post the viewer cannot see, or `feed_id` is not its parent**. Same body ("Comment not found.") in every case.
   - `bcc_internal_error 500` — `wp_trash_post` returned false.
 - **Side effects:**
   - The comment's `wp_post.post_status` transitions to `trash`. Subsequent `GET` lists exclude it (filtered on `post_status='publish'`).
@@ -4757,7 +4759,7 @@ Body `{ "code": "123456" }`.
 
 #### `PATCH /bcc/v1/me/account/password` (V2 Phase 2.5)
 
-Change password. Body `{ "current_password": "...", "password": "..." }`. New password ≥ 10 chars (server-enforced). Server calls `wp_set_password` (which destroys all session tokens) and immediately re-issues the current session's auth cookie so the user is not kicked out mid-flow. It also bumps the per-user JWT token-version (revoking every outstanding bearer token, the bearer analogue of the session-token wipe) and mints a **fresh token** for the current session, returned below — bearer clients must swap to it. *(since v1.9Z)* It also deletes every Web Push subscription of the user — the caller's own included; the client re-registers push if it is enabled.
+Change password. Body `{ "current_password": "...", "password": "..." }`. New password ≥ 10 chars (server-enforced). Server calls `wp_set_password` (which destroys all session tokens) and immediately re-issues the current session's auth cookie so the user is not kicked out mid-flow. It also bumps the per-user JWT token-version (revoking every outstanding bearer token, the bearer analogue of the session-token wipe) and mints a **fresh token** for the current session, returned below — bearer clients must swap to it. *(since v1.100)* It also deletes every Web Push subscription of the user — the caller's own included; the client re-registers push if it is enabled.
 
 - **Response 200:** `{ "ok": true, "token": "<jwt>", "expires_in": 604800, "token_type": "Bearer" }`
 
@@ -5754,7 +5756,7 @@ Both surfaces require Bearer JWT; suspended accounts → `bcc_forbidden 403`. St
   1. Audit row written: `AuditLogger::log('sessions_revoked_all', $userId, [], 'user', $userId)`. Counts toward the §4.23 GET timeline + 90-day retention.
   2. Out-of-band email: `AccountSecurityMailer::sessionsRevokedAll($userId)`. Track-F redundancy — if an attacker triggers this to lock the legitimate user out, the email channel still warns. Failure records `account_security_mail` / `sessions_revoked_all_send_failed` DegradationMetric per `project_account_security_mailer.md`.
   3. Token version bumped: `JwtToken::revokeAllForUser($userId)`. Every outstanding JWT for this user (including the bearer that authenticated THIS request) fails the `tv` check on next decode and returns `ERR_REVOKED`.
-  4. *(since v1.9Z)* Every Web Push subscription of the user is deleted, so the signed-out devices stop receiving pushes. Each device re-registers when it next signs in and enables push.
+  4. *(since v1.100)* Every Web Push subscription of the user is deleted, so the signed-out devices stop receiving pushes. Each device re-registers when it next signs in and enables push.
 - **Client-side responsibility:** the bearer is invalidated by the time the response is read. The client MUST call `signOut({ callbackUrl: "/" })` (or equivalent) immediately on 200 — any subsequent authenticated request will 401. The hook `useLogoutEverywhere()` in `useAccount.ts` does this automatically in `onSuccess`.
 - **Self-revocation note:** the user CAN sign themselves out of their own current session. The mutation is intentionally not session-aware (no "all OTHER devices" carve-out) — this is the minimal D2 per the Tier D scope decision; the per-device listing UI is deferred to a future planning session.
 - **Cache:** `no-store`.
@@ -6402,8 +6404,10 @@ the gate.
 - **Response 200:** `{ "data": { "ok": true, "feed_id": "feed_2210184" } }`
 - **Errors:** `bcc_unauthorized` 401 · `bcc_feature_disabled` 403 ·
   `bcc_rate_limited` 429 (10 / 10 min / viewer) · `bcc_invalid_request`
-  400 · `bcc_not_found` 404 · `bcc_forbidden` 403 (not owner, not
-  admin) · `bcc_internal_error` 500 (trash failure)
+  400 · `bcc_not_found` 404 (missing, **or (v1.99) not owner, not
+  admin, and the caller cannot see the post at all**; same "Post not
+  found." body) · `bcc_forbidden` 403 (not owner, not admin, on a post
+  the caller can see) · `bcc_internal_error` 500 (trash failure)
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** `PostsEndpoint::deleteFeedPost` → `PostsService::deletePost`.
 
@@ -6443,7 +6447,7 @@ Owner-only blog edit-read for the §D6 composer's `?edit=<id>` cold-load. Return
   ```
   Every field always present; unset fields resolve to `""`/`null`/`[]`. `cover_image_url` is the `large` thumbnail.
 - **`group` (v1.96 — §D6 group blogs):** the blog's group as `{ "id": 4231, "name": "Cosmos Validators", "slug": "cosmos-validators" }`, or `null` for a wall blog. The editor renders it **read-only on a published blog** (the group is immutable there — see `PATCH /posts/:id`) and editable while it is a draft. ⚠ For a DRAFT this reflects the **parked** target rather than a live group marker, because a draft is deliberately not attached yet — the parked value is the one publishing will use. No privacy gate applies: the read is already owner-only, and the name is returned even if the author has since LEFT the group, because publishing will then refuse and they need to know which group is refusing. `name`/`slug` fall back to `""` if the group row has gone.
-- **Errors:** `bcc_unauthorized` 401 · `bcc_forbidden` 403 (not the author) · `bcc_not_found` 404 (missing / wrong type / not a blog)
+- **Errors:** `bcc_unauthorized` 401 · `bcc_not_found` 404 (missing / wrong type / not a blog / **not the author — v1.99, was `bcc_forbidden` 403**). A post by someone else, draft or published, gets the same "Blog post not found." body as a missing id, so the route never confirms that another member's draft exists.
 - **Cache:** `no-store`.
 - **Mapping:** `PostsEndpoint::getBlogForEdit` (route `PostsEndpoint.php:265`) → `BlogService::getBlogForEdit`. FE `blog-endpoints.ts:getBlogPost`.
 
@@ -6456,7 +6460,7 @@ Owner blog **partial update** (§D6 PR-B). Registered as `WP_REST_Server::EDITAB
 - **Body (all optional):** `title`, `excerpt`, `content`, `category`, `tags`, `chain_tags`, `disclosure`, `sources`, `cover_image_id`, `status` — same per-field validation/caps as `POST /posts kind=blog`. Three-state tunnels: `tags`/`chain_tags`/`sources` omitted=unchanged, `[]`=clear, non-empty=replace; `disclosure` omitted=unchanged (internal `__noop__` sentinel), `null`=clear, object=replace; `cover_image_id` omitted=unchanged, `0`=un-pin, positive=replace; `title` omitted=unchanged, `""`=clear; `category` empty="no change"; `status` drives `transition_post_status` → `BlogStatusTransitionHandler` (draft→publish fires `bcc_blog_post_created`; publish→draft removes the activity row); `wp_save_post_revision` runs before mutation.
 - **Body (group target, v1.96 — §D6 group blogs):** `group_id` (int, optional) and `visibility` (string, optional). ⚠⚠ **THE GROUP IS IMMUTABLE ONCE PUBLISHED.** On a published blog any **change** to `group_id` is `bcc_invalid_request` 400, with the current group echoed in `error.data.group_id`. Its group decided who was notified, who may comment and who sees it on the author's profile; re-pointing it would silently re-stage all three for a different audience. **An EQUAL value is a no-op, not an error**, so a client that echoes the whole view-model back is not punished for including the field. A **draft's** group may still change — it has notified nobody and sits on no surface — and the change is re-gated. ⚠ **Absent and `0` are different:** omitted leaves the target alone, `0` takes a draft out of its group. Use `has_param` semantics, not a `0` default. **Publishing re-runs the group gate**: if the author has left the group or lost permission since saving, nothing is written — the post **stays a draft**, keeps its parked target, and the gate's own error is returned (`bcc_not_found` / `bcc_permission_denied` / `bcc_forbidden`). Surface that as "could not publish", never as "saved".
 - **Response 200:** `{ "ok": true, "post_id": 4012, "status": "publish" }` (`status` reflects the post-update state).
-- **Errors:** `bcc_unauthorized` 401 · `bcc_forbidden` 403 · `bcc_not_found` 404 · `bcc_invalid_request` 400 (any field validation failure; echoes `{max}`/`{category}`/`{chain_id}`) · `bcc_unavailable` 503
+- **Errors:** `bcc_unauthorized` 401 · `bcc_forbidden` 403 (a publish-time group gate only — see above) · `bcc_not_found` 404 (missing / not a blog / **not the author — v1.99, was `bcc_forbidden` 403**) · `bcc_invalid_request` 400 (any field validation failure; echoes `{max}`/`{category}`/`{chain_id}`) · `bcc_unavailable` 503
 - **Cache:** `no-store`.
 - **Mapping:** `PostsEndpoint::updateBlog` (route `PostsEndpoint.php:298`, EDITABLE) → `PostsService::updateBlog`. FE `blog-endpoints.ts:updateBlog` (PATCH).
 
@@ -8820,10 +8824,38 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.9Z — 2026-11-11 — additive plus one behaviour change — single-token sign-out; revoke-all drops push subscriptions
+### v1.100 — 2026-11-11 — additive plus one behaviour change — single-token sign-out; revoke-all drops push subscriptions
 
 - **New `POST /auth/logout` (F-120):** signs out the presented bearer token server-side (its `jti` is denylisted until it can no longer be used or refreshed). Always `200 { ok: true }`, idempotent; per-token `429`; `no-store`. Afterwards every Bearer route, `/auth/session` and `/auth/refresh` reject that token with `401`. Clients call it **before** NextAuth `signOut()`.
 - **`POST /auth/logout-everywhere` and `PATCH /me/account/password` (F-76):** now also delete every Web Push subscription of the user, so revoked devices stop receiving pushes. Devices re-register on their next sign-in. Email-change verify is unchanged.
+
+### v1.99 — 2026-11-11 — behaviour change — a hidden group, post or draft answers 404, never 403
+
+Ships with bcc-trust's F-47 change (bcc-trust #460).
+
+Several routes answered **403** for an id the caller could not see but **404** for one that does not exist, so the 403 confirmed the id existed. Each now gives such an id **exactly** the missing-id response. A 403 remains only where the thing is already visible to the caller.
+
+- **`POST /me/groups/:id/join` · `/leave`:** a `secret` group the caller is not an active member of → `bcc_invalid_request` 404 "Group not found." (was 403 "invite-only" on join, 200 on leave). Closed groups and secret-group members are unchanged.
+- **`GET` · `POST /posts/:feed_id/comments`:** gate failure on a post the viewer cannot see at all (secret group; members-only post in a group they are not in) → `bcc_not_found` 404 "Post not found." (was `bcc_forbidden` 403). A post they can see keeps the 403.
+- **`DELETE /posts/:feed_id/comments/:comment_id`:** someone else's comment on a post the viewer cannot see, or under a `feed_id` that is not its parent → `bcc_not_found` 404 "Comment not found." (was 403).
+- **`GET` · `PATCH /posts/:id` (blog edit):** not the author → `bcc_not_found` 404 "Blog post not found." (was `bcc_forbidden` 403), drafts included.
+- **`DELETE /feed/:feed_id`:** not owner, not admin, on a post the caller cannot see at all → `bcc_not_found` 404 "Post not found." (was `bcc_forbidden` 403). A post they can see keeps the 403.
+- **Clients:** treat these 404s as "not available", which the existing `bcc_not_found` copy already does. No new codes, no shape changes.
+
+### v1.98 — 2026-11-11 — additive — search marks a trust-less result `system_degraded`
+
+Scope: §4's `GET /bcc/v1/search` (search and trending modes). No route,
+envelope or view-model change.
+
+- **Documented:** the optional `stale` and `system_degraded` fields, which
+  the handler already emitted on last-known-good responses.
+- **Additive (F-24):** a result built without trust enrichment (trust engine
+  unbound) now carries
+  `system_degraded: true`. It used to look like a normal response and was
+  cached as one, including the hour-long last-known-good mirror; it is now
+  cached 10 s and never mirrored. Mapping: `SearchController::isTrustDegraded()`
+  (bcc-search) + the `search_trust` degradation subsystem (bcc-core).
+
 ### v1.97 — 2026-11-11 — behaviour change — sign-in throttles per identity; 2FA attempt cap
 
 - **`POST /auth/2fa/verify` (F-124):** at most 5 wrong codes per (user, challenge); the 5th burns the code and the challenge (`401 bcc_invalid_2fa_token` → sign in again). Codes are bound to their challenge and only the most recent challenge per user is live (a new login supersedes earlier ones). No new error code. One-time effect at deploy: a sign-in mid-2FA must restart.
