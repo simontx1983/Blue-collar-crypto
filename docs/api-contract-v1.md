@@ -3188,16 +3188,19 @@ The user's holder-groups state — joined groups, eligible-to-join suggestions, 
       }
     ],
     "eligible_to_join": [ /* same item shape; user qualifies but isn't a member */ ],
-    "opted_out": [ /* same item shape; user explicitly left or was mod-removed */ ]
+    "opted_out": [ /* same item shape; user explicitly left or was mod-removed — plus "opt_out_kind" (v1.8X) */ ]
   }
   ```
+- **`opted_out[].opt_out_kind` (v1.8X, additive):** `"left"` | `"removed"`. Present on `opted_out` items only.
+  - `"left"`: the member left (voluntary). An explicit `POST …/join` overrides it, so a client may offer **Join** (eligibility still applies).
+  - `"removed"`: a moderator removed them (permanent). Join is refused with `opt_out_active`, so a client must not offer it.
 - **Cache:** `private, no-store` (per-viewer membership state).
 - **Mapping:** `peepso-group` posts where `_bcc_group_kind = 'holders'`, joined with `peepso_group_members` for membership and `wp_bcc_onchain_collections` for collection display. Eligibility uses `HoldingsService::ownsAnyMany` (one batched holdings call per chain). Opt-out is read from `bcc_gated_groups_optout` user_meta with TTL applied.
 - **Cold-start protection:** the `activity.heat` field is the user's escape hatch from ghost-town suggestions — frontend may sort `eligible_to_join[]` by heat to surface active rooms first.
 
 #### `POST /bcc/v1/me/holder-groups/:id/join`
 
-Explicit user-initiated join. Verifies eligibility server-side, clears any active opt-out for this group, and lands the user as a full member regardless of the group's `closed` privacy flag.
+Explicit user-initiated join. Verifies eligibility server-side, clears any active opt-out for this group, and lands the user as a full member regardless of the group's `closed` privacy flag. **Since v1.8X** a *voluntary* opt-out (the member left) does not block this explicit join; it only stops automatic re-adding. A **moderator eviction** still refuses (see `opt_out_active` below).
 
 - **Auth:** Bearer (401 anonymous)
 - **Response 200:**
@@ -3209,7 +3212,7 @@ Explicit user-initiated join. Verifies eligibility server-side, clears any activ
   - `bcc_forbidden` (403) — account suspended ("Your account is suspended."). Holding the NFT is the eligibility gate, not an override of moderation; admin bypass off.
   - `bcc_invalid_request` (400) — group is not a holder group
   - `bcc_permission_denied` (403) with `unlock_hint`:
-    - opt-out cooldown active: "You opted out of this community recently. Try again later or rejoin from the discovery page."
+    - moderator eviction: "A moderator removed you from this community, so you cannot rejoin it." (v1.8X; previously an opt-out-cooldown sentence that a voluntary leave also triggered — a voluntary leave no longer refuses an explicit join)
     - holder check failed: "Hold a `<CollectionName>` NFT to join this community." (or "Hold at least N NFTs from this collection..." for `min_balance > 1`)
   - `bcc_internal_error` (503) — chain unsupported (transient infra issue)
   - `bcc_upstream_unavailable` (503) — the chain provider could not verify NFT
@@ -3464,6 +3467,7 @@ Shape mirrors §4.7.1 exactly, with a `validator_stats` block replacing `collect
     "opted_out": []
   }
   ```
+- **`opted_out[].opt_out_kind` (v1.8X, additive):** `"left"` | `"removed"`, with the same meaning and values as `GET /me/holder-groups`. Offer Join only on `"left"`.
 - **Cache:** `private, no-store` (every bucket is viewer-scoped).
 - **Fail-closed omission (important):** a community whose delegation check could not be completed (upstream LCD outage) is **omitted from `eligible_to_join`** rather than surfaced. A suggestion that 503s on click is worse than a suggestion that reappears one poll later. Clients must not infer ineligibility from absence.
 
@@ -3477,7 +3481,7 @@ Shape mirrors §4.7.1 exactly, with a `validator_stats` block replacing `collect
   - `bcc_rate_limited` **429** — throttled.
   - `bcc_forbidden` **403** — account suspended (holding stake is not an override of moderation).
   - `bcc_invalid_request` **400** — not a delegator community.
-  - `bcc_permission_denied` **403** — opted out recently (`error.data.reason_code` = `opt_out_active`, v1.84), **or** not eligible (`error.data.reason_code` = `not_eligible`, v1.85). Both carry a `reason_code`, so the two are told apart by its **value** and never by the presence or absence of `error.data`.
+  - `bcc_permission_denied` **403** — a moderator removed this member (`error.data.reason_code` = `opt_out_active`, v1.84; **narrowed in v1.8X**: emitted ONLY for a moderator eviction, since a voluntary leave no longer blocks an explicit join), **or** not eligible (`error.data.reason_code` = `not_eligible`, v1.85). Both carry a `reason_code`, so the two are told apart by its **value** and never by the presence or absence of `error.data`.
     - **`error.data.min_stake_display` (v1.85)** — on the `not_eligible` refusal only: the same server-pre-formatted string the card and the unlock hint carry (`"10 ATOM"`, or a bare amount when the chain’s native token is unknown). `null` when the gate config or the native token is unreadable; the key is always present on this refusal, so a client can tell "unknown" from "field absent". ⚠ **This field exists because the minimum must NOT be read out of `error.message`.** §γ forbids a client rendering `error.message`, so a figure carried only in the sentence is a figure the user never sees — which is exactly what the card surfaces showed before v1.85 ("you don’t delegate enough", with no amount). Render the amount from this field, interpolated into your own code-keyed copy.
     - `error.message` remains the server-pinned sentence (e.g. `"Delegate at least 10 ATOM to Coinbase01 to join this community."`) for non-browser clients and the logs. It is **not** for display: earlier revisions of this line said to render it verbatim, which contradicted §γ and is withdrawn.
   - `bcc_upstream_unavailable` **503** — **could not verify** the delegation. This is NOT "you don't qualify": the join failed **closed** during an upstream outage. Clients MUST present it as retryable and MUST NOT render it as an eligibility failure.
@@ -8717,6 +8721,15 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.8X — 2026-11-11 — behaviour change — leaving a community no longer locks you out of rejoining it
+
+Placeholder version; take the next free number at merge. Ships with bcc-trust's F-158 change.
+
+- **`POST /me/holder-groups/{id}/join` and the delegator-community join (behaviour change):** an explicit join now **overrides a voluntary opt-out** (recorded when the member left, 90-day TTL). Eligibility is still required, and a successful join clears the opt-out, as before. The opt-out continues to stop **automatic** re-adding, and the groups lists keep showing the group in its opted-out bucket.
+- **`opt_out_active` (narrowed):** now emitted **only** for a **moderator eviction** (a permanent opt-out), which still refuses an explicit join. The holder-group 403 sentence changed to "A moderator removed you from this community, so you cannot rejoin it." The delegator 403 keeps `reason_code: opt_out_active`. The code is not removed.
+- **`opted_out[].opt_out_kind` (additive, both `GET /me/holder-groups` and `GET /me/validator-groups`):** `"left"` | `"removed"`, so a client can tell which opted-out communities it may offer Join on.
+- **Clients:** offer Join on an `opted_out` item only when `opt_out_kind` is `"left"`. An `opt_out_active` refusal means the member was removed by a moderator.
 
 ### v1.88 — 2026-11-11 — behaviour change plus additive — an email is only "verified" once its inbox is proven
 
