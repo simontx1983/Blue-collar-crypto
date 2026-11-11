@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.103 · 2026-11-11 · Phase 1 deliverable
+**Status:** Draft v1.104 · 2026-11-11 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -5650,8 +5650,9 @@ Set new display order for the viewer's selections.
   { "ok": true, "updated": 3 }
   ```
   `updated` is the number of rows actually written; can be less than `ordered_ids.length` if some ids were unowned (local cache lagged a remote delete).
-- **Errors:** `bcc_invalid_request 422` (missing or non-array `ordered_ids`).
-- **Rate limit:** unthrottled in V1 — UI is button-driven and naturally bounded by user pacing. Worth a throttle if abuse appears.
+- **Errors:** `bcc_invalid_request 422` (missing or non-array `ordered_ids`, **or (v1.104) more than 200 ids**: "ordered_ids may contain at most 200 ids."; nothing is written). `bcc_rate_limited 429` (v1.104, throttled; see below).
+- **Limits (v1.104):** `ordered_ids` holds at most **200** ids, the most selections the profile list ever loads. The write is one row update per id, so the cap bounds a single request.
+- **Rate limit (v1.104):** 30 requests / 60 s per user (`nft_reorder` bucket, like the sibling select/deselect routes). Over it → `bcc_rate_limited 429`, nothing written. (Was unthrottled before v1.104.)
 - **Side effects:** bumps the per-user selections generation counter when `updated > 0`.
 
 ---
@@ -8842,6 +8843,16 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.104 — 2026-11-11 — behaviour change — NFT reorder is capped and throttled
+
+Ships with bcc-trust's F-30 change.
+
+`POST /nft-selections/reorder` had no size or rate limit, and it writes one row per id, so a single request could issue an unbounded number of updates.
+
+- **Cap:** more than **200** ids in `ordered_ids` → `bcc_invalid_request` 422, nothing written. 200 is the most selections the profile list loads, so a real reorder never hits it.
+- **Throttle:** 30 requests / 60 s per user → `bcc_rate_limited` 429, nothing written.
+- **Clients:** no change for normal use. Both codes are existing ones with existing copy. Response shape unchanged.
 
 ### v1.103 — 2026-11-11 — docs-only clarification — a cursor's payload is per-surface; the tiebreak is what binds
 
