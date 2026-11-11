@@ -105,8 +105,10 @@ Production code rollback has two routes, per affected plugin repo:
    merge it once CI is green. **This also rolls staging back:** the merge triggers the staging
    auto-deploy. Then **Actions → Deploy → Run workflow → Branch `main` →
    `environment: production`**, with `expected_sha` = the new tip's full 40-character SHA.
-   The plugin-scoped rsync (with `--delete`) makes the server tree match that commit, except
-   excluded paths (`.git`/`.github`), which `--delete` never touches.
+   The plugin-scoped rsync (with `--delete`) makes the server tree match that commit's
+   *shipped* files — except excluded paths (`.git`/`.github`), which `--delete` never touches,
+   and minus the dev-only hide list (`tests/`, composer/phpstan/phpunit files, …; see
+   [deploy-runbook.md](deploy-runbook.md)), which is never shipped.
 2. **Restore a pre-deploy tarball (fast path, out of band).** If you took a tarball of the
    plugin directory before deploying, restore it on the box over SSH. This is faster, but
    leaves `main` ahead of production. Follow up with a revert on `main` before the next

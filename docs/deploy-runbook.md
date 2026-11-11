@@ -34,9 +34,22 @@ Each plugin repo has `.github/workflows/deploy.yml`:
   commit to **staging**.
 - **`workflow_dispatch`** trigger — manual; pick `staging` or `production`.
 - The deploy step is a **plugin-scoped `rsync -az --delete --delete-delay
-  --delay-updates`** of the checked-out tree (minus `.git`/`.github`) into that
-  plugin's directory on the server. `vendor/` is committed, so there is **no
-  build step** — the checkout *is* the artifact.
+  --delay-updates`** of the checked-out tree (minus `.git`/`.github`, and minus
+  the **dev-only files** below) into that plugin's directory on the server.
+  `vendor/` is committed, so there is **no build step** — the checkout *is*
+  the artifact.
+- **Dev-only files are not deployed (F-36).** These root-level paths are
+  *hidden* from the transfer with `--filter='H /…'`, so they are not shipped
+  and `--delete` removes any copy already on the server:
+  - all three plugins: `tests/`, `composer.json`, `composer.lock`,
+    `phpstan*.neon`, `phpstan-bootstrap.php`, `phpunit*.xml.dist`,
+    `.gitignore`, `.gitattributes`
+  - bcc-search also: `README.md`
+  - bcc-trust also: `docs/`, `MIGRATED-FROM.md` — **`scripts/` IS still
+    shipped** (runbooks run them with `wp eval-file`), behind a deny-all
+    `scripts/.htaccess`.
+  Root-anchored on purpose: `vendor/*/tests/` and `vendor/*/docs/` still ship.
+  The deploy's final guard fails if any of these is still in the target.
 - After the rsync: the deployed `Version:` header is grepped back over SSH, a
   **health probe** runs, and (bcc-core, bcc-trust) a **stranded-path guard**
   refuses a target that still holds `.git`/`.github`. A production dispatch
@@ -58,7 +71,8 @@ removes **every file not in the commit** — including server-only files —
 **except excluded paths**: anything matching an `--exclude` (`.git`, `.github`,
 at any depth) is *protected* on the server, never updated and never removed.
 That is how stale `.git` trees were stranded (bcc-trust #286), and why the
-stranded-path guard exists.
+stranded-path guard exists. The dev-only files above are the opposite case:
+*hidden* (`H`), not excluded, so `--delete` does remove them.
 
 ## Secrets (per repo)
 
@@ -135,7 +149,19 @@ slice.
 - **`rsync: mkdir … failed: No such file or directory`** — `DEPLOY_BASE` is
   wrong (often the MSYS mangling above). Verify the resolved path exists over
   SSH; re-set the secret relative.
-- **Verify staging == GitHub** — blob-hash manifest: for each tracked file,
-  compare `git cat-file blob origin/main:<f> | git hash-object --stdin`
+- **Verify staging == GitHub** — blob-hash manifest: for each **shipped**
+  tracked file, compare `git cat-file blob origin/main:<f> | git hash-object --stdin`
   against `ssh … git hash-object <server>/<f>`. Zero mismatches = in sync.
   (Line-ending-safe, unlike a raw byte diff.)
+  - **Shipped = tracked minus the dev-only hide list** (F-36). Build the
+    file list with the same root-anchored filter the deploy uses, or every
+    hidden file reads as a false mismatch (it is deliberately absent):
+    ```
+    git ls-files | grep -vE '^(tests/|docs/|composer\.(json|lock)$|phpstan[^/]*\.neon$|phpstan-bootstrap\.php$|phpunit[^/]*\.xml\.dist$|\.gitignore$|\.gitattributes$|README\.md$|MIGRATED-FROM\.md$)'
+    ```
+    `.git`/`.github` paths are not tracked files, so they never appear.
+  - **Manifest counts** (e.g. in release memos) are counts of that filtered
+    list. A count taken from plain `git ls-files` is larger by exactly the
+    hidden files and is not a drift signal.
+  - Before a plugin's first deploy with the hide filters, the hidden files
+    are still on the server; the filtered comparison simply skips them.
