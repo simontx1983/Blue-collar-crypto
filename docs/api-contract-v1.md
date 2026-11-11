@@ -7053,7 +7053,21 @@ Auth **operator**. Promotes a draft to published at authoritative server time.
 
 #### `POST /bcc/v1/validators/:pageId/announcements/:id/archive`
 
-Auth **operator**. Archival is **one-way** in v1 and is **not a deletion** (§4.32.6).
+Auth **operator** or **administrator** *(v1.107)*. Archival is **one-way** in v1 and is **not a deletion** (§4.32.6).
+
+**Who may archive *(v1.107)*.** Archive is the one announcement write that is **not** limited to
+the notice's author:
+
+- the page's **current** resolved operator may archive **any published notice on that page**,
+  including one written by a **previous** operator of the page (before v1.107 that answered
+  `404`, so after a claim hand-over the predecessor's notices could not be taken down by anyone);
+- a **site administrator** (`manage_options`) may archive any published notice.
+
+Everyone else is refused exactly as before (`403 bcc_forbidden`, `reason_code: not_claimer`).
+Edit, publish, schedule and pin remain **author-only**. The other rules on this route do not
+change: only a published notice can be archived (below), a second archive is `409 Already archived.`,
+and the notice keeps its permalink and public readability (§4.32.6). An archive of a notice the
+actor did not write is recorded in the audit log.
 
 ⚠⚠ **ONLY A PUBLISHED NOTICE CAN BE ARCHIVED.** A `draft`, `scheduled` or
 `blocked` row is refused with `409 bcc_conflict` and
@@ -7149,9 +7163,10 @@ validator row bound to it. Collection/creator claims are a different question wi
 semantics and are **out of scope**; they are neither accepted here nor affected by it, and the
 existing collection-creator permissions on page bio and image are unchanged.
 
-**Administrators hold read-only recovery rights only** — inspect drafts, inspect removed
-comments, restore removed comments. They may not create, edit, schedule, publish, pin or
-archive, and may not act as the operator. An administrator who is *independently* the resolved
+**Administrators hold recovery rights plus archive** — inspect drafts, inspect removed
+comments, restore removed comments, and *(v1.107)* archive any published notice (§4.32.6 — a
+one-way move off the page and the feed that keeps the public record). They may not create,
+edit, schedule, publish or pin, and may not act as the operator. An administrator who is *independently* the resolved
 operator gets operator rights through the normal path, never through an override.
 
 #### 4.32.3 `Announcement` view-model
@@ -7959,8 +7974,9 @@ spelling is intentional, so the disabled control and the eventual `403` give the
 
 **(d) Administrator capabilities — a separate object, never merged into either scope above**
 
-`can_inspect_drafts` · `can_inspect_removed` · `can_restore_comment`, on the admin routes only.
-**Every owner and row capability is `false` for a non-operator administrator** (§4.32.2).
+`can_inspect_drafts` · `can_inspect_removed` · `can_restore_comment` · `can_archive_any` *(v1.107)*, on the admin routes only.
+**Every owner and row capability is `false` for a non-operator administrator** (§4.32.2). The archive route itself admits an administrator *(v1.107)*; the row's `can_archive` stays the operator's answer, and `can_archive_any` is the administrator's.
+**Row capabilities on a notice another operator wrote** *(v1.107)*: for the page's current operator, `can_edit`, `can_pin` and `can_publish` are **author-only** — they report `not_claimer` on a predecessor's notice, because those routes resolve the row by its author. `can_archive` and `can_manage_comments` stay operator-wide.
 
 ##### Field-to-consumer trace
 
@@ -8858,6 +8874,16 @@ Ships with bcc-trust's profile-prefs write-failure change (bcc-trust #467, follo
 - **`PATCH /me/profile-prefs` (new error):** a database failure while writing an already-validated field used to be silent, and the request still returned 200. It now returns `bcc_internal_error` 500 with `error.data.saved` (fields that persisted) and `error.data.failed` (the one that did not). Earlier writes are not rolled back.
 - Also documents F-97 (bcc-trust #449, already shipped): every field is validated before any write, so a 422 or 503 writes nothing.
 - **Clients:** treat this 500 as "not saved"; re-sending the whole request is safe.
+
+### v1.107 — 2026-11-11 — behaviour change plus additive — a new operator or an administrator can archive a predecessor's announcement
+
+Ships with bcc-trust F-147 (bcc-trust #478).
+
+- **`POST /validators/:pageId/announcements/:id/archive`:** the page's **current** operator may now archive any **published** notice on the page, including one a previous operator wrote (was `404`); a site administrator may archive any published notice (was `403`). Everyone else: unchanged `403 not_claimer`. Edit, publish, schedule and pin stay author-only.
+- **§4.32.2:** administrators gain archive; the rest of their rights are unchanged.
+- **Row capabilities (bcc-trust #513):** on a predecessor's notice, `can_edit`, `can_pin` and `can_publish` are author-only and report `not_claimer` to the current operator; `can_archive` and `can_manage_comments` stay operator-wide.
+- **Additive:** administrator capability `can_archive_any` (§4.32.11 (d)). No new error codes.
+- **Clients:** a row the current operator sees with `can_archive` allowed now archives instead of answering `404`.
 
 ### v1.106 — 2026-11-11 — behaviour change — wallet sign-in names the site; its challenge can't be replaced or burned
 
