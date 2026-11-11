@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.103 · 2026-11-11 · Phase 1 deliverable
+**Status:** Draft v1.105 · 2026-11-11 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2225,7 +2225,7 @@ Confirms email ownership and completes signup via either an OTP code or a one-sh
 - **Response 200:** identical shape to `/auth/login` (`{ user_id, handle, token, expires_in, token_type, in_good_standing }`) so the frontend treats both uniformly, **plus `linked_wallet_count: int` (since v1.90)** — how many wallets are linked to the account whose email was just proven. When it is `> 0` the client asks "this account has a wallet linked — is it yours?", listing them with `GET /wallets` (using the fresh `token`) and removing one with `DELETE /wallets/{id}`. A count only: no wallet detail rides this auth response. If the wallet read fails the count is `0` and verification still succeeds (the prompt is advisory; wallets stay reviewable in Settings) — so **`0` can mean "read failed"**: a client must never take a destructive or irreversible action on `linked_wallet_count: 0`.
 - **Errors:** `bcc_invalid_request` 422 (neither token nor email+code) · `bcc_invalid_verify_token` 400 (token expired/used) · `bcc_invalid_otp` 400 (email unknown — generic; or code wrong/expired) · `bcc_already_verified` 409 (OTP path only) · `bcc_invalid_state` 409 (no handle) · `bcc_rate_limited` 429 · `bcc_internal_error` 500
 - **Rate limit:** IP-bucketed, 10 / 3600s
-- **Attempt cap (since v1.10Z, F-48):** at most **5 wrong codes per (account, current code)**; the 5th burns that code. Because a correct code signs the caller in, the per-IP bucket alone did not bound guesses spread across addresses. The answer stays the generic `400 bcc_invalid_otp` "Invalid or expired code." (no new code, no enumeration signal); the user requests a new code via `/auth/resend-verification`, which starts a fresh count, or uses the emailed link — the **token path is not capped and not affected**.
+- **Attempt cap (since v1.105, F-48):** at most **5 wrong codes per (account, current code)**; the 5th burns that code. Because a correct code signs the caller in, the per-IP bucket alone did not bound guesses spread across addresses. The answer stays the generic `400 bcc_invalid_otp` "Invalid or expired code." (no new code, no enumeration signal); the user requests a new code via `/auth/resend-verification`, which starts a fresh count, or uses the emailed link — the **token path is not capped and not affected**.
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** token path consumes the `bcc_vt_<token>` transient (single-use); OTP path resolves by email, checks `_bcc_email_verified`, timing-safely (`hash_equals`) consumes the HMAC-hashed `bcc_otp_<userId>` transient. Both converge on `finalizeVerification` → sets `_bcc_email_verified='1'`, sets the auth cookie, **revokes every earlier bearer token for the account (JWT token-version bump, since v1.88)**, mints the JWT, emits `email_verified` audit, fires `do_action('bcc_email_verified', …)`. The revocation means a session held by whoever created the account before the address was proven does not survive the inbox owner's verification; the returned token is the caller's working session and must be stored. Handler `AuthEndpoint::verifyEmail` (route `AuthEndpoint.php:487`). Standard envelope per §1.4.
 
@@ -5651,8 +5651,9 @@ Set new display order for the viewer's selections.
   { "ok": true, "updated": 3 }
   ```
   `updated` is the number of rows actually written; can be less than `ordered_ids.length` if some ids were unowned (local cache lagged a remote delete).
-- **Errors:** `bcc_invalid_request 422` (missing or non-array `ordered_ids`).
-- **Rate limit:** unthrottled in V1 — UI is button-driven and naturally bounded by user pacing. Worth a throttle if abuse appears.
+- **Errors:** `bcc_invalid_request 422` (missing or non-array `ordered_ids`, **or (v1.104) more than 200 ids**: "ordered_ids may contain at most 200 ids."; nothing is written). `bcc_rate_limited 429` (v1.104, throttled; see below).
+- **Limits (v1.104):** `ordered_ids` holds at most **200** ids, the most selections the profile list ever loads. The write is one row update per id, so the cap bounds a single request.
+- **Rate limit (v1.104):** 30 requests / 60 s per user (`nft_reorder` bucket, like the sibling select/deselect routes). Over it → `bcc_rate_limited 429`, nothing written. (Was unthrottled before v1.104.)
 - **Side effects:** bumps the per-user selections generation counter when `updated > 0`.
 
 ---
@@ -8844,11 +8845,21 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.10Z — 2026-11-11 — behaviour change — the email-verification code has an attempt cap
+### v1.105 — 2026-11-11 — behaviour change — the email-verification code has an attempt cap
 
 Ships with bcc-trust #500.
 
 - **`POST /auth/verify-email` (F-48), OTP path:** 5 wrong codes per (account, current code) burn that code. Same `400 bcc_invalid_otp` answer as any wrong code; a resend starts a fresh count; the emailed link (token path) keeps working. 2FA is unchanged — `/auth/2fa/verify` already has its per-challenge cap (v1.97).
+
+### v1.104 — 2026-11-11 — behaviour change — NFT reorder is capped and throttled
+
+Ships with bcc-trust's F-30 change.
+
+`POST /nft-selections/reorder` had no size or rate limit, and it writes one row per id, so a single request could issue an unbounded number of updates.
+
+- **Cap:** more than **200** ids in `ordered_ids` → `bcc_invalid_request` 422, nothing written. 200 is the most selections the profile list loads, so a real reorder never hits it.
+- **Throttle:** 30 requests / 60 s per user → `bcc_rate_limited` 429, nothing written.
+- **Clients:** no change for normal use. Both codes are existing ones with existing copy. Response shape unchanged.
 
 ### v1.103 — 2026-11-11 — docs-only clarification — a cursor's payload is per-surface; the tiebreak is what binds
 
