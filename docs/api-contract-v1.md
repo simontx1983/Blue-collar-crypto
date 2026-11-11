@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.97 · 2026-11-11 · Phase 1 deliverable
+**Status:** Draft v1.98 · 2026-11-11 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -4025,7 +4025,7 @@ Direct bcc-search project search and trending mode — the upstream that `cards/
     ]
   }
   ```
-- **Optional degradation fields (v1.9X):** `stale: true` marks a response served from the last-known-good mirror while the upstream is unavailable; `system_degraded: true` marks one served from that mirror, or (F-24) built WITHOUT trust enrichment — text-only ranking, no impersonation guard — because the trust engine is unbound. Both are absent on a normal response; a client may show a "results may be incomplete" hint but must not treat either as an error. A trust-less response is cached only 10 s and never mirrored to LKG.
+- **Optional degradation fields (v1.98):** `stale: true` marks a response served from the last-known-good mirror while the upstream is unavailable; `system_degraded: true` marks one served from that mirror, or (F-24) built WITHOUT trust enrichment — text-only ranking, no impersonation guard — because the trust engine is unbound. Both are absent on a normal response; a client may show a "results may be incomplete" hint but must not treat either as an error. A trust-less response is cached only 10 s and never mirrored to LKG.
 - **`categories` scope (v1.46):** the full category list ships only on result-bearing responses. Empty-result short-circuits (query under 2 / over 100 chars, junk-gate rejection, unknown `type`) return `categories: []` — autocomplete fires these per keystroke and nothing reads categories off an empty response.
 - **Errors (legacy WP shape — not §L5 envelope):**
   - `bcc_rate_limited` (HTTP 429) — `10 req / 5s` per subnet *(doc corrected 2026-08-05: the previously listed `rate_limit_exceeded` never existed in code)*
@@ -8807,6 +8807,20 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
+### v1.98 — 2026-11-11 — additive — search marks a trust-less result `system_degraded`
+
+Scope: §4's `GET /bcc/v1/search` (search and trending modes). No route,
+envelope or view-model change.
+
+- **Documented:** the optional `stale` and `system_degraded` fields, which
+  the handler already emitted on last-known-good responses.
+- **Additive (F-24):** a result built without trust enrichment (trust engine
+  unbound) now carries
+  `system_degraded: true`. It used to look like a normal response and was
+  cached as one, including the hour-long last-known-good mirror; it is now
+  cached 10 s and never mirrored. Mapping: `SearchController::isTrustDegraded()`
+  (bcc-search) + the `search_trust` degradation subsystem (bcc-core).
+
 ### v1.97 — 2026-11-11 — behaviour change — sign-in throttles per identity; 2FA attempt cap
 
 - **`POST /auth/2fa/verify` (F-124):** at most 5 wrong codes per (user, challenge); the 5th burns the code and the challenge (`401 bcc_invalid_2fa_token` → sign in again). Codes are bound to their challenge and only the most recent challenge per user is live (a new login supersedes earlier ones). No new error code. One-time effect at deploy: a sign-in mid-2FA must restart.
@@ -8872,20 +8886,6 @@ into (F-88).
   shape is unchanged. No route added or changed, so the §4 endpoint
   inventory is unmoved. Mapping: `VoteRepository::findManyActiveByIds()` +
   `FeedHydrationPipeline` (bcc-trust, paired PR).
-
-### v1.9X — 2026-11-11 — additive — search marks a trust-less result `system_degraded` (number assigned at merge)
-
-Scope: §4's `GET /bcc/v1/search` (search and trending modes). No route,
-envelope or view-model change.
-
-- **Documented:** the optional `stale` and `system_degraded` fields, which
-  the handler already emitted on last-known-good responses.
-- **Additive (F-24):** a result built without trust enrichment (trust engine
-  unbound) now carries
-  `system_degraded: true`. It used to look like a normal response and was
-  cached as one, including the hour-long last-known-good mirror; it is now
-  cached 10 s and never mirrored. Mapping: `SearchController::isTrustDegraded()`
-  (bcc-search) + the `search_trust` degradation subsystem (bcc-core).
 
 ### v1.93 — 2026-11-11 — behaviour change — content reports: report what you can see; credible reporters auto-hide
 
