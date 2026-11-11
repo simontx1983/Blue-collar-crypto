@@ -1,6 +1,9 @@
 # Open findings handoff — seven items
 
-**Status: NOTHING HERE HAS BEEN FIXED.** Each item was observed while doing
+**Status (2026-11-11):** item 1 is **partly addressed** — the stranded `.git`
+directories were removed by hand on 2026-11-10 and bcc-core / bcc-trust deploys
+now end with a stranded-path guard (bcc-search: F-43). The other items stand as
+written. *Original status:* nothing here had been fixed. Each item was observed while doing
 other work and is recorded here so it can be scheduled on its own terms.
 Deliberately **not** fixed as a side effect, because each has a blast radius
 that deserves its own review.
