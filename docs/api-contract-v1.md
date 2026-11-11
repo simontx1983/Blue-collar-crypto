@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.102 · 2026-11-11 · Phase 1 deliverable
+**Status:** Draft v1.103 · 2026-11-11 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -258,13 +258,24 @@ Two styles, **never mixed within an endpoint**:
 }
 ```
 
-**Cursor format (locked):** the server encodes `(timestamp, id, rank_score_at_emit)` as a base64-encoded JSON token, e.g.,
+**Cursor format — the FEED cursor, and illustrative rather than universal:** the feed server encodes `(timestamp, id, rank_score_at_emit)` as a base64url-encoded JSON token, e.g.,
 
 ```
 base64({"t":"2026-04-27T11:14:00Z","id":98712,"rs":0.873})
 ```
 
 Including `rank_score_at_emit` lets the server preserve scroll order across re-ranks at the cost of slight duplication risk. The cursor is **opaque to the client** — never decode, parse, or modify it; round-trip it verbatim. Default `limit` = 20, max = 50.
+
+⚠⚠ **The payload is an implementation detail of the EMITTING SURFACE, not a wire contract.** It follows from the cursor being opaque: a client that never decodes it cannot depend on its fields, so each paginated collection may carry whatever its own ordering requires. `rank_score_at_emit` exists for re-ranked feeds and has no analogue on a collection ordered by a plain timestamp.
+
+What **is** normative for every cursor:
+
+- it carries a **unique tiebreak** — the row id — alongside its sort key, because a timestamp alone is not a total order and two rows sharing a second would page unstably;
+- it is **base64url** (no `+`, `/` or `=`), since it travels in a query string;
+- a malformed, truncated or foreign cursor **resets to the first page** rather than erroring — a bad cursor is a navigation accident (a stale bookmark, a copied URL), not a client fault worth a `400`;
+- it **cannot widen visibility**: it only adds a `(sort_key, id)` comparison to a query whose authorization and visibility predicates are applied independently. That is why cursors are unsigned.
+
+⚠ This paragraph was added because the word "locked" above had been read as pinning the *bytes*, which the contract itself does not do: §4.32.14's announcement example decodes to `{"p":…,"i":…}` and the announcement surfaces mint `{v,s,k,id}` — three shapes, none of them wrong. A surface that **tags** its payload and refuses a foreign one is preferred, because it makes cross-surface decoding impossible rather than merely unlikely; see the note under §4.32.12.
 
 **Offset (directories, static lists, admin tools):**
 
@@ -7991,6 +8002,13 @@ closes.
 **Pinning promotes on the validator page only** and never reorders the general feed
 (§4.32.8).
 
+⚠ **The cursor payloads in §4.32.14 are illustrative.** Per §1.5 the bytes are an
+implementation detail of the emitting surface, so a reader must not treat an example token as
+a shape to reproduce. Each announcement collection **tags** its cursor with its own surface and
+refuses a cursor minted for another — necessary because the four collections order by
+DIFFERENT columns (`published_at` for the active list, `archived_at` for the archived one), so
+applying one to the other would skip or repeat rows with nothing in the response to show it.
+
 ⚠ **Cursor stability.** `?state=active` is ordered by a field the operator can change (pinning
 moves a row to the front), so a cursor page boundary can shift under a reader mid-scroll. The
 cursor must therefore carry a **unique tiebreak** (the row id) alongside its sort key, exactly
@@ -8824,6 +8842,14 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.103 — 2026-11-11 — docs-only clarification — a cursor's payload is per-surface; the tiebreak is what binds
+
+No behaviour, route or field change.
+
+- **§1.5:** the "Cursor format (locked)" example is the **feed's** cursor and is illustrative. The payload bytes belong to the emitting surface; a client must treat every cursor as opaque.
+- **What is normative for every cursor:** a unique `id` tiebreak beside the sort key; base64url; a malformed or foreign cursor resets to the first page instead of erroring; a cursor can never widen visibility.
+- **§4.32.14:** the announcement cursor examples are illustrative. Each collection tags its cursor with its surface and refuses another's, because they order by different columns.
 
 ### v1.102 — 2026-11-11 — additive — unclaimed page cards hide vouch, back and report
 
