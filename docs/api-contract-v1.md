@@ -1990,6 +1990,7 @@ Verifies a signed nonce, creates a new user (placeholder email if none supplied)
 - **Rate limit:** IP-bucketed (`WALLET_SIGNUP_RATE_LIMIT`/min/IP).
 - **Cache:** `Cache-Control: no-store`
 - **Side effects:** sets `wp_set_auth_cookie`, fires `bcc_wallet_verified` (seeds trust-engine + onchain-signals rows just like `verifyAndLink`), emits `user_signup` audit row, fires `bcc_user_signup` action. **Note:** does NOT emit the `bcc_first_wallet_link` celebration on the response — celebration delivery for wallet-signup is reserved for a future contract revision.
+- **Email state (changed in v1.NN):** sets `_bcc_email_verified='0'` — a wallet signature proves control of the wallet, not of the inbox. A **caller-supplied** email gets the standard verification email (OTP + one-shot link, completed via `POST /auth/verify-email`) once the wallet link commits; a **placeholder** gets none and stays `'0'`. Previously this route set `'1'` with no inbox proof, which let a wallet signup typed with someone else's address receive that person's later Google sign-in (see `/auth/oauth-complete` → the anti-pre-registration gate). `'0'` does not affect the user's own sign-in: they sign in with the wallet.
 - **Race protection:** if a concurrent signup wins the wallet-link race between the `existsForOtherUser` check and the actual link write, the inserted user is rolled back (`wp_delete_user`) and `bcc_wallet_already_linked` is returned. No orphan user is left behind.
 
 #### `POST /bcc/v1/auth/forgot-password`
@@ -2130,7 +2131,7 @@ Completes an OAuth (Google/X) signup for a first-time user: exchanges the `provi
 - **Errors:** `bcc_invalid_request` 400 (missing provider_token) · `bcc_invalid_oauth_token` 400 (provider_token expired (15 min) or consumed — restart the OAuth flow) · `bcc_invalid_handle` 422 / `bcc_handle_reserved` 422 (§B6) · `bcc_invalid_email` 422 (email missing/invalid when the provider supplied none) · `bcc_conflict` 409 (handle or email already taken) · `bcc_rate_limited` 429 · `bcc_internal_error` 500. Validation errors leave the provider_token intact so the user corrects and retries in place.
 - **Rate limit:** IP-bucketed, 5 / 60s
 - **Cache:** `Cache-Control: no-store`
-- **Mapping:** peeks the provider_token without consuming; creates a `subscriber` `wp_users` row (`wp_insert_user`, login `u_<handle>`, random 64-char password), sets `bcc_handle` + `_bcc_oauth_<provider>` meta. Email-verified flag depends on the email's origin: provider-supplied (Google) → `_bcc_email_verified='1'` + welcome email immediately; **user-typed** (X) → `'0'` + the standard verification email (same OTP/link machinery as `/auth/signup`; the welcome email arrives via `finalizeVerification`). A `'0'` account cannot be email-matched by the `/auth/oauth` bridge (anti-pre-registration gate) nor password-login until verified — provider sign-in is unaffected (provider-ID match). Consumes the provider_token only after the user row commits, mints the JWT, emits the `user_signup` audit log (`via: oauth`), fires `do_action('bcc_user_signup', …)`. Handler `AuthEndpoint::oauthComplete` (route `AuthEndpoint.php:621`). Standard envelope per §1.4.
+- **Mapping:** peeks the provider_token without consuming; creates a `subscriber` `wp_users` row (`wp_insert_user`, login `u_<handle>`, random 64-char password), sets `bcc_handle` + `_bcc_oauth_<provider>` meta. Email-verified flag depends on the email's origin: **provider-verified** → `_bcc_email_verified='1'` + welcome email immediately — since v1.NN that means only a Google email the signed `/auth/oauth` bridge payload explicitly marked `email_verified: true` (a JSON boolean), carried server-side on the provider_token; a stored email without that bit (including any provider_token minted before v1.NN) counts as unverified; **user-typed** (X) or unverified → `'0'` + the standard verification email (same OTP/link machinery as `/auth/signup`; the welcome email arrives via `finalizeVerification`). **Anti-pre-registration gate (tightened in v1.NN):** the `/auth/oauth` bridge links a sign-in into an existing account by email **only when the bridge payload marks the email provider-verified (`provider: "google"` and `email_verified: true`) AND that account's `_bcc_email_verified` is exactly `'1'`** — `'0'` (pending), `''` (legacy, never verified) and any other value fail closed and the sign-in falls through to `handle_required`. On that first link-by-email, every earlier bearer token for the account is revoked before the session token is minted. A `'0'` account also cannot password-login until verified — provider sign-in is unaffected (provider-ID match). Consumes the provider_token only after the user row commits, mints the JWT, emits the `user_signup` audit log (`via: oauth`), fires `do_action('bcc_user_signup', …)`. Handler `AuthEndpoint::oauthComplete` (route `AuthEndpoint.php:621`). Standard envelope per §1.4.
 
 #### `POST /bcc/v1/auth/refresh`
 
@@ -2165,7 +2166,7 @@ Confirms email ownership and completes signup via either an OTP code or a one-sh
 - **Errors:** `bcc_invalid_request` 422 (neither token nor email+code) · `bcc_invalid_verify_token` 400 (token expired/used) · `bcc_invalid_otp` 400 (email unknown — generic; or code wrong/expired) · `bcc_already_verified` 409 (OTP path only) · `bcc_invalid_state` 409 (no handle) · `bcc_rate_limited` 429 · `bcc_internal_error` 500
 - **Rate limit:** IP-bucketed, 10 / 3600s
 - **Cache:** `Cache-Control: no-store`
-- **Mapping:** token path consumes the `bcc_vt_<token>` transient (single-use); OTP path resolves by email, checks `_bcc_email_verified`, timing-safely (`hash_equals`) consumes the HMAC-hashed `bcc_otp_<userId>` transient. Both converge on `finalizeVerification` → sets `_bcc_email_verified='1'`, sets the auth cookie, mints the JWT, emits `email_verified` audit, fires `do_action('bcc_email_verified', …)`. Handler `AuthEndpoint::verifyEmail` (route `AuthEndpoint.php:487`). Standard envelope per §1.4.
+- **Mapping:** token path consumes the `bcc_vt_<token>` transient (single-use); OTP path resolves by email, checks `_bcc_email_verified`, timing-safely (`hash_equals`) consumes the HMAC-hashed `bcc_otp_<userId>` transient. Both converge on `finalizeVerification` → sets `_bcc_email_verified='1'`, sets the auth cookie, **revokes every earlier bearer token for the account (JWT token-version bump, since v1.NN)**, mints the JWT, emits `email_verified` audit, fires `do_action('bcc_email_verified', …)`. The revocation means a session held by whoever created the account before the address was proven does not survive the inbox owner's verification; the returned token is the caller's working session and must be stored. Handler `AuthEndpoint::verifyEmail` (route `AuthEndpoint.php:487`). Standard envelope per §1.4.
 
 #### `POST /bcc/v1/auth/resend-verification`
 
@@ -2177,7 +2178,7 @@ Re-sends a fresh verification OTP + link to an unverified account. Always return
 - **Errors:** `bcc_invalid_request` 422 (missing/malformed email) · `bcc_rate_limited` 429
 - **Rate limit:** IP-bucketed, 3 / 3600s
 - **Cache:** `Cache-Control: no-store`
-- **Mapping:** resolves by email; only when `_bcc_email_verified === '0'` generates + stores a fresh HMAC-hashed OTP (overwriting the prior `bcc_otp_<userId>` transient) + verify token, then dispatches the email. Already-verified / legacy accounts are silently skipped. Handler `AuthEndpoint::resendVerification` (route `AuthEndpoint.php:521`). Standard envelope per §1.4.
+- **Mapping:** resolves by email; only when `_bcc_email_verified` is `'0'` (pending) **or `''` (legacy, never verified — since v1.NN)** and the address is not a wallet placeholder (`@noreply.bcc.local`), generates + stores a fresh HMAC-hashed OTP (overwriting the prior `bcc_otp_<userId>` transient) + verify token, then dispatches the email. Already-verified accounts and placeholders are silently skipped. A legacy account uses this to verify and so become eligible for OAuth link-by-email (`/auth/oauth-complete` → the anti-pre-registration gate). Handler `AuthEndpoint::resendVerification` (route `AuthEndpoint.php:521`). Standard envelope per §1.4.
 
 ### 4.2 Cards
 
@@ -4664,10 +4665,26 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
 
 #### `PATCH /bcc/v1/me/account/email` (V2 Phase 2.5)
 
-Change the user's WordPress email. Body `{ "current_password": "...", "email": "..." }`. Server re-verifies the current password via `wp_check_password` on every call — there is no session-elevation flag.
+**Request** a change of the user's WordPress email. Body `{ "current_password": "...", "email": "..." }`. Server re-verifies the current password via `wp_check_password` on every call — there is no session-elevation flag.
 
-- **Response 200:** `{ "email": "<new>" }`
-- **Errors:** `bcc_invalid_request` (422 — bad email or wrong current password; message disambiguates), `bcc_conflict` (409 — email already taken by another user).
+**Verify-before-promote (behaviour change in v1.NN).** This call does **not** change the email. It holds the new address **pending** and mails a 6-digit OTP to the **new** address; `user_email` and `_bcc_email_verified` are unchanged until `POST /me/account/email/verify` confirms the code. Until then the account keeps its current address and its verification state, and nothing that matches by email (OAuth link-by-email, password login by email, password reset) can see the pending one. Previously the change applied at once and kept the old address's verified flag — so a password holder could re-point a verified account at an address they don't own, and that address's owner's later Google sign-in linked into their account.
+
+- **Response 200:** `{ "ok": true, "pending": true, "email_masked": "v*****@gmail.com", "expires_in": 900 }`. Same address as the current one (case-insensitive) → `{ "ok": true, "pending": false }`, nothing mailed.
+- **Errors:** `bcc_invalid_request` (422 — bad email or wrong current password; message disambiguates), `bcc_conflict` (409 — email already taken by another user), `bcc_unauthorized` 401, `bcc_rate_limited` 429 (5/min/user, before the password check).
+- **Side effects:** stages `{ email, otp_hash, purpose: "change" }` in the account's pending-email transient (15-min TTL, one per account — shared with the recovery-email route below, so a new request of either kind supersedes the previous one); mails the OTP via `AuthMailer::sendEmailChangeOtp` (subject "Confirm your new email address"); writes an `account_email_change_requested` audit row. The change canary goes out on **confirmation**, not here.
+- **Cache:** `Cache-Control: no-store`.
+
+#### `POST /bcc/v1/me/account/email/verify` (since v1.NN)
+
+Confirms the OTP from `PATCH /me/account/email` and **promotes** the pending address to `user_email`, marking it verified (`_bcc_email_verified='1'` — the code proved the new inbox). The account's credentials just changed, so — exactly like `PATCH /me/account/password` — every earlier bearer token is revoked and a **fresh token** is returned; bearer clients must swap to it.
+
+Body `{ "code": "123456" }`.
+
+- **Auth:** required. **Rate limit:** 10/hour/user. (A 6-digit OTP under this cap + the 15-min TTL is not brute-forceable; a wrong code leaves the pending entry in place for retry.)
+- **Response 200:** `{ "ok": true, "email": "<new>", "token": "<jwt>", "expires_in": 604800, "token_type": "Bearer" }`
+- **Errors:** `bcc_unauthorized` 401; `bcc_invalid_request` **400** (no pending email change — never requested, expired, or superseded: the client returns to the request step) / 422 (missing code); **`bcc_invalid_otp` 422** (incorrect code — the pending entry is kept: the client stays on the code step and may retry); `bcc_conflict` 409 (the address was taken in the race window — the pending entry is dropped); `bcc_internal_error` 500; `bcc_rate_limited` 429. Clients branch on `error.code`, not on status alone.
+- **Cache:** `Cache-Control: no-store`.
+- **Side effects:** `wp_update_user(user_email)` + `_bcc_email_verified='1'`; clears the pending entry; JWT token-version bump; `account_email_changed` audit row; out-of-band canary via `AccountSecurityMailer::emailChanged` (both addresses) — or `::recoveryEmailConfirmed` (new address only) when the old one was a placeholder. A pending **recovery** email cannot be confirmed here, nor a pending change via the recovery verify route: each confirm accepts only its own purpose.
 
 #### `PATCH /bcc/v1/me/account/password` (V2 Phase 2.5)
 
@@ -4691,7 +4708,7 @@ Body `{ "wallet_address", "chain_slug", "signature", "email", "extra"? }`. The s
 - **Response 200:** `{ "ok": true, "email_masked": "a****@example.com", "expires_in": 900 }`
 - **Errors:** `bcc_unauthorized` 401; `bcc_invalid_request` 400 (missing fields / unknown chain / wallet not linked or not verified / challenge expired) / 422 (bad or placeholder email); `bcc_signature_invalid` 401; `bcc_conflict` 409 (email already in use); `bcc_rate_limited` 429.
 - **Cache:** `Cache-Control: no-store`.
-- **Side effects:** stages `{ email, otp_hash }` in the `bcc_recovery_email_{userId}` transient (15-min TTL); mails the OTP via `AuthMailer::sendRecoveryEmailOtp`; writes a `recovery_email_requested` audit row.
+- **Side effects:** stages `{ email, otp_hash, purpose: "recovery" }` in the `bcc_recovery_email_{userId}` transient (15-min TTL) — the account's single pending-email slot, shared with `PATCH /me/account/email` (a new request of either kind supersedes the previous one; an entry without `purpose`, written before v1.NN, reads as `recovery`); mails the OTP via `AuthMailer::sendRecoveryEmailOtp`; writes a `recovery_email_requested` audit row.
 
 #### `POST /bcc/v1/me/account/recovery-email/verify` (wallet recovery, phase 2)
 
@@ -8653,6 +8670,21 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NN — <merge date> — behaviour change plus additive — an email is only "verified" once its inbox is proven
+
+> Version placeholder: set `v1.NN` (here and in §4) to the next free version at merge time.
+
+Closes an account pre-hijack: an address typed by someone who doesn't own it could end up marked verified, and `/auth/oauth` then linked the address owner's Google sign-in into that account. Ships with bcc-trust's matching release; the frontend email-change step ships alongside.
+
+- **`POST /auth/wallet-signup` (behaviour change):** sets `_bcc_email_verified='0'`, not `'1'`. A caller-supplied email gets the standard verification email; a placeholder gets none.
+- **`/auth/oauth` link-by-email (behaviour change):** only when the bridge marks the email provider-verified (Google + `email_verified: true`, a new **bridge payload field** inside the HMAC-signed body) **and** into an account whose flag is exactly `'1'`. Anything else fails closed (→ `handle_required`). The first link-by-email revokes the account's earlier bearer tokens.
+- **`POST /auth/oauth-complete` (behaviour change):** `'1'` only for an email the bridge marked provider-verified (stored on the provider_token); any other stored email starts `'0'` with the verification email. A provider_token minted before this version reads as unverified.
+- **`POST /auth/verify-email` (behaviour change):** revokes the account's earlier bearer tokens before minting the returned one. Clients must store the returned token (they already do — same shape as `/auth/login`).
+- **`POST /auth/resend-verification` (behaviour change):** also serves legacy `''` accounts (so they can verify and then link by email); never mails a wallet placeholder.
+- **`PATCH /me/account/email` (BREAKING response change):** no longer changes the email. It holds the new address pending and mails an OTP to it; the response is now `{ ok, pending, email_masked, expires_in }` (was `{ email }`). Clients must add a code-entry step.
+- **`POST /me/account/email/verify` (new):** confirms that code, promotes the address (verified), revokes earlier bearer tokens and returns a fresh one (`token`, `expires_in`, `token_type`), and sends the both-address canary. A wrong code is `bcc_invalid_otp` 422 (retry); nothing pending is `bcc_invalid_request` 400 (start again).
+- **Recovery email (`/me/account/recovery-email[/verify]`):** unchanged on the wire. Its pending slot is now shared with the email change (one pending address per account; a new request supersedes; a code only completes its own flow).
 
 ### v1.86 — 2026-11-06 — behaviour change plus correction — the claim route stops reporting server faults as wallet mismatches
 
