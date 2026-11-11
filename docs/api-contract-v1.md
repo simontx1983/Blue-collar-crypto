@@ -164,6 +164,8 @@ The canonical envelope's `message` is presentation; the *behavior fork* is on `c
 
 Rate-limit buckets are per-user (when authenticated) AND per-IP. Both must allow the request through; the more conservative rejection wins. The server never returns 429 from cached read paths (cached responses bypass throttling).
 
+**Self-scoped writes (since v1.11Y, F-134).** Every signed-in write to the caller's own state under `/me/*` that §4 does not give its own rate limit — profile, profile fields, prefs, privacy, onboarding, mark-read, celebrations, highlights, primary hall, push-subscription revoke, review removal — shares **one per-account bucket: 120 / 60 s**, keyed on the account (never the IP). `PATCH /me/handle` additionally allows **10 changes per hour** per account. A tripped bucket answers `429 bcc_rate_limited`. Routes with their own documented limit (account email/password/recovery, uploads, reports, joins, blocks, …) keep it and are not counted here.
+
 #### 1.4.5 Capability-denied semantics
 
 `bcc_permission_denied` (403) is **never used for state errors** ("can't unlink — wallet doesn't exist") and **never used for input errors** ("missing chain field"). Those are `bcc_not_found` and `bcc_invalid_request` respectively.
@@ -8892,6 +8894,12 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.11Y — 2026-11-11 — behaviour change — self-scoped writes are rate limited per account
+
+Ships with bcc-trust #532.
+
+- **§1.4.4 (F-134):** the cheap `/me/*` writes that had no rate limit (profile, profile fields, prefs, privacy, onboarding, handle, mark-read, celebrations, highlights, primary hall, push-subscription revoke, review removal) now share one per-account bucket of 120 / 60 s; `PATCH /me/handle` also allows 10 changes per hour. Tripped → `429 bcc_rate_limited`. Normal UI use stays far below the limits; clients already handle 429 per §1.4.4.
 
 ### v1.111 — 2026-11-11 — behaviour change — profile image uploads are rate limited
 
