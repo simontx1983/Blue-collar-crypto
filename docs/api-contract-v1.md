@@ -4025,7 +4025,7 @@ Direct bcc-search project search and trending mode — the upstream that `cards/
     ]
   }
   ```
-- **Optional degradation fields (v1.9X):** `stale: true` marks a response served from the last-known-good mirror while the upstream is unavailable; `system_degraded: true` marks one served from that mirror, or (F-24) built WITHOUT trust enrichment — text-only ranking, no impersonation guard — because the trust engine is unbound or returned no scores. Both are absent on a normal response; a client may show a "results may be incomplete" hint but must not treat either as an error. A trust-less response is cached only 10 s and never mirrored to LKG.
+- **Optional degradation fields (v1.9X):** `stale: true` marks a response served from the last-known-good mirror while the upstream is unavailable; `system_degraded: true` marks one served from that mirror, or (F-24) built WITHOUT trust enrichment — text-only ranking, no impersonation guard — because the trust engine is unbound. Both are absent on a normal response; a client may show a "results may be incomplete" hint but must not treat either as an error. A trust-less response is cached only 10 s and never mirrored to LKG.
 - **`categories` scope (v1.46):** the full category list ships only on result-bearing responses. Empty-result short-circuits (query under 2 / over 100 chars, junk-gate rejection, unknown `type`) return `categories: []` — autocomplete fires these per keystroke and nothing reads categories off an empty response.
 - **Errors (legacy WP shape — not §L5 envelope):**
   - `bcc_rate_limited` (HTTP 429) — `10 req / 5s` per subnet *(doc corrected 2026-08-05: the previously listed `rate_limit_exceeded` never existed in code)*
@@ -8881,7 +8881,7 @@ envelope or view-model change.
 - **Documented:** the optional `stale` and `system_degraded` fields, which
   the handler already emitted on last-known-good responses.
 - **Additive (F-24):** a result built without trust enrichment (trust engine
-  unbound, or no scores for a non-empty candidate set) now carries
+  unbound) now carries
   `system_degraded: true`. It used to look like a normal response and was
   cached as one, including the hour-long last-known-good mirror; it is now
   cached 10 s and never mirrored. Mapping: `SearchController::isTrustDegraded()`
