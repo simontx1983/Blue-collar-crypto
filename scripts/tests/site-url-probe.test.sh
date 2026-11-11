@@ -58,6 +58,10 @@ PASSED=0
 FAILED=0
 ALL_OUTPUT=""
 
+# The probe only accepts the identity host of the env it was given (F-44);
+# the fake curl on PATH means no request ever leaves the runner.
+base_for() { case "$1" in staging) echo "https://stage.bluecollarcrypto.io" ;; *) echo "https://cms.bluecollarcrypto.io" ;; esac; }
+
 # run <name> <expected_exit> <env> <body> <code> [curl_exit]
 run() {
   local name="$1" want="$2" env="$3" body="$4" code="$5" curl_exit="${6:-0}"
@@ -66,7 +70,7 @@ run() {
   out=$(
     PATH="$TMP/bin:$PATH" \
     BCC_ENV="$env" \
-    BCC_IDENTITY_BASE="https://identity.invalid" \
+    BCC_IDENTITY_BASE="$(base_for "$env")" \
     BCC_INTERNAL_SECRET="$FIXTURE_SECRET" \
     FAKE_CURL_BODY="$body" \
     FAKE_CURL_CODE="$code" \
@@ -205,6 +209,12 @@ no_request "empty BCC_ENV fails before any request" 2 "" "https://identity.inval
 # `prod` is a banner-only alias; the probe must keep demanding `production`.
 no_request "legacy 'prod' alias is not accepted here" 2 prod "https://identity.invalid" "$FIXTURE_SECRET"
 
+# F-44: the secret only ever goes to this env's identity host, over https.
+no_request "wrong host is refused before the secret is sent" 2 production "https://identity.invalid" "$FIXTURE_SECRET"
+no_request "http:// base is refused before the secret is sent" 2 production "http://cms.bluecollarcrypto.io" "$FIXTURE_SECRET"
+no_request "staging base on the production job is refused" 2 production "https://stage.bluecollarcrypto.io" "$FIXTURE_SECRET"
+no_request "lookalike host is refused" 2 production "https://cms.bluecollarcrypto.io.evil.com" "$FIXTURE_SECRET"
+
 # ── POSITIVE CONTROLS: prove this harness is not vacuously green ─────────
 #
 # Every case above asserts that a CORRECT probe behaves correctly. None of
@@ -235,7 +245,7 @@ control() {
 
   out=$(
     PATH="$TMP/bin:$PATH" BCC_ENV="$env" \
-    BCC_IDENTITY_BASE="https://identity.invalid" \
+    BCC_IDENTITY_BASE="$(base_for "$env")" \
     BCC_INTERNAL_SECRET="$FIXTURE_SECRET" \
     FAKE_CURL_BODY="$body" FAKE_CURL_CODE=200 FAKE_CURL_EXIT=0 \
     bash "$mutant" 2>&1
