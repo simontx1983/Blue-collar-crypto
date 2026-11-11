@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.106 · 2026-11-11 · Phase 1 deliverable
+**Status:** Draft v1.110 · 2026-11-11 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2300,8 +2300,33 @@ Anonymous-friendly trending feed (§F2 zero-follow fallback).
 - **Response 200:** `CursorEnvelope<FeedItem>` (same shape as `/feed`)
 - **Errors:** `bcc_invalid_request`
 - **Rate limit:** 60/min/IP (anon), 60/min/user (authed)
-- **Cache:** `Cache-Control: public, max-age=15, stale-while-revalidate=30`
-- **Mapping:** `BccFeedRankingService` with global trending profile. The same service serves all feed surfaces (§F3) — no separate hot-feed code path.
+- **Cache (v1.109 — NOW VARIES BY VIEWER):**
+  - Anonymous: `Cache-Control: public, max-age=60, stale-while-revalidate=120`
+  - Signed in: `Cache-Control: private, max-age=15`
+  - **Both:** `Vary: Authorization, Cookie`
+
+  ⚠⚠ **A signed-in response is never shareable, and this is a security
+  property rather than a tuning choice.** As of v1.109 the hot feed applies
+  §K1 mutual invisibility for a signed-in reader, so the body depends on who
+  is asking. Served under the old `public` header, a shared cache (CDN or
+  reverse proxy) could store ONE viewer's filtered feed and serve it to
+  everyone else, including logged-out visitors, for up to three minutes —
+  leaking which authors that viewer blocks, by absence.
+
+  ⚠ `Vary` is sent on the ANONYMOUS response too. Without it a shared cache
+  does not know the response depends on credentials and may hand the cached
+  anonymous copy to a signed-in request; that leaks nothing but silently
+  defeats the filter.
+
+  ⚠ The anonymous posture is otherwise UNCHANGED, so the public,
+  SEO-relevant cacheability this route exists for is preserved. Logged-out
+  responses are byte-identical to the revision before this one.
+
+  ⚠ **Correction, not a change:** this line previously documented
+  `public, max-age=15, stale-while-revalidate=30`. The shipped values have
+  been `max-age=60, stale-while-revalidate=120`; the anonymous row above
+  records what the route actually sends.
+- **Mapping:** `BccFeedRankingService` with global trending profile. The same service serves all feed surfaces (§F3) — no separate hot-feed code path. ⚠ The shared, globally cached payload is still built with the ANONYMOUS posture; the per-viewer §K1 filter is applied AFTER that cache is read and is never written back into it, so one viewer's filtered feed cannot reach another.
 
 #### `GET /bcc/v1/feed/tag`
 
@@ -2489,7 +2514,7 @@ Full User view-model.
 Paginated directory of human members. Sibling to §4.9 `/cards` (entity-card directory). **Each item is a full member `Card` view-model (§3.2, `card_kind: "member"`)** so the frontend renders directory rows through the canonical `<CardFactory>` — the same component the entity-card directory uses. The per-member back-of-card signal blocks (verifications, engagement, owned-page typed counts, primary Hall) ride along on the card's `member_dossier` block; nothing the older slim `MemberSummary` shape carried is lost. Click-through navigates to `/u/:handle` for the full profile.
 
 - **Auth:** Anonymous OR Bearer (privacy-filtered — `real_name_hidden` honored)
-- **Query:** `page` (1-indexed, default 1), `per_page` (default 20, max 50), `q` (optional — bounded to 64 chars, matched against the **display name** and the **@handle** (`bcc_handle`) only, as a substring; a leading `@` is ignored; a search matches at most the first 1000 members per field. Since v1.9X it never matches `user_login` (a login match on this anonymous route confirmed that a login name exists) or `user_nicename` (derived from the login), for any caller. Email is never matched.), `type` (optional — one of `validator | project | nft | dao`; restricts results to users with ≥1 owned page of that canonical type, intersecting with `q` when both are present), `mentors` (optional bool — *v1.62, Rank Phase 7 spec §21.4*; restricts results to **actively listed mentors**: explicit `mentor_opt_in` AND the live `list_as_mentor` capability (Veteran AND Trusted+ AND not suspended AND not in Rank recovery), composed at read time via `MentorListingService::activeMentorIds`; intersects (AND) with the other filter axes), `verified[]` (optional array — *documented v1.64, shipped earlier*; each ∈ `x | github | wallet`; **AND semantics** — every listed provider must be verified for the member to match; intersects with the other filter axes)
+- **Query:** `page` (1-indexed, default 1), `per_page` (default 20, max 50), `q` (optional — bounded to 64 chars, matched against the **display name** and the **@handle** (`bcc_handle`) only, as a substring; a leading `@` is ignored; a search matches at most the first 1000 members per field. Since v1.110 it never matches `user_login` (a login match on this anonymous route confirmed that a login name exists) or `user_nicename` (derived from the login), for any caller. Email is never matched.), `type` (optional — one of `validator | project | nft | dao`; restricts results to users with ≥1 owned page of that canonical type, intersecting with `q` when both are present), `mentors` (optional bool — *v1.62, Rank Phase 7 spec §21.4*; restricts results to **actively listed mentors**: explicit `mentor_opt_in` AND the live `list_as_mentor` capability (Veteran AND Trusted+ AND not suspended AND not in Rank recovery), composed at read time via `MentorListingService::activeMentorIds`; intersects (AND) with the other filter axes), `verified[]` (optional array — *documented v1.64, shipped earlier*; each ∈ `x | github | wallet`; **AND semantics** — every listed provider must be verified for the member to match; intersects with the other filter axes)
 - **Response 200:**
   ```json
   {
@@ -4750,6 +4775,8 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
   - `mentor_opt_in` *(v1.62 — Rank Phase 7, spec §21.4)* → `bcc_mentor_opt_in` user_meta, "1"/"0" (via `MentorListingService`). Read/write bool. Opting in requires **no** eligibility — a non-Veteran may pre-opt-in and lists automatically the day they qualify.
 - **Read-only mentor pair (v1.62, GET response only — never writable):** `mentor_listed` (bool) — whether the user is **actively listed** in the mentor directory *right now*; the listing composes **live** as opt-in AND `can('list_as_mentor')` (**Veteran** rank AND trust tier ≥ **Trusted** AND not suspended AND not in §14.2 Rank recovery). Nothing is materialized — when any condition fails the listing **pauses automatically on the next read** (no sweep, no flag to un-stick). `mentor_eligibility_reason` (string|null) — the resolver's stable deny slug ∈ `suspended|new_member|below_veteran|below_trusted|in_recovery` so the frontend can explain a paused listing; `null` while eligible (regardless of opt-in).
 - **PATCH** is partial — missing keys are untouched.
+  - **Every field is validated before anything is written** (F-97): an invalid value (`bcc_invalid_request` 422) or PeepSo missing when `profile_visibility` is sent (`bcc_peepso_unavailable` 503) writes **nothing**.
+  - **A write that fails after validation (v1.108)** stops the request: `bcc_internal_error` **500**, message "Some of your preferences could not be saved. Please try again.", with `error.data.saved` (list of the request's field names that DID persist, in write order: `profile_visibility`, then the user-meta fields, then `mentor_opt_in`) and `error.data.failed` (the field that did not). Earlier writes are **not** rolled back. A client must not report the save as successful, and may re-send the whole request (every write is idempotent).
 
 #### `PATCH /bcc/v1/me/account/email` (V2 Phase 2.5)
 
@@ -7051,7 +7078,21 @@ Auth **operator**. Promotes a draft to published at authoritative server time.
 
 #### `POST /bcc/v1/validators/:pageId/announcements/:id/archive`
 
-Auth **operator**. Archival is **one-way** in v1 and is **not a deletion** (§4.32.6).
+Auth **operator** or **administrator** *(v1.107)*. Archival is **one-way** in v1 and is **not a deletion** (§4.32.6).
+
+**Who may archive *(v1.107)*.** Archive is the one announcement write that is **not** limited to
+the notice's author:
+
+- the page's **current** resolved operator may archive **any published notice on that page**,
+  including one written by a **previous** operator of the page (before v1.107 that answered
+  `404`, so after a claim hand-over the predecessor's notices could not be taken down by anyone);
+- a **site administrator** (`manage_options`) may archive any published notice.
+
+Everyone else is refused exactly as before (`403 bcc_forbidden`, `reason_code: not_claimer`).
+Edit, publish, schedule and pin remain **author-only**. The other rules on this route do not
+change: only a published notice can be archived (below), a second archive is `409 Already archived.`,
+and the notice keeps its permalink and public readability (§4.32.6). An archive of a notice the
+actor did not write is recorded in the audit log.
 
 ⚠⚠ **ONLY A PUBLISHED NOTICE CAN BE ARCHIVED.** A `draft`, `scheduled` or
 `blocked` row is refused with `409 bcc_conflict` and
@@ -7147,9 +7188,10 @@ validator row bound to it. Collection/creator claims are a different question wi
 semantics and are **out of scope**; they are neither accepted here nor affected by it, and the
 existing collection-creator permissions on page bio and image are unchanged.
 
-**Administrators hold read-only recovery rights only** — inspect drafts, inspect removed
-comments, restore removed comments. They may not create, edit, schedule, publish, pin or
-archive, and may not act as the operator. An administrator who is *independently* the resolved
+**Administrators hold recovery rights plus archive** — inspect drafts, inspect removed
+comments, restore removed comments, and *(v1.107)* archive any published notice (§4.32.6 — a
+one-way move off the page and the feed that keeps the public record). They may not create,
+edit, schedule, publish or pin, and may not act as the operator. An administrator who is *independently* the resolved
 operator gets operator rights through the normal path, never through an override.
 
 #### 4.32.3 `Announcement` view-model
@@ -7957,8 +7999,9 @@ spelling is intentional, so the disabled control and the eventual `403` give the
 
 **(d) Administrator capabilities — a separate object, never merged into either scope above**
 
-`can_inspect_drafts` · `can_inspect_removed` · `can_restore_comment`, on the admin routes only.
-**Every owner and row capability is `false` for a non-operator administrator** (§4.32.2).
+`can_inspect_drafts` · `can_inspect_removed` · `can_restore_comment` · `can_archive_any` *(v1.107)*, on the admin routes only.
+**Every owner and row capability is `false` for a non-operator administrator** (§4.32.2). The archive route itself admits an administrator *(v1.107)*; the row's `can_archive` stays the operator's answer, and `can_archive_any` is the administrator's.
+**Row capabilities on a notice another operator wrote** *(v1.107)*: for the page's current operator, `can_edit`, `can_pin` and `can_publish` are **author-only** — they report `not_claimer` on a predecessor's notice, because those routes resolve the row by its author. `can_archive` and `can_manage_comments` stay operator-wide.
 
 ##### Field-to-consumer trace
 
@@ -8849,13 +8892,75 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.9X — 2026-11-11 — behaviour change — member search no longer matches login names
+### v1.110 — 2026-11-11 — behaviour change — member search no longer matches login names
 
-Placeholder version; take the next free number at merge. Ships with bcc-trust's F-175 change.
+Ships with bcc-trust's F-175 change (bcc-trust #515).
 
 - **`GET /members` `q`:** now matched against the **display name** and the **@handle** (`bcc_handle`) only, as a substring, with a leading `@` ignored; a search matches at most the first 1000 members per field. It no longer matches `user_login`: the route is anonymous, so a login match let anyone confirm that a login name exists. `user_nicename` is not matched either, because WordPress derives it from the login. This applies to signed-in callers too.
 - **New:** `q` now matches the @handle, which it never did before.
 - **Clients:** a search typed as a login that differs from the member's display name and handle no longer finds them. No shape change.
+
+### v1.109 — 2026-11-11 — behaviour change — `/feed/hot` varies by viewer and is no longer shared-cacheable when signed in
+
+Ships with bcc-trust's hot-feed per-viewer block filter, stacked on
+bcc-trust #487.
+
+- **`GET /feed/hot` now applies §K1 mutual invisibility for a SIGNED-IN
+  reader.** Authors the viewer has blocked, and authors who have blocked the
+  viewer, are dropped from the page. Previously this route was the one feed
+  surface where a blocked author still appeared, because it is built once
+  with the anonymous posture and cached for everyone. Logged-out responses
+  are unchanged.
+- **Cache posture — and this is a security property, not tuning:**
+  - signed in → `Cache-Control: private, max-age=15` (matching `/feed/tag`,
+    which already had this problem and solved it the same way)
+  - anonymous → `Cache-Control: public, max-age=60, stale-while-revalidate=120`, **unchanged**
+  - **both** → `Vary: Authorization, Cookie`
+
+  ⚠⚠ A signed-in response must never be shareable. Served under the old
+  `public` header, a shared cache (CDN or reverse proxy) could store ONE
+  viewer's filtered feed and serve it to everyone else, including logged-out
+  visitors, for up to three minutes — leaking which authors that viewer
+  blocks, by their absence. That would be strictly worse than the unfiltered
+  feed this replaces.
+
+  ⚠ `Vary` is sent on the ANONYMOUS response too. Without it a shared cache
+  does not know the response depends on credentials and may hand the cached
+  anonymous copy to a signed-in request; that leaks nothing but silently
+  defeats the filter, so the feature would look implemented and not work.
+- **Correction on the same §4 row:** it previously documented
+  `public, max-age=15, stale-while-revalidate=30`. The route has been sending
+  `max-age=60, stale-while-revalidate=120`; the anonymous row now records
+  what the code actually sends. Called out rather than folded in silently.
+- **Clients:** nothing to change. The payload shape is untouched — a
+  `CursorEnvelope<FeedItem>` either way.
+
+  ⚠ But a signed-in page can now be **shorter than `limit`, or EMPTY if the
+  block state cannot be checked right now**, and neither means the feed has
+  ended. The filter is applied after the page is assembled, so blocked
+  authors are removed rather than back-filled; and an unreadable block table
+  fails CLOSED, withholding the page rather than risking a blocked author.
+  `pagination.has_more` remains the only end-of-feed signal — true on every
+  surface already, but newly reachable here, and a client that treats "fewer
+  items than I asked for" or "no items" as the end will stop paginating
+  early.
+### v1.108 — 2026-11-11 — additive — a profile-prefs save that fails part-way says so
+
+Ships with bcc-trust's profile-prefs write-failure change (bcc-trust #467, follow-up to F-97 / #449).
+
+- **`PATCH /me/profile-prefs` (new error):** a database failure while writing an already-validated field used to be silent, and the request still returned 200. It now returns `bcc_internal_error` 500 with `error.data.saved` (fields that persisted) and `error.data.failed` (the one that did not). Earlier writes are not rolled back.
+- Also documents F-97 (bcc-trust #449, already shipped): every field is validated before any write, so a 422 or 503 writes nothing.
+- **Clients:** treat this 500 as "not saved"; re-sending the whole request is safe.
+
+### v1.107 — 2026-11-11 — behaviour change plus additive — a new operator or an administrator can archive a predecessor's announcement
+
+Ships with bcc-trust F-147 (bcc-trust #478).
+
+- **`POST /validators/:pageId/announcements/:id/archive`:** the page's **current** operator may now archive any **published** notice on the page, including one a previous operator wrote (was `404`); a site administrator may archive any published notice (was `403`). Everyone else: unchanged `403 not_claimer`. Edit, publish, schedule and pin stay author-only.
+- **§4.32.2:** administrators gain archive; the rest of their rights are unchanged.
+- **Row capabilities (bcc-trust #513):** on a predecessor's notice, `can_edit`, `can_pin` and `can_publish` are author-only and report `not_claimer` to the current operator; `can_archive` and `can_manage_comments` stay operator-wide.
+- **Additive:** administrator capability `can_archive_any` (§4.32.11 (d)). No new error codes.
+- **Clients:** a row the current operator sees with `can_archive` allowed now archives instead of answering `404`.
 
 ### v1.106 — 2026-11-11 — behaviour change — wallet sign-in names the site; its challenge can't be replaced or burned
 
