@@ -26,6 +26,7 @@ same commit. When a hook is retired (cleared via
 | Hook | Interval | Registered in | Handler |
 |---|---|---|---|
 | `bcc_core_rl_cleanup` | `bcc_thirty_minutes` | [bcc-core/bcc-core.php:288](../app/public/wp-content/plugins/bcc-core/bcc-core.php#L288) | bcc-core/bcc-core.php:226 — `OptionCleanupRepository::deleteExpiredRange` for `_bcc_rl_*` and `_transient_bcc_rl_*` rows. |
+| `bcc_search_terms_prune` | `daily` | bcc-search/bcc-search.php (`bcc_search_terms_prune` schedule on `init`) | bcc-search/bcc-search.php — `SearchTermsRepository::ensureTable()` (self-heal, F-50) then `::prune()`: deletes search-analytics rows older than `RETENTION_DAYS` (30). |
 | `bcc_search_ensure_ft_index` | `hourly` | [bcc-search/bcc-search.php:96](../app/public/wp-content/plugins/bcc-search/bcc-search.php#L96) | bcc-search/bcc-search.php:105 — `SearchRepository::ensureFulltextIndex`. Self-deschedules once `bcc_ft_index_v2_installed` option is set. |
 | `bcc_trust_daily_cleanup` | `daily` | [bcc-trust/app/Domain/Core/Services/CronService.php:581](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/CronService.php#L581) | bcc-trust/bcc-trust.php:311 — `cronService()->dailyCleanup()`. |
 | `bcc_trust_hourly_recalc` | `hourly` | CronService.php:582 | bcc-trust/bcc-trust.php:314 — `cronService()->hourlyRecalc()`. |
