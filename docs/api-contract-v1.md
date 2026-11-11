@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.88 · 2026-11-11 · Phase 1 deliverable
+**Status:** Draft v1.89 · 2026-11-11 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2151,7 +2151,7 @@ Silent-refresh seam: exchanges a recently-expired (or near-expiry) Bearer JWT fo
 
 #### `GET /bcc/v1/auth/session`
 
-*(since v1.8Y)* Server-side validation of a Bearer JWT: "whose session is this token?". Built for the frontend's NextAuth `bcc-verified` credentials provider, which must build its session from the **server's** answer, never from a POSTed `user_id` / `handle` (frontend F-08).
+*(since v1.89)* Server-side validation of a Bearer JWT: "whose session is this token?". Built for the frontend's NextAuth `bcc-verified` credentials provider, which must build its session from the **server's** answer, never from a POSTed `user_id` / `handle` (frontend F-08).
 
 - **Auth:** Bearer required — the token to check, in `Authorization: Bearer <jwt>`. The route validates **the presented token itself** with the canonical `JwtToken::decode` (signature, issuer, audience, `exp`, token-version revocation) — **no refresh grace**. It never consults the WordPress cookie session: a valid cookie with a missing or bad Bearer is still `401`.
 - **Body / query:** none.
@@ -8736,9 +8736,8 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.8Y — <merge date> — additive — `GET /auth/session`
+### v1.89 — 2026-11-11 — additive — `GET /auth/session`
 
-> Version placeholder: the coordinator assigns the number at merge; replace every `v1.8Y` (here and in §4) and `<merge date>`.
 
 - **New `GET /auth/session`:** validates the presented Bearer JWT (canonical decode, no refresh grace, never the cookie session) and returns `{ user_id, handle, in_good_standing, expires_at }`. One `401 bcc_unauthorized` for every rejection; `409` without a handle; per-token `429`. `in_good_standing` fails open — not a security gate. For the frontend's `bcc-verified` provider (F-08), which must stop trusting POSTed identity fields.
 
