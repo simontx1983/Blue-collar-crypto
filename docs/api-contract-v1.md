@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.104 · 2026-11-11 · Phase 1 deliverable
+**Status:** Draft v1.105 · 2026-11-11 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2415,6 +2415,7 @@ Full User view-model.
 
 - **Auth:** Anonymous OR Bearer
 - **Path:** `handle` (lowercase, no `@` prefix)
+- **Retired handles (v1.105):** a handle the server retired because it equalled the member's login still resolves to that member, on this route and on every `:handle` / `:slug` member route (cards, followers, following, albums, groups). The response's `handle` is the member's **current** handle. When it differs from the requested one, the client MUST redirect permanently to `/u/{handle}` (current). A retired handle is never assigned to anyone again. Only those specific retired handles resolve this way; it is not a login lookup.
 - **Response 200:** User view-model (§3.1) — own variant if `is_self`, others' variant otherwise
 - **Errors:** `bcc_not_found` (handle missing), `bcc_permission_denied` (account suspended; rare) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer. ⚠ Note the two distinct 403 codes on this route: `bcc_permission_denied` is about the **viewer's** standing, `bcc_forbidden` about the **owner's** privacy. A client must branch on `code` plus `data.reason`, not on the status alone.
 - **Rate limit:** 60/min/viewer
@@ -8843,6 +8844,14 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.105 — 2026-11-11 — behaviour change — public handles never expose a login; retired handles still resolve
+
+Ships with bcc-trust's public-identity changes (two stacked PRs) and bcc-core's feed-author fix.
+
+- **Fallbacks:** a member with no stored handle shows `member-{id}` as `handle` (was: their login). A `display_name` that is empty or equal to the login shows the handle (was: the login). Applies everywhere a member mini, card, feed author, comment byline, mention, notification or message party is rendered. Types are unchanged; only the fallback values differ.
+- **Retired handles:** members whose handle equalled their login get a new handle (their display-name slug, else `member-{id}`). The old handle is retired. It still resolves to the member on `GET /users/:handle` and the other `:handle` / `:slug` member routes, and is never assigned again. The response carries the CURRENT `handle`; the client redirects `/u/{old}` permanently to `/u/{current}` (see `GET /bcc/v1/users/:handle`). Only retired handles resolve this way; it is not a login lookup.
+- **Clients:** add the redirect on the profile route when the response's `handle` differs from the requested one (case-insensitive). No other change.
 
 ### v1.104 — 2026-11-11 — behaviour change — NFT reorder is capped and throttled
 
