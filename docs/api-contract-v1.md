@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.101 · 2026-11-11 · Phase 1 deliverable
+**Status:** Draft v1.107 · 2026-11-11 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -258,13 +258,24 @@ Two styles, **never mixed within an endpoint**:
 }
 ```
 
-**Cursor format (locked):** the server encodes `(timestamp, id, rank_score_at_emit)` as a base64-encoded JSON token, e.g.,
+**Cursor format — the FEED cursor, and illustrative rather than universal:** the feed server encodes `(timestamp, id, rank_score_at_emit)` as a base64url-encoded JSON token, e.g.,
 
 ```
 base64({"t":"2026-04-27T11:14:00Z","id":98712,"rs":0.873})
 ```
 
 Including `rank_score_at_emit` lets the server preserve scroll order across re-ranks at the cost of slight duplication risk. The cursor is **opaque to the client** — never decode, parse, or modify it; round-trip it verbatim. Default `limit` = 20, max = 50.
+
+⚠⚠ **The payload is an implementation detail of the EMITTING SURFACE, not a wire contract.** It follows from the cursor being opaque: a client that never decodes it cannot depend on its fields, so each paginated collection may carry whatever its own ordering requires. `rank_score_at_emit` exists for re-ranked feeds and has no analogue on a collection ordered by a plain timestamp.
+
+What **is** normative for every cursor:
+
+- it carries a **unique tiebreak** — the row id — alongside its sort key, because a timestamp alone is not a total order and two rows sharing a second would page unstably;
+- it is **base64url** (no `+`, `/` or `=`), since it travels in a query string;
+- a malformed, truncated or foreign cursor **resets to the first page** rather than erroring — a bad cursor is a navigation accident (a stale bookmark, a copied URL), not a client fault worth a `400`;
+- it **cannot widen visibility**: it only adds a `(sort_key, id)` comparison to a query whose authorization and visibility predicates are applied independently. That is why cursors are unsigned.
+
+⚠ This paragraph was added because the word "locked" above had been read as pinning the *bytes*, which the contract itself does not do: §4.32.14's announcement example decodes to `{"p":…,"i":…}` and the announcement surfaces mint `{v,s,k,id}` — three shapes, none of them wrong. A surface that **tags** its payload and refuses a foreign one is preferred, because it makes cross-surface decoding impossible rather than merely unlikely; see the note under §4.32.12.
 
 **Offset (directories, static lists, admin tools):**
 
@@ -394,6 +405,7 @@ The single most important shared type. Encodes §N7 (always visible, disabled wi
   - ⚠ It is deliberately a **different** code from `messaging_unavailable`. That one is the §4.19 info-leak shield, hiding WHICH of mutual-block / DMs-off / no-such-user applies. `unavailable` states a fact about the REQUEST rather than about the pair, so it reveals nothing the shield protects — and on a failed read every candidate in a batch receives it uniformly, which is why a shared payload is safe here.
   - The matching write paths answer `bcc_unavailable` **503** (§4.19), so a client that retries gets a coherent answer from both sides.
   - **Info-leak shield:** a mutual block and a recipient with DMs turned off emit the **byte-identical** `{ allowed: false, unlock_hint: null, reason_code: "messaging_unavailable" }`. Clients must not attempt to distinguish them, and the server never does on the wire (this mirrors the §4.19 404 shield on the write path).
+- **`can_vouch` · `can_stand_behind` · `can_report` on an UNCLAIMED page card (v1.102):** a validator, project or creator page nobody has claimed (no owner yet) emits `{ allowed: false, unlock_hint: null, reason_code: "unclaimed" }` for all three, for **every** viewer, anonymous included (not "Sign in to …": signing in would not unlock it). Clients **omit** the three slots (§N7 structural carve-out) and may show Message in their place; `can_message` and `can_watch` are unaffected. This mirrors the write path: `POST /me/attestations` already refuses such a target with `bcc_not_found` 404 "Target not found.", unchanged. On a claimed page, and on member cards, the three keep their existing shapes, with `reason_code: null`.
 - When `allowed: true`, `unlock_hint` is `null` (not omitted — explicit `null` so client typing is uniform).
 - When a gate is **structurally impossible** for this viewer (e.g., viewing your own card → `can_watch: false`, you can't follow yourself), `unlock_hint` is `null` and the frontend hides the action UI per §N7's "structurally impossible" carve-out (the always-visible rule applies to *gates a viewer could resolve*, not to nonsensical actions).
 
@@ -1855,6 +1867,7 @@ Issues a single-use challenge nonce for wallet signing.
 - **Errors:** `bcc_invalid_request` (bad chain or wallet format), `bcc_rate_limited`
 - **Rate limit:** 10/min/IP, 5/min/wallet
 - **Cache:** `Cache-Control: no-store`
+- **Message (since v1.106, F-25):** the text to sign is `Verify your wallet on Blue Collar Crypto (<host>). This request will not trigger a transaction or cost any fees. Code: <nonce> Chain: <slug>`. `<host>` is the public site's host: the canonical `BCC_FRONTEND_ORIGIN` entry, else `home_url()`'s host, so staging names its own host. If neither yields a host, the ` (<host>)` part is omitted (the rest of the text is unchanged). Clients sign the returned text **as is** and never build it themselves.
 
 #### `POST /bcc/v1/auth/wallet-link`
 
@@ -1919,8 +1932,8 @@ Issues a single-use challenge nonce for **anonymous** wallet signing. Public sib
 - **Response 200:**
   ```json
   {
-    "nonce": "8f3a7b2e9c1d4f6a",
-    "message": "Sign this to verify you control this wallet on Blue Collar Crypto.\n\nNonce: 8f3a7b2e9c1d4f6a\nIssued: 2026-04-27T14:23:00Z\nExpires: 2026-04-27T14:33:00Z",
+    "nonce": "8f3a7b2e9c1d4f6a8f3a7b2e9c1d4f6a",
+    "message": "Sign in to Blue Collar Crypto (bluecollarcrypto.io). This request will not trigger a transaction or cost any fees. Code: 8f3a7b2e9c1d4f6a8f3a7b2e9c1d4f6a Chain: cosmos",
     "chain_slug": "cosmos",
     "chain_id": 4,
     "wallet_address": "cosmos1abcdef…",
@@ -1929,6 +1942,8 @@ Issues a single-use challenge nonce for **anonymous** wallet signing. Public sib
   ```
 - **Errors:** `bcc_invalid_request` (missing chain/address, unsupported chain, bad address format), `bcc_rate_limited`
 - **Rate limit:** IP-bucketed (`WALLET_NONCE_RATE_LIMIT`/min/IP). Disjoint from `/auth/nonce`'s user-keyed bucket — the two routes never starve each other under partial DoS.
+- **Message (since v1.106, F-25):** `Sign in to Blue Collar Crypto (<host>). This request will not trigger a transaction or cost any fees. Code: <nonce> Chain: <slug>` — `<host>` as for `/auth/nonce`. Clients sign `message` **as returned**.
+- **One live challenge per (address, chain) (since v1.106, F-25):** while a challenge is live (5 min), a repeat request for the same address and chain returns **the same challenge** instead of replacing it, so a stranger requesting a nonce for someone else's address can no longer invalidate the one they are about to sign. A request for another chain gets its own challenge and leaves the first live.
 - **Cache:** `Cache-Control: no-store`
 
 #### `POST /bcc/v1/auth/wallet-login`
@@ -1957,13 +1972,13 @@ Verifies a signed nonce, looks up the BCC user the wallet is linked to, mints + 
   }
   ```
 - **Errors:**
-  - `bcc_invalid_request` 400 — missing field, expired nonce, unsupported chain.
-  - `bcc_signature_invalid` 401 — signature verification failed.
+  - `bcc_invalid_request` 400 — missing field; no live challenge for the address (expired, never issued, or already used — including a replayed signature, or a concurrent duplicate that lost).
+  - `bcc_signature_invalid` 401 — the signature verifies against none of the address's live challenges.
   - `bcc_wallet_not_linked` 404 — no BCC account is bound to this wallet. Frontend should route the user to `/signup` (or the wallet-signup flow) with the wallet pre-attached. **Distinct, recoverable code** — never auto-promotes.
   - `bcc_invalid_state` 409 — account is missing a handle (created outside BCC signup); routes through handle-claim surface.
   - `bcc_rate_limited` 429.
-  - `bcc_internal_error` 500 — stored challenge malformed.
-- **Rate limit (changed in v1.97):** **per wallet** — `WALLET_LOGIN_RATE_LIMIT` (5) / min per (chain + lower-cased address) — plus a route-wide ceiling of 300 / min; **no longer per IP** (this route is called server-side by the frontend, so every request shares one IP and a per-IP bucket let anyone lock out all wallet logins). The check runs **after** the nonce is consumed (only a request carrying a server-issued nonce for that address counts, so junk cannot drain someone else's bucket) and **before** the CPU-bound verify step. Case-variant base58/SS58 addresses share a bucket (fail-closed).
+- **Rate limit (changed in v1.97; keyed per address since v1.106):** **per wallet** — `WALLET_LOGIN_RATE_LIMIT` (5) / min per lower-cased address (the chain is only known once a signature verifies) — plus a route-wide ceiling of 300 / min; **no longer per IP** (this route is called server-side by the frontend, so every request shares one IP and a per-IP bucket let anyone lock out all wallet logins). The check runs **after** a live challenge for the address is found (a bare junk request for an address with none does not count) and **before** the CPU-bound verify step. Case-variant base58/SS58 addresses share a bucket (fail-closed).
+- **Verify before consume (since v1.106, F-25):** the signature is checked against the address's live challenges (at most one per chain, each against its own stored message), and **only the challenge it verifies against is consumed** — atomically, so a replay or a concurrent duplicate gets `400`. A wrong signature consumes nothing, so a stranger can no longer burn the challenge the wallet owner is about to sign.
 - **Cache:** `Cache-Control: no-store`
 - **Side effects:** sets `wp_set_auth_cookie`, emits `user_login` audit row, fires `bcc_user_login` action.
 
@@ -1996,13 +2011,14 @@ Verifies a signed nonce, creates a new user (placeholder email if none supplied)
   }
   ```
 - **Errors:**
-  - `bcc_invalid_request` 400 — missing field, expired nonce, unsupported chain, bad address.
+  - `bcc_invalid_request` 400 — missing field, bad address; no live challenge for the address (expired, never issued, or already used).
   - `bcc_invalid_handle` 400 / `bcc_handle_reserved` 409 / `bcc_conflict` 409 — handle validation per §B6.
   - `bcc_signature_invalid` 401 — signature verification failed.
   - `bcc_wallet_already_linked` 409 — wallet is already bound to an account. Frontend should route to `/login`.
   - `bcc_rate_limited` 429.
-  - `bcc_internal_error` 500 — stored challenge malformed, or `wp_insert_user` failed.
+  - `bcc_internal_error` 500 — `wp_insert_user` failed.
 - **Rate limit:** IP-bucketed (`WALLET_SIGNUP_RATE_LIMIT`/min/IP).
+- **Verify before consume (since v1.106, F-25):** as `/auth/wallet-login` — the signature picks the live challenge it was made for (which also fixes the chain), nothing is consumed until the handle, address and wallet-collision checks pass, and a wrong signature consumes nothing.
 - **Cache:** `Cache-Control: no-store`
 - **Side effects:** sets `wp_set_auth_cookie`, fires `bcc_wallet_verified` (seeds trust-engine + onchain-signals rows just like `verifyAndLink`), emits `user_signup` audit row, fires `bcc_user_signup` action. **Note:** does NOT emit the `bcc_first_wallet_link` celebration on the response — celebration delivery for wallet-signup is reserved for a future contract revision.
 - **Email state (changed in v1.88):** sets `_bcc_email_verified='0'` — a wallet signature proves control of the wallet, not of the inbox. A **caller-supplied** email gets the standard verification email (OTP + one-shot link, completed via `POST /auth/verify-email`) once the wallet link commits; a **placeholder** gets none and stays `'0'`. Previously this route set `'1'` with no inbox proof, which let a wallet signup typed with someone else's address receive that person's later Google sign-in (see `/auth/oauth-complete` → the anti-pre-registration gate). `'0'` does not affect the user's own sign-in: they sign in with the wallet.
@@ -2213,6 +2229,7 @@ Confirms email ownership and completes signup via either an OTP code or a one-sh
 - **Response 200:** identical shape to `/auth/login` (`{ user_id, handle, token, expires_in, token_type, in_good_standing }`) so the frontend treats both uniformly, **plus `linked_wallet_count: int` (since v1.90)** — how many wallets are linked to the account whose email was just proven. When it is `> 0` the client asks "this account has a wallet linked — is it yours?", listing them with `GET /wallets` (using the fresh `token`) and removing one with `DELETE /wallets/{id}`. A count only: no wallet detail rides this auth response. If the wallet read fails the count is `0` and verification still succeeds (the prompt is advisory; wallets stay reviewable in Settings) — so **`0` can mean "read failed"**: a client must never take a destructive or irreversible action on `linked_wallet_count: 0`.
 - **Errors:** `bcc_invalid_request` 422 (neither token nor email+code) · `bcc_invalid_verify_token` 400 (token expired/used) · `bcc_invalid_otp` 400 (email unknown — generic; or code wrong/expired) · `bcc_already_verified` 409 (OTP path only) · `bcc_invalid_state` 409 (no handle) · `bcc_rate_limited` 429 · `bcc_internal_error` 500
 - **Rate limit:** IP-bucketed, 10 / 3600s
+- **Attempt cap (since v1.105, F-48):** at most **5 wrong codes per (account, current code)**; the 5th burns that code. Because a correct code signs the caller in, the per-IP bucket alone did not bound guesses spread across addresses. The answer stays the generic `400 bcc_invalid_otp` "Invalid or expired code." (no new code, no enumeration signal); the user requests a new code via `/auth/resend-verification`, which starts a fresh count, or uses the emailed link — the **token path is not capped and not affected**.
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** token path consumes the `bcc_vt_<token>` transient (single-use); OTP path resolves by email, checks `_bcc_email_verified`, timing-safely (`hash_equals`) consumes the HMAC-hashed `bcc_otp_<userId>` transient. Both converge on `finalizeVerification` → sets `_bcc_email_verified='1'`, sets the auth cookie, **revokes every earlier bearer token for the account (JWT token-version bump, since v1.88)**, mints the JWT, emits `email_verified` audit, fires `do_action('bcc_email_verified', …)`. The revocation means a session held by whoever created the account before the address was proven does not survive the inbox owner's verification; the returned token is the caller's working session and must be stored. Handler `AuthEndpoint::verifyEmail` (route `AuthEndpoint.php:487`). Standard envelope per §1.4.
 
@@ -2283,13 +2300,13 @@ Anonymous-friendly trending feed (§F2 zero-follow fallback).
 - **Response 200:** `CursorEnvelope<FeedItem>` (same shape as `/feed`)
 - **Errors:** `bcc_invalid_request`
 - **Rate limit:** 60/min/IP (anon), 60/min/user (authed)
-- **Cache (v1.9X — NOW VARIES BY VIEWER; version number assigned at merge):**
+- **Cache (v1.107 — NOW VARIES BY VIEWER):**
   - Anonymous: `Cache-Control: public, max-age=60, stale-while-revalidate=120`
   - Signed in: `Cache-Control: private, max-age=15`
   - **Both:** `Vary: Authorization, Cookie`
 
   ⚠⚠ **A signed-in response is never shareable, and this is a security
-  property rather than a tuning choice.** As of this revision the hot feed applies
+  property rather than a tuning choice.** As of v1.107 the hot feed applies
   §K1 mutual invisibility for a signed-in reader, so the body depends on who
   is asking. Served under the old `public` header, a shared cache (CDN or
   reverse proxy) could store ONE viewer's filtered feed and serve it to
@@ -2303,7 +2320,7 @@ Anonymous-friendly trending feed (§F2 zero-follow fallback).
 
   ⚠ The anonymous posture is otherwise UNCHANGED, so the public,
   SEO-relevant cacheability this route exists for is preserved. Logged-out
-  responses are byte-identical to the previous revision.
+  responses are byte-identical to v1.106.
 
   ⚠ **Correction, not a change:** this line previously documented
   `public, max-age=15, stale-while-revalidate=30`. The shipped values have
@@ -5663,8 +5680,9 @@ Set new display order for the viewer's selections.
   { "ok": true, "updated": 3 }
   ```
   `updated` is the number of rows actually written; can be less than `ordered_ids.length` if some ids were unowned (local cache lagged a remote delete).
-- **Errors:** `bcc_invalid_request 422` (missing or non-array `ordered_ids`).
-- **Rate limit:** unthrottled in V1 — UI is button-driven and naturally bounded by user pacing. Worth a throttle if abuse appears.
+- **Errors:** `bcc_invalid_request 422` (missing or non-array `ordered_ids`, **or (v1.104) more than 200 ids**: "ordered_ids may contain at most 200 ids."; nothing is written). `bcc_rate_limited 429` (v1.104, throttled; see below).
+- **Limits (v1.104):** `ordered_ids` holds at most **200** ids, the most selections the profile list ever loads. The write is one row update per id, so the cap bounds a single request.
+- **Rate limit (v1.104):** 30 requests / 60 s per user (`nft_reorder` bucket, like the sibling select/deselect routes). Over it → `bcc_rate_limited 429`, nothing written. (Was unthrottled before v1.104.)
 - **Side effects:** bumps the per-user selections generation counter when `updated > 0`.
 
 ---
@@ -8015,6 +8033,13 @@ closes.
 **Pinning promotes on the validator page only** and never reorders the general feed
 (§4.32.8).
 
+⚠ **The cursor payloads in §4.32.14 are illustrative.** Per §1.5 the bytes are an
+implementation detail of the emitting surface, so a reader must not treat an example token as
+a shape to reproduce. Each announcement collection **tags** its cursor with its own surface and
+refuses a cursor minted for another — necessary because the four collections order by
+DIFFERENT columns (`published_at` for the active list, `archived_at` for the archived one), so
+applying one to the other would skip or repeat rows with nothing in the response to show it.
+
 ⚠ **Cursor stability.** `?state=active` is ordered by a field the operator can change (pinning
 moves a row to the front), so a cursor page boundary can shift under a reader mid-scroll. The
 cursor must therefore carry a **unique tiebreak** (the row id) alongside its sort key, exactly
@@ -8849,7 +8874,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.9X (number assigned at merge) — 2026-11-11 — behaviour change — `/feed/hot` varies by viewer and is no longer shared-cacheable when signed in
+### v1.107 — 2026-11-11 — behaviour change — `/feed/hot` varies by viewer and is no longer shared-cacheable when signed in
 
 Ships with bcc-trust's hot-feed per-viewer block filter, stacked on
 bcc-trust #487.
@@ -8882,10 +8907,56 @@ bcc-trust #487.
   `max-age=60, stale-while-revalidate=120`; the anonymous row now records
   what the code actually sends. Called out rather than folded in silently.
 - **Clients:** nothing to change. The payload shape is untouched — a
-  `CursorEnvelope<FeedItem>` either way, with fewer items for a signed-in
-  viewer who blocks someone. A page may come back shorter than `limit`
-  without meaning the feed has ended; `pagination.has_more` remains the only
-  end-of-feed signal, as on every other surface.
+  `CursorEnvelope<FeedItem>` either way.
+
+  ⚠ But a signed-in page can now be **shorter than `limit`, or EMPTY if the
+  block state cannot be checked right now**, and neither means the feed has
+  ended. The filter is applied after the page is assembled, so blocked
+  authors are removed rather than back-filled; and an unreadable block table
+  fails CLOSED, withholding the page rather than risking a blocked author.
+  `pagination.has_more` remains the only end-of-feed signal — true on every
+  surface already, but newly reachable here, and a client that treats "fewer
+  items than I asked for" or "no items" as the end will stop paginating
+  early.
+### v1.106 — 2026-11-11 — behaviour change — wallet sign-in names the site; its challenge can't be replaced or burned
+
+Ships with bcc-core #83 and bcc-trust #486.
+
+- **Signed text (F-25, user-approved wording):** wallet sign-in / sign-up (`/auth/wallet-nonce`) now asks the wallet to sign `Sign in to Blue Collar Crypto (<host>). This request will not trigger a transaction or cost any fees. Code: <nonce> Chain: <slug>`; wallet linking and validator claims (`/auth/nonce`) sign `Verify your wallet on Blue Collar Crypto (<host>). …` with the same tail. `<host>` comes from config, so staging names its own host. Clients already sign `message` as returned — no client change.
+- **`GET /auth/wallet-nonce`:** a live challenge is no longer replaced by a repeat request for the same address and chain — the same challenge comes back until it expires. Challenges are per (address, chain).
+- **`POST /auth/wallet-login` · `/auth/wallet-signup`:** the signature is verified **before** anything is consumed, and only the challenge it verified against is consumed. A wrong signature now leaves the owner's challenge intact (`401`); replay or a lost race is `400`. The `500 stored challenge malformed` case is gone (such a challenge simply never verifies). wallet-login's per-wallet bucket is now keyed on the lower-cased address alone.
+
+### v1.105 — 2026-11-11 — behaviour change — the email-verification code has an attempt cap
+
+Ships with bcc-trust #500.
+
+- **`POST /auth/verify-email` (F-48), OTP path:** 5 wrong codes per (account, current code) burn that code. Same `400 bcc_invalid_otp` answer as any wrong code; a resend starts a fresh count; the emailed link (token path) keeps working. 2FA is unchanged — `/auth/2fa/verify` already has its per-challenge cap (v1.97).
+
+### v1.104 — 2026-11-11 — behaviour change — NFT reorder is capped and throttled
+
+Ships with bcc-trust's F-30 change.
+
+`POST /nft-selections/reorder` had no size or rate limit, and it writes one row per id, so a single request could issue an unbounded number of updates.
+
+- **Cap:** more than **200** ids in `ordered_ids` → `bcc_invalid_request` 422, nothing written. 200 is the most selections the profile list loads, so a real reorder never hits it.
+- **Throttle:** 30 requests / 60 s per user → `bcc_rate_limited` 429, nothing written.
+- **Clients:** no change for normal use. Both codes are existing ones with existing copy. Response shape unchanged.
+
+### v1.103 — 2026-11-11 — docs-only clarification — a cursor's payload is per-surface; the tiebreak is what binds
+
+No behaviour, route or field change.
+
+- **§1.5:** the "Cursor format (locked)" example is the **feed's** cursor and is illustrative. The payload bytes belong to the emitting surface; a client must treat every cursor as opaque.
+- **What is normative for every cursor:** a unique `id` tiebreak beside the sort key; base64url; a malformed or foreign cursor resets to the first page instead of erroring; a cursor can never widen visibility.
+- **§4.32.14:** the announcement cursor examples are illustrative. Each collection tags its cursor with its surface and refuses another's, because they order by different columns.
+
+### v1.102 — 2026-11-11 — additive — unclaimed page cards hide vouch, back and report
+
+Ships with bcc-trust #469.
+
+- **§3.2 page cards:** on a page with no owner yet, `can_vouch`, `can_stand_behind` and `can_report` are `{ allowed: false, unlock_hint: null, reason_code: "unclaimed" }` for every viewer. Previously they were `allowed: true` for an eligible viewer (or "Sign in to …" for anon), and the cast then failed with 404, which the frontend rendered as "Attestation not found.".
+- **New `reason_code` value:** `unclaimed`. Hidden (no hint); clients omit the slot.
+- **Unchanged:** the `POST /me/attestations` write path (it already refused these targets), claimed pages, member cards, and the endorse gate.
 
 ### v1.101 — 2026-11-11 — additive — the email-digest unsubscribe link also accepts POST
 
