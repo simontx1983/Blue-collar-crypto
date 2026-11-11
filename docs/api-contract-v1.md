@@ -8826,7 +8826,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ### v1.9X — 2026-11-11 — behaviour change — a new operator or an administrator can archive a predecessor's announcement (number assigned at merge)
 
-Ships with bcc-trust F-147.
+Ships with bcc-trust F-147 (bcc-trust #478).
 
 - **`POST /validators/:pageId/announcements/:id/archive`:** the page's **current** operator may now archive any **published** notice on the page, including one a previous operator wrote (was `404`); a site administrator may archive any published notice (was `403`). Everyone else: unchanged `403 not_claimer`. Edit, publish, schedule and pin stay author-only.
 - **§4.32.2:** administrators gain archive; the rest of their rights are unchanged.
