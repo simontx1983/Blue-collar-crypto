@@ -302,7 +302,7 @@ Per-(voter,page,category) trust vote with weight + vesting lifecycle.
 - weight_corrected_at · datetime · YES · K
 - reason · varchar(100) · YES
 - explanation · text · YES
-- status · tinyint · NO
+- status · tinyint · NO — `0` retracted by the voter (re-casting restores the row; purged after `BCC_TRUST_CLEANUP_VOTES` days) · `1` active (the only value any score, feed or count reads) · `2` removed by accepted dispute (re-vote blocked; never purged by the cleanup sweep) · `3` removed by moderation — admin clear, ring invalidation, account deletion (re-vote blocked; restorable via `VoteRemovalService::restoreModeratedVotes()` for `MODERATION_RESTORE_WINDOW_DAYS` = 90 days, then purged). Constants on `VoteRepository::STATUS_*`. Bulk removal only ever moves `1 → 3` (bcc-trust #428)
 - ip_address · varbinary(16) · YES · K
 - created_at · datetime · NO · K
 - updated_at · datetime · NO
