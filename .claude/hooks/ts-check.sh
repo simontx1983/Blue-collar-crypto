@@ -15,6 +15,12 @@ file_path=$(printf '%s' "$input" | sed -n 's/.*"file_path"[[:space:]]*:[[:space:
 
 [[ -z "$file_path" ]] && exit 0
 
+# JSON escapes backslashes; normalize Windows separators to forward slashes so
+# the globs and the fe_root split below match regardless of how the path was
+# serialized. Same normalization as color-token-check.sh.
+file_path="${file_path//\\\\//}"
+file_path="${file_path//\\//}"
+
 # Only act on TypeScript sources inside bcc-frontend/. Skip declaration
 # files (they're generally generated or boundary types) and node_modules.
 case "$file_path" in
