@@ -2162,7 +2162,7 @@ Confirms email ownership and completes signup via either an OTP code or a one-sh
   { "token": "<64-hex one-shot token>" }
   ```
   OTP `code` = 6-digit email code (15-min TTL); `token` = self-identifying single-use link token (24-h TTL). The handler requires either `token` or both `email` and `code`.
-- **Response 200:** identical shape to `/auth/login` (`{ user_id, handle, token, expires_in, token_type, in_good_standing }`) so the frontend treats both uniformly.
+- **Response 200:** identical shape to `/auth/login` (`{ user_id, handle, token, expires_in, token_type, in_good_standing }`) so the frontend treats both uniformly, **plus `linked_wallet_count: int` (since v1.8X)** — how many wallets are linked to the account whose email was just proven. When it is `> 0` the client asks "this account has a wallet linked — is it yours?", listing them with `GET /wallets` (using the fresh `token`) and removing one with `DELETE /wallets/{id}`. A count only: no wallet detail rides this auth response. If the wallet read fails the count is `0` and verification still succeeds (the prompt is advisory; wallets stay reviewable in Settings) — so **`0` can mean "read failed"**: a client must never take a destructive or irreversible action on `linked_wallet_count: 0`.
 - **Errors:** `bcc_invalid_request` 422 (neither token nor email+code) · `bcc_invalid_verify_token` 400 (token expired/used) · `bcc_invalid_otp` 400 (email unknown — generic; or code wrong/expired) · `bcc_already_verified` 409 (OTP path only) · `bcc_invalid_state` 409 (no handle) · `bcc_rate_limited` 429 · `bcc_internal_error` 500
 - **Rate limit:** IP-bucketed, 10 / 3600s
 - **Cache:** `Cache-Control: no-store`
@@ -5746,8 +5746,10 @@ Unlinks a wallet owned by the current user. Idempotent — a double-tap unlink a
 - **Path:** `id` (integer, wallet_link row id).
 - **Response 200:**
   ```json
-  { "ok": true, "id": 142, "removed": true }
+  { "ok": true, "id": 142, "removed": true, "token": "<jwt>", "expires_in": 604800, "token_type": "Bearer" }
   ```
+  `token` / `expires_in` / `token_type` (since v1.8X) are present **only** on a true removal of the caller's own wallet (`removed: true`); `removed: false` (foreign or already-gone id) carries none. **Clients must store the returned token** — see "Sessions" below.
+- **Sessions (since v1.8X):** when the site option `bcc_unlink_revokes_sessions` is ON, a true removal first **revokes every earlier bearer token** for the account (JWT token-version bump) — so a wallet-login session for the removed wallet ends with the link — and the returned token is the caller's only working session. It is **OFF by default**: the fresh token is always returned, so a client can adopt it before revocation is switched on. ⚠ **Release order:** the frontend that stores the returned token on **every** unlink (Settings → Wallets and the post-verification "is this wallet yours?" prompt) must be **in production before** an operator runs `wp option update bcc_unlink_revokes_sessions 1` — otherwise every unlink signs the user out. With the option ON, the user's **other devices and tabs are signed out** on unlink — intended. Also do not switch it on until the frontend's token-swap race fix ships: an in-flight request still carrying the old bearer would otherwise refresh → `ERR_REVOKED` → end the session. After a removal, a new wallet-login with that wallet cannot reach the account either (the login lookup no longer finds the link).
 - **Errors:** `bcc_unauthorized` 401, `bcc_invalid_request` 400 (id missing), `bcc_last_recovery_method` 409 (see lockout guard below), `bcc_rate_limited` 429.
 - **Rate limit:** 10/min/user.
 - **Cache:** `Cache-Control: no-store`.
@@ -8717,6 +8719,17 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.8X — <merge date> — additive — "is this wallet yours?" after verification; unlink returns a fresh token
+
+> Version placeholder: the coordinator assigns the number at merge; replace every `v1.8X` (here and in §4) and `<merge date>`.
+
+Follow-up to v1.88 (bcc-trust #398). In an account someone else created with your address, v1.88 stops the takeover, but their wallet stays linked — this lets the proven owner see and remove it.
+
+- **`POST /auth/verify-email` (additive):** `linked_wallet_count: int` in the response — a count only.
+- **`DELETE /wallets/{id}` (additive):** on a true removal of the caller's own wallet, returns `token`, `expires_in`, `token_type`. With the option `bcc_unlink_revokes_sessions` ON (default **OFF**) it first revokes every earlier bearer token — other devices and tabs are signed out (intended). **Release order:** switch the option on only once (1) the frontend that stores the returned token on every unlink and (2) its token-swap race fix (an in-flight old-bearer request must not refresh → `ERR_REVOKED` → end the session) are both in production.
+- `linked_wallet_count: 0` can mean the wallet read failed — never act destructively on it.
+- No new routes.
 
 ### v1.88 — 2026-11-11 — behaviour change plus additive — an email is only "verified" once its inbox is proven
 
