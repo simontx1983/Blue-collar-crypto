@@ -115,6 +115,3 @@ jobs:
       - name: site-url probe parser regressions
         run: bash scripts/tests/site-url-probe.test.sh
 
-      # wallet-case-preservation-check.php is intentionally NOT run here — it
-      # boots WordPress (needs mysqli + a DB), so it's a live-site check, not a
-      # static gate. Run it against a running site, not in CI.

@@ -67,6 +67,3 @@ and what (cannot be confirmed to) block merge.
   guards — only a push to the sibling's `main` (or a manual umbrella `workflow_dispatch`) does.
 - **`next build` is not gated in GitHub Actions** — delegated to Vercel preview deploys; whether
   Vercel success is a required check is Vercel/GitHub-side config, not in these files.
-- **`wallet-case-preservation-check.php`** exists in `scripts/` and is referenced in the umbrella
-  `ci.yml` only by an **exclusion comment** — it is deliberately **not run** as a static guard
-  (it boots WordPress + needs a DB, so it's a live-site check, not a CI gate).

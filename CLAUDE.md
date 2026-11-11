@@ -139,8 +139,7 @@ background audits, worktree-based parallelism), see
   `docs/database-schema.md` turns umbrella CI red.**
 
 Also present in `scripts/` but not documentation-load-bearing:
-`wallet-case-preservation-check.php` (throwaway
-live-DB check, deliberately excluded from CI), `bcc-query-floor-probe.php`
+`bcc-query-floor-probe.php`
 (temporary boot-floor diagnostic), `auth-cache-isolation-probe.sh`
 (staging Authorization-cache probe; weekly via
 `.github/workflows/staging-cache-probe.yml`), and `perf/` (k6 harness).
