@@ -123,6 +123,7 @@ const EXEMPT_INTERNAL = [
     // — Machine (shared-secret / OAuth callback / liveness) —
     'GET /bcc/v1/system/ping'                   => 'machine: public liveness probe (no sensitive data)',
     'GET /bcc/v1/digest/unsubscribe'            => 'machine: HMAC-token email unsubscribe link',
+    'POST /bcc/v1/digest/unsubscribe'           => 'machine: RFC 8058 one-click unsubscribe (List-Unsubscribe-Post) — same HMAC token',
     'GET /bcc-trust/v1/github/callback'         => 'machine: GitHub OAuth redirect (CSRF state)',
     'GET /bcc-trust/v1/x/callback'              => 'machine: X OAuth redirect (CSRF state)',
     'POST /bcc/v1/onchain/helius/webhook'       => 'machine: Helius webhook (hash_equals secret)',
