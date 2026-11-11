@@ -823,6 +823,7 @@ foreach (($dm["degradation_metrics"]["subsystems"] ?? []) as $name => $events) {
 - `peepso_absence` (19 events)
 - `search_lkg` (2 events)
 - `search_ft_index` (1 event — FT-eligible query served by title-prefix fallback because the FULLTEXT index is missing; added 2026-07-19)
+- `search_trust` (1 event — `enrichment_unavailable`; a search or trending result served WITHOUT trust enrichment: text-only ranking, no impersonation guard; tagged `system_degraded`, cached 10 s, never as LKG; added 2026-11-11, F-24)
 - `read_model_fallback` (1 event)
 - `audit_log_swallow` (4 events)
 - `account_security_mail` (7 events — Tier D `sessions_revoked_all_send_failed` added 2026-05-16; `password_reset_requested_send_failed` added 2026-05-30)

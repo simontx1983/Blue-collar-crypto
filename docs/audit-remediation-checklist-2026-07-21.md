@@ -567,7 +567,7 @@ to their Batch-H doc item (not built here).
 - **Priority:** P3 · **Timing:** post-launch · **Type:** code · **Surface:** bcc-trust
 - **F-IDs:** F099 · **Location:** `bcc_stoke_added/removed` etc. (no listeners). **Current:** 9 orphan emitters. **Outcome:** delete or wire. **Acceptance:** no orphan `do_action` remains. **Deps:** launch · **Risk:** low · **Size:** small · **Tracker:** TODO.md:31.
 
-### ☐ CL-92 — bcc-search uninstall hygiene — **OPEN**
+### ☑ CL-92 — bcc-search uninstall hygiene — **DONE (F-53, bcc-search #29)**
 - **Priority:** P3 · **Timing:** post-launch · **Type:** code · **Surface:** bcc-search
 - **F-IDs:** F060, F243 · **Location:** `uninstall.php:21-24`. **Current:** promises a `wp_bcc_search_terms` drop never written + 2 gen-counter options not cleaned. **Outcome:** add the guarded DROP + option deletes; remove/reword the dead `dropTable()`. **Acceptance:** uninstall removes all search artifacts. **Deps:** — · **Risk:** low · **Size:** tiny · **Tracker:** this item.
 

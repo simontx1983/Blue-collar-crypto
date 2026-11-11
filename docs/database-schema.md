@@ -743,7 +743,9 @@ Sidecar (not a column) because PeepSo owns `peepso_activities`.
 #### wp_bcc_search_terms (bcc-search)
 Search-analytics aggregate: one row per (norm_term, vertical, day), UPSERT-collided on the
 unique key by `SearchTermsRepository::record()`. Self-heal installed (option-guarded,
-advisory-locked); rows past the 120-day retention window pruned daily
+advisory-locked); rows past the 30-day retention window pruned daily (was 120 days
+until F-53, 2026-11-11; the users vertical — names of people searched — is never
+recorded)
 (`bcc_search_terms_prune` cron). The only bcc-search-owned table.
 - id · bigint unsigned · NO · PK auto
 - norm_term · varchar(100) · NO
