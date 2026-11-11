@@ -23,7 +23,8 @@
         "MYSQL_DB": "local",
         "ALLOW_INSERT_OPERATION": "false",
         "ALLOW_UPDATE_OPERATION": "false",
-        "ALLOW_DELETE_OPERATION": "false"
+        "ALLOW_DELETE_OPERATION": "false",
+        "ALLOW_DDL_OPERATION": "false"
       }
     },
     "sentry": {

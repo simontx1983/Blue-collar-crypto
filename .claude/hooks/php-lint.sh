@@ -20,10 +20,13 @@ file_path=$(printf '%s' "$input" | sed -n 's/.*"file_path"[[:space:]]*:[[:space:
 file_path="${file_path//\\\\//}"
 file_path="${file_path//\\//}"
 
-[[ "$file_path" != *.php ]] && exit 0
+# Scope on a LOWERCASED copy (case-insensitive filesystems): `X.PHP` must be
+# linted and `Vendor/` must be skipped.
+lc="${file_path,,}"
+[[ "$lc" != *.php ]] && exit 0
 
 # Skip vendor/ — composer-managed, not ours to lint.
-case "$file_path" in
+case "$lc" in
   */vendor/*) exit 0 ;;
 esac
 
