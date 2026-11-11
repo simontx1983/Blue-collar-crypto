@@ -8849,6 +8849,44 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
+### v1.9X (number assigned at merge) — 2026-11-11 — behaviour change — `/feed/hot` varies by viewer and is no longer shared-cacheable when signed in
+
+Ships with bcc-trust's hot-feed per-viewer block filter, stacked on
+bcc-trust #487.
+
+- **`GET /feed/hot` now applies §K1 mutual invisibility for a SIGNED-IN
+  reader.** Authors the viewer has blocked, and authors who have blocked the
+  viewer, are dropped from the page. Previously this route was the one feed
+  surface where a blocked author still appeared, because it is built once
+  with the anonymous posture and cached for everyone. Logged-out responses
+  are unchanged.
+- **Cache posture — and this is a security property, not tuning:**
+  - signed in → `Cache-Control: private, max-age=15` (matching `/feed/tag`,
+    which already had this problem and solved it the same way)
+  - anonymous → `Cache-Control: public, max-age=60, stale-while-revalidate=120`, **unchanged**
+  - **both** → `Vary: Authorization, Cookie`
+
+  ⚠⚠ A signed-in response must never be shareable. Served under the old
+  `public` header, a shared cache (CDN or reverse proxy) could store ONE
+  viewer's filtered feed and serve it to everyone else, including logged-out
+  visitors, for up to three minutes — leaking which authors that viewer
+  blocks, by their absence. That would be strictly worse than the unfiltered
+  feed this replaces.
+
+  ⚠ `Vary` is sent on the ANONYMOUS response too. Without it a shared cache
+  does not know the response depends on credentials and may hand the cached
+  anonymous copy to a signed-in request; that leaks nothing but silently
+  defeats the filter, so the feature would look implemented and not work.
+- **Correction on the same §4 row:** it previously documented
+  `public, max-age=15, stale-while-revalidate=30`. The route has been sending
+  `max-age=60, stale-while-revalidate=120`; the anonymous row now records
+  what the code actually sends. Called out rather than folded in silently.
+- **Clients:** nothing to change. The payload shape is untouched — a
+  `CursorEnvelope<FeedItem>` either way, with fewer items for a signed-in
+  viewer who blocks someone. A page may come back shorter than `limit`
+  without meaning the feed has ended; `pagination.has_more` remains the only
+  end-of-feed signal, as on every other surface.
+
 ### v1.101 — 2026-11-11 — additive — the email-digest unsubscribe link also accepts POST
 
 Ships with bcc-trust #489 (admin-controlled email digest).
