@@ -825,7 +825,6 @@ foreach (($dm["degradation_metrics"]["subsystems"] ?? []) as $name => $events) {
 - `search_ft_index` (1 event — FT-eligible query served by title-prefix fallback because the FULLTEXT index is missing; added 2026-07-19)
 - `read_model_fallback` (1 event)
 - `audit_log_swallow` (4 events)
-- `legacy_ajax` (3 events — was 9; 6 wallet/collection AJAX handlers retired 2026-05-25)
 - `account_security_mail` (7 events — Tier D `sessions_revoked_all_send_failed` added 2026-05-16; `password_reset_requested_send_failed` added 2026-05-30)
 - `cron_dispatch` (2 events — soft wp_schedule_single_event / AsyncDispatcher enqueue failures on the unrecoverable trust async surface)
 - `post_commit_task` (1 event — `vote_subtask_failed`; a post-commit trust step threw during execution and was swallowed; NOT a wp_options signal. `dispute_backfill_failed` retired with the §D5 backfill, Rank Phase 6)
