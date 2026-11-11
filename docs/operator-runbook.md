@@ -104,7 +104,6 @@ Bottom of Health page shows the 18-subsystem table. Hot rows (nonzero current OR
 | `read_model_fallback.legacy_aggregation` | RM read fell back to live aggregation | Recalc cron stalled — see §3 |
 | `audit_log_swallow.log_write_failed` | Audit log insert returned false | DB write-failure on audit table. Check disk space + table schema |
 | `account_security_mail.*_send_failed` | wp_mail failure on credential-rotation canary email | **P1 alert posture** — the user who was supposed to receive a canary notification did NOT. Investigate mail backend immediately. The audit_log row is the only remaining trail. |
-| `legacy_ajax.*` | A deprecated AJAX endpoint was hit by an actual caller | Investigate WHICH endpoint; the legacy_ajax cluster was retired with no expected callers |
 | `cron_dispatch.endorsement_fraud_analyzer` | wp_schedule_single_event returned false for fraud analysis | DB write-failure on wp_options. Endorsement bonus may stick on a fraudulent endorser. Manual replay needed. |
 | `cron_dispatch.vote_job_dispatcher` | Same, for the composite post-vote job | All four sub-tasks for that vote stranded. Manual replay needed. |
 | `gated_group_provision.peepso_absent` | PeepSo Groups missing | Same as `peepso_absence` — check plugin state |
