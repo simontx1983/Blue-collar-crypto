@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.89 · 2026-11-11 · Phase 1 deliverable
+**Status:** Draft v1.90 · 2026-11-11 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2149,6 +2149,24 @@ Silent-refresh seam: exchanges a recently-expired (or near-expiry) Bearer JWT fo
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** decodes via `JwtToken::decodeForRefresh`, re-reads `bcc_handle` from authoritative storage (a handle change since the original mint is reflected; the JWT payload is not trusted), mints a fresh JWT, emits the `token_refreshed` audit log. No cookie set, no DB mutation beyond the audit row. Handler `AuthEndpoint::refresh` (route `AuthEndpoint.php:292`). Standard envelope per §1.4.
 
+#### `GET /bcc/v1/auth/session`
+
+*(since v1.89)* Server-side validation of a Bearer JWT: "whose session is this token?". Built for the frontend's NextAuth `bcc-verified` credentials provider, which must build its session from the **server's** answer, never from a POSTed `user_id` / `handle` (frontend F-08).
+
+- **Auth:** Bearer required — the token to check, in `Authorization: Bearer <jwt>`. The route validates **the presented token itself** with the canonical `JwtToken::decode` (signature, issuer, audience, `exp`, token-version revocation) — **no refresh grace**. It never consults the WordPress cookie session: a valid cookie with a missing or bad Bearer is still `401`.
+- **Body / query:** none.
+- **Response 200:**
+  ```json
+  { "user_id": 42, "handle": "alice", "in_good_standing": true, "expires_at": 1767225600 }
+  ```
+  - `handle` — the user's **current** handle from authoritative storage (the token's own claim goes stale after a handle change).
+  - `in_good_standing` — the same value `/auth/login` returns; it **fails open** (`true`) when the standing lookup errors, so it is display state, **never a security gate**.
+  - `expires_at` — the token's own `exp` (unix seconds). `decode` accepts a token up to **60 s past** it (the standard skew), so a client may see a `200` with `expires_at` slightly in the past.
+- **Errors:** `bcc_unauthorized` 401 for a missing, malformed, invalid, expired, revoked or deleted-user token — **one code, one message, no reason** (the reason is written to the audit log only) · `bcc_invalid_state` 409 (the user has no handle) · `bcc_rate_limited` 429.
+- **Rate limit:** **per token**, 60 / 60 s — keyed on a hash of the presented token and checked **before** decode (calls arrive from the frontend server's single IP, so a per-IP bucket would be shared by every user).
+- **Cache:** `Cache-Control: no-store`, `Vary: Authorization`.
+- **Mapping:** reads the Bearer via `BearerAuth::readBearerToken` (the same header reader authentication uses), `JwtToken::decode`, `get_userdata`, `bcc_handle` meta, `AuthSupport::resolveInGoodStanding`. No writes beyond an `auth_session_rejected` audit-log line on a 401. Handler `SessionController::session`. Standard envelope per §1.4.
+
 #### `POST /bcc/v1/auth/verify-email`
 
 Confirms email ownership and completes signup via either an OTP code or a one-shot link token, then signs the user in by returning a JWT (no separate `/auth/login` roundtrip).
@@ -2162,7 +2180,7 @@ Confirms email ownership and completes signup via either an OTP code or a one-sh
   { "token": "<64-hex one-shot token>" }
   ```
   OTP `code` = 6-digit email code (15-min TTL); `token` = self-identifying single-use link token (24-h TTL). The handler requires either `token` or both `email` and `code`.
-- **Response 200:** identical shape to `/auth/login` (`{ user_id, handle, token, expires_in, token_type, in_good_standing }`) so the frontend treats both uniformly, **plus `linked_wallet_count: int` (since v1.89)** — how many wallets are linked to the account whose email was just proven. When it is `> 0` the client asks "this account has a wallet linked — is it yours?", listing them with `GET /wallets` (using the fresh `token`) and removing one with `DELETE /wallets/{id}`. A count only: no wallet detail rides this auth response. If the wallet read fails the count is `0` and verification still succeeds (the prompt is advisory; wallets stay reviewable in Settings) — so **`0` can mean "read failed"**: a client must never take a destructive or irreversible action on `linked_wallet_count: 0`.
+- **Response 200:** identical shape to `/auth/login` (`{ user_id, handle, token, expires_in, token_type, in_good_standing }`) so the frontend treats both uniformly, **plus `linked_wallet_count: int` (since v1.90)** — how many wallets are linked to the account whose email was just proven. When it is `> 0` the client asks "this account has a wallet linked — is it yours?", listing them with `GET /wallets` (using the fresh `token`) and removing one with `DELETE /wallets/{id}`. A count only: no wallet detail rides this auth response. If the wallet read fails the count is `0` and verification still succeeds (the prompt is advisory; wallets stay reviewable in Settings) — so **`0` can mean "read failed"**: a client must never take a destructive or irreversible action on `linked_wallet_count: 0`.
 - **Errors:** `bcc_invalid_request` 422 (neither token nor email+code) · `bcc_invalid_verify_token` 400 (token expired/used) · `bcc_invalid_otp` 400 (email unknown — generic; or code wrong/expired) · `bcc_already_verified` 409 (OTP path only) · `bcc_invalid_state` 409 (no handle) · `bcc_rate_limited` 429 · `bcc_internal_error` 500
 - **Rate limit:** IP-bucketed, 10 / 3600s
 - **Cache:** `Cache-Control: no-store`
@@ -5748,8 +5766,8 @@ Unlinks a wallet owned by the current user. Idempotent — a double-tap unlink a
   ```json
   { "ok": true, "id": 142, "removed": true, "token": "<jwt>", "expires_in": 604800, "token_type": "Bearer" }
   ```
-  `token` / `expires_in` / `token_type` (since v1.89) are present **only** on a true removal of the caller's own wallet (`removed: true`); `removed: false` (foreign or already-gone id) carries none. **Clients must store the returned token** — see "Sessions" below.
-- **Sessions (since v1.89):** when the site option `bcc_unlink_revokes_sessions` is ON, a true removal first **revokes every earlier bearer token** for the account (JWT token-version bump) — so a wallet-login session for the removed wallet ends with the link — and the returned token is the caller's only working session. It is **OFF by default**: the fresh token is always returned, so a client can adopt it before revocation is switched on. ⚠ **Release order:** the frontend that stores the returned token on **every** unlink (Settings → Wallets and the post-verification "is this wallet yours?" prompt) must be **in production before** an operator runs `wp option update bcc_unlink_revokes_sessions 1` — otherwise every unlink signs the user out. With the option ON, the user's **other devices and tabs are signed out** on unlink — intended. Also do not switch it on until the frontend's token-swap race fix ships: an in-flight request still carrying the old bearer would otherwise refresh → `ERR_REVOKED` → end the session. After a removal, a new wallet-login with that wallet cannot reach the account either (the login lookup no longer finds the link).
+  `token` / `expires_in` / `token_type` (since v1.90) are present **only** on a true removal of the caller's own wallet (`removed: true`); `removed: false` (foreign or already-gone id) carries none. **Clients must store the returned token** — see "Sessions" below.
+- **Sessions (since v1.90):** when the site option `bcc_unlink_revokes_sessions` is ON, a true removal first **revokes every earlier bearer token** for the account (JWT token-version bump) — so a wallet-login session for the removed wallet ends with the link — and the returned token is the caller's only working session. It is **OFF by default**: the fresh token is always returned, so a client can adopt it before revocation is switched on. ⚠ **Release order:** the frontend that stores the returned token on **every** unlink (Settings → Wallets and the post-verification "is this wallet yours?" prompt) must be **in production before** an operator runs `wp option update bcc_unlink_revokes_sessions 1` — otherwise every unlink signs the user out. With the option ON, the user's **other devices and tabs are signed out** on unlink — intended. Also do not switch it on until the frontend's token-swap race fix ships: an in-flight request still carrying the old bearer would otherwise refresh → `ERR_REVOKED` → end the session. After a removal, a new wallet-login with that wallet cannot reach the account either (the login lookup no longer finds the link).
 - **Errors:** `bcc_unauthorized` 401, `bcc_invalid_request` 400 (id missing), `bcc_last_recovery_method` 409 (see lockout guard below), `bcc_rate_limited` 429.
 - **Rate limit:** 10/min/user.
 - **Cache:** `Cache-Control: no-store`.
@@ -8720,7 +8738,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.89 — 2026-11-11 — additive — "is this wallet yours?" after verification; unlink returns a fresh token
+### v1.90 — 2026-11-11 — additive — "is this wallet yours?" after verification; unlink returns a fresh token
 
 
 Follow-up to v1.88 (bcc-trust #398). In an account someone else created with your address, v1.88 stops the takeover, but their wallet stays linked — this lets the proven owner see and remove it.
@@ -8729,6 +8747,11 @@ Follow-up to v1.88 (bcc-trust #398). In an account someone else created with you
 - **`DELETE /wallets/{id}` (additive):** on a true removal of the caller's own wallet, returns `token`, `expires_in`, `token_type`. With the option `bcc_unlink_revokes_sessions` ON (default **OFF**) it first revokes every earlier bearer token — other devices and tabs are signed out (intended). **Release order:** switch the option on only once (1) the frontend that stores the returned token on every unlink and (2) its token-swap race fix (an in-flight old-bearer request must not refresh → `ERR_REVOKED` → end the session) are both in production.
 - `linked_wallet_count: 0` can mean the wallet read failed — never act destructively on it.
 - No new routes.
+
+### v1.89 — 2026-11-11 — additive — `GET /auth/session`
+
+
+- **New `GET /auth/session`:** validates the presented Bearer JWT (canonical decode, no refresh grace, never the cookie session) and returns `{ user_id, handle, in_good_standing, expires_at }`. One `401 bcc_unauthorized` for every rejection; `409` without a handle; per-token `429`. `in_good_standing` fails open — not a security gate. For the frontend's `bcc-verified` provider (F-08), which must stop trusting POSTed identity fields.
 
 ### v1.88 — 2026-11-11 — behaviour change plus additive — an email is only "verified" once its inbox is proven
 
