@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.105 · 2026-11-11 · Phase 1 deliverable
+**Status:** Draft v1.109 · 2026-11-11 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1867,6 +1867,7 @@ Issues a single-use challenge nonce for wallet signing.
 - **Errors:** `bcc_invalid_request` (bad chain or wallet format), `bcc_rate_limited`
 - **Rate limit:** 10/min/IP, 5/min/wallet
 - **Cache:** `Cache-Control: no-store`
+- **Message (since v1.106, F-25):** the text to sign is `Verify your wallet on Blue Collar Crypto (<host>). This request will not trigger a transaction or cost any fees. Code: <nonce> Chain: <slug>`. `<host>` is the public site's host: the canonical `BCC_FRONTEND_ORIGIN` entry, else `home_url()`'s host, so staging names its own host. If neither yields a host, the ` (<host>)` part is omitted (the rest of the text is unchanged). Clients sign the returned text **as is** and never build it themselves.
 
 #### `POST /bcc/v1/auth/wallet-link`
 
@@ -1931,8 +1932,8 @@ Issues a single-use challenge nonce for **anonymous** wallet signing. Public sib
 - **Response 200:**
   ```json
   {
-    "nonce": "8f3a7b2e9c1d4f6a",
-    "message": "Sign this to verify you control this wallet on Blue Collar Crypto.\n\nNonce: 8f3a7b2e9c1d4f6a\nIssued: 2026-04-27T14:23:00Z\nExpires: 2026-04-27T14:33:00Z",
+    "nonce": "8f3a7b2e9c1d4f6a8f3a7b2e9c1d4f6a",
+    "message": "Sign in to Blue Collar Crypto (bluecollarcrypto.io). This request will not trigger a transaction or cost any fees. Code: 8f3a7b2e9c1d4f6a8f3a7b2e9c1d4f6a Chain: cosmos",
     "chain_slug": "cosmos",
     "chain_id": 4,
     "wallet_address": "cosmos1abcdef…",
@@ -1941,6 +1942,8 @@ Issues a single-use challenge nonce for **anonymous** wallet signing. Public sib
   ```
 - **Errors:** `bcc_invalid_request` (missing chain/address, unsupported chain, bad address format), `bcc_rate_limited`
 - **Rate limit:** IP-bucketed (`WALLET_NONCE_RATE_LIMIT`/min/IP). Disjoint from `/auth/nonce`'s user-keyed bucket — the two routes never starve each other under partial DoS.
+- **Message (since v1.106, F-25):** `Sign in to Blue Collar Crypto (<host>). This request will not trigger a transaction or cost any fees. Code: <nonce> Chain: <slug>` — `<host>` as for `/auth/nonce`. Clients sign `message` **as returned**.
+- **One live challenge per (address, chain) (since v1.106, F-25):** while a challenge is live (5 min), a repeat request for the same address and chain returns **the same challenge** instead of replacing it, so a stranger requesting a nonce for someone else's address can no longer invalidate the one they are about to sign. A request for another chain gets its own challenge and leaves the first live.
 - **Cache:** `Cache-Control: no-store`
 
 #### `POST /bcc/v1/auth/wallet-login`
@@ -1969,13 +1972,13 @@ Verifies a signed nonce, looks up the BCC user the wallet is linked to, mints + 
   }
   ```
 - **Errors:**
-  - `bcc_invalid_request` 400 — missing field, expired nonce, unsupported chain.
-  - `bcc_signature_invalid` 401 — signature verification failed.
+  - `bcc_invalid_request` 400 — missing field; no live challenge for the address (expired, never issued, or already used — including a replayed signature, or a concurrent duplicate that lost).
+  - `bcc_signature_invalid` 401 — the signature verifies against none of the address's live challenges.
   - `bcc_wallet_not_linked` 404 — no BCC account is bound to this wallet. Frontend should route the user to `/signup` (or the wallet-signup flow) with the wallet pre-attached. **Distinct, recoverable code** — never auto-promotes.
   - `bcc_invalid_state` 409 — account is missing a handle (created outside BCC signup); routes through handle-claim surface.
   - `bcc_rate_limited` 429.
-  - `bcc_internal_error` 500 — stored challenge malformed.
-- **Rate limit (changed in v1.97):** **per wallet** — `WALLET_LOGIN_RATE_LIMIT` (5) / min per (chain + lower-cased address) — plus a route-wide ceiling of 300 / min; **no longer per IP** (this route is called server-side by the frontend, so every request shares one IP and a per-IP bucket let anyone lock out all wallet logins). The check runs **after** the nonce is consumed (only a request carrying a server-issued nonce for that address counts, so junk cannot drain someone else's bucket) and **before** the CPU-bound verify step. Case-variant base58/SS58 addresses share a bucket (fail-closed).
+- **Rate limit (changed in v1.97; keyed per address since v1.106):** **per wallet** — `WALLET_LOGIN_RATE_LIMIT` (5) / min per lower-cased address (the chain is only known once a signature verifies) — plus a route-wide ceiling of 300 / min; **no longer per IP** (this route is called server-side by the frontend, so every request shares one IP and a per-IP bucket let anyone lock out all wallet logins). The check runs **after** a live challenge for the address is found (a bare junk request for an address with none does not count) and **before** the CPU-bound verify step. Case-variant base58/SS58 addresses share a bucket (fail-closed).
+- **Verify before consume (since v1.106, F-25):** the signature is checked against the address's live challenges (at most one per chain, each against its own stored message), and **only the challenge it verifies against is consumed** — atomically, so a replay or a concurrent duplicate gets `400`. A wrong signature consumes nothing, so a stranger can no longer burn the challenge the wallet owner is about to sign.
 - **Cache:** `Cache-Control: no-store`
 - **Side effects:** sets `wp_set_auth_cookie`, emits `user_login` audit row, fires `bcc_user_login` action.
 
@@ -2008,13 +2011,14 @@ Verifies a signed nonce, creates a new user (placeholder email if none supplied)
   }
   ```
 - **Errors:**
-  - `bcc_invalid_request` 400 — missing field, expired nonce, unsupported chain, bad address.
+  - `bcc_invalid_request` 400 — missing field, bad address; no live challenge for the address (expired, never issued, or already used).
   - `bcc_invalid_handle` 400 / `bcc_handle_reserved` 409 / `bcc_conflict` 409 — handle validation per §B6.
   - `bcc_signature_invalid` 401 — signature verification failed.
   - `bcc_wallet_already_linked` 409 — wallet is already bound to an account. Frontend should route to `/login`.
   - `bcc_rate_limited` 429.
-  - `bcc_internal_error` 500 — stored challenge malformed, or `wp_insert_user` failed.
+  - `bcc_internal_error` 500 — `wp_insert_user` failed.
 - **Rate limit:** IP-bucketed (`WALLET_SIGNUP_RATE_LIMIT`/min/IP).
+- **Verify before consume (since v1.106, F-25):** as `/auth/wallet-login` — the signature picks the live challenge it was made for (which also fixes the chain), nothing is consumed until the handle, address and wallet-collision checks pass, and a wrong signature consumes nothing.
 - **Cache:** `Cache-Control: no-store`
 - **Side effects:** sets `wp_set_auth_cookie`, fires `bcc_wallet_verified` (seeds trust-engine + onchain-signals rows just like `verifyAndLink`), emits `user_signup` audit row, fires `bcc_user_signup` action. **Note:** does NOT emit the `bcc_first_wallet_link` celebration on the response — celebration delivery for wallet-signup is reserved for a future contract revision.
 - **Email state (changed in v1.88):** sets `_bcc_email_verified='0'` — a wallet signature proves control of the wallet, not of the inbox. A **caller-supplied** email gets the standard verification email (OTP + one-shot link, completed via `POST /auth/verify-email`) once the wallet link commits; a **placeholder** gets none and stays `'0'`. Previously this route set `'1'` with no inbox proof, which let a wallet signup typed with someone else's address receive that person's later Google sign-in (see `/auth/oauth-complete` → the anti-pre-registration gate). `'0'` does not affect the user's own sign-in: they sign in with the wallet.
@@ -2225,6 +2229,7 @@ Confirms email ownership and completes signup via either an OTP code or a one-sh
 - **Response 200:** identical shape to `/auth/login` (`{ user_id, handle, token, expires_in, token_type, in_good_standing }`) so the frontend treats both uniformly, **plus `linked_wallet_count: int` (since v1.90)** — how many wallets are linked to the account whose email was just proven. When it is `> 0` the client asks "this account has a wallet linked — is it yours?", listing them with `GET /wallets` (using the fresh `token`) and removing one with `DELETE /wallets/{id}`. A count only: no wallet detail rides this auth response. If the wallet read fails the count is `0` and verification still succeeds (the prompt is advisory; wallets stay reviewable in Settings) — so **`0` can mean "read failed"**: a client must never take a destructive or irreversible action on `linked_wallet_count: 0`.
 - **Errors:** `bcc_invalid_request` 422 (neither token nor email+code) · `bcc_invalid_verify_token` 400 (token expired/used) · `bcc_invalid_otp` 400 (email unknown — generic; or code wrong/expired) · `bcc_already_verified` 409 (OTP path only) · `bcc_invalid_state` 409 (no handle) · `bcc_rate_limited` 429 · `bcc_internal_error` 500
 - **Rate limit:** IP-bucketed, 10 / 3600s
+- **Attempt cap (since v1.105, F-48):** at most **5 wrong codes per (account, current code)**; the 5th burns that code. Because a correct code signs the caller in, the per-IP bucket alone did not bound guesses spread across addresses. The answer stays the generic `400 bcc_invalid_otp` "Invalid or expired code." (no new code, no enumeration signal); the user requests a new code via `/auth/resend-verification`, which starts a fresh count, or uses the emailed link — the **token path is not capped and not affected**.
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** token path consumes the `bcc_vt_<token>` transient (single-use); OTP path resolves by email, checks `_bcc_email_verified`, timing-safely (`hash_equals`) consumes the HMAC-hashed `bcc_otp_<userId>` transient. Both converge on `finalizeVerification` → sets `_bcc_email_verified='1'`, sets the auth cookie, **revokes every earlier bearer token for the account (JWT token-version bump, since v1.88)**, mints the JWT, emits `email_verified` audit, fires `do_action('bcc_email_verified', …)`. The revocation means a session held by whoever created the account before the address was proven does not survive the inbox owner's verification; the returned token is the caller's working session and must be stored. Handler `AuthEndpoint::verifyEmail` (route `AuthEndpoint.php:487`). Standard envelope per §1.4.
 
@@ -2415,7 +2420,7 @@ Full User view-model.
 
 - **Auth:** Anonymous OR Bearer
 - **Path:** `handle` (lowercase, no `@` prefix)
-- **Retired handles (v1.105):** a handle the server retired because it equalled the member's login still resolves to that member, on this route and on every `:handle` / `:slug` member route (cards, followers, following, albums, groups). The response's `handle` is the member's **current** handle. When it differs from the requested one, the client MUST redirect permanently to `/u/{handle}` (current). A retired handle is never assigned to anyone again. Only those specific retired handles resolve this way; it is not a login lookup.
+- **Retired handles (v1.109):** a handle the server retired because it equalled the member's login still resolves to that member, on this route and on every `:handle` / `:slug` member route (cards, followers, following, albums, groups). The response's `handle` is the member's **current** handle. When it differs from the requested one, the client MUST redirect permanently to `/u/{handle}` (current). A retired handle is never assigned to anyone again. Only those specific retired handles resolve this way; it is not a login lookup.
 - **Response 200:** User view-model (§3.1) — own variant if `is_self`, others' variant otherwise
 - **Errors:** `bcc_not_found` (handle missing), `bcc_permission_denied` (account suspended; rare) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer. ⚠ Note the two distinct 403 codes on this route: `bcc_permission_denied` is about the **viewer's** standing, `bcc_forbidden` about the **owner's** privacy. A client must branch on `code` plus `data.reason`, not on the status alone.
 - **Rate limit:** 60/min/viewer
@@ -4746,6 +4751,8 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
   - `mentor_opt_in` *(v1.62 — Rank Phase 7, spec §21.4)* → `bcc_mentor_opt_in` user_meta, "1"/"0" (via `MentorListingService`). Read/write bool. Opting in requires **no** eligibility — a non-Veteran may pre-opt-in and lists automatically the day they qualify.
 - **Read-only mentor pair (v1.62, GET response only — never writable):** `mentor_listed` (bool) — whether the user is **actively listed** in the mentor directory *right now*; the listing composes **live** as opt-in AND `can('list_as_mentor')` (**Veteran** rank AND trust tier ≥ **Trusted** AND not suspended AND not in §14.2 Rank recovery). Nothing is materialized — when any condition fails the listing **pauses automatically on the next read** (no sweep, no flag to un-stick). `mentor_eligibility_reason` (string|null) — the resolver's stable deny slug ∈ `suspended|new_member|below_veteran|below_trusted|in_recovery` so the frontend can explain a paused listing; `null` while eligible (regardless of opt-in).
 - **PATCH** is partial — missing keys are untouched.
+  - **Every field is validated before anything is written** (F-97): an invalid value (`bcc_invalid_request` 422) or PeepSo missing when `profile_visibility` is sent (`bcc_peepso_unavailable` 503) writes **nothing**.
+  - **A write that fails after validation (v1.108)** stops the request: `bcc_internal_error` **500**, message "Some of your preferences could not be saved. Please try again.", with `error.data.saved` (list of the request's field names that DID persist, in write order: `profile_visibility`, then the user-meta fields, then `mentor_opt_in`) and `error.data.failed` (the field that did not). Earlier writes are **not** rolled back. A client must not report the save as successful, and may re-send the whole request (every write is idempotent).
 
 #### `PATCH /bcc/v1/me/account/email` (V2 Phase 2.5)
 
@@ -7047,7 +7054,21 @@ Auth **operator**. Promotes a draft to published at authoritative server time.
 
 #### `POST /bcc/v1/validators/:pageId/announcements/:id/archive`
 
-Auth **operator**. Archival is **one-way** in v1 and is **not a deletion** (§4.32.6).
+Auth **operator** or **administrator** *(v1.107)*. Archival is **one-way** in v1 and is **not a deletion** (§4.32.6).
+
+**Who may archive *(v1.107)*.** Archive is the one announcement write that is **not** limited to
+the notice's author:
+
+- the page's **current** resolved operator may archive **any published notice on that page**,
+  including one written by a **previous** operator of the page (before v1.107 that answered
+  `404`, so after a claim hand-over the predecessor's notices could not be taken down by anyone);
+- a **site administrator** (`manage_options`) may archive any published notice.
+
+Everyone else is refused exactly as before (`403 bcc_forbidden`, `reason_code: not_claimer`).
+Edit, publish, schedule and pin remain **author-only**. The other rules on this route do not
+change: only a published notice can be archived (below), a second archive is `409 Already archived.`,
+and the notice keeps its permalink and public readability (§4.32.6). An archive of a notice the
+actor did not write is recorded in the audit log.
 
 ⚠⚠ **ONLY A PUBLISHED NOTICE CAN BE ARCHIVED.** A `draft`, `scheduled` or
 `blocked` row is refused with `409 bcc_conflict` and
@@ -7143,9 +7164,10 @@ validator row bound to it. Collection/creator claims are a different question wi
 semantics and are **out of scope**; they are neither accepted here nor affected by it, and the
 existing collection-creator permissions on page bio and image are unchanged.
 
-**Administrators hold read-only recovery rights only** — inspect drafts, inspect removed
-comments, restore removed comments. They may not create, edit, schedule, publish, pin or
-archive, and may not act as the operator. An administrator who is *independently* the resolved
+**Administrators hold recovery rights plus archive** — inspect drafts, inspect removed
+comments, restore removed comments, and *(v1.107)* archive any published notice (§4.32.6 — a
+one-way move off the page and the feed that keeps the public record). They may not create,
+edit, schedule, publish or pin, and may not act as the operator. An administrator who is *independently* the resolved
 operator gets operator rights through the normal path, never through an override.
 
 #### 4.32.3 `Announcement` view-model
@@ -7953,8 +7975,9 @@ spelling is intentional, so the disabled control and the eventual `403` give the
 
 **(d) Administrator capabilities — a separate object, never merged into either scope above**
 
-`can_inspect_drafts` · `can_inspect_removed` · `can_restore_comment`, on the admin routes only.
-**Every owner and row capability is `false` for a non-operator administrator** (§4.32.2).
+`can_inspect_drafts` · `can_inspect_removed` · `can_restore_comment` · `can_archive_any` *(v1.107)*, on the admin routes only.
+**Every owner and row capability is `false` for a non-operator administrator** (§4.32.2). The archive route itself admits an administrator *(v1.107)*; the row's `can_archive` stays the operator's answer, and `can_archive_any` is the administrator's.
+**Row capabilities on a notice another operator wrote** *(v1.107)*: for the page's current operator, `can_edit`, `can_pin` and `can_publish` are **author-only** — they report `not_claimer` on a predecessor's notice, because those routes resolve the row by its author. `can_archive` and `can_manage_comments` stay operator-wide.
 
 ##### Field-to-consumer trace
 
@@ -8845,13 +8868,45 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.105 — 2026-11-11 — behaviour change — public handles never expose a login; retired handles still resolve
+### v1.109 — 2026-11-11 — behaviour change — public handles never expose a login; retired handles still resolve
 
 Ships with bcc-trust's public-identity changes (two stacked PRs) and bcc-core's feed-author fix.
 
 - **Fallbacks:** a member with no stored handle shows `member-{id}` as `handle` (was: their login). A `display_name` that is empty or equal to the login shows the handle (was: the login). Applies everywhere a member mini, card, feed author, comment byline, mention, notification or message party is rendered. Types are unchanged; only the fallback values differ.
 - **Retired handles:** members whose handle equalled their login get a new handle (their display-name slug, else `member-{id}`). The old handle is retired. It still resolves to the member on `GET /users/:handle` and the other `:handle` / `:slug` member routes, and is never assigned again. The response carries the CURRENT `handle`; the client redirects `/u/{old}` permanently to `/u/{current}` (see `GET /bcc/v1/users/:handle`). Only retired handles resolve this way; it is not a login lookup.
 - **Clients:** add the redirect on the profile route when the response's `handle` differs from the requested one (case-insensitive). No other change.
+
+### v1.108 — 2026-11-11 — additive — a profile-prefs save that fails part-way says so
+
+Ships with bcc-trust's profile-prefs write-failure change (bcc-trust #467, follow-up to F-97 / #449).
+
+- **`PATCH /me/profile-prefs` (new error):** a database failure while writing an already-validated field used to be silent, and the request still returned 200. It now returns `bcc_internal_error` 500 with `error.data.saved` (fields that persisted) and `error.data.failed` (the one that did not). Earlier writes are not rolled back.
+- Also documents F-97 (bcc-trust #449, already shipped): every field is validated before any write, so a 422 or 503 writes nothing.
+- **Clients:** treat this 500 as "not saved"; re-sending the whole request is safe.
+
+### v1.107 — 2026-11-11 — behaviour change plus additive — a new operator or an administrator can archive a predecessor's announcement
+
+Ships with bcc-trust F-147 (bcc-trust #478).
+
+- **`POST /validators/:pageId/announcements/:id/archive`:** the page's **current** operator may now archive any **published** notice on the page, including one a previous operator wrote (was `404`); a site administrator may archive any published notice (was `403`). Everyone else: unchanged `403 not_claimer`. Edit, publish, schedule and pin stay author-only.
+- **§4.32.2:** administrators gain archive; the rest of their rights are unchanged.
+- **Row capabilities (bcc-trust #513):** on a predecessor's notice, `can_edit`, `can_pin` and `can_publish` are author-only and report `not_claimer` to the current operator; `can_archive` and `can_manage_comments` stay operator-wide.
+- **Additive:** administrator capability `can_archive_any` (§4.32.11 (d)). No new error codes.
+- **Clients:** a row the current operator sees with `can_archive` allowed now archives instead of answering `404`.
+
+### v1.106 — 2026-11-11 — behaviour change — wallet sign-in names the site; its challenge can't be replaced or burned
+
+Ships with bcc-core #83 and bcc-trust #486.
+
+- **Signed text (F-25, user-approved wording):** wallet sign-in / sign-up (`/auth/wallet-nonce`) now asks the wallet to sign `Sign in to Blue Collar Crypto (<host>). This request will not trigger a transaction or cost any fees. Code: <nonce> Chain: <slug>`; wallet linking and validator claims (`/auth/nonce`) sign `Verify your wallet on Blue Collar Crypto (<host>). …` with the same tail. `<host>` comes from config, so staging names its own host. Clients already sign `message` as returned — no client change.
+- **`GET /auth/wallet-nonce`:** a live challenge is no longer replaced by a repeat request for the same address and chain — the same challenge comes back until it expires. Challenges are per (address, chain).
+- **`POST /auth/wallet-login` · `/auth/wallet-signup`:** the signature is verified **before** anything is consumed, and only the challenge it verified against is consumed. A wrong signature now leaves the owner's challenge intact (`401`); replay or a lost race is `400`. The `500 stored challenge malformed` case is gone (such a challenge simply never verifies). wallet-login's per-wallet bucket is now keyed on the lower-cased address alone.
+
+### v1.105 — 2026-11-11 — behaviour change — the email-verification code has an attempt cap
+
+Ships with bcc-trust #500.
+
+- **`POST /auth/verify-email` (F-48), OTP path:** 5 wrong codes per (account, current code) burn that code. Same `400 bcc_invalid_otp` answer as any wrong code; a resend starts a fresh count; the emailed link (token path) keeps working. 2FA is unchanged — `/auth/2fa/verify` already has its per-challenge cap (v1.97).
 
 ### v1.104 — 2026-11-11 — behaviour change — NFT reorder is capped and throttled
 
