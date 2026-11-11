@@ -8843,6 +8843,14 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
+### v1.9X — 2026-11-11 — docs-only clarification — a cursor's payload is per-surface; the tiebreak is what binds (number assigned at merge)
+
+No behaviour, route or field change.
+
+- **§1.5:** the "Cursor format (locked)" example is the **feed's** cursor and is illustrative. The payload bytes belong to the emitting surface; a client must treat every cursor as opaque.
+- **What is normative for every cursor:** a unique `id` tiebreak beside the sort key; base64url; a malformed or foreign cursor resets to the first page instead of erroring; a cursor can never widen visibility.
+- **§4.32.14:** the announcement cursor examples are illustrative. Each collection tags its cursor with its surface and refuses another's, because they order by different columns.
+
 ### v1.102 — 2026-11-11 — additive — unclaimed page cards hide vouch, back and report
 
 Ships with bcc-trust #469.
