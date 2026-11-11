@@ -2099,7 +2099,7 @@ First factor of the password login. Validates credentials, then **always** initi
 - **Errors:** `bcc_invalid_request` 422 (missing identifier or empty password) · `bcc_invalid_credentials` 401 (user-not-found OR wrong password — generic, anti-enumeration; identical for email- and handle-shaped identifiers) · `bcc_email_not_verified` 403 · `bcc_invalid_state` 409 (account has no handle) · `bcc_rate_limited` 429
 - **Rate limit:** IP-bucketed, 5 / 60s (before the bcrypt compare)
 - **Cache:** `Cache-Control: no-store`
-- **Mapping:** reads `wp_users` by email or by login (`u_<handle>` via `AuthSupport::deriveLogin`) + `wp_check_password`, reads `bcc_handle` + `_bcc_email_verified`, stores an HMAC-hashed 2FA OTP (`bcc_2fa_otp_<userId>`, 5-min transient) + challenge token (`bcc_2fa_ct_<token>`, 10-min transient), emails the code (`AuthMailer::send2faCode`), emits the `user_login_2fa_initiated` audit log. No auth cookie, no JWT. Handler `PasswordAuthController::login`. Standard envelope per §1.4.
+- **Mapping:** reads `wp_users` by email or by login (`u_<handle>` via `AuthSupport::deriveLogin`) + `wp_check_password`, reads `bcc_handle` + `_bcc_email_verified`, registers the challenge token (`bcc_2fa_ct_<token>`, 10-min transient) as the user's one live challenge (`bcc_2fa_current_<userId>`, superseding — and dropping the code of — any earlier one; since v1.97) and stores an HMAC-hashed 2FA OTP bound to it (`bcc_2fa_otp_<first 40 hex of sha256(token)>`, 5-min transient), emails the code (`AuthMailer::send2faCode`), emits the `user_login_2fa_initiated` audit log. No auth cookie, no JWT. Handler `PasswordAuthController::login`. Standard envelope per §1.4.
 
 #### `POST /bcc/v1/auth/2fa/verify`
 
@@ -2131,7 +2131,7 @@ Re-sends a fresh 2FA code for an in-progress login challenge. Always returns `ok
 - **Errors:** `bcc_rate_limited` 429
 - **Rate limit:** IP-bucketed, 3 / 60s (email-bomb fence)
 - **Cache:** `Cache-Control: no-store`
-- **Mapping:** peeks the challenge token without consuming it; when valid, overwrites `bcc_2fa_otp_<userId>` with a fresh HMAC-hashed code (the prior code immediately stops working) and re-dispatches `AuthMailer::send2faCode`. Handler `AuthEndpoint::twoFaResend` (route `AuthEndpoint.php:563`). Standard envelope per §1.4.
+- **Mapping:** peeks the challenge token without consuming it; when valid (and still the user's current challenge), overwrites that challenge's `bcc_2fa_otp_<first 40 hex of sha256(token)>` with a fresh HMAC-hashed code (the prior code immediately stops working; the challenge's wrong-code count is NOT reset) and re-dispatches `AuthMailer::send2faCode`. Handler `AuthEndpoint::twoFaResend` (route `AuthEndpoint.php:563`). Standard envelope per §1.4.
 
 #### `POST /bcc/v1/auth/oauth-complete`
 
