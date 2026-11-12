@@ -945,9 +945,19 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
   // Before v1.127 it was unfiltered and ignored the viewer entirely.
   // `primary_hall` above is derived from this list, which is why Halls
   // survive the toggle.
+  // v1.NEXT: each row carries the MEMBER's role in that group —
+  // `role` ∈ "owner"|"moderator"|"member" (manager reads as moderator)
+  // and the server-rendered `role_label` (the §4.7.7 roster vocabulary,
+  // filterable via `bcc_group_role_labels`). Shown ONLY where this viewer
+  // could already see that group's roster: on the member's own profile,
+  // for an open group or a Hall, or for a group the viewer is an active
+  // member of. Everywhere else both are null (render no badge) — a profile
+  // never reveals who moderates a closed or secret group. Also null when
+  // the membership could not be read (never a guessed role). Present on
+  // GET /users/:handle (the full profile) only; summary payloads omit them.
   "halls": [
-    { "id": 12, "slug": "cosmos-hall", "name": "Cosmos Hall", "is_primary": true },
-    { "id": 18, "slug": "osmosis-hall", "name": "Osmosis Hall", "is_primary": false }
+    { "id": 12, "slug": "cosmos-hall", "name": "Cosmos Hall", "is_primary": true, "role": "moderator", "role_label": "MODERATOR" },
+    { "id": 18, "slug": "osmosis-hall", "name": "Osmosis Hall", "is_primary": false, "role": "member", "role_label": "MEMBER" }
   ],
   // OWN-ACCOUNT ONLY. This array is populated exactly as shown when
   // `is_self` is true, and is `[]` for every other viewer (see §3.1
@@ -9067,6 +9077,13 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-12 — additive — a member's role in each group on their profile
+
+Ships with bcc-trust #671.
+
+- **Additive (§3.1 `MemberProfile.halls`, full profile only):** `role` (`owner|moderator|member`) and `role_label` per row — the §4.7.7 roster vocabulary, now one shared helper. Shown only where the viewer could already see that group's roster (the member themself, an open group or a Hall, or a group the viewer is an active member of); otherwise both `null`. `null` too when the membership could not be read.
+- **Clients:** render a badge from `role_label` when it is non-null; render nothing when it is null (never infer a role).
 
 ### v1.134 — 2026-11-12 — behaviour change — 2FA resend reports an ended challenge, and its code always works
 
