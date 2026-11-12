@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.125 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.NEXT · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -4209,7 +4209,8 @@ PeepSo's `peepso_notifications` table is the storage layer (§I1 "extend, don't 
     "display_name": "Simon",
     "avatar_url": "https://…"
   },
-  "link": "/?focus=15823"
+  "link": "/post/15823",
+  "target_available": true
 }
 ```
 
@@ -4217,15 +4218,17 @@ PeepSo's `peepso_notifications` table is the storage layer (§I1 "extend, don't 
 - `message` is server-rendered per §A2 — frontend renders verbatim. Plain English, capped at 200 chars (PeepSo's column width).
 - `actor.handle` may be empty when the originating user has been deleted; the frontend renders the message verbatim regardless.
 - `link` is a server-built relative path. Per type:
-  - `bcc_reaction` → `/?focus=<act_id>` (jump back to the post)
+  - `bcc_reaction` → `/post/<act_id>` (the permalink of the post that was reacted to) *(v1.NEXT — was `/?focus=<act_id>`, which no client route reads)*
   - `bcc_review` → `/v/<page-handle>` etc. (the reviewed page, route prefix per kind)
   - `bcc_card_watched` → `/u/<actor-handle>` (the watcher's profile) — legacy `bcc_card_watched` resolves identically during deprecation
   - `bcc_rank_up` → `/me/progression` *(v1.64 — was `/u/<recipient-handle>`; the standing page is where promotion detail lives)*
   - the other rank/finding self-notices *(v1.64)* — `bcc_rank_demoted`, `bcc_rank_recovery_started`, `bcc_rank_recovery_reminder`, `bcc_rank_decay_warning`, `bcc_rank_finding_issued`, `bcc_rank_appeal_outcome`, `bcc_rank_finding_reversed` → `/me/progression` (previously fell to the `/` default)
   - `bcc_welcome` → `/` (the floor — the user is probably already there when they see it)
-  - `bcc_mention` → `/?focus=<act_id>` (jump to the floor focused on the post containing the @-tag; for comment mentions `act_id` is the **parent post's** act_id — the FE has no comment-anchor consumer in V1)
+  - `bcc_mention` → `/post/<act_id>` *(v1.NEXT — was `/?focus=<act_id>`)* (the permalink of the post containing the @-tag; for comment mentions `act_id` is the **parent post's** act_id — the FE has no comment-anchor consumer in V1)
   - `bcc_hall_post` → `/halls/<slug>` resolved from `external_id` (the Hall's group_id). Falls back to `/halls` when the group is no longer a Hall (deleted, `_bcc_group_kind` meta cleared).
-  - `bcc_comment_received` → `/?focus=<act_id>` (jump to the floor focused on the parent post that received the comment; mirrors REACTION + MENTION shape — the FE has no comment-anchor consumer in V1). Covers both the "commented on your post" and the v1.45 "replied to your comment" messages — same type, same link shape.
+  - `bcc_comment_received` → `/post/<act_id>` *(v1.NEXT — was `/?focus=<act_id>`)* (the permalink of the parent post that received the comment; mirrors REACTION + MENTION shape — the FE has no comment-anchor consumer in V1). Covers both the "commented on your post" and the v1.45 "replied to your comment" messages — same type, same link shape.
+- `target_available` *(bool, v1.NEXT, always present)* — `false` only when `link` points at a post (`bcc_reaction`, `bcc_mention`, `bcc_comment_received`) that is **known to be gone**: deleted, unpublished, or moderation-hidden. `true` for every other row, **and when availability could not be read** — unknown is not gone, so the row keeps its link and the permalink makes the final call (`GET /feed/{id}` answers 404). Per-viewer visibility (a block, a gated group) is NOT folded in: the permalink's 404 still covers it. Clients SHOULD render a `false` row as "this post is no longer available" instead of navigating.
+- Push payloads for `bcc_mention` (one mention) and `bcc_comment_received` carry the same `/post/<act_id>` `url` *(v1.NEXT)*; pushes carry no `target_available`.
 - Self-notifications are emitted for `bcc_rank_up` + `bcc_welcome` and *(v1.63)* every rank/finding notice listed above (all are to==from system events). Other types skip the dispatch when actor === recipient.
 
 #### `GET /bcc/v1/me/notifications`
@@ -8940,6 +8943,15 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-12 — behaviour change + additive — notifications open the post
+
+Scope: the notification view-model (`GET /me/notifications`) and the mention/comment push `url`.
+
+- **Behaviour change:** `bcc_reaction`, `bcc_mention` and `bcc_comment_received` rows link to **`/post/<act_id>`**, the post's permalink (backed by `GET /feed/{id}`). They linked `/?focus=<act_id>`, which no client route reads, so all three of the most common notifications dead-ended on the Floor. The single-mention and comment **push** `url`s change the same way.
+- **Additive:** every notification item now carries **`target_available`** (bool). It is `false` only when a post-linked row's post is **known** to be gone (deleted, unpublished, moderation-hidden); a failed availability read leaves it `true`. Clients SHOULD show "this post is no longer available" for `false` instead of navigating.
+- **Clients:** follow `link` as before; nothing needs to parse it. A client still special-casing `?focus=` can drop that code.
+- ⚠ **Coordination:** ships with bcc-trust F-245 (`fix/f245-notification-post-links`); that PR merges first. The frontend half (rendering `target_available: false`) is public-cb's.
 
 ### v1.125 — 2026-11-12 — additive — claim re-verify: badge-removed bell; revoked claims leave the feed
 
