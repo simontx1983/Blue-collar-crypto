@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.130 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.131 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1068,6 +1068,8 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
   "claim_target": null,
   "messaging": { "destination": "operator", "operator": { "handle": "cosmosops", "name": "Cosmos Ops" } },
   "viewer_has_reviewed": false,
+  "viewer_is_watching": true,
+  "viewer_watch": { "follow_id": 4812, "source": "peepso" },
   "viewer_has_endorsed": false,
   "endorse_unlock_hint": null,
   "chains": null,
@@ -1130,6 +1132,7 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
 - Risky entities render like any other tier (v1.57). They previously had no `card_tier` at all, and the contract instructed frontends to render nothing visible for them — which meant the platform actively hid its own strongest warning. The tier strip now renders for all five bands.
 - `permissions.can_watch.allowed` is `false` when (a) viewer is anonymous, (b) viewer is the card subject (you can't follow yourself), or (c) the card is hidden (risky tier). In cases (a) and (c), `unlock_hint` is `null` — these aren't hints the user can resolve. (Legacy permission key `permissions.can_watch` is emitted alongside `can_watch` during the §1.1.1 deprecation window.)
 - `viewer_has_reviewed` / `viewer_has_endorsed` (per §D2 / §V1.5) — drives "WRITE A REVIEW" → "REMOVE YOUR REVIEW" CTA swaps. Always `false` for anonymous viewers. **v1.49:** `viewer_has_reviewed` is REAL on `member` cards too (has the viewer reviewed this member — a vote on their self-page); the old "always false on member cards" rule is retired. `viewer_has_endorsed` stays `false` on member cards (endorsements target page cards only).
+- `viewer_is_watching` / `viewer_watch` (v1.131, F-255; page and member cards, and the `GET /users/:handle` profile) — is the viewer watching this card, and the handle to unwatch it with: `viewer_watch = { follow_id: int, source: "peepso" | "page" } | null`, exactly the `:follow_id` and `?source=` that `DELETE /me/watching/:follow_id` takes. `viewer_is_watching` is `viewer_watch !== null`. **This is the source of truth for every watch button: never derive it from a page of `GET /me/watching`** — there is no cap on how many things a member watches, so any page is a partial list. Resolved the way `POST /me/watching/watch` writes: a member card → the viewer's follow of that member; a page card with an owner → the viewer's follow of the **owner** (watching a claimed page is following its operator, so every page that operator owns reads as watched); a pre-claim placeholder page → the viewer's `bcc_page_follows` row (`source: "page"`). `false` / `null` for anonymous viewers and on the viewer's own card. Batched per card page (two bounded `IN()` reads, whatever the watchlist size). Absent on community cards.
 - `review_target_id` (v1.49, **member cards only** — absent on other kinds) — the member's deterministic self-page id (`MemberSelfPageService::selfPageId(user_id)`), i.e. the page member reviews live on. This is the `:id` the frontend passes to `DELETE /me/reviews/:id` to remove its review of the member; the frontend must never derive `ID_BASE` itself (§L5). The WRITE path is unchanged (`POST /posts kind=review target_kind=user_profile target_user_id`).
 - `endorse_unlock_hint` mirrors `permissions.can_endorse.unlock_hint` so the EndorseButton can render the hover hint without reaching into the permission object.
 - `watching_size` (on member cards' stats and on `User.counts.watching_size`) **counts member follows alongside entity follows.** Watching another member is a first-class watchlist action, no separate `following_count` field exists.
@@ -2486,6 +2489,7 @@ Full User view-model.
 - **Cache:** `Cache-Control: private, max-age=30` (own: `no-store`); React Query `staleTime: 30s` (own: 0)
 - **Mapping:**
   - Identity fields ← `wp_users` + `wp_usermeta.bcc_handle`
+  - `viewer_is_watching` / `viewer_watch` (v1.131, F-255) ← the viewer's follow of this member, same shape and rule as on the §3.2 Card; `false` / `null` for anonymous viewers and on one's own profile. The profile's watch button reads these, not `GET /me/watching`. (This route is `private, max-age=30`: after a watch or unwatch the client updates from the mutation response rather than refetching.)
   - `trust_score`, `reputation_tier`, `reputation_tier_label`, `is_in_good_standing`, `flags` ← `bcc-trust` services (§A4)
   - `member_state`, `rank`, `rank_label`, `current_rank_label` ← `RankStateService::memberState` over `wp_bcc_trust_rank_state` (v1.59; missing row = New Member, nullable rank fields)
   - `living` ← derived from `peepso_activities` + `bcc_trust_score_events` (§A4 owns)
@@ -2827,11 +2831,11 @@ Returns the viewer's watchlist (§C2 — UI projection of PeepSo follows + `bcc_
     - **Hydration never drops, filters, or reorders rows from a returned page.** An unhydratable target stays in place with `card: null` — clients must render or account for it, not assume the row vanished.
     - `total` is identical with and without `include=cards` (it is computed independently of hydration).
     - `items` length and `total_pages` are **not** guaranteed identical across the two modes: requesting `page_size` above the hydrated cap returns a smaller page (clamped to 24), which necessarily changes both. That is the clamp, not row dropping. Compare the two modes at the same *effective* `page_size` (≤ 24) if you need a like-for-like diff.
-- **Page-size caveat (pre-dates v1.76, applies to both modes):** page 1 prepends the viewer's pre-claim page-follows (`bcc_page_follows`, hard cap 100) **before** applying the PeepSo page budget, so **page 1 may return more than `page_size` items** — up to `min(100, N_page_follows) + page_size`. Clients must not assume `items.length <= page_size` on page 1. These rows drain as operators claim their pages.
+- **Paging (v1.131, F-255):** the two sources are paged as **one ordered list** — the viewer's pre-claim page follows (`bcc_page_follows`, newest first) first, then the PeepSo follows (newest watch first) — so every watched item appears on **exactly one** page and **`items.length <= page_size` on every page**. There is **no cap** on how many things a member can watch; `page_size` (max 50, 24 with `include=cards`) is a page size only, and `total` / `total_pages` count every watch. *(Before v1.131, page 1 prepended at most 100 page follows on top of the page budget, page follows past the 100th were never listed, and page 2+ skipped as many PeepSo follows as page 1 held page follows.)* To know whether ONE card is watched, read the card's `viewer_is_watching` / `viewer_watch` (§3.2), not this list.
 - **Errors:** `bcc_unauthorized`
 - **Rate limit:** 60/min/user
 - **Cache:** `Cache-Control: no-store` *(doc corrected v1.76 — was documented `private, max-age=30`, never shipped)*
-- **Mapping:** JOIN of `peepso_user_followers` + `bcc_watch_meta` (§C2), merged with `bcc_page_follows` rows (page 1 prepends the pre-claim follows). Removed cards (unwatched) do not appear. `reputation_tier_at_watch` is the followee's tier at the moment the card was watched, not the current tier — preserved for historical narrative; label pre-rendered per §A2. Rows written before v1.57 held rarity slugs and were rewritten by `watch_tier_vocabulary_v1`; rows snapshotted as risky were stored NULL and are unrecoverable. Hydration (`include=cards`) reuses the §L5 list builders behind `/members` and `/cards` with one batch prefetch per kind — no per-row queries.
+- **Mapping:** JOIN of `peepso_user_followers` + `bcc_watch_meta` (§C2), merged with `bcc_page_follows` rows (the pre-claim follows come first in the one ordered list; see Paging). Removed cards (unwatched) do not appear. `reputation_tier_at_watch` is the followee's tier at the moment the card was watched, not the current tier — preserved for historical narrative; label pre-rendered per §A2. Rows written before v1.57 held rarity slugs and were rewritten by `watch_tier_vocabulary_v1`; rows snapshotted as risky were stored NULL and are unrecoverable. Hydration (`include=cards`) reuses the §L5 list builders behind `/members` and `/cards` with one batch prefetch per kind — no per-row queries.
 
 #### `GET /bcc/v1/me/watching/summary`
 
@@ -2923,6 +2927,7 @@ Stops watching a card (= PeepSo unfollow).
 
 - **Auth:** Bearer
 - **Path:** `follow_id` (the PeepSo follow row ID, returned by `GET /me/watching`)
+- **Query:** `source` (optional, `peepso` | `page`; default `peepso`) — which table `follow_id` belongs to. Echo the item's `follow_source`, or the card's `viewer_watch.source` (v1.131). Required for a pre-claim page follow (`page`): the two tables' ids overlap. *(Documented v1.131; the parameter predates it.)*
 - **Response 200:**
   ```json
   {
@@ -8977,6 +8982,14 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.131 — 2026-11-12 — additive + behaviour change — every card says whether the viewer watches it; the watchlist has no cap
+
+Ships with bcc-trust #643 (F-255, backend half).
+
+- **New on page and member cards (§3.2) and on `GET /users/:handle`:** `viewer_is_watching` (bool) and `viewer_watch` (`{ follow_id, source: "peepso" | "page" } | null`), the handle `DELETE /me/watching/:follow_id[?source=page]` takes. It is correct however many things the viewer watches. **Clients:** drive every Watch / Unwatch button from these; stop deriving watch state from `GET /me/watching?page_size=50`, which only ever held the first 50.
+- **`GET /me/watching` paging:** one ordered list across both sources; every item on exactly one page; `items.length <= page_size` on every page (the page-1 exception is gone); no cap on page follows (was 100) and no skipped PeepSo follows at page boundaries. `total` counts every watch. No field or shape change.
+- No change to `POST /me/watching/watch` or `DELETE /me/watching/:follow_id`.
 
 ### v1.130 — 2026-11-12 — additive + behaviour change — confirm account changes with a wallet signature (F-253)
 
