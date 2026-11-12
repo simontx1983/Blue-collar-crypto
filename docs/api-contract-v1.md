@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.128 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.129 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -3142,7 +3142,7 @@ Join a Hall. The join/leave verb is `/membership` — same path, two methods.
     }
   }
   ```
-- **Errors:** `bcc_unauthorized`, `bcc_forbidden` (403 — account suspended "Your account is suspended.", or the Hall does not accept open membership), `bcc_conflict` (already a member), `bcc_rate_limited`
+- **Errors:** `bcc_unauthorized`, `bcc_forbidden` (403 — account suspended "Your account is suspended.", the Hall does not accept open membership, or **(v1.129)** the caller is banned from the Hall: "A moderator removed you from this Hall, so you cannot rejoin it."), `bcc_conflict` (already a member), `bcc_rate_limited`
 - **Rate limit:** 10/hour/user
 - **Mapping:** PeepSo group join (`peepso_group_members` insert). Emits `bcc_hall_joined` (§A3 async).
 
@@ -3324,7 +3324,7 @@ The user's holder-groups state — joined groups, eligible-to-join suggestions, 
   ```
 - **`opted_out[].opt_out_kind` (v1.95, additive):** `"left"` | `"removed"`. Present on `opted_out` items only.
   - `"left"`: the member left (voluntary). An explicit `POST …/join` overrides it, so a client may offer **Join** (eligibility still applies).
-  - `"removed"`: a moderator removed them (permanent). Join is refused with `opt_out_active`, so a client must not offer it.
+  - `"removed"`: a moderator removed them (permanent), **or (v1.129) the member is banned from the group** (a PeepSo `banned` row). Join is refused with `opt_out_active`, so a client must not offer it. A banned group never appears in `eligible_to_join`.
 - **Cache:** `private, no-store` (per-viewer membership state).
 - **Mapping:** `peepso-group` posts where `_bcc_group_kind = 'holders'`, joined with `peepso_group_members` for membership and `wp_bcc_onchain_collections` for collection display. Eligibility uses `HoldingsService::ownsAnyMany` (one batched holdings call per chain). Opt-out is read from `bcc_gated_groups_optout` user_meta with TTL applied.
 - **Cold-start protection:** the `activity.heat` field is the user's escape hatch from ghost-town suggestions — frontend may sort `eligible_to_join[]` by heat to surface active rooms first.
@@ -3343,13 +3343,13 @@ Explicit user-initiated join. Verifies eligibility server-side, clears any activ
   - `bcc_forbidden` (403) — account suspended ("Your account is suspended."). Holding the NFT is the eligibility gate, not an override of moderation; admin bypass off.
   - `bcc_invalid_request` (400) — group is not a holder group
   - `bcc_permission_denied` (403) with `unlock_hint`:
-    - moderator eviction: "A moderator removed you from this community, so you cannot rejoin it." (v1.95; previously an opt-out-cooldown sentence that a voluntary leave also triggered — a voluntary leave no longer refuses an explicit join)
+    - moderator eviction: "A moderator removed you from this community, so you cannot rejoin it." (v1.95; previously an opt-out-cooldown sentence that a voluntary leave also triggered — a voluntary leave no longer refuses an explicit join). **Since v1.129 a ban (a PeepSo `banned` membership row) gets this same refusal**, checked before any provider call; it used to reach the writer and come back as the 503 below.
     - holder check failed: "Hold a `<CollectionName>` NFT to join this community." (or "Hold at least N NFTs from this collection..." for `min_balance > 1`)
   - `bcc_internal_error` (503) — chain unsupported (transient infra issue)
   - `bcc_upstream_unavailable` (503) — the chain provider could not verify NFT
     ownership (timeout / 429 / circuit-breaker open / malformed response), OR
-    the membership write itself failed / was refused (PeepSo unavailable, or
-    the writer refused a banned membership row — v1.37).
+    the membership write itself failed (PeepSo unavailable). A banned row is
+    refused as a moderator eviction above since v1.129, not here.
     Transient; retry with backoff. The join **fails closed** — the user is NOT
     added when ownership can't be confirmed, so an outage never grants access.
     (Mirrors the §J read-time 503 precedent; the §1.4.6 standard-codes table
@@ -3367,6 +3367,7 @@ Leave a holder group and record a TTL'd opt-out so the reconcile sweep doesn't r
   - `bcc_invalid_request` (400) — group is not a holder group
   - `bcc_permission_denied` (403) — caller is the group owner ("Owners cannot leave their own community...")
 - **Mapping:** `PeepSoGroupWriter::leave` (refuses owners, fires `peepso_action_group_user_delete`) → opt-out timestamp written to `bcc_gated_groups_optout` user_meta. Mod-initiated removals (PeepSo's UI) record the opt-out as **permanent** (timestamp `0`) so banned users aren't re-added by the reconcile sweep.
+- **v1.129:** the opt-out (and the `holder_group_leave` audit row) is written only when the caller was an **active member** (`member%`). A moderator-removed or banned caller still gets `200 { left: true }`, but nothing is written, and a permanent opt-out is never downgraded by a later leave. A banned membership row is kept (bcc-core: leave never deletes it), so the ban survives.
 
 #### `GET /bcc/v1/me/holder-groups/preferences`
 
@@ -3475,7 +3476,8 @@ For non-gated, non-Hall PeepSo groups (the residual case: user/system groups cre
   - `bcc_permission_denied` (403):
     - `closed` group: "This community requires admin approval. Visit the group page to request access."
     - `secret` group, caller already a member: "This community is invite-only." *(v1.99: a non-member gets the 404 above instead)*
-  - `bcc_unavailable` (503) — the membership write failed or was refused (PeepSo unavailable, or the writer refused a banned membership row). Fail-closed; nothing was joined. Same surface as the Halls join.
+  - `bcc_permission_denied` (403) — **(v1.129)** the caller is banned from the group: "A moderator removed you from this community, so you cannot rejoin it." Checked before the write.
+  - `bcc_unavailable` (503) — the membership write failed (PeepSo unavailable). Fail-closed; nothing was joined. Same surface as the Halls join. (Before v1.129 a ban also landed here.)
 - **Mapping:** Resolves `GroupContext`; if `type` is `nft` or `hall` rejects (use the dedicated endpoint); for `open` groups calls `PeepSoGroupWriter::join` and honors its verdict — a `false` return is surfaced as `bcc_unavailable`, never as `joined: true`. Closed/secret are not joined here — PeepSo's request-flow / invitation machinery is not replicated by this endpoint.
 
 #### `POST /bcc/v1/me/groups/:id/leave`
@@ -3624,7 +3626,7 @@ Shape mirrors §4.7.1 exactly, with a `validator_stats` block replacing `collect
   - `bcc_rate_limited` **429** — throttled.
   - `bcc_forbidden` **403** — account suspended (holding stake is not an override of moderation).
   - `bcc_invalid_request` **400** — not a delegator community.
-  - `bcc_permission_denied` **403** — a moderator removed this member (`error.data.reason_code` = `opt_out_active`, v1.84; **narrowed in v1.95**: emitted ONLY for a moderator eviction, since a voluntary leave no longer blocks an explicit join), **or** not eligible (`error.data.reason_code` = `not_eligible`, v1.85). Both carry a `reason_code`, so the two are told apart by its **value** and never by the presence or absence of `error.data`.
+  - `bcc_permission_denied` **403** — a moderator removed this member (`error.data.reason_code` = `opt_out_active`, v1.84; **narrowed in v1.95**: emitted ONLY for a moderator eviction, since a voluntary leave no longer blocks an explicit join; **v1.129**: a ban gets the same refusal instead of a 503), **or** not eligible (`error.data.reason_code` = `not_eligible`, v1.85). Both carry a `reason_code`, so the two are told apart by its **value** and never by the presence or absence of `error.data`.
     - **`error.data.min_stake_display` (v1.85)** — on the `not_eligible` refusal only: the same server-pre-formatted string the card and the unlock hint carry (`"10 ATOM"`, or a bare amount when the chain’s native token is unknown). `null` when the gate config or the native token is unreadable; the key is always present on this refusal, so a client can tell "unknown" from "field absent". ⚠ **This field exists because the minimum must NOT be read out of `error.message`.** §γ forbids a client rendering `error.message`, so a figure carried only in the sentence is a figure the user never sees — which is exactly what the card surfaces showed before v1.85 ("you don’t delegate enough", with no amount). Render the amount from this field, interpolated into your own code-keyed copy.
     - `error.message` remains the server-pinned sentence (e.g. `"Delegate at least 10 ATOM to Coinbase01 to join this community."`) for non-browser clients and the logs. It is **not** for display: earlier revisions of this line said to render it verbatim, which contradicted §γ and is withdrawn.
   - `bcc_upstream_unavailable` **503** — **could not verify** the delegation. This is NOT "you don't qualify": the join failed **closed** during an upstream outage. Clients MUST present it as retryable and MUST NOT render it as an eligibility failure.
@@ -6700,7 +6702,7 @@ Cross-kind single-group detail view-model (`nft`/`hall`/`system`/`user`). Powers
   { "id": 4231, "slug": "holders-bored-apes", "name": "Holders: Bored Apes", "type": "nft", "privacy": "closed", "description": "…", "image_url": "https://…", "image_fallback_url": null, "member_count": 87, "verification": { "kind": "on_chain", "label": "On-Chain Verified" }, "activity": { "posts_last_7d": 14, "active_members_7d": 5, "last_activity_at": "2026-05-04T14:22:00Z", "heat": "warm", "heat_label": "Warm" }, "collection_stats": { "...": "§4.7.4 block, NFT-type only else null" }, "viewer_membership": { "is_member": true, "joined_at": "2026-01-12T00:00:00Z" }, "permissions": { "can_join": { "allowed": false, "unlock_hint": null, "reason_code": "already_member" }, "can_leave": { "allowed": true, "unlock_hint": null, "reason_code": null }, "can_read_feed": { "allowed": true, "unlock_hint": null, "reason_code": null } }, "feed_visible": true, "members_visible": true, "can_use_public_all": true, "can_manage_public_all_policy": false, "public_all_members_enabled": false, "chain_tag": "ethereum", "trust_min": null, "links": { "self": "/groups/holders-bored-apes" }, "card": { "...": "community Card view-model per §3.2.4 — card_kind: \"community\", community_dossier populated" } }
   ```
   - `card` (v1.27, additive): the full §3.2.4 community Card, composed from the same data already resolved for the flat fields (zero extra queries). New consumers render `group.card` via the CardFactory; the flat fields remain during the migration window.
-  - `type` ∈ `nft|validator|hall|system|user`; `privacy` ∈ `open|closed|secret`. `image_url`/`collection_stats` are NFT-type only (else `null`); `validator_stats` (v1.52, §4.7.4 block) is `validator`-type only (else `null`); `verification` is present for both on-chain-gated kinds (`nft`, `validator`) and `null` elsewhere. `can_join` for a `validator` group is always `{allowed: false, reason_code: "not_eligible", unlock_hint: "Delegate to this validator to join its community."}` — the join round-trip happens via §4.7.8. `activity` is the §4.7.1 heat tile (defaults `posts_last_7d: 0, heat: "cold", heat_label: "Quiet"`). `viewer_membership`: `null` (anon), `{is_member: false, joined_at: null}` (authed non-member), `{is_member: true, joined_at}` (member). `permissions.*` each `{allowed, unlock_hint, reason_code}` (render `unlock_hint` verbatim per §A2/§N7); `can_join.reason_code` ∈ `auth_required|already_member|not_eligible|trust_threshold|requires_approval|invite_only`; `can_leave.reason_code` ∈ `auth_required|not_member|owner_cannot_leave`; `can_read_feed.allowed` always `true` for a built view-model (per-post visibility teaser, v1.24 — secret-non-member never gets a view-model). `feed_visible` mirrors `can_read_feed.allowed`. `members_visible` true for open groups, else only for active members. `can_use_public_all` (bool) — whether **this viewer** may set `visibility=public_all` when posting here (drives the composer's "PUBLIC" option; `false` for anon/non-members and members not authorized to syndicate — see §4.14). `can_manage_public_all_policy` (bool) — whether **this viewer** may change the group-wide ordinary-member opt-in (drives the owner control; `true` for the group **owner / manager** or a **site admin (`manage_options`)**, `false` for moderators, ordinary members, and anon). Distinct from `can_use_public_all`: a moderator may *use* `public_all` on their own post but may **not** manage the group policy. `public_all_members_enabled` (bool) — the group's ordinary-member opt-in state. **Minimum exposure:** it reflects the real value only for viewers who can manage the policy (`can_manage_public_all_policy = true`); every other viewer sees `false` (the raw config is not disclosed to ordinary/anon viewers — they rely on `can_use_public_all`). Toggled via `POST /me/groups/:id/post-policy` (§4.7.3). `chain_tag` slug or `null`. `trust_min` ∈ `25|50|75|null`.
+  - `type` ∈ `nft|validator|hall|system|user`; `privacy` ∈ `open|closed|secret`. `image_url`/`collection_stats` are NFT-type only (else `null`); `validator_stats` (v1.52, §4.7.4 block) is `validator`-type only (else `null`); `verification` is present for both on-chain-gated kinds (`nft`, `validator`) and `null` elsewhere. `can_join` for a `validator` group is always `{allowed: false, reason_code: "not_eligible", unlock_hint: "Delegate to this validator to join its community."}` — the join round-trip happens via §4.7.8. `activity` is the §4.7.1 heat tile (defaults `posts_last_7d: 0, heat: "cold", heat_label: "Quiet"`). `viewer_membership`: `null` (anon), `{is_member: false, joined_at: null}` (authed non-member), `{is_member: true, joined_at}` (member). `permissions.*` each `{allowed, unlock_hint, reason_code}` (render `unlock_hint` verbatim per §A2/§N7); `can_join.reason_code` ∈ `auth_required|already_member|removed|not_eligible|trust_threshold|requires_approval|invite_only` (`removed`, v1.129: the viewer is banned from the group, any type; `unlock_hint` "A moderator removed you from this community."; never offer Join); `can_leave.reason_code` ∈ `auth_required|not_member|owner_cannot_leave`; `can_read_feed.allowed` always `true` for a built view-model (per-post visibility teaser, v1.24 — secret-non-member never gets a view-model). `feed_visible` mirrors `can_read_feed.allowed`. `members_visible` true for open groups, else only for active members. `can_use_public_all` (bool) — whether **this viewer** may set `visibility=public_all` when posting here (drives the composer's "PUBLIC" option; `false` for anon/non-members and members not authorized to syndicate — see §4.14). `can_manage_public_all_policy` (bool) — whether **this viewer** may change the group-wide ordinary-member opt-in (drives the owner control; `true` for the group **owner / manager** or a **site admin (`manage_options`)**, `false` for moderators, ordinary members, and anon). Distinct from `can_use_public_all`: a moderator may *use* `public_all` on their own post but may **not** manage the group policy. `public_all_members_enabled` (bool) — the group's ordinary-member opt-in state. **Minimum exposure:** it reflects the real value only for viewers who can manage the policy (`can_manage_public_all_policy = true`); every other viewer sees `false` (the raw config is not disclosed to ordinary/anon viewers — they rely on `can_use_public_all`). Toggled via `POST /me/groups/:id/post-policy` (§4.7.3). `chain_tag` slug or `null`. `trust_min` ∈ `25|50|75|null`.
 - **Errors:** `bcc_invalid_request` 400 (empty slug) · `bcc_not_found` 404 (unresolved, OR secret + viewer not a member — §S, indistinguishable from missing)
 - **Cache:** anon → `public, max-age=60`; authed → `private, no-store`.
 - **Mapping:** `GroupsDetailEndpoint::show` (route `GroupsDetailEndpoint.php:52`) → `GroupsService::getGroup` (→ `PeepSoGroupRepository::findGroupBySlug` → `GroupContextResolver` → secret-gate → `GroupActivityHeatService` → `findUserMemberships` → NFT enrichment → `buildPermissions` → `ChainRepository::resolveSlugsForGroups`).
@@ -8956,6 +8958,18 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.129 — 2026-11-12 — behaviour change — a group ban survives Leave, and reads as a removal
+
+Ships with bcc-core's F-266 change (bcc-core #108, merged) and bcc-trust's F-267/F-271 change. Release core first.
+
+- **Leave never erases a ban (F-266).** Leaving a group you are banned from returns the same success as before but changes nothing: the ban stays, so a later Join is still refused. Before, Leave deleted the ban and Join then worked.
+- **A removal is not undone by Leave (F-267).** `POST /me/holder-groups/:id/leave` and `POST /me/validator-groups/:id/leave` write the voluntary opt-out only for an active member. A moderator's permanent opt-out is never downgraded by a later Leave.
+- **A ban reads as a removal (F-271):**
+  - group detail `permissions.can_join`: new `reason_code` `removed` (`allowed: false`, `unlock_hint` "A moderator removed you from this community.");
+  - `GET /me/holder-groups` and `GET /me/validator-groups`: a banned group is listed in `opted_out` with `opt_out_kind: "removed"`, never in `eligible_to_join`;
+  - holder and delegator joins refuse a ban with the existing `bcc_permission_denied` 403 `opt_out_active`. The plain-group join refuses it with `bcc_permission_denied` 403, and the Hall join with `bcc_forbidden` 403. All used to return a 503.
+- **Clients:** treat `reason_code: "removed"` like the other non-unlockable codes, with no Join button. The new 403s need no retry; a 503 on these joins now means only an outage.
 
 ### v1.128 — 2026-11-12 — behaviour change — sign-in and search use the current handle; renamed handles are retired
 
