@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.120 · 2026-11-11 · Phase 1 deliverable
+**Status:** Draft v1.121 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -3085,7 +3085,7 @@ List of available Halls (PeepSo Groups in BCC clothing).
   }
   ```
 - **Cache:** `Cache-Control: public, max-age=300` anonymous ·
-  `private, no-store` authenticated *(v1.12X, behaviour change)* — every
+  `private, no-store` authenticated *(v1.121, behaviour change)* — every
   row carries `viewer_membership`, so a signed-in response is personal and
   must not be stored by a shared cache. It was `public, max-age=300`
   unconditionally, which let one member's membership state be served to a
@@ -4794,12 +4794,12 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
   - `profile_visibility` → `peepso_users.usr_profile_acc` column (PeepSo's user-search and feed gate join against this — writing through this endpoint keeps gating coherent). `public` → 10, `members` → 20, `friends` → 30, `private` → 40.
     - **`friends` is new in v1.91.** The level existed in storage and was honoured by PeepSo's own surfaces, but this endpoint's token map had no entry for it, so a member could not select it through BCC at all — only through PeepSo's own profile UI.
     - ⚠ **30 is `PeepSoFriendsPlugin::ACCESS_FRIENDS`, defined and enforced by the peepso-friends plugin, not by PeepSo core** (which declares only 10, 20 and 40). It means the PeepSo **friends** list, which is a mutual, request-and-accept relation — *not* BCC followers, which are one-directional. With peepso-friends inactive the level falls through PeepSo's ladder and stays **denied**, which is the fail-closed direction.
-    - ⚠ `default_post_audience` gained `friends` (30) in v1.12X. Until then a stored `peepso_last_used_post_privacy` of 30 — which PeepSo's own posting UI sets — was reported as `members`, so a read-modify-write round-trip through this endpoint wrote 20 back and **loosened** friends to members silently. It now round-trips faithfully. ⚠ Note what the value means today: with peepso-friends absent, `act_access = 30` resolves to the author alone, so `friends` is honest about the stored setting while that setting currently behaves as "only me".
+    - ⚠ `default_post_audience` gained `friends` (30) in v1.121. Until then a stored `peepso_last_used_post_privacy` of 30 — which PeepSo's own posting UI sets — was reported as `members`, so a read-modify-write round-trip through this endpoint wrote 20 back and **loosened** friends to members silently. It now round-trips faithfully. ⚠ Note what the value means today: with peepso-friends absent, `act_access = 30` resolves to the author alone, so `friends` is honest about the stored setting while that setting currently behaves as "only me".
   - `post_visibility` → `peepso_profile_post_acc` user_meta. PUBLIC is intentionally absent (matches PeepSo's `access-profile-post` UI which strips it).
   - `hide_birthday_year` → `peepso_hide_birthday_year` user_meta, "1"/"0".
   - `hide_online` *(documented v1.64 — shipped earlier)* → `peepso_hide_online_status` user_meta, "1"/"0" — PeepSo's presence indicators treat "1" as "hide the green dot".
   - `hide_from_search` *(documented v1.64 — shipped earlier)* → `peepso_is_hide_profile_from_user_listing` user_meta, "1"/"0" — "1" excludes the user from directory + member search (direct profile links still work).
-  - `default_post_audience` *(documented v1.64 — shipped earlier; `friends` added v1.12X)* → `peepso_last_used_post_privacy` user_meta (int 10/20/30/40 ↔ public/members/friends/private) — defaults PeepSo's audience picker; PeepSo itself overwrites it on every post, so this is a default, not a lock. ⚠ The column is not a validated enum, so a value with no token at all is reported as `members`.
+  - `default_post_audience` *(documented v1.64 — shipped earlier; `friends` added v1.121)* → `peepso_last_used_post_privacy` user_meta (int 10/20/30/40 ↔ public/members/friends/private) — defaults PeepSo's audience picker; PeepSo itself overwrites it on every post, so this is a default, not a lock. ⚠ The column is not a validated enum, so a value with no token at all is reported as `members`.
   - `mentor_opt_in` *(v1.62 — Rank Phase 7, spec §21.4)* → `bcc_mentor_opt_in` user_meta, "1"/"0" (via `MentorListingService`). Read/write bool. Opting in requires **no** eligibility — a non-Veteran may pre-opt-in and lists automatically the day they qualify.
 - **Read-only mentor pair (v1.62, GET response only — never writable):** `mentor_listed` (bool) — whether the user is **actively listed** in the mentor directory *right now*; the listing composes **live** as opt-in AND `can('list_as_mentor')` (**Veteran** rank AND trust tier ≥ **Trusted** AND not suspended AND not in §14.2 Rank recovery). Nothing is materialized — when any condition fails the listing **pauses automatically on the next read** (no sweep, no flag to un-stick). `mentor_eligibility_reason` (string|null) — the resolver's stable deny slug ∈ `suspended|new_member|below_veteran|below_trusted|in_recovery` so the frontend can explain a paused listing; `null` while eligible (regardless of opt-in).
 - **PATCH** is partial — missing keys are untouched.
@@ -8932,7 +8932,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.12X — 2026-11-11 — two behaviour changes — a per-viewer Halls list stops being publicly cacheable, and a `friends` post default stops loosening
+### v1.121 — 2026-11-12 — two behaviour changes — a per-viewer Halls list stops being publicly cacheable, and a `friends` post default stops loosening
 
 Both are cases of a per-viewer value being handled as though it were not.
 
