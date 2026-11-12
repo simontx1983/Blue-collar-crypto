@@ -820,7 +820,7 @@ foreach (($dm["degradation_metrics"]["subsystems"] ?? []) as $name => $events) {
 
 - `throttle`
 - `null_trust_read` + 9 other `null_*` NullService activations
-- `peepso_absence` (19 events)
+- `peepso_absence` (21 events)
 - `search_lkg` (2 events)
 - `search_ft_index` (1 event — FT-eligible query served by title-prefix fallback because the FULLTEXT index is missing; added 2026-07-19)
 - `search_trust` (1 event — `enrichment_unavailable`; a search or trending result served WITHOUT trust enrichment: text-only ranking, no impersonation guard; tagged `system_degraded`, cached 10 s, never as LKG; added 2026-11-11, F-24)
