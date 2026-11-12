@@ -445,6 +445,7 @@ Or, if the viewer has zero network connection:
 - **Hidden-watchlist rule (§O4):** users who have hidden their watchlist (per §K2) still contribute to `additional_count` but **never** appear in `named_handles`, even if they're elite/trusted.
 - `kind` is one of: `follow`, `vouch`, `stand_behind`, `dispute_signed`, `nft_held`, `hall_member`. Determines which verb the headline uses.
 - `weighted: true` means the headline applied trust weighting; `false` means raw count (used only on internal admin views, never on public surfaces — kept in the contract for symmetry).
+- **Feed items: `recent_reactors` (v1.9X).** Up to 3 most recent reactors as `{handle, display_name, avatar_url}`, for the stacked avatar faces. It never includes a **suspended** member, or, for a signed-in viewer, anyone they blocked or who blocked them. If either check cannot be read, the key is omitted for the whole page (faces are decoration). On a feed item in a group the viewer cannot read, `headline` is `null` and `recent_reactors` is omitted.
 
 **Anti-rule:** the frontend MUST NOT show `additional_count` as a separate UI element. The server has already incorporated it into `headline`. Showing it twice is a rendering bug.
 
@@ -889,6 +890,7 @@ Appears on Feed item view-models and on Card view-models that support reactions.
 - `kind_grammar` is **required** on every `reactions` block. Frontend MUST branch on it; deriving the rail from `post_kind` is forbidden (a future grammar change must not require a frontend rebuild).
 - `counts` always has all kinds for the active grammar, even if zero. Eliminates `undefined` checks on the client.
 - `viewer_reaction` is `null` when the viewer is anonymous or hasn't reacted; otherwise the kind name (a string belonging to the active grammar).
+- **Group-gated (v1.9X):** on a feed item in a group the viewer cannot read (anonymous, or not a member with a read-allowed status), every `counts` value is `0`, `heat_stage` is `1` and `stoke_count` is `0`, exactly what an unreacted post shows. This is the same rule that already zeroes `comment_count` there. The viewer's own `viewer_reaction` / `viewer_has_stoked` are kept. Keys and shapes are unchanged.
 - A reaction kind from one grammar MUST NOT appear on a `reactions` block of another grammar. The server rejects cross-grammar set-reaction requests with `bcc_invalid_request`.
 - _(Legacy fields `my_reactions` and `totals` shown in earlier drafts of this section were never emitted by the V1 implementation; the canonical shape has always been `viewer_reaction: string | null`.)_
 
@@ -1351,6 +1353,8 @@ V1.5 transition rules: clients tolerant of unknown fields ride forward without c
 `grade` ∈ {`trust`, `neutral`, `caution`} (from `vote_type` 1/0/-1). `text` is the review body (≤ 4000 chars; falls back to the short `reason` slug for bare-vote rows). `page_kind` ∈ {`validator`, `project`, `creator`, `member`, `""`} and drives the target link prefix (`/v`|`/p`|`/c`|`/u`; `""` → no link).
 
 Only a review whose vote is **active** is emitted (v1.94). When the vote has been retracted by its author, removed by an accepted dispute, or removed by moderation, the `review` item is **omitted** from every feed surface (it is never emitted with an empty or placeholder body), and its permalink (`GET /feed/:id`) answers `bcc_not_found` 404. The omission is read-time, so a vote that is restored or re-cast brings the item back.
+
+Unpublished targets (v1.9X): only a **published** page resolves. When the reviewed page is a draft, private or trashed, `page_handle`, `page_name` and `page_kind` are `""`, the same as for a missing page, so the card never shows an unpublished page's title or slug and the frontend suppresses the link.
 
 Member-target rows (v1.48): `page_id` is the member's **self-page id** (`MemberSelfPageService::selfPageId(user_id)`), `page_name` is the member's display name, and `page_handle` is their `bcc_handle` — `""` when unset (the frontend suppresses the link; `user_login`/nicename are never projected).
 
@@ -8892,6 +8896,15 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.9X — 2026-11-11 — behaviour change — feed items stop leaking unpublished pages, blocked reactors and group engagement
+
+Placeholder version; main agent assigns the number at merge. Ships with bcc-trust's F-90 change.
+
+- **§3.3.2 `review` body:** a review of a draft, private or trashed page now renders that page like a missing one (`page_handle` / `page_name` / `page_kind` = `""`). Only published pages resolve.
+- **§2.2 `social_proof.recent_reactors`** (now documented): never includes suspended members, or, for a signed-in viewer, mutually blocked ones. It is omitted for the page if either check cannot be read.
+- **Group-gated engagement:** on a feed item in a group the viewer cannot read, `reactions.counts` are all `0`, `heat_stage` is `1`, `stoke_count` is `0`, `social_proof.headline` is `null` and `recent_reactors` is omitted. That's the same rule that already zeroed `comment_count`. The viewer's own `viewer_reaction` / `viewer_has_stoked` are kept.
+- No new fields, codes or shapes. **Clients:** no change needed.
 
 ### v1.111 — 2026-11-11 — behaviour change — profile image uploads are rate limited
 
