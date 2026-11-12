@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.122 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.123 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -6783,7 +6783,7 @@ Watchers-tab data plane — people watching this entity. Offset-paginated to mat
 - **Target (v1.116):** `target_id` must be a **published** `peepso-page` whose page type matches `target_kind`. Any other id, such as a status post, a draft, or another kind's page, returns the same empty page as a missing one. It previously accepted any post id, which listed that post author's followers.
 - **Owner privacy (v1.116):** the watchers are the owner's followers, so they answer to the owner's profile exactly like `GET /users/:handle/followers`. If the owner's `profile_visibility` does not admit this viewer, or the owner is suspended (§F-182; an *unknown* suspension does not hide), the route answers `bcc_forbidden` **403** with `error.data.reason: "profile_private"`. The owner's `watching_hidden` flag still does not propagate.
 - **Errors:** `bcc_invalid_request` 400 · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` (v1.116, see above)
-- **Cache:** anon → `public, max-age=30`; authed → `private, max-age=30` + `Vary`; invalid and `profile_private` → `private, no-store`.
+- **Cache:** anon → `public, max-age=30`; authed → `private, max-age=30`; both carry `Vary: Authorization, Cookie` (anon too since v1.123); invalid and `profile_private` → `private, no-store`.
 - **Mapping:** `CardWatchersEndpoint::list` (route `CardWatchersEndpoint.php:46`) → `CardWatchersService::listWatchers`. FE `card-tabs-endpoints.ts:getCardWatchers`.
 
 #### `GET /bcc/v1/creators/:slug/gallery`
@@ -8931,6 +8931,13 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.123 — 2026-11-12 — header fix — anonymous entity-watchers responses carry `Vary`
+
+Ships with bcc-trust #591.
+
+- **`GET /entities/:target_kind/:target_id/watchers`:** the anonymous `public, max-age=30` response now carries `Vary: Authorization, Cookie`, like the signed-in one. Without it a shared cache could serve the anonymous copy to a signed-in request.
+- **Clients:** no shape or status change.
 
 ### v1.122 — 2026-11-12 — behaviour change — trending hashtags count only posts anyone can see
 
