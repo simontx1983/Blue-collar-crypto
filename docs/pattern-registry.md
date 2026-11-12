@@ -314,6 +314,45 @@ directory cards; the single-card path uses the same repository resolver.
   `peepso_group_members_count` so PeepSo's frontend stays in sync.
   Single-graph rule (§E3): never write to `peepso_group_members`
   directly.
+  - **Every membership write for one (user, group) pair is
+    serialized** (2026-11-12, bcc-core #112): `join()`, `leave()` and
+    the eight F-272 doors below run their read AND write under one
+    advisory lock, `PeepSoGroupWriter::memberLockKey()`
+    (`bcc_group_member_{groupId}_{userId}`). `peepso_group_members`
+    has no unique (user, group) index, so this lock is what stops two
+    rows for a pair. Busy lock → the door fails closed (`false` /
+    `OUTCOME_UNAVAILABLE`). A caller that takes its own outer lock
+    must use a **different** key (MySQL lets a session re-take its own
+    lock). Residual: PeepSo's own UI/AJAX doors do not take it; the
+    headless frontend does not use them.
+- **Join requests and invitations** (closed / secret groups, F-272) →
+  `PeepSoGroupWriter::requestJoin` / `cancelJoinRequest` /
+  `approveJoinRequest` / `denyJoinRequest` / `invite` / `revokeInvite`
+  / `acceptInvite` / `declineInvite`, returning `OUTCOME_*`
+  (`done` / `conflict` / `refused` / `unavailable`). Bounded pending
+  reads: `PeepSoGroupRepository::listPendingMembers` /
+  `countPendingMembers` / `listUserPendingInvites` (fail-closed: `null`
+  when the read did not run). Gates, authority (owner / manager / site
+  admin, never moderators) and notifications live in bcc-trust
+  `GroupJoinRequestService`; do not call the doors from anywhere else
+  (a structural test enforces it).
+  - **⚠ ACCEPTED §C2 / §E3 EXCEPTION (approved 2026-11-12, bcc-core
+    #112 review):** these doors write `peepso_group_members` **directly**,
+    through `BCC\Core\Repositories\PeepSoGroupMembershipWriteRepository`
+    — the only BCC code that may. Reason: PeepSo's API cannot express a
+    conditional transition. `member_join()` always inserts a FULL member
+    (so "insert, then demote to pending" left a full member behind when
+    the second step failed — an approval bypass), and `member_modify()`
+    / `member_leave()` write by (user, group) whatever the row's status
+    (so a read-then-write could overwrite a ban that landed in between —
+    the F-266 class). Each statement names the status it expects in its
+    WHERE clause (insert only when the pair has NO row; promote/delete
+    only from the expected pending status); 0 affected rows =
+    `OUTCOME_CONFLICT`, a failed statement = `OUTCOME_UNAVAILABLE`. The
+    writer refreshes `peepso_group_members_count` and fires
+    `peepso_action_group_user_join` after a real promotion, as the AJAX
+    layer would. **Do not extend this exception** to other writes:
+    anything new goes through PeepSo's API.
 
 ### RESOLVED (v1.55) — "Hall-ness" is a meta column, written by the provisioner
 
