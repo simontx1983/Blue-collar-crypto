@@ -4129,7 +4129,7 @@ Users vertical — separate cache + rate-limit bucket from project search so the
 - **Query:**
   - `q` (string) — 2..100 chars (`QueryQualityGate` shared with project search). Over 100 chars → `rest_invalid_param` 400 (v1.47).
   - `limit` (int, optional) — default 20, capped at 50
-- **Matching (since v1.127, F-302):** a member is returned when `q` matches their **current @handle** or their display name (bcc-trust's shared member matcher, also used by `/members` and the @-mention picker), in addition to PeepSo's first/last-name search. Never the login or email. Every candidate still passes PeepSo's privacy filter set (bans, profile level, blocks, hidden-from-listing, discovery opt-out), and a hidden real name matches by handle only. Retired handles are not searchable. Without bcc-trust active only the PeepSo name search runs.
+- **Matching (since v1.127, F-302):** a member is returned when `q` matches their **display name or current @handle only** (bcc-trust's shared member matcher, also used by `/members` and the @-mention picker). Never the login, the email or a first/last name, and a hidden real name matches by handle only; the query is never passed to PeepSo's own search. Every candidate still passes PeepSo's privacy filter set (bans, profile level, blocks, hidden-from-listing). Retired handles are not searchable. Without bcc-trust active the endpoint returns no results.
 - **Response 200:**
   ```json
   {
@@ -8950,7 +8950,7 @@ Ships with bcc-trust #634 (F-280) and bcc-search #36 (F-302). Draft number: renu
 - **`POST /auth/login`:** a handle-shaped `identifier` resolves the account's current handle, not the `u_<handle>` signup login. A renamed member signs in with their new handle; the old handle no longer signs in. A handle two accounts hold signs in nobody. Errors and their shapes are unchanged.
 - **`PATCH /me/handle`:** the outgoing handle is retired (it keeps resolving to the member, so old `/u/` links and `@mentions` work, and no other member can take it). The owner may reclaim it. New error `bcc_internal_error` 500 when the old handle cannot be recorded; nothing changes. A one-shot migration retires the original handle of members who renamed before this change.
 - **Availability:** a retired handle, or one a signup login was derived from, is reported taken (`bcc_conflict` 409) to signup and to other members' renames, so the availability answer matches what signup will do.
-- **`GET /search/users` (and `GET /cards/search` member suggestions):** members are also found by their current @handle and display name. No shape change.
+- **`GET /search/users` (and `GET /cards/search` member suggestions):** matching is by display name or current @handle only. A renamed member is found by the new handle; the login, first/last name and a hidden real name no longer match (the query no longer reaches PeepSo's own search). No shape change.
 - **Clients:** no change required. The frontend already redirects a `/u/{old}` response to the current handle.
 
 ### v1.125 — 2026-11-12 — additive — claim re-verify: badge-removed bell; revoked claims leave the feed
