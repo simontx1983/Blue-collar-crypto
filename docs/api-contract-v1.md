@@ -6190,7 +6190,7 @@ Block a target user. Idempotent — re-blocking returns `state: "existing"`.
 - **Response 200:** `{ "data": { "ok": true, "user_id": 412, "state": "created" } }` — `state` ∈ `created | existing`.
 - **Errors:** `bcc_unauthorized` (401) · `bcc_rate_limited` (429, > 20 creates/60s, checked before target resolution) · `bcc_invalid_request` (400, `user_id` ≤ 0 or self-block) · `bcc_not_found` (404, target missing) · `bcc_unavailable` (503, insert failed)
 - **Audit:** `user_blocked` fires only on the `created` transition.
-- **Side effect:** every successful block, `created` or `existing`, removes the follows between the two members in **both** directions, together with their watch metadata. They leave both watchlists. Unblocking (`DELETE /me/blocks/:user_id`) does **not** restore them. While the block exists, neither member can watch the other (`POST /me/watching/watch` → `bcc_forbidden` 403).
+- **Side effect:** every successful block, `created` or `existing`, removes the member-to-member follows between the two members in **both** directions, together with their watch metadata. They leave both watchlists. Page follows (a member following a page the other member owns) are **not** removed. Unblocking (`DELETE /me/blocks/:user_id`) does **not** restore them. While the block exists, neither member can watch the other (`POST /me/watching/watch` → `bcc_forbidden` 403).
 - **Rate limit:** 20/60s/viewer
 - **Mapping:** `MyBlocksEndpoint::create` (route `MyBlocksEndpoint.php:48`, CREATABLE entry) → `PeepSoBlockWriter::block` (fires `peepso_user_blocked` on create — PeepSo-native-wire compat; the block audit trail is written inline via `AuditLogger`, not a subscriber). FE `blocks-endpoints.ts:blockUser`.
 
@@ -8925,12 +8925,12 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-12 — behaviour change — a block prevents and removes follows
+### v1.NEXT — 2026-11-12 — behaviour change — a block prevents and removes member-to-member follows
 
 Ships with bcc-core's F-29 change (bcc-core #99) and bcc-trust's F-29 change (bcc-trust #581). Release core first.
 
 - **`POST /me/watching/watch`:** a block between the viewer and the card's owner, in either direction, refuses the watch with `bcc_forbidden` (403) and the generic message "You can't watch this account.". The route already returned `bcc_forbidden` 403 for a suspended viewer; that case is now listed too.
-- **`POST /me/blocks`:** a successful block (`created` or `existing`) removes the follows between the two members in **both** directions, with their watch metadata. Unblocking does not restore them.
+- **`POST /me/blocks`:** a successful block (`created` or `existing`) removes the member-to-member follows between the two members in **both** directions, with their watch metadata. Page follows are not removed. Unblocking does not restore them.
 - No new fields, codes or shapes. **Clients:** treat `bcc_forbidden` on watch like any refusal, and don't retry it. After a block, the blocked member disappears from the blocker's watchlist (and vice versa) without a separate unwatch.
 
 ### v1.120 — 2026-11-11 — behaviour change — a group's old posts leave the global feed when it turns closed or secret (F-23)
