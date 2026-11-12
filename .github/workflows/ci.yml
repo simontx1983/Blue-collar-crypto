@@ -34,21 +34,21 @@ jobs:
     name: Cross-repo guards — contract · subsystem · cadence · dead-file
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: simontx1983/bcc-trust
           path: app/public/wp-content/plugins/bcc-trust
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: simontx1983/bcc-core
           path: app/public/wp-content/plugins/bcc-core
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: simontx1983/bcc-search
           path: app/public/wp-content/plugins/bcc-search
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: simontx1983/bcc-frontend
           path: bcc-frontend
