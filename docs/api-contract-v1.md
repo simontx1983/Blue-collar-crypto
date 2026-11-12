@@ -400,7 +400,7 @@ The single most important shared type. Encodes §N7 (always visible, disabled wi
 - When `allowed: false`, `unlock_hint` is a **plain-English explanation** the frontend renders verbatim as a tooltip/disabled-button helper.
 - `can_open_dispute` is the **owner vote-dispute** entry (DisputeCallout → `POST /disputes`) and mirrors the write gate exactly: page ownership only, no feature ladder (shipped 2026-06-11). It is the **sole** dispute gate — the `can_dispute` §J attestation-cast gate (`sign_dispute` ladder) was a dead scaffold (no such attestation kind existed) and was retired 2026-07-08. Non-owners get `reason_code: "not_page_owner"` with no hint — the §N7 visible-gate rule applies to gates a viewer can eventually unlock, which ownership of someone else's page is not.
   - **Member self-pages (member-disputes slice, 2026-06-30):** a member is the owner of their own self-page, so on their OWN member card/profile `can_open_dispute` is `allowed: true` when they have a contestable active downvote on their self-page, else `reason_code: "no_contestable_downvote"`. Non-owners and anonymous viewers get `reason_code: "not_applicable"` (members can't dispute votes on each other — only the subject can contest a downvote on themselves, mirroring the entity owner-contests-downvote model). Ownership resolves via the zero-DB self-page identity (`page_id = ID_BASE + user_id`).
-- `can_message` (v1.53) mirrors the DM write gates exactly — it is produced by the SAME messaging-policy evaluator the send path runs, so a rendered Message button and the `POST /me/conversations` it triggers can never disagree on a permanent rule. Only the transient rate limit is POST-only. On **validator page cards** it targets the page's resolved verified operator (or the queue, when the validator has never been claimed); on member and community cards it is `not_applicable`. Reason codes: `not_applicable` (hide) · `auth_required` (visible-disabled, sign-in copy) · `self_action_blocked` (hide — viewer is the operator) · `sender_restricted` (hide — suspended/banned sender) · `sender_chat_disabled` (visible-disabled, resolvable hint) · `messaging_unavailable` (hide) · `friends_only` (visible-disabled + hint) · **`unavailable` (hide — v1.92)**.
+- `can_message` (v1.53) mirrors the DM write gates exactly — it is produced by the SAME messaging-policy evaluator the send path runs, so a rendered Message button and the `POST /me/conversations` it triggers can never disagree on a permanent rule. Only the transient rate limit is POST-only. On **validator page cards** it targets the page's resolved verified operator (or the queue, when the validator has never been claimed); on community cards it is `not_applicable`. On **member cards** (since v1.NEXT, F-246) a signed-in viewer gets the live gate to that member — the same evaluator, batched per page on list surfaces — and `self_action_blocked` on their own card; anonymous viewers' member cards are unchanged. Reason codes: `not_applicable` (hide) · `auth_required` (visible-disabled, sign-in copy) · `self_action_blocked` (hide — viewer is the operator) · `sender_restricted` (hide — suspended/banned sender) · `sender_chat_disabled` (visible-disabled, resolvable hint) · `messaging_unavailable` (hide) · `friends_only` (visible-disabled + hint) · **`unavailable` (hide — v1.92)**.
 
   - ⚠⚠ **`unavailable` (v1.92) means "the server could not determine the block state", not "you may not message".** It is emitted when the block table cannot be READ — a transient database failure — and it exists because the alternative is worse: the previous behaviour reported an unreadable block table as "not blocked", so the client rendered a live Message button and the `POST` then refused it. Clients MUST **omit** the affordance, never render it disabled: the condition is not something the viewer can resolve, so §N7's visible-disabled rule does not apply.
   - ⚠⚠ **It is ALWAYS paired with `unlock_hint: null`, and that pairing is load-bearing rather than cosmetic.** A client that hides on the hint rather than on the code — which is what the member-card pill did before the omit branch shipped — would render a DISABLED pill if a hint string ever accompanied this code. The server therefore guarantees the null, and a backend test asserts the pairing independently of the code.
@@ -5035,7 +5035,7 @@ Paginated list of the viewer's conversations, ordered by `mpart_last_activity DE
 - `peer` is the OTHER participant for 1-on-1 conversations and `null` for groups (where `is_group === true`); the frontend uses `peer` for the inbox-row title and falls back to a participant list when null.
 - `sender_blocked_by_viewer` (v1.87) — `true` when the viewer has blocked `last_message.author`. **Always present**, never absent, so a client reads `false` rather than `undefined`. When it is `true`, `preview` is **already** the fixed string `Message from someone you have blocked` — the real preview text is not in the payload at all. See **Blocked senders** below.
 - `unread_count` excludes messages whose author the viewer has blocked (v1.87).
-- **Errors:** `bcc_unauthorized 401`.
+- **Errors:** `bcc_unauthorized 401`, `bcc_unavailable 503` (since v1.NEXT, F-300: the conversation list could not be read; retryable — render an error with retry, **not** the empty state. Before, a failed read answered an empty `items`).
 - **Cache:** `private, no-store`. DM state mutates per-viewer on every read.
 
 #### `POST /bcc/v1/me/conversations`
@@ -5098,7 +5098,8 @@ Paginated message history. `{id}` is either the conversation root msg id OR any 
       "id": 4031,
       "is_group": false,
       "participants": [...UserMini[]],
-      "peer": {...UserMini}
+      "peer": {...UserMini},
+      "can_reply": { "allowed": false, "unlock_hint": "Turn on direct messages in your settings to send messages.", "reason_code": "sender_chat_disabled" }
     },
     "items": [
       {
@@ -5113,11 +5114,12 @@ Paginated message history. `{id}` is either the conversation root msg id OR any 
     "pagination": { "page": 1, "per_page": 30, "total": null, "has_more": true }
   }
   ```
+- `conversation.can_reply` (v1.NEXT, F-246, additive) — would `POST /me/conversations/{id}/messages` be accepted right now? `{allowed, unlock_hint, reason_code}`, produced by exactly the reply path's gates: the sender's permanent rules (suspension/ban → `sender_restricted`; own DMs off → `sender_chat_disabled` with a resolvable hint) and, for a 1-on-1, the messaging-policy evaluator against the other participant (`messaging_unavailable` for peer DMs off **or** a mutual block — indistinguishable, the §4.19 shield; `friends_only` + hint; `unavailable` when the block table cannot be read). Group threads are gated by the sender rules only. The transient rate limit is POST-only, as on `can_message`. A client that does not know the field treats it as allowed (today's behaviour).
 - `is_inline_notice` is `true` for system rows (`peepso-message-notic` post_type) — "Phillip joined the conversation," "Admin left." Frontend renders these with an austere centered treatment (no avatar, no bubble).
 - `sender_blocked_by_viewer` (v1.87) — `true` when the viewer has blocked that message's author. **Always present.**
 - ⚠ **When it is `true`, `body` is the fixed string `Message from someone you have blocked`, NOT the real text** (v1.87). `id`, `author`, `posted_at` and `is_inline_notice` are unaffected. The real text is reachable only through `GET …/messages/{message_id}/reveal` below, on an explicit per-message request — so a blocked sender's words never enter the viewer's browser unless the viewer asks for them. See **Blocked senders** below for why this changed within v1.87's own development.
-- **Side effect:** marks every unread message in the conversation as viewed for the viewer (`mrec_viewed = 1`). Equivalent to a `POST /me/conversations/{id}/read` riding on the same request — keeps the typical "open thread → mark read" flow to one round-trip.
-- **Errors:** `bcc_unauthorized 401`, `bcc_not_found 404`.
+- **Side effect:** marks every unread message in the conversation as viewed for the viewer (`mrec_viewed = 1`). Equivalent to a `POST /me/conversations/{id}/read` riding on the same request — keeps the typical "open thread → mark read" flow to one round-trip. **Not** on a `bcc_unavailable` response: a thread that could not be read is not marked read and the unread badge is not decremented (v1.NEXT).
+- **Errors:** `bcc_unauthorized 401`, `bcc_not_found 404`, `bcc_unavailable 503` (since v1.NEXT, F-300: the messages could not be read; retryable — render an error with retry, **not** "No messages yet". Before, a failed read answered an empty `items` and still marked the thread read).
 - **Cache:** `private, no-store`.
 
 #### `GET /bcc/v1/me/conversations/{id}/messages/{message_id}/reveal` (v1.87)
@@ -8956,6 +8958,15 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-12 — additive + behaviour change — DM `can_reply`, member-card `can_message`, and failed DM reads are errors
+
+Ships with bcc-trust #644 (F-246 backend + F-300) and bcc-core #113 (merged). Draft number: renumbered in merge order.
+
+- **`GET /me/conversations/{id}/messages` (additive):** `conversation.can_reply` `{allowed, unlock_hint, reason_code}` — the reply path's exact gates, so the composer can say "can't reply" (with the right copy) before the user writes instead of failing on send. Reason codes are the existing `can_message` set.
+- **Member cards (behaviour change):** `permissions.can_message` is now the signed-in viewer's live DM gate to that member (was always `not_applicable`), batched per page on list surfaces (`/members`, followers, watchers, watching). `self_action_blocked` on the viewer's own card. Anonymous viewers unchanged. Feeds the `/messages/new` recipient picker and its `?to_user` pin.
+- **`GET /me/conversations` and `GET /me/conversations/{id}/messages` (behaviour change):** a failed DM read is `bcc_unavailable` 503 instead of an empty list; the thread is not marked read in that case.
+- **Clients:** render `bcc_unavailable` on these two reads as a retryable load failure, never the empty state; read `can_reply` (absent = allowed) and the member-card `can_message` in the composer and the recipient picker.
 
 ### v1.128 — 2026-11-12 — behaviour change — sign-in and search use the current handle; renamed handles are retired
 
