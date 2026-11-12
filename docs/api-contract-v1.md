@@ -4912,7 +4912,8 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
     "show_groups_on_profile":    true,
     "mentor_opt_in":             false,
     "mentor_listed":             false,
-    "mentor_eligibility_reason": "below_veteran"
+    "mentor_eligibility_reason": "below_veteran",
+    "handle_next_change_at":     null
   }
   ```
 - **Storage:**
@@ -4929,6 +4930,7 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
     - ⚠ **It governs only the toggleable part of the policy.** Two rules apply regardless of it, and a client must not present it as "all of my group privacy": secret groups are never shown to non-members, and NFT-holder / delegator groups are shown only to **signed-in** viewers. See `GET /users/:slug/groups`.
   - `mentor_opt_in` *(v1.62 — Rank Phase 7, spec §21.4)* → `bcc_mentor_opt_in` user_meta, "1"/"0" (via `MentorListingService`). Read/write bool. Opting in requires **no** eligibility — a non-Veteran may pre-opt-in and lists automatically the day they qualify.
 - **Read-only mentor pair (v1.62, GET response only — never writable):** `mentor_listed` (bool) — whether the user is **actively listed** in the mentor directory *right now*; the listing composes **live** as opt-in AND `can('list_as_mentor')` (**Veteran** rank AND trust tier ≥ **Trusted** AND not suspended AND not in §14.2 Rank recovery). Nothing is materialized — when any condition fails the listing **pauses automatically on the next read** (no sweep, no flag to un-stick). `mentor_eligibility_reason` (string|null) — the resolver's stable deny slug ∈ `suspended|new_member|below_veteran|below_trusted|in_recovery` so the frontend can explain a paused listing; `null` while eligible (regardless of opt-in).
+- **Read-only `handle_next_change_at` (since v1.NEXT, F-333, GET and the PATCH echo — never writable):** when the owner may next change their handle (`PATCH /me/handle`), as ISO-8601 UTC (`"2026-06-17T14:05:00Z"`), or `null` when they can change it now. The same instant the cooldown `429` reports in `error.data.next_change_at`.
 - **PATCH** is partial — missing keys are untouched.
   - **Every field is validated before anything is written** (F-97): an invalid value (`bcc_invalid_request` 422) or PeepSo missing when `profile_visibility` is sent (`bcc_peepso_unavailable` 503) writes **nothing**.
   - **A write that fails after validation (v1.108)** stops the request: `bcc_internal_error` **500**, message "Some of your preferences could not be saved. Please try again.", with `error.data.saved` (list of the request's field names that DID persist, in write order: `profile_visibility`, then the user-meta fields, then `mentor_opt_in`) and `error.data.failed` (the field that did not). Earlier writes are **not** rolled back. A client must not report the save as successful, and may re-send the whole request (every write is idempotent).
@@ -6581,7 +6583,7 @@ Change the viewer's public handle (§B6). 7-day cooldown. Registered as `WP_REST
 - **Body (JSON):** `handle` (**required**) — lowercased + trimmed; §B6 rules (3–20 chars, `a-z`/digits/`-`, no leading/trailing/consecutive hyphens, not reserved).
 - **Response 200:** `{ "data": { "handle": "ramona-v", "next_change_at": "2026-06-17T14:05:00Z" } }` — `next_change_at` is now + 7 days, **null on a no-op rename** (submitting the existing handle short-circuits without arming the cooldown).
 - **Old handles are retired, not freed (since v1.128, F-280).** A rename records the outgoing handle as **retired** for this member before the new one is written. A retired handle keeps resolving to the member on every per-user route (`/u/{handle}`, `/users/{handle}/…`, cards, so old links and `@mentions` keep working; the response carries the current handle and the client redirects), never signs in, and is `bcc_conflict` 409 for every **other** member and for signup. Its **owner may reclaim it** (normal cooldown applies); it then stops being retired. Exception: a handle equal to the account's login (retired by the 2026 login-handle rotation) stays locked for its owner too. A handle some account's original signup login was derived from is also reported taken (signup could never mint it).
-- **Errors (checked in this order):** `bcc_unauthorized` 401 · `bcc_rate_limited` 429 (the shared per-account attempt bucket, §1.4.4 — since v1.115) · `bcc_forbidden` 403 (account suspended) · `bcc_rate_limited` 429 (within the 7-day cooldown; checked before the handle itself so a locked-out user can't probe availability; carries `Retry-After`) · `bcc_invalid_handle` 422 · `bcc_handle_reserved` 422 · `bcc_conflict` 409 (taken, or retired by another member) · `bcc_rate_limited` 429 (the change cap below — only when a real change is about to be written) · `bcc_internal_error` 500 (since v1.128: the old handle could not be recorded as retired; nothing was changed, retry)
+- **Errors (checked in this order):** `bcc_unauthorized` 401 · `bcc_rate_limited` 429 (the shared per-account attempt bucket, §1.4.4 — since v1.115) · `bcc_forbidden` 403 (account suspended) · `bcc_rate_limited` 429 (within the 7-day cooldown; checked before the handle itself so a locked-out user can't probe availability; carries `Retry-After` (the real remaining wait, since v1.NEXT) and, since v1.NEXT (F-333), `error.data.next_change_at`, the same ISO-8601 UTC instant `GET /me/profile-prefs` reports as `handle_next_change_at`) · `bcc_invalid_handle` 422 · `bcc_handle_reserved` 422 · `bcc_conflict` 409 (taken, or retired by another member) · `bcc_rate_limited` 429 (the change cap below — only when a real change is about to be written) · `bcc_internal_error` 500 (since v1.128: the old handle could not be recorded as retired; nothing was changed, retry)
 - **Rate limit:** one successful change per 7 days (`HandleService::COOLDOWN_SECONDS = 604800`). Every attempt also counts against the shared per-account bucket (120 attempts / 60 s, §1.4.4). *(since v1.115)* A backstop of **10 changes per hour** per account is charged only when a change passes every check and is about to be written — attempts on taken, invalid or unchanged handles never count against it; the 7-day cooldown normally binds first.
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** `OnboardingEndpoint::updateHandle` (route `OnboardingEndpoint.php:102`, EDITABLE) → `HandleService`; on a real rename adds a `bcc_handle_retired` row for the old handle (v1.128), writes `bcc_handle` + `bcc_handle_last_changed`, removes the new handle's own retired row if it was one, audit-logs `handle_changed`, fires `do_action('bcc_handle_changed', …)`.
@@ -9067,6 +9069,14 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-12 — additive + fix — the handle cooldown is readable before submit, and its Retry-After is the real wait
+
+Ships with bcc-trust #653 (F-333, F-294). Version number assigned at merge.
+
+- **`GET`/`PATCH /me/profile-prefs`:** new read-only **`handle_next_change_at`** (ISO-8601 UTC, or `null` when the owner can change their handle now).
+- **`PATCH /me/handle`:** the cooldown `429` now also carries **`error.data.next_change_at`** (same format, same instant). **Fix:** its `Retry-After` is now the real remaining wait. It used to be overwritten with `60` (the shared per-account write bucket's window) alongside a misleading `error.data.retry_after_seconds: 60`; neither is added to a 429 that sets its own `Retry-After` any more.
+- **Clients:** optional. The handle editor can show the date before a submit, and read it from the 429 body instead of the header.
 
 ### v1.134 — 2026-11-12 — behaviour change — 2FA resend reports an ended challenge, and its code always works
 
