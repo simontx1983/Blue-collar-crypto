@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.131 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.132 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -3382,7 +3382,8 @@ Leave a holder group and record a TTL'd opt-out so the reconcile sweep doesn't r
 - **Response 200:** `{ "left": true, "group_id": 4231 }`
 - **Errors:**
   - `bcc_invalid_request` (400) — group is not a holder group
-  - `bcc_permission_denied` (403) — caller is the group owner ("Owners cannot leave their own community...")
+  - `bcc_permission_denied` (403) — caller is the group owner ("Owners cannot leave their own community..."). **(v1.132)** Decided by a membership read made before the write; only the owner gets it.
+  - `bcc_unavailable` (503) — **(v1.132)** the membership read failed, or the leave did not happen for any other reason (busy per-member write lock, failed write, PeepSo unavailable). Retryable; nothing was left or written. Before v1.132 these answered the owner 403.
 - **Mapping:** `PeepSoGroupWriter::leave` (refuses owners, fires `peepso_action_group_user_delete`) → opt-out timestamp written to `bcc_gated_groups_optout` user_meta. Mod-initiated removals (PeepSo's UI) record the opt-out as **permanent** (timestamp `0`) so banned users aren't re-added by the reconcile sweep.
 - **v1.129:** the opt-out (and the `holder_group_leave` audit row) is written only when the caller was an **active member** (`member%`). A moderator-removed or banned caller still gets `200 { left: true }`, but nothing is written, and a permanent opt-out is never downgraded by a later leave. A banned membership row is kept (bcc-core: leave never deletes it), so the ban survives.
 
@@ -3491,8 +3492,8 @@ For non-gated, non-Hall PeepSo groups (the residual case: user/system groups cre
   - `bcc_invalid_request` (404) — group not found, **or (v1.99) a `secret` group the caller is not an active member of**. The two are byte-identical, so the response never confirms that an id is a secret group.
   - `bcc_invalid_request` (400) — group is a holder group or Hall; use the dedicated endpoint
   - `bcc_permission_denied` (403):
-    - `closed` group: "This community requires admin approval. Visit the group page to request access."
-    - `secret` group, caller already a member: "This community is invite-only." *(v1.99: a non-member gets the 404 above instead)*
+    - `closed` group: "This community requires admin approval. Visit the group page to request access." *(v1.132: ask with `POST /me/groups/:id/request-join`)*
+    - `secret` group, caller already a member: "This community is invite-only." *(v1.99: a non-member gets the 404 above instead; v1.132: an invitee accepts with `POST /me/groups/:id/invite/accept`)*
   - `bcc_permission_denied` (403) — **(v1.129)** the caller is banned from the group: "A moderator removed you from this community, so you cannot rejoin it." Checked before the write.
   - `bcc_unavailable` (503) — the membership write failed (PeepSo unavailable). Fail-closed; nothing was joined. Same surface as the Halls join. (Before v1.129 a ban also landed here.)
 - **Mapping:** Resolves `GroupContext`; if `type` is `nft` or `hall` rejects (use the dedicated endpoint); for `open` groups calls `PeepSoGroupWriter::join` and honors its verdict — a `false` return is surfaced as `bcc_unavailable`, never as `joined: true`. Closed/secret are not joined here — PeepSo's request-flow / invitation machinery is not replicated by this endpoint.
@@ -3504,8 +3505,9 @@ For non-gated, non-Hall PeepSo groups (the residual case: user/system groups cre
 - **Errors:**
   - `bcc_invalid_request` (404) — group not found, **or (v1.99) a `secret` group the caller is not an active member of** (previously a `200` no-op). Nothing is written.
   - `bcc_invalid_request` (400) — group is a holder group or Hall
-  - `bcc_permission_denied` (403) — caller is the group owner
-- **Mapping:** `PeepSoGroupWriter::leave` (refuses owners; PeepSo's `member_leave` recomputes `peepso_group_members_count` internally).
+  - `bcc_permission_denied` (403) — caller is the group owner ("Owners cannot leave their own community. Hand off ownership or delete the group first."). **(v1.132)** Decided by a membership read made **before** the write; only the owner ever gets this copy.
+  - `bcc_unavailable` (503) — **(v1.132)** the membership read failed, or the leave did not happen for any other reason (the per-member write lock was busy, the write failed, PeepSo unavailable). Fail-closed; **retryable**; nothing was left. Before v1.132 these answered the owner 403.
+- **Mapping:** `GroupLeaveGuard::precheck` (fail-closed membership read: failed → 503, `member_owner` → 403) → `PeepSoGroupWriter::leave` (a `false` → 503; PeepSo's `member_leave` recomputes `peepso_group_members_count` internally). The leave audit row is written only for an **active** member (`member%`).
 
 #### `POST /bcc/v1/me/groups/:id/post-policy`
 
@@ -3520,6 +3522,79 @@ Owner/manager/site-admin control for a single group knob: may **ordinary members
   - `bcc_permission_denied` (403) — caller is not the group owner, a manager, or a site admin (`manage_options`) — moderators and ordinary members included
   - `bcc_invalid_request` (400) — missing/invalid group id
 - **Mapping:** `GroupsService::setPublicAllMembersPolicy` — `resolveGroupAccess` (existence + secret-gate → 404, no leak), then the canonical `GroupsService::canManagePublicAllPolicy` (owner/manager/`manage_options`; moderator excluded), then `GroupPostPolicyRepository::setPublicAllMembers` writes the `_bcc_group_public_all_members` post-meta ('1' on; deleted on off). The read side is surfaced on the group-detail response (§4.7 `can_use_public_all` / `can_manage_public_all_policy` / `public_all_members_enabled`).
+
+#### Join requests and invitations (v1.132, F-272)
+
+Getting into **closed** and **secret** plain groups (`type` ∈ `user|system`). A member asks to join a closed group and an owner or manager approves or denies; an owner or manager invites a member to a closed or secret group and the invitee accepts or declines. Holder groups, Halls and delegator communities have their own gates and answer `bcc_invalid_request` (400) on every route below.
+
+Rules shared by every route:
+
+- **Auth:** Bearer (401 anonymous). Throttled per caller (429 `bcc_rate_limited`). A suspended account — caller, or the member being approved/invited — is refused (admin bypass off).
+- **Who decides (D1):** the group **owner**, a **manager**, or a **site admin** (`manage_options`). **Moderators do not.** Anyone else gets `bcc_permission_denied` (403).
+- **Existence (F-47):** a `secret` group answers `bcc_invalid_request` (404), byte-identical to a missing id, to anyone who is neither an active member nor its invitee.
+- **Blocks (user decision):** a block either way between inviter and invitee, or between a requester and the group **owner**, refuses with the same generic copy as any other refusal (below). A block state that cannot be read refuses too. A request never rings the bell of an owner or manager blocked either way with the requester.
+- **Write outcomes:** `bcc_conflict` (409) — the row is not (or no longer) in the state the action needs (already a member, already requested or invited, the request was cancelled, the invitation was revoked, …), or **"Please retry."** when another membership change for the same member and group is in flight; `bcc_permission_denied` (403) — refused (a ban, a block, or a member who blocks invitations); `bcc_unavailable` (503) — a read or the write failed; nothing was written; retryable.
+- **Generic refusal copy:** a refused request is always *"You can't join this community."* and a refused invitation always *"This member can't be invited."* — a ban and a block answer identically, so neither can be inferred.
+- **Notifications** (bell only, see `GET /me/notification-prefs`): `bcc_group_join_requested` → each owner and manager; `bcc_group_join_approved` → the requester; `bcc_group_invited` → the invitee. A deny, decline, cancel or revoke notifies nobody (D2).
+
+#### `POST /bcc/v1/me/groups/:id/request-join`
+
+Ask to join a **closed** group.
+
+- **Response 200:** `{ "status": "requested", "group_id": 4231 }`
+- **Errors:** `bcc_invalid_request` 400 — not a closed group (open: join directly; secret: invitation only); 404 — missing or not visible; `bcc_permission_denied` 403 — *"You can't ask to join this community again yet."* within **7 days** of a denied request (D3), or the generic refusal; `bcc_conflict` 409; `bcc_unavailable` 503 (including when the group's owners and managers could not be read).
+
+#### `POST /bcc/v1/me/groups/:id/request-join/cancel`
+
+Withdraw one's own pending request. **200:** `{ "status": "none", "group_id": 4231 }`. `bcc_conflict` 409 when there is no pending request.
+
+#### `GET /bcc/v1/me/groups/:id/requests`
+
+Owner / manager / site admin: the group's pending requests, newest first.
+
+- **Query:** `offset` (default 0), `limit` (default 24, max 100).
+- **Response 200:** `{ "items": [ UserSummary + { "requested_at": "<iso8601 UTC>" } ], "pagination": { "offset", "limit", "total", "has_more" } }` — same `UserSummary` shape as `GET /groups/:id/members`.
+- **Errors:** 403 not an owner/manager/site admin; 404; `bcc_unavailable` 503 when the list cannot be read (never an empty list).
+
+#### `POST /bcc/v1/me/groups/:id/requests/:user_id/approve`
+
+Owner / manager / site admin. The requester becomes a member. **200:** `{ "status": "member", "group_id": 4231, "user_id": 140 }`. 403 — not allowed, or the requester's account is suspended; 409 — no longer pending.
+
+#### `POST /bcc/v1/me/groups/:id/requests/:user_id/deny`
+
+Owner / manager / site admin. Silent (D2): the requester is not notified; the request disappears and they may not ask again for **7 days** (D3). **200:** `{ "status": "none", "group_id": 4231, "user_id": 140 }`. 409 — no longer pending.
+
+#### `GET /bcc/v1/me/groups/:id/invites`
+
+Owner / manager / site admin: the group's outstanding invitations, newest first. Same query and envelope as `GET …/requests`, each item carrying `invited_at` instead of `requested_at`.
+
+#### `POST /bcc/v1/me/groups/:id/invites`
+
+Owner / manager / site admin invites a member to a **closed or secret** group.
+
+- **Body:** `user_id` (int, required).
+- **Response 200:** `{ "status": "invited", "group_id": 4231, "user_id": 140 }`
+- **Errors:** `bcc_invalid_request` 400 — an open group (anyone may join) or inviting oneself; `bcc_invalid_request` 404 *"Member not found."* — an unknown **or suspended** account (identical, so the form cannot probe account state); 403 — not allowed, or the generic *"This member can't be invited."*; 409 — already a member, already invited, or has asked to join (approve the request instead); `bcc_rate_limited` 429 — more than **200** open invitations in the group, or more than **50** invitations by this caller today.
+
+#### `POST /bcc/v1/me/groups/:id/invites/:user_id/revoke`
+
+Owner / manager / site admin withdraws an outstanding invitation. **200:** `{ "status": "none", "group_id": 4231, "user_id": 140 }`. 409 — no longer pending.
+
+#### `GET /bcc/v1/me/group-invites`
+
+The caller's own open invitations, newest first — the only way an invitee finds a **secret** group.
+
+- **Query:** `offset` (default 0), `limit` (default 24, max 100).
+- **Response 200:** `{ "items": [ { "group": { "id", "slug", "name", "privacy", "links": { "self" } }, "invited_by": { "handle", "display_name" } | null, "invited_at": "<iso8601 UTC>" } ], "pagination": { "offset", "limit", "has_more" } }`. Groups that no longer exist, or are not plain groups, are left out.
+- **Errors:** `bcc_unavailable` 503 when the list cannot be read.
+
+#### `POST /bcc/v1/me/groups/:id/invite/accept`
+
+The invitee accepts and becomes a member (a closed group needs no further approval). **200:** `{ "joined": true, "status": "member", "group_id": 4231 }`. `bcc_invalid_request` 404 — no pending invitation for the caller (whatever the group's privacy); 409 — no longer pending; 503 — the membership read failed.
+
+#### `POST /bcc/v1/me/groups/:id/invite/decline`
+
+The invitee declines. Nobody is notified. **200:** `{ "status": "none", "group_id": 4231 }`. Same 404 / 409 as accept.
 
 ### 4.7.4 Groups Discovery
 
@@ -3658,7 +3733,8 @@ Both methods are registered and behave identically (`DELETE` is the REST-idiomat
 - **Auth:** Bearer required. **Throttle:** 10/60s per viewer.
 - **200:** `{ "left": true, "group_id": 5310 }`. Idempotent — leaving when not a member still returns 200 (and writes neither an opt-out nor an audit row).
 - Records a TTL'd **opt-out** so the community moves to the `opted_out` bucket; the opt-out store is shared with §4.7.1 (keyed by group id), so the semantics — including the permanent opt-out a moderator eviction writes — are identical across both gated kinds.
-- **`bcc_permission_denied` 403** when the caller is the **operator-owner** (a community may not be orphaned).
+- **`bcc_permission_denied` 403** when the caller is the **operator-owner** (a community may not be orphaned). **(v1.132)** Decided by a membership read before the write; only the owner gets it.
+- **`bcc_unavailable` 503 (v1.132)** — the membership read failed, or the leave did not happen for any other reason (busy per-member write lock, failed write, PeepSo unavailable). Retryable; nothing was left or written. Before v1.132 these answered the owner 403.
 
 #### Revocation (no endpoint — behaviour note)
 
@@ -4386,7 +4462,10 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
     "bcc_holder_community_live":  true,
     "bcc_delegator_group_removed": true,
     "bcc_content_auto_hidden":    true,
-    "bcc_claim_badge_removed":    true
+    "bcc_claim_badge_removed":    true,
+    "bcc_group_join_requested":   true,
+    "bcc_group_join_approved":    true,
+    "bcc_group_invited":          true
   },
   "push": {
     "enabled": false,
@@ -4410,6 +4489,11 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
   - holder reason (`no_longer_holder`): *"We couldn't confirm your linked wallets still hold {name}, so the holder badge was removed. Claim again once a linked wallet holds it."*
   - **Empty name:** the wallet and validator-gone messages drop the name (*"…behind your claim…"*); the holder message uses *"this collection"*. These are exactly `NotificationDispatcher::claimBadgeRemovedMessage()`.
   - **In-app only:** no push variant, excluded from the email digest. Sent only after a real revoke (the re-verify runs in a report-only mode until an operator enables enforcement), never for a wallet disconnect.
+- **v1.132 (F-272):** three new bell keys, all default on, **in-app only** (no push variant, excluded from the email digest). `external_id` is the group; `link` is the group's page (`/communities/{slug}`), or `/communities` if the group no longer resolves.
+  - `bcc_group_join_requested` — to each owner and manager of a closed group (never to one blocked either way with the requester); `actor` = the requester. *"@{handle} asked to join {group}."*
+  - `bcc_group_join_approved` — to the requester; `actor` = the approver. *"You're now a member of {group}."*
+  - `bcc_group_invited` — to the invitee; `actor` = the inviter. *"@{handle} invited you to join {group}."*
+  - A denied request, a declined or revoked invitation and a cancelled request notify nobody.
 - `email_digest` defaults `false` (opt-in).
 - `push.enabled` is the master toggle. Defaults `false` until the user explicitly enables it (a browser permission prompt fires on enable; no silent dispatch).
 - `push.events.*` defaults are all-on per V2 Phase 1 §P1.C3 — anti-noise carries the load via debounce + 5-min aggregation in `PushDispatcher`. The push event taxonomy is intentionally narrower than the bell ("bell shows everything; push is 'you really need to know'"). Adding a new push event requires extending `NotificationPrefs::PUSH_TYPES` server-side and the corresponding subscriber wiring.
@@ -6726,7 +6810,7 @@ Cross-kind single-group detail view-model (`nft`/`hall`/`system`/`user`). Powers
   { "id": 4231, "slug": "holders-bored-apes", "name": "Holders: Bored Apes", "type": "nft", "privacy": "closed", "description": "…", "image_url": "https://…", "image_fallback_url": null, "member_count": 87, "verification": { "kind": "on_chain", "label": "On-Chain Verified" }, "activity": { "posts_last_7d": 14, "active_members_7d": 5, "last_activity_at": "2026-05-04T14:22:00Z", "heat": "warm", "heat_label": "Warm" }, "collection_stats": { "...": "§4.7.4 block, NFT-type only else null" }, "viewer_membership": { "is_member": true, "joined_at": "2026-01-12T00:00:00Z" }, "permissions": { "can_join": { "allowed": false, "unlock_hint": null, "reason_code": "already_member" }, "can_leave": { "allowed": true, "unlock_hint": null, "reason_code": null }, "can_read_feed": { "allowed": true, "unlock_hint": null, "reason_code": null } }, "feed_visible": true, "members_visible": true, "can_use_public_all": true, "can_manage_public_all_policy": false, "public_all_members_enabled": false, "chain_tag": "ethereum", "trust_min": null, "links": { "self": "/groups/holders-bored-apes" }, "card": { "...": "community Card view-model per §3.2.4 — card_kind: \"community\", community_dossier populated" } }
   ```
   - `card` (v1.27, additive): the full §3.2.4 community Card, composed from the same data already resolved for the flat fields (zero extra queries). New consumers render `group.card` via the CardFactory; the flat fields remain during the migration window.
-  - `type` ∈ `nft|validator|hall|system|user`; `privacy` ∈ `open|closed|secret`. `image_url`/`collection_stats` are NFT-type only (else `null`); `validator_stats` (v1.52, §4.7.4 block) is `validator`-type only (else `null`); `verification` is present for both on-chain-gated kinds (`nft`, `validator`) and `null` elsewhere. `can_join` for a `validator` group is always `{allowed: false, reason_code: "not_eligible", unlock_hint: "Delegate to this validator to join its community."}` — the join round-trip happens via §4.7.8. `activity` is the §4.7.1 heat tile (defaults `posts_last_7d: 0, heat: "cold", heat_label: "Quiet"`). `viewer_membership`: `null` (anon), `{is_member: false, joined_at: null}` (authed non-member), `{is_member: true, joined_at}` (member). `permissions.*` each `{allowed, unlock_hint, reason_code}` (render `unlock_hint` verbatim per §A2/§N7); `can_join.reason_code` ∈ `auth_required|already_member|removed|not_eligible|trust_threshold|requires_approval|invite_only` (`removed`, v1.129: the viewer is banned from the group, any type; `unlock_hint` "A moderator removed you from this community."; never offer Join); `can_leave.reason_code` ∈ `auth_required|not_member|owner_cannot_leave`; `can_read_feed.allowed` always `true` for a built view-model (per-post visibility teaser, v1.24 — secret-non-member never gets a view-model). `feed_visible` mirrors `can_read_feed.allowed`. `members_visible` true for open groups, else only for active members. `can_use_public_all` (bool) — whether **this viewer** may set `visibility=public_all` when posting here (drives the composer's "PUBLIC" option; `false` for anon/non-members and members not authorized to syndicate — see §4.14). `can_manage_public_all_policy` (bool) — whether **this viewer** may change the group-wide ordinary-member opt-in (drives the owner control; `true` for the group **owner / manager** or a **site admin (`manage_options`)**, `false` for moderators, ordinary members, and anon). Distinct from `can_use_public_all`: a moderator may *use* `public_all` on their own post but may **not** manage the group policy. `public_all_members_enabled` (bool) — the group's ordinary-member opt-in state. **Minimum exposure:** it reflects the real value only for viewers who can manage the policy (`can_manage_public_all_policy = true`); every other viewer sees `false` (the raw config is not disclosed to ordinary/anon viewers — they rely on `can_use_public_all`). Toggled via `POST /me/groups/:id/post-policy` (§4.7.3). `chain_tag` slug or `null`. `trust_min` ∈ `25|50|75|null`.
+  - `type` ∈ `nft|validator|hall|system|user`; `privacy` ∈ `open|closed|secret`. `image_url`/`collection_stats` are NFT-type only (else `null`); `validator_stats` (v1.52, §4.7.4 block) is `validator`-type only (else `null`); `verification` is present for both on-chain-gated kinds (`nft`, `validator`) and `null` elsewhere. `can_join` for a `validator` group is always `{allowed: false, reason_code: "not_eligible", unlock_hint: "Delegate to this validator to join its community."}` — the join round-trip happens via §4.7.8. `activity` is the §4.7.1 heat tile (defaults `posts_last_7d: 0, heat: "cold", heat_label: "Quiet"`). `viewer_membership`: `null` (anon), `{is_member: false, joined_at: null, status}` (authed non-member), `{is_member: true, joined_at, status: "member"}` (member). **`status` (v1.132)** ∈ `none|requested|invited|member` — `requested` = the viewer's join request is pending, `invited` = the viewer holds an invitation; a banned row reads as `none` (no disclosure here; `can_join.reason_code: "removed"` covers it). `permissions.*` each `{allowed, unlock_hint, reason_code}` (render `unlock_hint` verbatim per §A2/§N7); `can_join.reason_code` ∈ `auth_required|already_member|removed|not_eligible|trust_threshold|requires_approval|invite_only` (`removed`, v1.129: the viewer is banned from the group, any type; `unlock_hint` "A moderator removed you from this community."; never offer Join); `can_leave.reason_code` ∈ `auth_required|not_member|owner_cannot_leave`; `can_read_feed.allowed` always `true` for a built view-model (per-post visibility teaser, v1.24 — secret-non-member never gets a view-model) — **except (v1.132)** a `secret` group's **invitee**: they get the view-model (to accept the invitation) but `can_read_feed: {allowed: false, reason_code: "not_member", unlock_hint: "Accept the invitation to read this community."}`, and the feed and members routes still answer them 404. **`permissions.can_request_join` (v1.132)** — `{allowed, unlock_hint, reason_code}`; allowed only for a signed-in non-member of a **closed** `user`/`system` group; `reason_code` ∈ `auth_required|already_member|not_applicable|already_requested|invited|not_eligible|cooldown` (`not_applicable`: not a closed plain group; `invited`: accept the invitation instead; `not_eligible`: suspended or banned; `cooldown`: a request was denied within 7 days). It mirrors the server's request gates except blocks, which are never disclosed (a blocked request gets the generic 403). Requests go to `POST /me/groups/:id/request-join`. `feed_visible` mirrors `can_read_feed.allowed`. `members_visible` true for open groups, else only for active members. `can_use_public_all` (bool) — whether **this viewer** may set `visibility=public_all` when posting here (drives the composer's "PUBLIC" option; `false` for anon/non-members and members not authorized to syndicate — see §4.14). `can_manage_public_all_policy` (bool) — whether **this viewer** may change the group-wide ordinary-member opt-in (drives the owner control; `true` for the group **owner / manager** or a **site admin (`manage_options`)**, `false` for moderators, ordinary members, and anon). Distinct from `can_use_public_all`: a moderator may *use* `public_all` on their own post but may **not** manage the group policy. `public_all_members_enabled` (bool) — the group's ordinary-member opt-in state. **Minimum exposure:** it reflects the real value only for viewers who can manage the policy (`can_manage_public_all_policy = true`); every other viewer sees `false` (the raw config is not disclosed to ordinary/anon viewers — they rely on `can_use_public_all`). Toggled via `POST /me/groups/:id/post-policy` (§4.7.3). `chain_tag` slug or `null`. `trust_min` ∈ `25|50|75|null`. **`pending_request_count` (v1.132)** — int for the group's **owner / manager / site admin** on a closed plain group (the number of pending join requests); `null` for everyone else (the queue size is not disclosed).
 - **Errors:** `bcc_invalid_request` 400 (empty slug) · `bcc_not_found` 404 (unresolved, OR secret + viewer not a member — §S, indistinguishable from missing)
 - **Cache:** anon → `public, max-age=60`; authed → `private, no-store`.
 - **Mapping:** `GroupsDetailEndpoint::show` (route `GroupsDetailEndpoint.php:52`) → `GroupsService::getGroup` (→ `PeepSoGroupRepository::findGroupBySlug` → `GroupContextResolver` → secret-gate → `GroupActivityHeatService` → `findUserMemberships` → NFT enrichment → `buildPermissions` → `ChainRepository::resolveSlugsForGroups`).
@@ -8982,6 +9066,16 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.132 — 2026-11-12 — additive + behaviour change — request to join closed groups, invitations to closed and secret ones; a failed leave is 503 (F-272, F-329)
+
+Ships with bcc-core #112 (merged), bcc-trust #640 (F-272) and bcc-trust #639 (F-329). Deploy core #112 first.
+
+- **New (§4.7.3, F-272):** `POST /me/groups/:id/request-join`, `POST …/request-join/cancel`, `GET /me/groups/:id/requests`, `POST …/requests/:user_id/approve`, `POST …/requests/:user_id/deny`, `GET /me/groups/:id/invites`, `POST /me/groups/:id/invites`, `POST …/invites/:user_id/revoke`, `GET /me/group-invites`, `POST /me/groups/:id/invite/accept`, `POST /me/groups/:id/invite/decline`. Owners, managers and site admins decide — never moderators. A deny is silent and blocks a new request for 7 days. A block either way (requester ↔ owner, inviter ↔ invitee) refuses with the same generic copy as a ban.
+- **Additive (§4.7.5):** `viewer_membership.status` (`none|requested|invited|member`), `permissions.can_request_join`, `pending_request_count` (owners/managers only, else `null`). A secret group's invitee now gets the group view-model (no feed).
+- **Additive:** bell keys `bcc_group_join_requested`, `bcc_group_join_approved`, `bcc_group_invited` (in-app only).
+- **Behaviour change (F-329):** the three leave routes (`/me/groups`, `/me/holder-groups`, `/me/validator-groups` `…/:id/leave`) answer **`bcc_unavailable` 503** (retryable) when the leave did not happen for a reason other than ownership — a failed read, a busy per-member write lock, a failed write. These used to answer the owner 403; only the owner gets it now.
+- **Clients:** render `can_request_join` and `viewer_membership.status` on closed groups; list `GET /me/group-invites` for the invitee; treat 409 "Please retry." and 503 as retryable.
 
 ### v1.131 — 2026-11-12 — additive + behaviour change — every card says whether the viewer watches it; the watchlist has no cap
 
