@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.120 · 2026-11-11 · Phase 1 deliverable
+**Status:** Draft v1.123 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2404,7 +2404,7 @@ Most-used hashtags, ordered most-used first. Non-personalized.
   }
   ```
   - `tag` — the hashtag text **without** the leading `#`
-  - `count` — number of posts PeepSo has counted for the tag (`int`)
+  - `count` — number of posts **anyone can see** that carry the tag (`int`, ≥ 1). Since v1.122 this is not PeepSo's raw `ht_count`, which also counts closed/secret-group, members-only, private and private-profile posts. A post counts when it is published, is outside any group or marked `public_all` (and, for a group that is now closed or secret, was made `public_all` while it was already non-open: the v1.120 global-feed rule), and both its own access and its author's profile are public. A tag used only in hidden posts is not listed, and `items` are ordered by this count. The ranking is recomputed at most every 10 minutes from PeepSo's 50 most-used tags.
 - **Errors:** none beyond the standard envelope
 - **Rate limit:** 60/min/IP (anon), 60/min/user (authed)
 - **Cache:** `Cache-Control: public, max-age=300` (non-personalized, share-cacheable)
@@ -3084,7 +3084,16 @@ List of available Halls (PeepSo Groups in BCC clothing).
     "pagination": { "page": 1, "page_size": 20, "total": 142, "total_pages": 8 }
   }
   ```
-- **Cache:** `Cache-Control: public, max-age=300`
+- **Cache:** `Cache-Control: public, max-age=300` anonymous ·
+  `private, no-store` authenticated *(v1.121, behaviour change)* — every
+  row carries `viewer_membership`, so a signed-in response is personal and
+  must not be stored by a shared cache. It was `public, max-age=300`
+  unconditionally, which let one member's membership state be served to a
+  different viewer for up to five minutes.
+  - `Vary: Authorization, Cookie` is sent on BOTH variants. `private` keeps
+    the authenticated response out of a shared cache, but says nothing
+    about an ANONYMOUS response already cached under the same URL being
+    replayed to a signed-in viewer; `Vary` is what keys those apart.
 - **Mapping:** `peepso-group` CPT posts filtered to Halls (`_bcc_group_kind = 'hall'` meta), JOINed with `peepso_group_members` for `member_count` and viewer membership; the viewer's primary pointer comes from `bcc_primary_hall_group_id` usermeta.
 
 **`validator_count` / `collection_count`** are the indexed on-chain content for the
@@ -4775,7 +4784,7 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
     "hide_birthday_year":        false,
     "hide_online":               false,
     "hide_from_search":          false,
-    "default_post_audience":     "public" | "members" | "private",
+    "default_post_audience":     "public" | "members" | "friends" | "private",
     "mentor_opt_in":             false,
     "mentor_listed":             false,
     "mentor_eligibility_reason": "below_veteran"
@@ -4785,12 +4794,12 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
   - `profile_visibility` → `peepso_users.usr_profile_acc` column (PeepSo's user-search and feed gate join against this — writing through this endpoint keeps gating coherent). `public` → 10, `members` → 20, `friends` → 30, `private` → 40.
     - **`friends` is new in v1.91.** The level existed in storage and was honoured by PeepSo's own surfaces, but this endpoint's token map had no entry for it, so a member could not select it through BCC at all — only through PeepSo's own profile UI.
     - ⚠ **30 is `PeepSoFriendsPlugin::ACCESS_FRIENDS`, defined and enforced by the peepso-friends plugin, not by PeepSo core** (which declares only 10, 20 and 40). It means the PeepSo **friends** list, which is a mutual, request-and-accept relation — *not* BCC followers, which are one-directional. With peepso-friends inactive the level falls through PeepSo's ladder and stays **denied**, which is the fail-closed direction.
-    - 📌 `default_post_audience` deliberately keeps its three tokens. A stored `peepso_last_used_post_privacy` of 30 is still reported as `members`, so a read-modify-write round-trip through this endpoint writes 20 back and **loosens** friends to members. Pre-existing, tracked separately; the fix is to report `friends` there too now that the token exists.
+    - ⚠ `default_post_audience` gained `friends` (30) in v1.121. Until then a stored `peepso_last_used_post_privacy` of 30 — which PeepSo's own posting UI sets — was reported as `members`, so a read-modify-write round-trip through this endpoint wrote 20 back and **loosened** friends to members silently. It now round-trips faithfully. ⚠ Note what the value means today: with peepso-friends absent, `act_access = 30` resolves to the author alone, so `friends` is honest about the stored setting while that setting currently behaves as "only me".
   - `post_visibility` → `peepso_profile_post_acc` user_meta. PUBLIC is intentionally absent (matches PeepSo's `access-profile-post` UI which strips it).
   - `hide_birthday_year` → `peepso_hide_birthday_year` user_meta, "1"/"0".
   - `hide_online` *(documented v1.64 — shipped earlier)* → `peepso_hide_online_status` user_meta, "1"/"0" — PeepSo's presence indicators treat "1" as "hide the green dot".
   - `hide_from_search` *(documented v1.64 — shipped earlier)* → `peepso_is_hide_profile_from_user_listing` user_meta, "1"/"0" — "1" excludes the user from directory + member search (direct profile links still work).
-  - `default_post_audience` *(documented v1.64 — shipped earlier)* → `peepso_last_used_post_privacy` user_meta (int 10/20/40 ↔ public/members/private) — defaults PeepSo's audience picker; PeepSo itself overwrites it on every post, so this is a default, not a lock.
+  - `default_post_audience` *(documented v1.64 — shipped earlier; `friends` added v1.121)* → `peepso_last_used_post_privacy` user_meta (int 10/20/30/40 ↔ public/members/friends/private) — defaults PeepSo's audience picker; PeepSo itself overwrites it on every post, so this is a default, not a lock. ⚠ The column is not a validated enum, so a value with no token at all is reported as `members`.
   - `mentor_opt_in` *(v1.62 — Rank Phase 7, spec §21.4)* → `bcc_mentor_opt_in` user_meta, "1"/"0" (via `MentorListingService`). Read/write bool. Opting in requires **no** eligibility — a non-Veteran may pre-opt-in and lists automatically the day they qualify.
 - **Read-only mentor pair (v1.62, GET response only — never writable):** `mentor_listed` (bool) — whether the user is **actively listed** in the mentor directory *right now*; the listing composes **live** as opt-in AND `can('list_as_mentor')` (**Veteran** rank AND trust tier ≥ **Trusted** AND not suspended AND not in §14.2 Rank recovery). Nothing is materialized — when any condition fails the listing **pauses automatically on the next read** (no sweep, no flag to un-stick). `mentor_eligibility_reason` (string|null) — the resolver's stable deny slug ∈ `suspended|new_member|below_veteran|below_trusted|in_recovery` so the frontend can explain a paused listing; `null` while eligible (regardless of opt-in).
 - **PATCH** is partial — missing keys are untouched.
@@ -6774,7 +6783,7 @@ Watchers-tab data plane — people watching this entity. Offset-paginated to mat
 - **Target (v1.116):** `target_id` must be a **published** `peepso-page` whose page type matches `target_kind`. Any other id, such as a status post, a draft, or another kind's page, returns the same empty page as a missing one. It previously accepted any post id, which listed that post author's followers.
 - **Owner privacy (v1.116):** the watchers are the owner's followers, so they answer to the owner's profile exactly like `GET /users/:handle/followers`. If the owner's `profile_visibility` does not admit this viewer, or the owner is suspended (§F-182; an *unknown* suspension does not hide), the route answers `bcc_forbidden` **403** with `error.data.reason: "profile_private"`. The owner's `watching_hidden` flag still does not propagate.
 - **Errors:** `bcc_invalid_request` 400 · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` (v1.116, see above)
-- **Cache:** anon → `public, max-age=30`; authed → `private, max-age=30`; both carry `Vary: Authorization, Cookie` (anon too since v1.NEXT); invalid and `profile_private` → `private, no-store`.
+- **Cache:** anon → `public, max-age=30`; authed → `private, max-age=30`; both carry `Vary: Authorization, Cookie` (anon too since v1.123); invalid and `profile_private` → `private, no-store`.
 - **Mapping:** `CardWatchersEndpoint::list` (route `CardWatchersEndpoint.php:46`) → `CardWatchersService::listWatchers`. FE `card-tabs-endpoints.ts:getCardWatchers`.
 
 #### `GET /bcc/v1/creators/:slug/gallery`
@@ -8923,12 +8932,46 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-12 — header fix — anonymous entity-watchers responses carry `Vary`
+### v1.123 — 2026-11-12 — header fix — anonymous entity-watchers responses carry `Vary`
 
 Ships with bcc-trust #591.
 
 - **`GET /entities/:target_kind/:target_id/watchers`:** the anonymous `public, max-age=30` response now carries `Vary: Authorization, Cookie`, like the signed-in one. Without it a shared cache could serve the anonymous copy to a signed-in request.
 - **Clients:** no shape or status change.
+
+### v1.122 — 2026-11-12 — behaviour change — trending hashtags count only posts anyone can see
+
+Ships with bcc-core #96 + bcc-trust #569 (core must reach production first), plus bcc-core #102 for the group rule below.
+
+- **`GET /hashtags/trending`:** `count` is now the number of posts anyone can see that carry the tag, not PeepSo's raw counter. That counter included closed/secret-group, members-only, private and private-profile posts. A tag used only in hidden posts is no longer listed, and a mixed tag's count drops its hidden posts. Same route, same `{tag, count}` shape.
+- **Group posts (bcc-core #102):** the same rule as the global feed (v1.120). A post of a group that is now closed or secret counts only if it was made `public_all` while the group was already non-open. If the non-open group set can't be read, only those posts count.
+- **Clients:** no change needed. Counts may be lower than before, and the list may be shorter than `limit`.
+
+### v1.121 — 2026-11-12 — two behaviour changes — a per-viewer Halls list stops being publicly cacheable, and a `friends` post default stops loosening
+
+Both are cases of a per-viewer value being handled as though it were not.
+
+- **`GET /bcc/v1/halls` — cache posture is now per-viewer.** Every row carries
+  `viewer_membership` (`is_member`, `is_primary`, `joined_at`), and the route
+  sent `public, max-age=300` unconditionally. A shared cache could therefore
+  store one signed-in member's membership state and serve it to a different
+  viewer, or to anonymous visitors, for up to five minutes. Anonymous stays
+  `public, max-age=300`; authenticated is `private, no-store`, matching the
+  single-Hall route. `Vary: Authorization, Cookie` is sent on both.
+  - **Clients:** no shape change. A signed-in client that was relying on a
+    cached list will now re-fetch.
+- **`default_post_audience` gains a fourth token, `friends`.** Additive: no
+  existing token changes meaning or value. It closes a silent LOOSENING — a
+  stored 30 (settable in PeepSo's own posting UI) was reported as `members`, so
+  a read-modify-write round-trip wrote 20 back and moved the user's default
+  from friends to members with no notice.
+  - The 422 message now reads `public, members, friends, private`.
+  - ⚠ What the value means today: with peepso-friends absent, `act_access = 30`
+    resolves to the author alone, so `friends` reports the stored setting
+    honestly while that setting currently behaves as "only me". The contract
+    describes the round trip, not the audience copy.
+- **No route added or removed**, so the §4 inventory is unmoved. No schema
+  change.
 
 ### v1.120 — 2026-11-11 — behaviour change — a group's old posts leave the global feed when it turns closed or secret (F-23)
 
