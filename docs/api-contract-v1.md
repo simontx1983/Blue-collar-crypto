@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.117 · 2026-11-11 · Phase 1 deliverable
+**Status:** Draft v1.120 · 2026-11-11 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -807,11 +807,13 @@ Used on Card view-models. The visual identity of the entity.
   "monogram_color": "#1a0f3e",
   "background_kind": "chain",
   "background_value": "cosmos",
-  "image_url": null
+  "image_url": null,
+  "image_fallback_url": null
 }
 ```
 
 - `image_url` is non-null when the entity has uploaded a custom crest; the frontend prefers it over `initials + monogram_color`.
+- `image_fallback_url` (v1.119, F-187) is non-null only when `image_url` is an IPFS image (NFT collection art) served on the configured gateway; it carries the same image on `ipfs.io`. Follow the §3.7 IPFS image rule (v1.113): first load error → the fallback, next error → the monogram. Uploaded (non-IPFS) crest images are unchanged and have a `null` fallback.
 - `background_kind` is `chain` (background_value = chain slug), `tier` (= reputation_tier), or `solid` (= hex).
 
 ### 2.10 `Links`
@@ -2371,13 +2373,15 @@ Single-activity permalink read (v1.33 backfill — shipped with the post-detail 
 
 **Group-post syndication (v1.24):** a group-tagged post (one carrying `peepso_group_id` post-meta) appears in the global feed ONLY when its `_bcc_post_visibility` post-meta is `public_all` (the opt-in chosen at compose time via the §4.14 / §4.15 `visibility` field). `members_only` and `public_group` group posts — and any group post with no visibility meta — never enter the global candidate set, for members and non-members alike. (Previously open-group posts leaked into the global feed regardless of intent; now only `public_all` group posts syndicate.) Non-group posts are unaffected and continue to flow into the feed as before.
 
-**Group privacy does NOT independently gate global syndication.** The per-post `_bcc_post_visibility = 'public_all'` marker (above) is the SOLE gate for whether a group-tagged post enters the global feed. A `public_all` post syndicates globally **regardless of its group's privacy** (open, closed, or secret — including NFT-gated holder groups) and is visible to members, non-members, and anonymous viewers alike; a `members_only` / `public_group` / no-visibility-meta group post never enters the global candidate set for anyone.
+**Group privacy does NOT independently gate global syndication** (amended v1.120, F-23: see the amendment below). The per-post `_bcc_post_visibility = 'public_all'` marker (above) is the SOLE gate for whether a group-tagged post enters the global feed. A `public_all` post syndicates globally **regardless of its group's privacy** (open, closed, or secret — including NFT-gated holder groups) and is visible to members, non-members, and anonymous viewers alike; a `members_only` / `public_group` / no-visibility-meta group post never enters the global candidate set for anyone.
 
 The former membership-based exclusion — `FeedRankingService` computing `excludedGroupIds = (non-open group ids) − (viewer membership ids)` and `PeepSoActivityRepository::getActivities` appending a `gx_pm.meta_value NOT IN (...)` clause — has been **superseded and is now inert on the global path**: `PeepSoActivityRepository` keeps `$excludedGroupIds` in its signature for caller compatibility but does not consume it on the global path, and `FeedRankingService` **still computes** that membership-derived list and forwards it (at `buildHotFeed` / `getTagFeed` / `getFeed` / `getActivityForAuthor` — verified on `origin/main` 2026-07-22) — the value is now **dead weight the repository ignores globally**, pending a follow-up cleanup that removes the computation. The live global predicate is simply `(gx_pm.meta_value IS NULL OR vis_pm.meta_value = 'public_all')`, where `gx_pm` is the `peepso_group_id` marker and `vis_pm` the `_bcc_post_visibility` marker. Group-*scoped* surfaces (`GET /communities/{id}/feed`) still gate `members_only` / `public_group` teasers by membership via a separate INNER-JOIN path — that is unchanged.
 
 > ⚠️ **Correction (2026-07-21):** an earlier version of this section claimed non-open-group posts are dropped for non-members and that "anonymous viewers see no posts from any non-open group." That does **not** match the shipped code — a `public_all` post in a closed or secret group *does* syndicate to the global feed for everyone. Corrected here to describe actual behavior.
 >
 > ✅ **Approved policy (Gate 12, 2026-07-22, Phillip): Option B — "public_all wins."** The syndication described above is **intended**. An explicit, valid `public_all` post may appear on all public surfaces (feed / hot / tag, public permalink, public content-search, public group-discovery) **even inside a closed/secret group**, exposing only minimum discovery context (public body/media, author public identity, timestamp, public engagement, group name/avatar/URL, join/follow action). Private-by-default, fail-closed on unknown/legacy visibility, explicit-choice-only, server-side authorization, and moderator/admin removal all hold. *(This **supersedes** the earlier "content search is stricter" framing in `docs/content-search-privacy-design.md`; content search is **not yet built** and must mirror the feed's `public_all` gate when implemented.)* **Canonical group-stream visibility matrix** — `members_only` (member stream only) · `public_group` (member + non-member open/closed stream; **not** global/search) · `public_all` (every stream incl. non-member secret preview + global feed/permalink/search) — is documented in `docs/content-search-privacy-design.md` **Note C**. The safe secret-group public preview, the owner/moderator-controlled `public_all` authorization, and public-cache invalidation are **approved but NOT BUILT** (before-production; tracker `docs/audit-remediation-checklist-2026-07-21.md` CL-FN04 / CL-FN06 / CL-73).
+
+> ✅ **Amendment (v1.120, F-23, user decision 2026-11-11, option B): the group's privacy at posting time now matters.** Gate 12 stands for a **deliberate** syndication: a `public_all` post made while its group was **already** closed or secret keeps appearing on all public surfaces, and the `public_all_members` knob keeps its meaning. But a group post made while its group was **open**, and any group post with no record of its group's privacy at posting time (every post written before this change), **leaves the global, hot and tag feeds once the group is closed or secret, and its permalink (`GET /bcc/v1/feed/:id`) returns `bcc_not_found`**, for everyone, members included. Members still see it in the group's own feed, which is unchanged. If the group reopens, those posts syndicate again. When the server cannot read the set of non-open groups, only posts recorded as made while non-open syndicate (fail closed). Mapping: the post-meta `_bcc_post_group_privacy_at_post` (the group's `peepso_group_privacy` when the visibility was stamped, written by `PeepSoStatusWriter::attachToGroup`) and the shared rule `BCC\Core\Feed\GroupSyndicationGate`, used by the feed query and the permalink. (The trending count does not use it yet.)
 
 Defense-in-depth: the per-row `hydrateCommentCounts` membership gate is retained — a single bad caller path that bypasses the SQL exclusion would still see comment counts zeroed for gated-group items. The two layers compose; neither is sufficient alone.
 
@@ -2454,6 +2458,7 @@ Full User view-model.
 
 - **Auth:** Anonymous OR Bearer
 - **Path:** `handle` (lowercase, no `@` prefix)
+- **Retired handles (v1.118):** a handle the server retired because it equalled the member's login still resolves to that member, on this route and on every `:handle` / `:slug` member route (cards, followers, following, albums, groups). The response's `handle` is the member's **current** handle. When it differs from the requested one, the client MUST redirect permanently to `/u/{handle}` (current). A retired handle is never assigned to anyone again. Only those specific retired handles resolve this way; it is not a login lookup. Logins and nicenames do not resolve (`bcc_not_found`); a member with no stored handle resolves as `member-{id}`.
 - **Response 200:** User view-model (§3.1) — own variant if `is_self`, others' variant otherwise
 - **Errors:** `bcc_not_found` (handle missing) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91, widened v1.112)* — this profile is withheld from this viewer: either the owner's `profile_visibility` does not admit them, **or the account is suspended**. ⚠ The `reason` does **not** distinguish the two, and that is deliberate — a suspended account's moderation state is not disclosed to the people it is hidden from. A client must therefore not read `profile_private` as "the owner chose this".
   - ⚠ **`bcc_permission_denied` is NOT emitted on this route** *(v1.112)*. It was documented here as "account suspended; rare" and **no producer ever existed**: the route registers `permission_callback => '__return_true'` and the handler has no viewer-standing gate, so the only refusals are the 404 above and the 403. Same defect class as the `bcc_permission_denied` this contract removed from the claim route in **v1.86**, for the same measured reason — zero producers in the endpoint. A documented code no producer emits is a code a client would wait forever to see. **A suspended VIEWER still reads other members' profiles**; suspension hides the SUBJECT, not the reader.
@@ -3185,7 +3190,7 @@ No `/bcc/v1/halls/:slug/feed` endpoint exists or is planned. The two read calls 
     }
   ],
   "collections": [
-    { "id": 5, "name": "Bad Kids", "image_url": "https://…", "contract_address": "cosmos1…" }
+    { "id": 5, "name": "Bad Kids", "image_url": "https://…", "image_fallback_url": null, "contract_address": "cosmos1…" }
   ]
 }
 ```
@@ -3284,7 +3289,8 @@ The user's holder-groups state — joined groups, eligible-to-join suggestions, 
           "chain": "ethereum",
           "contract": "0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d",
           "name": "Bored Apes",
-          "image_url": "https://bluecollar.crypto/wp-content/uploads/.../bayc.png"
+          "image_url": "https://bluecollar.crypto/wp-content/uploads/.../bayc.png",
+          "image_fallback_url": null
         },
         "verification": { "kind": "on_chain", "label": "On-Chain Verified" },
         "activity": {
@@ -3498,6 +3504,7 @@ Cross-kind discovery list. Sort key: `verified DESC, heat_score DESC, member_cou
         "verification": { "kind": "on_chain", "label": "On-Chain Verified" },
         "description": "On-chain verified holders of Bored Apes. Auto-managed.",
         "image_url": "https://bluecollar.crypto/wp-content/uploads/.../bayc.png",
+        "image_fallback_url": null,
         "collection_stats": {
           "token_standard": "ERC-721",
           "total_supply": 10000,
@@ -6658,7 +6665,7 @@ Cross-kind single-group detail view-model (`nft`/`hall`/`system`/`user`). Powers
 - **Path:** `slug` — `[a-z0-9][a-z0-9-]{0,99}`, required.
 - **Response 200:**
   ```json
-  { "id": 4231, "slug": "holders-bored-apes", "name": "Holders: Bored Apes", "type": "nft", "privacy": "closed", "description": "…", "image_url": "https://…", "member_count": 87, "verification": { "kind": "on_chain", "label": "On-Chain Verified" }, "activity": { "posts_last_7d": 14, "active_members_7d": 5, "last_activity_at": "2026-05-04T14:22:00Z", "heat": "warm", "heat_label": "Warm" }, "collection_stats": { "...": "§4.7.4 block, NFT-type only else null" }, "viewer_membership": { "is_member": true, "joined_at": "2026-01-12T00:00:00Z" }, "permissions": { "can_join": { "allowed": false, "unlock_hint": null, "reason_code": "already_member" }, "can_leave": { "allowed": true, "unlock_hint": null, "reason_code": null }, "can_read_feed": { "allowed": true, "unlock_hint": null, "reason_code": null } }, "feed_visible": true, "members_visible": true, "can_use_public_all": true, "can_manage_public_all_policy": false, "public_all_members_enabled": false, "chain_tag": "ethereum", "trust_min": null, "links": { "self": "/groups/holders-bored-apes" }, "card": { "...": "community Card view-model per §3.2.4 — card_kind: \"community\", community_dossier populated" } }
+  { "id": 4231, "slug": "holders-bored-apes", "name": "Holders: Bored Apes", "type": "nft", "privacy": "closed", "description": "…", "image_url": "https://…", "image_fallback_url": null, "member_count": 87, "verification": { "kind": "on_chain", "label": "On-Chain Verified" }, "activity": { "posts_last_7d": 14, "active_members_7d": 5, "last_activity_at": "2026-05-04T14:22:00Z", "heat": "warm", "heat_label": "Warm" }, "collection_stats": { "...": "§4.7.4 block, NFT-type only else null" }, "viewer_membership": { "is_member": true, "joined_at": "2026-01-12T00:00:00Z" }, "permissions": { "can_join": { "allowed": false, "unlock_hint": null, "reason_code": "already_member" }, "can_leave": { "allowed": true, "unlock_hint": null, "reason_code": null }, "can_read_feed": { "allowed": true, "unlock_hint": null, "reason_code": null } }, "feed_visible": true, "members_visible": true, "can_use_public_all": true, "can_manage_public_all_policy": false, "public_all_members_enabled": false, "chain_tag": "ethereum", "trust_min": null, "links": { "self": "/groups/holders-bored-apes" }, "card": { "...": "community Card view-model per §3.2.4 — card_kind: \"community\", community_dossier populated" } }
   ```
   - `card` (v1.27, additive): the full §3.2.4 community Card, composed from the same data already resolved for the flat fields (zero extra queries). New consumers render `group.card` via the CardFactory; the flat fields remain during the migration window.
   - `type` ∈ `nft|validator|hall|system|user`; `privacy` ∈ `open|closed|secret`. `image_url`/`collection_stats` are NFT-type only (else `null`); `validator_stats` (v1.52, §4.7.4 block) is `validator`-type only (else `null`); `verification` is present for both on-chain-gated kinds (`nft`, `validator`) and `null` elsewhere. `can_join` for a `validator` group is always `{allowed: false, reason_code: "not_eligible", unlock_hint: "Delegate to this validator to join its community."}` — the join round-trip happens via §4.7.8. `activity` is the §4.7.1 heat tile (defaults `posts_last_7d: 0, heat: "cold", heat_label: "Quiet"`). `viewer_membership`: `null` (anon), `{is_member: false, joined_at: null}` (authed non-member), `{is_member: true, joined_at}` (member). `permissions.*` each `{allowed, unlock_hint, reason_code}` (render `unlock_hint` verbatim per §A2/§N7); `can_join.reason_code` ∈ `auth_required|already_member|not_eligible|trust_threshold|requires_approval|invite_only`; `can_leave.reason_code` ∈ `auth_required|not_member|owner_cannot_leave`; `can_read_feed.allowed` always `true` for a built view-model (per-post visibility teaser, v1.24 — secret-non-member never gets a view-model). `feed_visible` mirrors `can_read_feed.allowed`. `members_visible` true for open groups, else only for active members. `can_use_public_all` (bool) — whether **this viewer** may set `visibility=public_all` when posting here (drives the composer's "PUBLIC" option; `false` for anon/non-members and members not authorized to syndicate — see §4.14). `can_manage_public_all_policy` (bool) — whether **this viewer** may change the group-wide ordinary-member opt-in (drives the owner control; `true` for the group **owner / manager** or a **site admin (`manage_options`)**, `false` for moderators, ordinary members, and anon). Distinct from `can_use_public_all`: a moderator may *use* `public_all` on their own post but may **not** manage the group policy. `public_all_members_enabled` (bool) — the group's ordinary-member opt-in state. **Minimum exposure:** it reflects the real value only for viewers who can manage the policy (`can_manage_public_all_policy = true`); every other viewer sees `false` (the raw config is not disclosed to ordinary/anon viewers — they rely on `can_use_public_all`). Toggled via `POST /me/groups/:id/post-policy` (§4.7.3). `chain_tag` slug or `null`. `trust_min` ∈ `25|50|75|null`.
@@ -6781,7 +6788,7 @@ Paginated NFT collection gallery for a creator page (`/c/[slug]`). **Supersedes 
 - **Query:** `page` (default 1, **max 20** — over → 400) · `per_page` (default 12, max 50, over clamps) · `sort` ∈ `total_volume`(default)`|floor_price|unique_holders|total_supply|collection_name`
 - **Response 200:**
   ```json
-  { "items": [ { "id": 88, "contract_address": "0xbc4c…f13d", "chain_slug": "ethereum", "chain_name": "Ethereum", "name": "Bored Apes", "image_url": "https://…", "total_supply": 10000, "floor_price_label": "12.34 ETH", "total_volume_label": "987.7K ETH volume", "unique_holders_label": "5,421 holders", "explorer_url": "https://etherscan.io/address/0xbc4c…f13d" } ], "pagination": { "page": 1, "per_page": 12, "total": 7, "total_pages": 1, "has_more": false }, "is_stale": false, "last_refreshed_at": "2026-06-09T18:02:11Z" }
+  { "items": [ { "id": 88, "contract_address": "0xbc4c…f13d", "chain_slug": "ethereum", "chain_name": "Ethereum", "name": "Bored Apes", "image_url": "https://…", "image_fallback_url": null, "total_supply": 10000, "floor_price_label": "12.34 ETH", "total_volume_label": "987.7K ETH volume", "unique_holders_label": "5,421 holders", "explorer_url": "https://etherscan.io/address/0xbc4c…f13d" } ], "pagination": { "page": 1, "per_page": 12, "total": 7, "total_pages": 1, "has_more": false }, "is_stale": false, "last_refreshed_at": "2026-06-09T18:02:11Z" }
   ```
   Per §A2, floor/volume/holders are **pre-formatted display strings** (render verbatim, no `Intl.NumberFormat` in TS); each `null` when missing/zero. `name` falls back to a truncated contract; `image_url`/`explorer_url`/`total_supply` nullable. `is_stale` true when the visible page has an expired row (refresh already dispatched). `last_refreshed_at` is the newest `fetched_at` across the page (`null` when empty). V1 fetcher coverage: ETH + Solana; other chains return empty arrays ("Coming soon").
 - **Errors:** `bcc_invalid_request` 400 (empty slug or `page > 20`) · `bcc_not_found` 404 (slug not an `nft` page)
@@ -8925,6 +8932,31 @@ Ships with bcc-core's F-29 change (bcc-core #99) and bcc-trust's F-29 change (bc
 - **`POST /me/watching/watch`:** a block between the viewer and the card's owner, in either direction, refuses the watch with `bcc_forbidden` (403) and the generic message "You can't watch this account.". The route already returned `bcc_forbidden` 403 for a suspended viewer; that case is now listed too.
 - **`POST /me/blocks`:** a successful block (`created` or `existing`) removes the follows between the two members in **both** directions, with their watch metadata. Unblocking does not restore them.
 - No new fields, codes or shapes. **Clients:** treat `bcc_forbidden` on watch like any refusal, and don't retry it. After a block, the blocked member disappears from the blocker's watchlist (and vice versa) without a separate unwatch.
+
+### v1.120 — 2026-11-11 — behaviour change — a group's old posts leave the global feed when it turns closed or secret (F-23)
+
+Ships with bcc-core #94 + #100 (they ship together; #94 must not reach production alone).
+
+- **Rule:** once a group is closed or secret, its posts that were made while it was **open**, and any group post with no recorded posting-time privacy (all posts before this change), leave the global, hot and tag feeds and the public permalink, for everyone, members included. The group's own feed is unchanged. If the group reopens, they syndicate again.
+- **Gate 12 kept:** a `public_all` post made while the group was **already** closed or secret keeps syndicating, and the `public_all_members` knob is unchanged. See the amendment under `GET /bcc/v1/feed/:id`.
+- **Fail closed:** if the non-open group set can't be read, only posts recorded as made while non-open syndicate.
+- **Clients:** no shape change. Fewer group posts may appear in global feeds, and `GET /bcc/v1/feed/:id` for an affected post returns `bcc_not_found` for everyone, members included (members still see it in the group's own feed).
+
+### v1.119 — 2026-11-11 — additive — collection images: configured IPFS gateway + `image_fallback_url`
+
+Ships with bcc-trust's F-187 change (bcc-trust #570). Extends v1.113 (token-level images) to collection-level images.
+
+- **New, nullable `image_fallback_url`** beside `image_url` on: §2.9 `Crest` (every Card); the Hall detail chain preview `collections[]` (composition note); `GET /me/holder-groups` `collection`; `GET /groups` (discovery) items; `GET /groups/:slug`; `GET /creators/:slug/gallery` items.
+- **Behaviour:** an NFT collection's IPFS cover (stored on `ipfs.io` since v1.113) is now served on the site's configured IPFS gateway, with the `ipfs.io` copy in the fallback. Non-IPFS images (uploaded crests, CDN covers) are unchanged, with a `null` fallback.
+- **Clients:** the §3.7 IPFS image rule — `<img crossorigin="anonymous">`, first error → fallback when non-null, next error → placeholder/monogram; no `next/image` proxy; never a key in an image URL. An older client that ignores the field keeps working.
+
+### v1.118 — 2026-11-11 — behaviour change — public handles never expose a login; retired handles still resolve
+
+Ships with bcc-trust #517 (public-identity fallbacks), #540 (retired handles), #557 (no login or nicename resolution) and bcc-core #86 (feed-author fallback).
+
+- **Fallbacks:** a member with no stored handle shows `member-{id}` as `handle` (was: their login). A `display_name` that is empty or equal to the login shows the handle (was: the login). Applies everywhere a member mini, card, feed author, comment byline, mention, notification or message party is rendered. Types are unchanged; only the fallback values differ.
+- **Retired handles:** members whose handle equalled their login get a new handle (their display-name slug, else `member-{id}`). The old handle is retired. It still resolves to the member on `GET /users/:handle` and the other `:handle` / `:slug` member routes, and is never assigned again. The response carries the CURRENT `handle`; the client redirects `/u/{old}` permanently to `/u/{current}` (see `GET /bcc/v1/users/:handle`). Only retired handles resolve this way; it is not a login lookup. **Login and nicename slugs do not resolve:** `/users/<login>` and `/users/<nicename>` return `bcc_not_found` unless that string is also a stored or retired handle; a member with no stored handle resolves as `member-{id}`.
+- **Clients:** add the redirect on the profile route when the response's `handle` differs from the requested one (case-insensitive). No other change.
 
 ### v1.117 — 2026-11-11 — behaviour change — NFT piece upstream budget
 
