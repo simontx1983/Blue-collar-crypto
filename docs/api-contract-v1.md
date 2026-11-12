@@ -2400,7 +2400,7 @@ Most-used hashtags, ordered most-used first. Non-personalized.
   }
   ```
   - `tag` — the hashtag text **without** the leading `#`
-  - `count` — number of posts PeepSo has counted for the tag (`int`)
+  - `count` — number of posts **anyone can see** that carry the tag (`int`, ≥ 1). Since v1.9X this is not PeepSo's raw `ht_count`, which also counts closed/secret-group, members-only, private and private-profile posts. A post counts when it is published, is outside any group or marked `public_all`, and both its own access and its author's profile are public. A tag used only in hidden posts is not listed, and `items` are ordered by this count. The ranking is recomputed at most every 10 minutes from PeepSo's 50 most-used tags.
 - **Errors:** none beyond the standard envelope
 - **Rate limit:** 60/min/IP (anon), 60/min/user (authed)
 - **Cache:** `Cache-Control: public, max-age=300` (non-personalized, share-cacheable)
@@ -8913,6 +8913,13 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.9X — 2026-11-11 — behaviour change — trending hashtags count only posts anyone can see
+
+Placeholder version; main agent assigns the number at merge. Ships with bcc-trust #569, which needs bcc-core #96 in production first.
+
+- **`GET /hashtags/trending`:** `count` is now the number of posts anyone can see that carry the tag, not PeepSo's raw counter. That counter included closed/secret-group, members-only, private and private-profile posts. A tag used only in hidden posts is no longer listed, and a mixed tag's count drops its hidden posts. Same route, same `{tag, count}` shape.
+- **Clients:** no change needed. Counts may be lower than before, and the list may be shorter than `limit`.
 
 ### v1.116 — 2026-11-11 — behaviour change — entity watchers answer to the owner's profile privacy
 
