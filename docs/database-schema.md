@@ -758,10 +758,16 @@ feed render. Reads fail closed, so a broken query never reports as zero views.
 `unique_viewers` is a DAILY figure (see the dedupe table); summing days overcounts a
 returning reader, so any lifetime engagement rate derived from it is a conservative
 LOWER bound and must be labelled "per daily unique viewer".
-Retention: dailies kept 90 days, then collapsed into a lifetime totals row —
-archive-then-delete in ONE guarded method under the existing `bcc_cron_cleanup_lock`,
-never a standalone DELETE (a standalone audit purge once silently emptied an archive
-table in production).
+Retention: NONE — daily rows are kept indefinitely, with no collapse and no prune.
+An earlier draft planned a 90-day window collapsed into a lifetime totals row; the
+rows are too small to earn it (~70 bytes each, and a row exists only for a (day,
+source) pair that actually delivered a view — on the order of ~11 MB/year at a modest
+modelled posting rate). Not collapsing is also safer: a collapse would have to be
+archive-then-delete in one guarded method, since a standalone audit purge once
+preempted an archive path and silently emptied that table in production, and keeping
+the rows means that class of defect cannot arise here. Growth is watched via
+`RetentionHealthRepository`. The 48-hour purge on the dedupe table is unaffected and
+stays mandatory — that retention is a privacy promise, this one was housekeeping.
 - post_id · bigint unsigned · NO · PK (peepso_activities.act_id)
 - day · date · NO · PK (UTC, gmdate('Y-m-d'))
 - source · varchar(20) · NO · PK
@@ -775,7 +781,8 @@ table in production).
 F-324 post analytics. Short-retention guard so one reader is counted once per post per
 UTC day, which is what makes `post_reach_daily.unique_viewers` meaningful. The ONLY
 table in this feature holding anything viewer-derived, and what it holds is a keyed
-one-way hash: `HMAC-SHA256(key = BCC_ENCRYPTION_KEY, msg = day || subject)` truncated to
+one-way hash: `HMAC-SHA256(key = BCC_ENCRYPTION_KEY, msg = 'viewer:' || day || subject)`
+truncated to
 16 bytes, where subject is the viewer's user id when signed in, or the /24-or-/48 subnet
 plus user-agent when signed out (signed-out views count; bots never fire the beacon).
 Mixing the DAY into the message is what bounds linkability — the same reader hashes
