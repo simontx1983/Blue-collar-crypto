@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.121 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.122 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2404,7 +2404,7 @@ Most-used hashtags, ordered most-used first. Non-personalized.
   }
   ```
   - `tag` — the hashtag text **without** the leading `#`
-  - `count` — number of posts PeepSo has counted for the tag (`int`)
+  - `count` — number of posts **anyone can see** that carry the tag (`int`, ≥ 1). Since v1.122 this is not PeepSo's raw `ht_count`, which also counts closed/secret-group, members-only, private and private-profile posts. A post counts when it is published, is outside any group or marked `public_all` (and, for a group that is now closed or secret, was made `public_all` while it was already non-open: the v1.120 global-feed rule), and both its own access and its author's profile are public. A tag used only in hidden posts is not listed, and `items` are ordered by this count. The ranking is recomputed at most every 10 minutes from PeepSo's 50 most-used tags.
 - **Errors:** none beyond the standard envelope
 - **Rate limit:** 60/min/IP (anon), 60/min/user (authed)
 - **Cache:** `Cache-Control: public, max-age=300` (non-personalized, share-cacheable)
@@ -8931,6 +8931,14 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.122 — 2026-11-12 — behaviour change — trending hashtags count only posts anyone can see
+
+Ships with bcc-core #96 + bcc-trust #569 (core must reach production first), plus bcc-core #102 for the group rule below.
+
+- **`GET /hashtags/trending`:** `count` is now the number of posts anyone can see that carry the tag, not PeepSo's raw counter. That counter included closed/secret-group, members-only, private and private-profile posts. A tag used only in hidden posts is no longer listed, and a mixed tag's count drops its hidden posts. Same route, same `{tag, count}` shape.
+- **Group posts (bcc-core #102):** the same rule as the global feed (v1.120). A post of a group that is now closed or secret counts only if it was made `public_all` while the group was already non-open. If the non-open group set can't be read, only those posts count.
+- **Clients:** no change needed. Counts may be lower than before, and the list may be shorter than `limit`.
 
 ### v1.121 — 2026-11-12 — two behaviour changes — a per-viewer Halls list stops being publicly cacheable, and a `friends` post default stops loosening
 
