@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.117 · 2026-11-11 · Phase 1 deliverable
+**Status:** Draft v1.118 · 2026-11-11 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2454,6 +2454,7 @@ Full User view-model.
 
 - **Auth:** Anonymous OR Bearer
 - **Path:** `handle` (lowercase, no `@` prefix)
+- **Retired handles (v1.118):** a handle the server retired because it equalled the member's login still resolves to that member, on this route and on every `:handle` / `:slug` member route (cards, followers, following, albums, groups). The response's `handle` is the member's **current** handle. When it differs from the requested one, the client MUST redirect permanently to `/u/{handle}` (current). A retired handle is never assigned to anyone again. Only those specific retired handles resolve this way; it is not a login lookup. Logins and nicenames do not resolve (`bcc_not_found`); a member with no stored handle resolves as `member-{id}`.
 - **Response 200:** User view-model (§3.1) — own variant if `is_self`, others' variant otherwise
 - **Errors:** `bcc_not_found` (handle missing) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91, widened v1.112)* — this profile is withheld from this viewer: either the owner's `profile_visibility` does not admit them, **or the account is suspended**. ⚠ The `reason` does **not** distinguish the two, and that is deliberate — a suspended account's moderation state is not disclosed to the people it is hidden from. A client must therefore not read `profile_private` as "the owner chose this".
   - ⚠ **`bcc_permission_denied` is NOT emitted on this route** *(v1.112)*. It was documented here as "account suspended; rare" and **no producer ever existed**: the route registers `permission_callback => '__return_true'` and the handler has no viewer-standing gate, so the only refusals are the 404 above and the 403. Same defect class as the `bcc_permission_denied` this contract removed from the claim route in **v1.86**, for the same measured reason — zero producers in the endpoint. A documented code no producer emits is a code a client would wait forever to see. **A suspended VIEWER still reads other members' profiles**; suspension hides the SUBJECT, not the reader.
@@ -8915,6 +8916,14 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.118 — 2026-11-11 — behaviour change — public handles never expose a login; retired handles still resolve
+
+Ships with bcc-trust #517 (public-identity fallbacks), #540 (retired handles), #557 (no login or nicename resolution) and bcc-core #86 (feed-author fallback).
+
+- **Fallbacks:** a member with no stored handle shows `member-{id}` as `handle` (was: their login). A `display_name` that is empty or equal to the login shows the handle (was: the login). Applies everywhere a member mini, card, feed author, comment byline, mention, notification or message party is rendered. Types are unchanged; only the fallback values differ.
+- **Retired handles:** members whose handle equalled their login get a new handle (their display-name slug, else `member-{id}`). The old handle is retired. It still resolves to the member on `GET /users/:handle` and the other `:handle` / `:slug` member routes, and is never assigned again. The response carries the CURRENT `handle`; the client redirects `/u/{old}` permanently to `/u/{current}` (see `GET /bcc/v1/users/:handle`). Only retired handles resolve this way; it is not a login lookup. **Login and nicename slugs do not resolve:** `/users/<login>` and `/users/<nicename>` return `bcc_not_found` unless that string is also a stored or retired handle; a member with no stored handle resolves as `member-{id}`.
+- **Clients:** add the redirect on the profile route when the response's `handle` differs from the requested one (case-insensitive). No other change.
 
 ### v1.117 — 2026-11-11 — behaviour change — NFT piece upstream budget
 
