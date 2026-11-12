@@ -2352,7 +2352,7 @@ Anonymous-friendly hashtag feed — the hot feed narrowed to a single tag.
 - **Errors:** `bcc_invalid_request` (missing/empty `tag`)
 - **Rate limit:** 60/min/IP (anon), 60/min/user (authed)
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
-- **Mapping:** Same `FeedRankingService` single brain (§F3) as `/feed/hot` — identical visibility gates (caution/risky shadow-limit, moderation hide, non-open group exclusion at the anonymous posture, and the global `public_all` visibility gate). The candidate set is then narrowed by `peepso_activities` → `wp_posts.post_content LIKE '%#<tag>%'` (the same substring association PeepSo uses for its `ht_count`). The narrowing predicate can only remove posts from the gated set — the tag feed never surfaces a post `/feed/hot` would not.
+- **Mapping:** Same `FeedRankingService` single brain (§F3) as `/feed/hot` — identical visibility gates (caution/risky shadow-limit, moderation hide, non-open group exclusion at the anonymous posture, and the global `public_all` visibility gate). The candidate set is then narrowed to posts that carry `#<tag>` as a **whole word**, by PeepSo's own predicate (`PeepSo::hashtags_query_where`: content wrapped in spaces, tab/CR/LF/NBSP read as spaces, `LIKE '% #<tag> %'`, case-insensitive). It is the same predicate the public trending recount uses (`GET /hashtags/trending`), so the feed lists exactly the posts a tag's trending count counts. `#eth` does not match `#ethereum` or `#eth2`, and a tag followed directly by punctuation (`#eth.`) matches in neither (since v1.126; previously a bare substring `LIKE '%#<tag>%'`). The narrowing predicate can only remove posts from the gated set — the tag feed never surfaces a post `/feed/hot` would not.
 
 #### `GET /bcc/v1/feed/:id`
 
@@ -8954,6 +8954,13 @@ Ships with bcc-core's F-266 change (bcc-core #108, merged) and bcc-trust's F-267
   - `GET /me/holder-groups` and `GET /me/validator-groups`: a banned group is listed in `opted_out` with `opt_out_kind: "removed"`, never in `eligible_to_join`;
   - holder and delegator joins refuse a ban with the existing `bcc_permission_denied` 403 `opt_out_active`. The plain-group join refuses it with `bcc_permission_denied` 403, and the Hall join with `bcc_forbidden` 403. All used to return a 503.
 - **Clients:** treat `reason_code: "removed"` like the other non-unlockable codes, with no Join button. The new 403s need no retry; a 503 on these joins now means only an outage.
+
+### v1.126 — 2026-11-12 — behaviour change — the tag feed matches whole hashtags, like trending
+
+Ships with bcc-core #110 (F-268).
+
+- **`GET /bcc/v1/feed/tag`:** a post matches `tag=<t>` only when it carries `#<t>` as a whole word, by the same predicate the trending recount uses. Before, it was a substring match, so `#eth` also returned `#ethereum`, `#eth2` and `#ethics` posts, the feed disagreed with the trending count, and `tag=039` matched every post containing an apostrophe (stored as `&#039;`).
+- No new fields, codes or shapes. **Clients:** none; a tag feed may return fewer items than before.
 
 ### v1.125 — 2026-11-12 — additive — claim re-verify: badge-removed bell; revoked claims leave the feed
 
