@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.120 · 2026-11-11 · Phase 1 deliverable
+**Status:** Draft v1.121 · 2026-11-11 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -4344,7 +4344,8 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
     "bcc_comment_received":       true,
     "bcc_holder_community_live":  true,
     "bcc_delegator_group_removed": true,
-    "bcc_content_auto_hidden":    true
+    "bcc_content_auto_hidden":    true,
+    "bcc_claim_badge_removed":    true
   },
   "push": {
     "enabled": false,
@@ -4362,6 +4363,10 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
 - `bell.*` keys mirror the bell `type` taxonomy (matches §4.10's notification-shape `type` field). Defaults are all-on per §I1 baseline. The full key set is `NotificationPrefs::BELL_TYPES`, which is pinned equal to `NotificationType::ALL` by a generic registration test (v1.63) — the sample above shows the §I2 base taxonomy plus the v1.63 Rank keys; the §J.7 attestation keys and `bcc_divergence_state_warning` (documented where those events are specified) appear in the map too.
 - **v1.63 (Rank Phase 8):** eight bell keys are new in the map. Six are new bell-only notice types (`bcc_rank_recovery_started`, `bcc_rank_recovery_reminder`, `bcc_rank_decay_warning`, `bcc_rank_finding_issued`, `bcc_rank_appeal_outcome`, `bcc_rank_finding_reversed` — deliberately no push variants; none are urgent). Two are **repairs** of registration drift: `bcc_rank_demoted` (dispatched since v1.59 but absent from the type whitelist — its bell rows were silently rejected read-side and its pref key never appeared here) and `bcc_holder_community_live` (rows rendered fine but the pref key was missing from this surface, so the toggle documented at v1.32 was not actually exposed).
 - **v1.93:** new bell key `bcc_content_auto_hidden` (default on). It is the author's notice that their post was hidden **automatically** by the credible-report threshold. A self-notification: `actor` is the author, and it names no reporter, count or threshold. Message, verbatim: *"One of your posts was hidden automatically after several members reported it. A moderator will review it, and if it breaks no rule it will be restored."* `link` is `/`, because the post itself is hidden from every feed. **In-app only:** no push variant, and it is excluded from the email digest, like `bcc_delegator_group_removed`.
+- **v1.121 (F-14):** new bell key `bcc_claim_badge_removed` (default on). It is the member's notice that the weekly claim re-verify revoked a verified claim because it could no longer confirm the ownership behind it. A self-notification: `actor` is the member; `external_id` is the claim. `link` is `/`. Message, verbatim, `{name}` being the validator's or collection's name:
+  - wallet / validator reasons: *"We couldn't confirm you still control the wallet behind your {name} claim, so the verified badge was removed. Reconnect the wallet and claim again to restore it."*
+  - holder reason: *"We couldn't confirm your linked wallets still hold {name}, so the holder badge was removed. Claim again once a linked wallet holds it."*
+  - **In-app only:** no push variant, excluded from the email digest. Sent only after a real revoke (the re-verify runs in a report-only mode until an operator enables enforcement), never for a wallet disconnect.
 - `email_digest` defaults `false` (opt-in).
 - `push.enabled` is the master toggle. Defaults `false` until the user explicitly enables it (a browser permission prompt fires on enable; no silent dispatch).
 - `push.events.*` defaults are all-on per V2 Phase 1 §P1.C3 — anti-noise carries the load via debounce + 5-min aggregation in `PushDispatcher`. The push event taxonomy is intentionally narrower than the bell ("bell shows everything; push is 'you really need to know'"). Adding a new push event requires extending `NotificationPrefs::PUSH_TYPES` server-side and the corresponding subscriber wiring.
@@ -8922,6 +8927,15 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.121 — 2026-11-11 — additive — claim re-verify: badge-removed bell; revoked claims leave the feed
+
+Ships with bcc-trust's F-14 PR B1 (#587), F-14 PR A / F-89 (#561) and the F-14 PR B2 sweep (#594).
+
+- **New bell type and preference `bcc_claim_badge_removed`** (default on, in-app only, not in the digest). See `GET /me/notification-prefs` for the verbatim copy. Sent only when the weekly re-verify actually revokes a claim; until an operator enables enforcement the re-verify only records what it would revoke, and nobody is notified.
+- **Behaviour, no shape change:** a revoked claim stops counting everywhere a verified claim counts — the card's `is_claim_verified`, the operator badge and authority, and the page capabilities. The claimed page's card refreshes too, not only the claimant's own page.
+- **Feed (F-89):** a `page_claim` item whose claim is no longer verified is dropped from feed responses at read time (like a removed review); it returns if the member claims again.
+- **Clients:** render the new bell row like any other. No retry or special handling.
 
 ### v1.120 — 2026-11-11 — behaviour change — a group's old posts leave the global feed when it turns closed or secret (F-23)
 
