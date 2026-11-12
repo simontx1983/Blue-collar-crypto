@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.112 · 2026-11-11 · Phase 1 deliverable
+**Status:** Draft v1.118 · 2026-11-11 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -163,6 +163,8 @@ The canonical envelope's `message` is presentation; the *behavior fork* is on `c
 `bcc_rate_limited` (429) is retryable with backoff. The server MAY include `data.retry_after_seconds` (positive integer). When present, clients SHOULD wait at least that long before retrying. When absent, clients SHOULD apply at least 1.5× exponential backoff starting from 2 seconds.
 
 Rate-limit buckets are per-user (when authenticated) AND per-IP. Both must allow the request through; the more conservative rejection wins. The server never returns 429 from cached read paths (cached responses bypass throttling).
+
+**Self-scoped writes (since v1.115, F-134) — a per-ACCOUNT-only exception to the per-user-AND-per-IP rule above.** Every signed-in write to the caller's own state under `/me/*` that §4 does not give its own rate limit — profile, profile fields, prefs, privacy, onboarding, handle, mark-read, celebrations, highlights, primary hall, push-subscription revoke, review removal — shares **one bucket of 120 ATTEMPTS / 60 s per account**, keyed on the account and never on the IP (calls come from the frontend server's few IPs). Every attempt counts, successful or not. A tripped bucket answers `429 bcc_rate_limited`. Routes with their own documented limit (account email/password/recovery, uploads, reports, joins, blocks, …) keep it and are not counted here. `PATCH /me/handle` has further limits of its own — see its §4 entry.
 
 #### 1.4.5 Capability-denied semantics
 
@@ -445,6 +447,7 @@ Or, if the viewer has zero network connection:
 - **Hidden-watchlist rule (§O4):** users who have hidden their watchlist (per §K2) still contribute to `additional_count` but **never** appear in `named_handles`, even if they're elite/trusted.
 - `kind` is one of: `follow`, `vouch`, `stand_behind`, `dispute_signed`, `nft_held`, `hall_member`. Determines which verb the headline uses.
 - `weighted: true` means the headline applied trust weighting; `false` means raw count (used only on internal admin views, never on public surfaces — kept in the contract for symmetry).
+- **Feed items: `recent_reactors` (v1.114).** Up to 3 most recent reactors as `{handle, display_name, avatar_url}`, for the stacked avatar faces. It never includes a **suspended** member, or, for a signed-in viewer, anyone they blocked or who blocked them. If either check cannot be read, the key is omitted for the whole page (faces are decoration). On a feed item in a group the viewer cannot read, `headline` is `null` and `recent_reactors` is omitted.
 
 **Anti-rule:** the frontend MUST NOT show `additional_count` as a separate UI element. The server has already incorporated it into `headline`. Showing it twice is a rendering bug.
 
@@ -889,6 +892,7 @@ Appears on Feed item view-models and on Card view-models that support reactions.
 - `kind_grammar` is **required** on every `reactions` block. Frontend MUST branch on it; deriving the rail from `post_kind` is forbidden (a future grammar change must not require a frontend rebuild).
 - `counts` always has all kinds for the active grammar, even if zero. Eliminates `undefined` checks on the client.
 - `viewer_reaction` is `null` when the viewer is anonymous or hasn't reacted; otherwise the kind name (a string belonging to the active grammar).
+- **Group-gated (v1.114):** on a feed item in a group the viewer cannot read (anonymous, or not a member with a read-allowed status), every `counts` value is `0`, `heat_stage` is `1` and `stoke_count` is `0`, exactly what an unreacted post shows. This is the same rule that already zeroes `comment_count` there. The viewer's own `viewer_reaction` / `viewer_has_stoked` are kept. Keys and shapes are unchanged.
 - A reaction kind from one grammar MUST NOT appear on a `reactions` block of another grammar. The server rejects cross-grammar set-reaction requests with `bcc_invalid_request`.
 - _(Legacy fields `my_reactions` and `totals` shown in earlier drafts of this section were never emitted by the V1 implementation; the canonical shape has always been `viewer_reaction: string | null`.)_
 
@@ -1352,6 +1356,8 @@ V1.5 transition rules: clients tolerant of unknown fields ride forward without c
 
 Only a review whose vote is **active** is emitted (v1.94). When the vote has been retracted by its author, removed by an accepted dispute, or removed by moderation, the `review` item is **omitted** from every feed surface (it is never emitted with an empty or placeholder body), and its permalink (`GET /feed/:id`) answers `bcc_not_found` 404. The omission is read-time, so a vote that is restored or re-cast brings the item back.
 
+Unpublished targets (v1.114): only a **published** page resolves. When the reviewed page is a draft, private or trashed, `page_handle`, `page_name` and `page_kind` are `""`, the same as for a missing page, so the card never shows an unpublished page's title or slug and the frontend suppresses the link.
+
 Member-target rows (v1.48): `page_id` is the member's **self-page id** (`MemberSelfPageService::selfPageId(user_id)`), `page_name` is the member's display name, and `page_handle` is their `bcc_handle` — `""` when unset (the frontend suppresses the link; `user_login`/nicename are never projected).
 
 > Contract-drift note (fixed in v1.48): earlier revisions documented `{grade: A–F, grade_label, summary, long_form}` — that shape never shipped. The block above is what `ReviewBodyHydrator` has emitted since the feed brain landed.
@@ -1790,7 +1796,9 @@ Per-piece detail view-model used by §4.17. One row per uniquely-identified NFT,
   "name":         "Welder Genesis #042",
   "description":  "The forty-second piece in the Welder Genesis drop.",
   "image_url":    "https://cdn.bluecollar.crypto/nft/eth/0x1a2b3c.../042.png",
+  "image_fallback_url": null,
   "image_url_thumb": "https://cdn.bluecollar.crypto/nft/eth/0x1a2b3c.../042_thumb.png",
+  "image_url_thumb_fallback_url": null,
   "attributes": [
     { "trait_type": "Background", "value": "Workshop",   "rarity_pct": 12.5 },
     { "trait_type": "Tool",       "value": "MIG Welder", "rarity_pct": 4.2  }
@@ -1822,6 +1830,7 @@ Per-piece detail view-model used by §4.17. One row per uniquely-identified NFT,
 - `collection.is_verified` mirrors the admin-managed flag. Unverified pieces are still served — the field is rendered as a tier hint, not a hard gate.
 - `token_id` is a STRING, not a number. CW-721 token IDs are arbitrary strings; ERC-1155 token IDs are uint256 and exceed JS `Number.MAX_SAFE_INTEGER`. Always render verbatim; never coerce to Number.
 - `image_url` is the full asset URL; `image_url_thumb` is a CDN-resized thumbnail (≤ 512 px on the long edge). Both are absolute URLs per §1.7. `image_url_thumb` falls back to `image_url` when no resize is available.
+- **IPFS images and `*_fallback_url` (v1.113, F-165).** `image_url` / `image_url_thumb` are always an absolute `https://` URL or `null` — never `ipfs://`, `http://`, `data:` or `javascript:` (anything else is dropped to `null` server-side, including legacy stored values). An IPFS-hosted image is served on the site's configured IPFS gateway, and the sibling **`image_fallback_url`** (`image_url_thumb_fallback_url` for the thumb) carries the same image on the public `ipfs.io` gateway. The fallback is `null` when the image is not on IPFS, or when the configured gateway already is `ipfs.io`. **Client rule:** render `<img crossorigin="anonymous" src={image_url}>`; on the first load error switch to the fallback when it is non-null; on the next error (or a null fallback) show the placeholder. Do **not** proxy these through `next/image`, and never append a gateway key or token to any image URL — the gateway is opened to our origins, not by key. The same rule and field apply to §4.21 (picker + selections) and §4.31 (collection-stances panel).
 - `attributes[]` is the standard NFT trait array (OpenSea convention). `rarity_pct` is OPTIONAL — present only when the indexer has computed the trait's frequency across the collection. Empty array `[]` when the piece has no metadata; never `null`.
 - `owner` is the single dominant holder, reduced to **one field: `is_linked`**.
   - `null` when no on-chain holder is known (cold-cache, freshly minted, indexer behind).
@@ -2445,9 +2454,10 @@ Full User view-model.
 
 - **Auth:** Anonymous OR Bearer
 - **Path:** `handle` (lowercase, no `@` prefix)
-- **Retired handles (v1.112):** a handle the server retired because it equalled the member's login still resolves to that member, on this route and on every `:handle` / `:slug` member route (cards, followers, following, albums, groups). The response's `handle` is the member's **current** handle. When it differs from the requested one, the client MUST redirect permanently to `/u/{handle}` (current). A retired handle is never assigned to anyone again. Only those specific retired handles resolve this way; it is not a login lookup.
+- **Retired handles (v1.118):** a handle the server retired because it equalled the member's login still resolves to that member, on this route and on every `:handle` / `:slug` member route (cards, followers, following, albums, groups). The response's `handle` is the member's **current** handle. When it differs from the requested one, the client MUST redirect permanently to `/u/{handle}` (current). A retired handle is never assigned to anyone again. Only those specific retired handles resolve this way; it is not a login lookup. Logins and nicenames do not resolve (`bcc_not_found`); a member with no stored handle resolves as `member-{id}`.
 - **Response 200:** User view-model (§3.1) — own variant if `is_self`, others' variant otherwise
-- **Errors:** `bcc_not_found` (handle missing), `bcc_permission_denied` (account suspended; rare) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer. ⚠ Note the two distinct 403 codes on this route: `bcc_permission_denied` is about the **viewer's** standing, `bcc_forbidden` about the **owner's** privacy. A client must branch on `code` plus `data.reason`, not on the status alone.
+- **Errors:** `bcc_not_found` (handle missing) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91, widened v1.112)* — this profile is withheld from this viewer: either the owner's `profile_visibility` does not admit them, **or the account is suspended**. ⚠ The `reason` does **not** distinguish the two, and that is deliberate — a suspended account's moderation state is not disclosed to the people it is hidden from. A client must therefore not read `profile_private` as "the owner chose this".
+  - ⚠ **`bcc_permission_denied` is NOT emitted on this route** *(v1.112)*. It was documented here as "account suspended; rare" and **no producer ever existed**: the route registers `permission_callback => '__return_true'` and the handler has no viewer-standing gate, so the only refusals are the 404 above and the 403. Same defect class as the `bcc_permission_denied` this contract removed from the claim route in **v1.86**, for the same measured reason — zero producers in the endpoint. A documented code no producer emits is a code a client would wait forever to see. **A suspended VIEWER still reads other members' profiles**; suspension hides the SUBJECT, not the reader.
 - **Rate limit:** 60/min/viewer
 - **Cache:** `Cache-Control: private, max-age=30` (own: `no-store`); React Query `staleTime: 30s` (own: 0)
 - **Mapping:**
@@ -2488,7 +2498,7 @@ Full User view-model.
 - **Auth:** Anonymous OR Bearer (privacy-filtered)
 - **Path:** `handle`
 - **Query:** `weeks` (optional, default 52, max 104 — **refused above 104**, not clamped)
-- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (`weeks` outside 1–104, or not a whole number) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer. ⚠ This cap is **104**, not the 50 the list routes carry; enforcing a shared number here would halve a documented two-year window.
+- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (`weeks` outside 1–104, or not a whole number) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer, **or the account is suspended** *(v1.112)*. ⚠ This cap is **104**, not the 50 the list routes carry; enforcing a shared number here would halve a documented two-year window.
 - **Response 200:**
   ```json
   {
@@ -2515,6 +2525,8 @@ Full User view-model.
 Paginated directory of human members. Sibling to §4.9 `/cards` (entity-card directory). **Each item is a full member `Card` view-model (§3.2, `card_kind: "member"`)** so the frontend renders directory rows through the canonical `<CardFactory>` — the same component the entity-card directory uses. The per-member back-of-card signal blocks (verifications, engagement, owned-page typed counts, primary Hall) ride along on the card's `member_dossier` block; nothing the older slim `MemberSummary` shape carried is lost. Click-through navigates to `/u/:handle` for the full profile.
 
 - **Auth:** Anonymous OR Bearer (privacy-filtered — `real_name_hidden` honored)
+- **Exclusions** *(v1.112, behaviour change)*: **suspended members are not listed and are not counted**, so `pagination.total` and the page rows both drop them. Two exemptions, matching the profile gate exactly so a row and its profile can never disagree: a **site admin** (`manage_options`) sees everyone, and a viewer always sees **themselves**. A member with no trust record is **not** suspended and stays listed. `type_counts` is unaffected — it is global by design (see its field rule) and was never viewer-scoped.
+  - ⚠ This does **not** extend to wp-admin's Users screen or any other plain `WP_User_Query`; the exclusion is scoped to the member-directory and PeepSo search paths, so an administrator can still find a suspended account.
 - **Query:** `page` (1-indexed, default 1), `per_page` (default 20, max 50), `q` (optional — bounded to 64 chars, matched against the **display name** and the **@handle** (`bcc_handle`) only, as a substring; a leading `@` is ignored; a search matches at most the first 1000 members per field. Since v1.110 it never matches `user_login` (a login match on this anonymous route confirmed that a login name exists) or `user_nicename` (derived from the login), for any caller. Email is never matched.), `type` (optional — one of `validator | project | nft | dao`; restricts results to users with ≥1 owned page of that canonical type, intersecting with `q` when both are present), `mentors` (optional bool — *v1.62, Rank Phase 7 spec §21.4*; restricts results to **actively listed mentors**: explicit `mentor_opt_in` AND the live `list_as_mentor` capability (Veteran AND Trusted+ AND not suspended AND not in Rank recovery), composed at read time via `MentorListingService::activeMentorIds`; intersects (AND) with the other filter axes), `verified[]` (optional array — *documented v1.64, shipped earlier*; each ∈ `x | github | wallet`; **AND semantics** — every listed provider must be verified for the member to match; intersects with the other filter axes)
 - **Response 200:**
   ```json
@@ -2609,7 +2621,7 @@ The member's long-form blog posts (§D6 blog tab), newest-first, cursor-paginate
 - **Path:** `handle`
 - **Query:** `cursor` (optional, opaque base64url `{t,id}`, same family as `/feed`) · `limit` (optional, default 20, min 1, max 50 — **refused above 50**, not clamped)
 - **Response 200:** `CursorEnvelope<FeedItem>` — same shape as `/feed`: `data = { items: FeedItem[] (§3.3), pagination: { next_cursor: string|null, has_more: bool } }`, scoped to `act_user_id = handle AND act_module_id = 'blog'`. The blog body carries the full `full_text` (the Floor variant omits it): `{ excerpt, full_text, wp_post_id, title, category (string|null), tags (string[]), chain_tags ([{id, slug, name, color, icon_url}]), disclosure ({tickers, note}|null), cover_image_url (string|null), cover_image_id (int|null), sources (string[]) }`.
-- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer
+- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer, **or the account is suspended** *(v1.112)*
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - **Mapping:** `BlogService::getUserBlog` → `PeepSoActivityRepository::getActivities` (over-fetch-by-1 `has_more`, moderation-hidden excluded per §K1-C); body via `BlogService::hydrateForPostId(..., includeFullText: true)`. Handler `UsersEndpoint::blog` (route `UsersEndpoint.php:172`).
 
@@ -2631,7 +2643,7 @@ Reviews this member has written (§V1.5 reviews-on-file tab), offset-paginated.
   `grade` ∈ `A|B|C` (from `vote_type` 1/0/-1). When the target hides reviews and the viewer isn't the owner: `items: []`, totals `0`, `hidden: true`.
 
   `scope_label` ∈ `PAGE|MEMBER` (v1.48). Member-target rows (reviews this user wrote **about another member**): `subject` = the member's display name, `subject_handle` = their `bcc_handle` (`""` when unset — the frontend suppresses the `ON @…` link; `user_login` is never projected), `scope_label` = `MEMBER`.
-- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer
+- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer, **or the account is suspended** *(v1.112)*
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - **Pagination envelope:** offset (§1.5); `total_pages` is `0` (not 1) on empty/hidden.
 - **Mapping:** `UserReviewsService::getReviews` → `VoteRepository::countByVoter` + `findByVoterPaginated` (+ `UserMiniRepository::getRowsByIds` for member-target subjects, v1.48); `posted_at_label` server-rendered (§A2). Handler `UsersEndpoint::reviews` (route `UsersEndpoint.php:203`).
@@ -2652,7 +2664,7 @@ Disputes this member has **filed** (§V1.5 disputes tab), offset-paginated. A di
   }
   ```
   `status` ∈ `open|resolved|dismissed` (mapped from `bcc_disputes.status`: `reviewing`→`open`, `accepted`/`rejected`/`timeout_no_quorum`→`resolved`, `dismissed`→`dismissed`; unknown → `open`). `status_label` carries the richer real outcome (`OPEN`/`ACCEPTED`/`REJECTED`/`NOT DECIDED`/`DISMISSED`). `subject` is the disputed page title, falling back to `"Page removed"`; `scope_label` is `PAGE`. Hidden behaves as reviews (`items: []`, totals `0`, `hidden: true`).
-- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer
+- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer, **or the account is suspended** *(v1.112)*
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - **Pagination envelope:** offset (§1.5); `total_pages` is `0` on empty/hidden.
 - **Mapping:** `UserDisputesService::getDisputes` → `DisputeRepository::countByReporter` + `getByReporterPaginated` (live `bcc_disputes`, reporter-keyed). Handler `UsersEndpoint::disputes` (route `UsersEndpoint.php:215`). *(Was `bcc_trust_flags`/FlagsRepository — a write-dead legacy table — until 2026-07-08; the shape is unchanged.)*
@@ -2665,7 +2677,7 @@ Per-member activity wall — a single-author slice of the same activity stream t
 - **Path:** `handle`
 - **Query:** `cursor` (optional, same family as `/feed`) · `limit` (optional, default 20, min 1, max 50 — **refused above 50**, not clamped)
 - **Response 200:** `CursorEnvelope<FeedItem>` — identical shape to `/feed`/`/feed/hot`/`/feed/tag`: `data = { items: FeedItem[] (§3.3), pagination: { next_cursor, has_more } }`, fully hydrated (bodies, viewer reactions, author badges/ranks, social proof, permissions, group context, comment counts).
-- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer
+- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer, **or the account is suspended** *(v1.112)*
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - **Mapping:** `FeedRankingService::getActivityForAuthor($authorId, $viewerId, …)` — the single-brain feed composition scoped to one author; `excludedGroupIds = (non-open group ids) − (viewer membership ids)` forwarded to the SQL so wall posts in groups the viewer can't see are dropped. Handler `UsersEndpoint::activity` (route `UsersEndpoint.php:228`).
 
@@ -2684,7 +2696,7 @@ Per-member activity wall — a single-author slice of the same activity stream t
   }
   ```
   Each item is a full member `Card` (§3.2, `card_kind: "member"`) — same shape as `/members`. Rows for deleted users are silently skipped (so `items.length` may momentarily be < page size while `total` reflects the raw follow-edge count).
-- **Errors:** `bcc_not_found` (slug missing) · `bcc_permission_denied` 403 (`watching_hidden`) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer. ⚠ Two different 403s here: `watching_hidden` is the owner hiding **this list**, `profile_private` is the owner hiding **their whole profile**. The second is checked first, so a private profile never reveals whether its follow lists are also hidden.
+- **Errors:** `bcc_not_found` (slug missing) · `bcc_permission_denied` 403 (`watching_hidden`) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer, **or the account is suspended** *(v1.112)*. ⚠ Two different 403s here: `watching_hidden` is the owner hiding **this list**, `profile_private` is the owner hiding **their whole profile**. The second is checked first, so a private profile never reveals whether its follow lists are also hidden.
 - **Cache:** `Cache-Control: private, max-age=30`
 - **Pagination envelope:** offset with `has_more` (§1.5) — `offset`/`limit`/`total`/`has_more`, NOT the `page`/`per_page`/`total_pages` shape.
 - **Mapping:** `UserFollowsService::listFollowers` → `PeepSoFollowerRepository::getCounts` + `getFollowers`; cards via `CardViewService::getMemberCardForList` over a `MemberSummaryPrefetcher::primeFor` batch. Handler `UserFollowsEndpoint::listFollowers` (route `UserFollowsEndpoint.php:49`).
@@ -2697,7 +2709,7 @@ Per-member activity wall — a single-author slice of the same activity stream t
 - **Path:** `slug` (sanitized via `sanitize_user`)
 - **Query:** `offset` (default 0), `limit` (default 24, max 100)
 - **Response 200:** identical envelope to `/followers` — `{ items: Card[] (§3.2, member), pagination: { offset, limit, total, has_more } }`. `total` is the *following* count.
-- **Errors:** `bcc_not_found` (slug missing) · `bcc_permission_denied` 403 (`watching_hidden`) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer. ⚠ Two different 403s here: `watching_hidden` is the owner hiding **this list**, `profile_private` is the owner hiding **their whole profile**. The second is checked first, so a private profile never reveals whether its follow lists are also hidden.
+- **Errors:** `bcc_not_found` (slug missing) · `bcc_permission_denied` 403 (`watching_hidden`) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer, **or the account is suspended** *(v1.112)*. ⚠ Two different 403s here: `watching_hidden` is the owner hiding **this list**, `profile_private` is the owner hiding **their whole profile**. The second is checked first, so a private profile never reveals whether its follow lists are also hidden.
 - **Cache:** `Cache-Control: private, max-age=30`
 - **Pagination envelope:** offset with `has_more` (§1.5)
 - **Mapping:** `UserFollowsService::listFollowing` → `PeepSoFollowerRepository::getCounts` + `getFollowing`; same card hydration as `/followers`. Handler `UserFollowsEndpoint::listFollowing` (route `UserFollowsEndpoint.php:60`).
@@ -3366,7 +3378,7 @@ Cross-kind list of all PeepSo groups a target user is an active member of: holde
 
 - **Auth:** Anonymous OR Bearer
 - **Path:** `slug` matches the canonical `[a-z0-9][a-z0-9-]{1,18}[a-z0-9]` handle pattern (lowercase alphanumeric + hyphens, 3–20 chars). 404 with `bcc_not_found` for invalid or unknown handles.
-- **Errors:** `bcc_not_found` **404** (invalid or unknown handle) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer. *(This block carried no `Errors:` line before v1.91; the 404 above was documented in prose only.)*
+- **Errors:** `bcc_not_found` **404** (invalid or unknown handle) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer, **or the account is suspended** *(v1.112)*. *(This block carried no `Errors:` line before v1.91; the 404 above was documented in prose only.)*
 - **Privacy filtering (server-authoritative):**
   - ⚠ *v1.91:* the per-group filtering below is **unchanged and still applies**, but it is now reached only after the profile gate admits the viewer. The two are separate: the gate asks "may this viewer see this person", the filtering asks "which of their groups may this viewer see". Previously only the second question was asked, so a stranger could confirm an "only me" profile's open-group memberships.
   - `secret` groups → included **only if the viewer is also a member**
@@ -5570,7 +5582,8 @@ Live holdings across the viewer's linked wallets, annotated with which are alrea
       "chain_id": 1, "contract_address": "0x…", "token_id": "42",
       "wallet_link_id": 15, "is_selected": true,
       "name": "Genesis #042", "collection_name": null,
-      "image_url": "https://…", "metadata_uri": "ipfs://…",
+      "image_url": "https://…", "image_fallback_url": "https://ipfs.io/ipfs/…",
+      "metadata_uri": "ipfs://…",
       "token_standard": "ERC-721",
       "collection_verified": true
     }],
@@ -5584,6 +5597,7 @@ Live holdings across the viewer's linked wallets, annotated with which are alrea
     }
   }
   ```
+  - `image_url` / `image_fallback_url` (v1.113) follow the §3.7 IPFS image rule. `metadata_uri` is the token's raw metadata pointer and is **not** an image URL — never render it.
   - `refreshed_at` is keyed by `wallet_link_id` (not chain). Value is MySQL UTC datetime (`YYYY-MM-DD HH:MM:SS`); frontend normalizes to ISO at the boundary.
   - `meta.indexer_state` ∈ {`healthy`, `syncing`, `degraded`} per §3.6. `indexer_state_label` is `""` for `healthy` — the contract's "no chip" signal.
   - `collection_verified` (v1.31) — whether the operator has verified the item's collection (Verify Collections). **Display-only**: nothing gates on this flag. *(doc corrected 2026-11-09, RE-corrected twice on 2026-11-10 — see #218: the Cosmos behaviour was reversed by PR #204, and the frontend-treatment paragraph below has now been wrong in BOTH directions, so read that paragraph rather than this summary for the current treatment.)* **Its meaning differs by chain family**, because the holdings for each arrive from a different place:
@@ -5608,7 +5622,8 @@ The viewer's currently saved selections, joined with chain metadata so the UI ca
       "id": 142, "user_id": 7, "wallet_link_id": 15,
       "chain_id": 1, "contract_address": "0x…", "token_id": "42",
       "collection_name": null, "name": "Genesis #042",
-      "image_url": "https://…", "metadata_uri": "ipfs://…",
+      "image_url": "https://…", "image_fallback_url": null,
+      "metadata_uri": "ipfs://…",
       "token_standard": "ERC-721",
       "display_order": 0, "added_at": "2026-05-15 14:00:00",
       "chain_slug": "ethereum", "chain_name": "Ethereum",
@@ -5618,6 +5633,7 @@ The viewer's currently saved selections, joined with chain metadata so the UI ca
   ```
   - Numeric fields may arrive as strings from `$wpdb->get_results`; client types accept both per §A2 boundary tolerance.
   - `display_order` is 0-indexed; new selections get `MAX + 1`.
+  - `image_url` / `image_fallback_url` (v1.113) follow the §3.7 IPFS image rule. The stored snapshot is sanitized at read time, so a selection saved before v1.113 with a non-https image now reads `null`.
 - **Errors:** `bcc_unauthorized 401`.
 - **Rate limit:** unthrottled (read-only, single index lookup bounded to 200 rows).
 - **Cache:** `no-store`. React Query `staleTime: 30_000`; mutations invalidate the namespace.
@@ -5731,7 +5747,7 @@ Anonymous-readable per §J trust-graph doctrine: attestation data is public-by-d
 - **Errors:**
   - `bcc_not_found 404` — handle does not resolve to a known user.
   - `bcc_rate_limited 429` — 30/60/IP shared throttle bucket (`users_endorsements`).
-  - `bcc_forbidden 403` *(v1.91)* — `error.data.reason: "profile_private"`; the owner's `profile_visibility` does not admit this viewer.
+  - `bcc_forbidden 403` *(v1.91)* — `error.data.reason: "profile_private"`; the owner's `profile_visibility` does not admit this viewer, **or the account is suspended** *(v1.112)*.
 - **Rate limit:** 30/60/IP (shared across all `/users/:handle/endorsements` callers — per-handle granularity isn't worth the bucket sprawl).
 - **Cache:** `private, max-age=15` with `Vary: Authorization, Cookie` *(changed in v1.91 — was `public, max-age=15` with `Vary: Authorization`)*. React Query `staleTime: 15_000`.
   - ⚠ The short shared cache it used to keep is no longer available: since v1.91 this route can answer 403 for one viewer and 200 for another, and a shared cache holding the 200 would replay it to refused viewers. `Vary: Authorization` alone does not help — the owner/admin/friend distinctions turn on the session.
@@ -6078,7 +6094,8 @@ Upload a custom avatar. PeepSo owns the image pipeline; this route wraps `PeepSo
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized 401`.
 - **Body (`multipart/form-data`):** `avatar` (**required**, file) — size ≤ **2 MB**; MIME detected from file contents via `wp_check_filetype_and_ext` (request Content-Type never trusted); must be `image/jpeg|png|webp`.
 - **Response 200:** full updated **User view-model** (§3.1, own variant).
-- **Errors:** `bcc_unauthorized` (401) · `bcc_peepso_unavailable` (503, PeepSo not loaded) · `bcc_invalid_request` (422, field missing / empty / > 2 MB / bad MIME) · `bcc_upload_failed` (422 PHP upload error; 500 on PeepSo throw)
+- **Errors:** `bcc_unauthorized` (401) · `bcc_rate_limited` (429, v1.111: see below) · `bcc_forbidden` (403, account suspended) · `bcc_peepso_unavailable` (503, PeepSo not loaded) · `bcc_invalid_request` (422, field missing / empty / > 2 MB / bad MIME) · `bcc_upload_failed` (422 PHP upload error; 500 on PeepSo throw)
+- **Rate limit (v1.111):** avatar and cover uploads share one per-user budget: **5 per 60 s** and **20 per hour**. It's checked before the suspension check and before the file is read, so a refused upload writes nothing. Message: "Too many image uploads. Try again in a few minutes."
 - **Mapping:** `MyProfileEndpoint::uploadAvatar` (route `MyProfileEndpoint.php:103`, CREATABLE). FE `profile-endpoints.ts:uploadAvatar`.
 
 #### `DELETE /bcc/v1/me/profile/avatar`
@@ -6097,7 +6114,7 @@ Upload a cover photo. Wraps `PeepSoUser::move_cover_file` (resize + write + meta
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized 401`.
 - **Body (`multipart/form-data`):** `cover` (**required**, file) — size ≤ **5 MB**; MIME detected from contents; must be `image/jpeg|png|webp`.
 - **Response 200:** full updated **User view-model** (§3.1, own variant).
-- **Errors:** same set as `POST /me/profile/avatar` (only the `cover` field name + 5 MB cap differ): `bcc_unauthorized` (401) · `bcc_peepso_unavailable` (503) · `bcc_invalid_request` (422) · `bcc_upload_failed` (422/500)
+- **Errors:** same set as `POST /me/profile/avatar` (only the `cover` field name + 5 MB cap differ): `bcc_unauthorized` (401) · `bcc_rate_limited` (429, v1.111; the **same** per-user budget as the avatar upload) · `bcc_forbidden` (403, account suspended) · `bcc_peepso_unavailable` (503) · `bcc_invalid_request` (422) · `bcc_upload_failed` (422/500)
 - **Mapping:** `MyProfileEndpoint::uploadCover` (route `MyProfileEndpoint.php:125`, CREATABLE). FE `profile-endpoints.ts:uploadCover`.
 
 #### `DELETE /bcc/v1/me/profile/cover`
@@ -6411,8 +6428,8 @@ Change the viewer's public handle (§B6). 7-day cooldown. Registered as `WP_REST
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
 - **Body (JSON):** `handle` (**required**) — lowercased + trimmed; §B6 rules (3–20 chars, `a-z`/digits/`-`, no leading/trailing/consecutive hyphens, not reserved).
 - **Response 200:** `{ "data": { "handle": "ramona-v", "next_change_at": "2026-06-17T14:05:00Z" } }` — `next_change_at` is now + 7 days, **null on a no-op rename** (submitting the existing handle short-circuits without arming the cooldown).
-- **Errors (checked in this order):** `bcc_unauthorized` 401 · `bcc_rate_limited` 429 (within the 7-day cooldown; checked FIRST so a locked-out user can't probe availability; carries `Retry-After`) · `bcc_invalid_handle` 422 · `bcc_handle_reserved` 422 · `bcc_conflict` 409 (taken)
-- **Rate limit:** one successful change per 7 days (`HandleService::COOLDOWN_SECONDS = 604800`)
+- **Errors (checked in this order):** `bcc_unauthorized` 401 · `bcc_rate_limited` 429 (the shared per-account attempt bucket, §1.4.4 — since v1.115) · `bcc_forbidden` 403 (account suspended) · `bcc_rate_limited` 429 (within the 7-day cooldown; checked before the handle itself so a locked-out user can't probe availability; carries `Retry-After`) · `bcc_invalid_handle` 422 · `bcc_handle_reserved` 422 · `bcc_conflict` 409 (taken) · `bcc_rate_limited` 429 (the change cap below — only when a real change is about to be written)
+- **Rate limit:** one successful change per 7 days (`HandleService::COOLDOWN_SECONDS = 604800`). Every attempt also counts against the shared per-account bucket (120 attempts / 60 s, §1.4.4). *(since v1.115)* A backstop of **10 changes per hour** per account is charged only when a change passes every check and is about to be written — attempts on taken, invalid or unchanged handles never count against it; the 7-day cooldown normally binds first.
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** `OnboardingEndpoint::updateHandle` (route `OnboardingEndpoint.php:102`, EDITABLE) → `HandleService`; on a real rename writes `bcc_handle` + `bcc_handle_last_changed`, audit-logs `handle_changed`, fires `do_action('bcc_handle_changed', …)`.
 
@@ -6746,8 +6763,10 @@ Watchers-tab data plane — people watching this entity. Offset-paginated to mat
 - **Path:** `target_kind` ∈ `validator_card|project_card|creator_card` · `target_id` (int > 0).
 - **Query:** `offset` (default 0) · `limit` (default 24, max 100)
 - **Response 200:** `{ items: Card[], pagination: { offset, limit, total, has_more } }`, each `Card` the **full member Card view-model (§3.2, with `member_dossier`)** (hydrated via `CardViewService::getMemberCardForList`). Unclaimed cards (no resolvable `post_author`) return an empty page.
-- **Errors:** `bcc_invalid_request` 400
-- **Cache:** anon → `public, max-age=30`; authed → `private, max-age=30` + `Vary`; invalid → `private, no-store`.
+- **Target (v1.116):** `target_id` must be a **published** `peepso-page` whose page type matches `target_kind`. Any other id, such as a status post, a draft, or another kind's page, returns the same empty page as a missing one. It previously accepted any post id, which listed that post author's followers.
+- **Owner privacy (v1.116):** the watchers are the owner's followers, so they answer to the owner's profile exactly like `GET /users/:handle/followers`. If the owner's `profile_visibility` does not admit this viewer, or the owner is suspended (§F-182; an *unknown* suspension does not hide), the route answers `bcc_forbidden` **403** with `error.data.reason: "profile_private"`. The owner's `watching_hidden` flag still does not propagate.
+- **Errors:** `bcc_invalid_request` 400 · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` (v1.116, see above)
+- **Cache:** anon → `public, max-age=30`; authed → `private, max-age=30` + `Vary`; invalid and `profile_private` → `private, no-store`.
 - **Mapping:** `CardWatchersEndpoint::list` (route `CardWatchersEndpoint.php:46`) → `CardWatchersService::listWatchers`. FE `card-tabs-endpoints.ts:getCardWatchers`.
 
 #### `GET /bcc/v1/creators/:slug/gallery`
@@ -6905,6 +6924,7 @@ Every collection the viewer's linked wallets hold, with the state that picks the
   { "items": [{
       "chain_id": 8, "chain_slug": "cosmos",
       "contract_address": "cosmos1…", "name": "ATLAS", "image_url": "https://…",
+      "image_fallback_url": null,
       "collection_verified": false,
       "state": "waitlist",
       "group_id": null,
@@ -6913,6 +6933,8 @@ Every collection the viewer's linked wallets hold, with the state that picks the
   }],
     "holdings_status": "complete" }
   ```
+  `image_url` / `image_fallback_url` (v1.113) follow the §3.7 IPFS image rule; the panel previously emitted the holdings image unchecked.
+
   `state` ∈ {`live`, `waitlist`} — `live` means verified + community provisioned (`group_id` non-null → feed it to §4.7.1 join). `waitlist_count` is public social proof. Rows sort live-first, then by waitlist momentum; capped at 60.
 
   **`holdings_status`** (additive, v1.77) ∈ {`complete`, `partial`, `unavailable`} — whether every holdings source finished, so an empty `items` stops answering two different questions with the same silence:
@@ -8893,13 +8915,92 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.112 — 2026-11-11 — behaviour change — public handles never expose a login; retired handles still resolve
+### v1.118 — 2026-11-11 — behaviour change — public handles never expose a login; retired handles still resolve
 
-Ships with bcc-trust's public-identity changes (two stacked PRs) and bcc-core's feed-author fix.
+Ships with bcc-trust #517 (public-identity fallbacks), #540 (retired handles), #557 (no login or nicename resolution) and bcc-core #86 (feed-author fallback).
 
 - **Fallbacks:** a member with no stored handle shows `member-{id}` as `handle` (was: their login). A `display_name` that is empty or equal to the login shows the handle (was: the login). Applies everywhere a member mini, card, feed author, comment byline, mention, notification or message party is rendered. Types are unchanged; only the fallback values differ.
-- **Retired handles:** members whose handle equalled their login get a new handle (their display-name slug, else `member-{id}`). The old handle is retired. It still resolves to the member on `GET /users/:handle` and the other `:handle` / `:slug` member routes, and is never assigned again. The response carries the CURRENT `handle`; the client redirects `/u/{old}` permanently to `/u/{current}` (see `GET /bcc/v1/users/:handle`). Only retired handles resolve this way; it is not a login lookup.
+- **Retired handles:** members whose handle equalled their login get a new handle (their display-name slug, else `member-{id}`). The old handle is retired. It still resolves to the member on `GET /users/:handle` and the other `:handle` / `:slug` member routes, and is never assigned again. The response carries the CURRENT `handle`; the client redirects `/u/{old}` permanently to `/u/{current}` (see `GET /bcc/v1/users/:handle`). Only retired handles resolve this way; it is not a login lookup. **Login and nicename slugs do not resolve:** `/users/<login>` and `/users/<nicename>` return `bcc_not_found` unless that string is also a stored or retired handle; a member with no stored handle resolves as `member-{id}`.
 - **Clients:** add the redirect on the profile route when the response's `handle` differs from the requested one (case-insensitive). No other change.
+
+### v1.116 — 2026-11-11 — behaviour change — entity watchers answer to the owner's profile privacy
+
+Ships with bcc-trust's F-26 change (bcc-trust #547).
+
+- **`GET /entities/:target_kind/:target_id/watchers`:**
+  - If the owner's profile is not viewable by the viewer (private, members-only, friends-only, or a suspended owner), the route now returns `bcc_forbidden` **403** `profile_private`. That's the same gate and the same answer as `GET /users/:handle/followers`, since the watchers *are* the owner's followers.
+  - `target_id` must be a published entity page of `target_kind`; any other post id returns an empty page. It used to accept any post id, a back door to any member's follower list.
+- **Clients:** render a `profile_private` 403 on the Watchers tab as "watchers hidden" rather than as a load failure. No shape change.
+
+### v1.115 — 2026-11-11 — behaviour change — self-scoped writes are rate limited per account
+
+Ships with bcc-trust #532.
+
+- **§1.4.4 (F-134):** the cheap `/me/*` writes that had no rate limit (profile, profile fields, prefs, privacy, onboarding, handle, mark-read, celebrations, highlights, primary hall, push-subscription revoke, review removal) now share one per-account bucket of 120 attempts / 60 s (an explicit per-account-only exception to §1.4.4's per-user-and-per-IP rule). `PATCH /me/handle` attempts count against it too, and a backstop of 10 changes per hour is charged only on a change about to be written (the 7-day cooldown is unchanged and normally binds first). Tripped → `429 bcc_rate_limited`. Normal UI use stays far below the limits; clients already handle 429 per §1.4.4.
+
+### v1.114 — 2026-11-11 — behaviour change — feed items stop leaking unpublished pages, blocked reactors and group engagement
+
+Ships with bcc-trust's F-90 change (bcc-trust #539).
+
+- **§3.3.2 `review` body:** a review of a draft, private or trashed page now renders that page like a missing one (`page_handle` / `page_name` / `page_kind` = `""`). Only published pages resolve.
+- **§2.2 `social_proof.recent_reactors`** (now documented): never includes suspended members, or, for a signed-in viewer, mutually blocked ones. It is omitted for the page if either check cannot be read.
+- **Group-gated engagement:** on a feed item in a group the viewer cannot read, `reactions.counts` are all `0`, `heat_stage` is `1`, `stoke_count` is `0`, `social_proof.headline` is `null` and `recent_reactors` is omitted. That's the same rule that already zeroed `comment_count`. The viewer's own `viewer_reaction` / `viewer_has_stoked` are kept.
+- No new fields, codes or shapes. **Clients:** no change needed.
+
+### v1.113 — 2026-11-11 — additive — IPFS NFT images: configured gateway + `image_fallback_url`
+
+Ships with bcc-trust's F-165 change (bcc-trust #534).
+
+- **New, nullable:** `image_fallback_url` on §3.7 `NftPiece` (plus `image_url_thumb_fallback_url`), on §4.21 `GET /nft-selections/picker` and `GET /nft-selections` items, and on §4.31 `GET /me/collection-stances/panel` items.
+- **Behaviour:** IPFS-hosted images (previously refused, so `null`) are now served on the site's configured IPFS gateway, with the public `ipfs.io` copy in the fallback field. `image_url` on these surfaces is now always `https://` or `null`: holdings, picker, selections and stances images were previously passed through unchecked, so an `http://`, `ipfs://` or `javascript:` value could reach the client.
+- **Clients:** `<img crossorigin="anonymous">`; first error → fallback when non-null; next error → placeholder. No `next/image` proxy; never add a key to an image URL. An older client that ignores the new field keeps working (it just has no fallback). The shared `collection-stance-panel.contract.json` fixture lists the new field.
+
+### v1.112 — 2026-11-11 — behaviour change — a suspended member's profile is hidden, and so is their directory row
+
+**Suspension used to govern only what someone could DO.** Their profile and every
+per-user surface served a stranger exactly what they served anyone, and the member
+directory listed them normally. Raised as item 1 of the contract/code audit, which
+noted that this route documented a 403 for a suspended account while the handler
+had no suspension check at all — and said that if the contract was right, a
+suspended account's profile was readable by anyone. It was.
+
+- **Behaviour change — the existing 403 widens, on the same twelve routes.**
+  `bcc_forbidden` **403** with `error.data.reason: "profile_private"` (added in
+  v1.91 for the owner's visibility setting) is now **also** returned when the
+  profile's owner is suspended. **No new code, no new `reason` value, and no new
+  route**: a client that already handles the v1.91 refusal needs no change.
+  - **The cause is deliberately not disclosed.** One `reason` covers both, so a
+    caller cannot tell a privacy setting from a sanction, and a suspended
+    member's moderation state is not published to the people it is hidden from.
+    `profile_private` must therefore not be read as "the owner chose this".
+  - **Exempt:** the member themselves (a suspension must not hide someone's own
+    account from them) and site admins (`manage_options`), for whom a moderated
+    account has to stay reviewable.
+- **Behaviour change — `GET /bcc/v1/members` drops suspended members**, from the
+  rows **and** from `pagination.total`. Listing someone whose profile answers 403
+  contradicted the decision, and the exclusion is applied inside the counted
+  statement so rows and total agree. `type_counts` is unchanged — it is global by
+  design. The same two exemptions apply, so a row and its profile can never
+  disagree. wp-admin's Users screen is untouched.
+- **Correction — `bcc_permission_denied` removed from `GET /users/:handle`.** It
+  was documented as "account suspended; rare" and **never had a producer**: the
+  route's `permission_callback` is `__return_true` and the handler has no
+  viewer-standing gate. Same defect class as the `bcc_permission_denied` removed
+  from the claim route in **v1.86**, for the same measured reason. **No behaviour changes with this line** — nothing ever sent it, so no
+  client could have depended on it. A suspended **viewer** still reads other
+  members' profiles; this release hides the **subject**, not the reader.
+- **Unreadable state means visible.** When the suspension state cannot be read
+  the profile is served. It is a read path, and the alternative would withdraw
+  every profile on the site the moment that read failed.
+- **No schema change, no route added or removed**, so the §4 endpoint inventory
+  is unmoved.
+### v1.111 — 2026-11-11 — behaviour change — profile image uploads are rate limited
+
+Ships with bcc-trust's F-58 change (bcc-trust #524).
+
+- **`POST /me/profile/avatar` · `POST /me/profile/cover`:** now return `bcc_rate_limited` **429** past one shared per-user budget of **5 per 60 s** and **20 per hour**. Both routes were unthrottled, so a script could fill the uploads directory. The limit is checked before the file is read, so a refused upload writes nothing.
+- Also documents the existing `bcc_forbidden` 403 for a suspended account on both routes (F-109, already shipped).
+- **Clients:** show the 429 as "try again in a few minutes"; no retry loop. No shape change.
 
 ### v1.110 — 2026-11-11 — behaviour change — member search no longer matches login names
 
@@ -9183,6 +9284,9 @@ decision — `PeepSoUser::is_accessible*` was called **zero times** in bcc-trust
 So "friends" and "only me" profiles served a stranger exactly what they served
 the owner, on every per-user surface.
 
+- ⚠ **Superseded in part by v1.112:** the same code and `reason` now also
+  cover a **suspended** owner, so the wording below ("`profile_visibility`")
+  is narrower than current behaviour. The refusal shape is unchanged.
 - **Behaviour change — twelve routes can now refuse.** New `bcc_forbidden`
   **403** carrying `error.data.reason: "profile_private"` on
   `GET /users/:handle` and its `/blog`, `/activity`, `/endorsements`,
