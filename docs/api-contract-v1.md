@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.113 · 2026-11-11 · Phase 1 deliverable
+**Status:** Draft v1.116 · 2026-11-11 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -163,6 +163,8 @@ The canonical envelope's `message` is presentation; the *behavior fork* is on `c
 `bcc_rate_limited` (429) is retryable with backoff. The server MAY include `data.retry_after_seconds` (positive integer). When present, clients SHOULD wait at least that long before retrying. When absent, clients SHOULD apply at least 1.5× exponential backoff starting from 2 seconds.
 
 Rate-limit buckets are per-user (when authenticated) AND per-IP. Both must allow the request through; the more conservative rejection wins. The server never returns 429 from cached read paths (cached responses bypass throttling).
+
+**Self-scoped writes (since v1.115, F-134) — a per-ACCOUNT-only exception to the per-user-AND-per-IP rule above.** Every signed-in write to the caller's own state under `/me/*` that §4 does not give its own rate limit — profile, profile fields, prefs, privacy, onboarding, handle, mark-read, celebrations, highlights, primary hall, push-subscription revoke, review removal — shares **one bucket of 120 ATTEMPTS / 60 s per account**, keyed on the account and never on the IP (calls come from the frontend server's few IPs). Every attempt counts, successful or not. A tripped bucket answers `429 bcc_rate_limited`. Routes with their own documented limit (account email/password/recovery, uploads, reports, joins, blocks, …) keep it and are not counted here. `PATCH /me/handle` has further limits of its own — see its §4 entry.
 
 #### 1.4.5 Capability-denied semantics
 
@@ -445,6 +447,7 @@ Or, if the viewer has zero network connection:
 - **Hidden-watchlist rule (§O4):** users who have hidden their watchlist (per §K2) still contribute to `additional_count` but **never** appear in `named_handles`, even if they're elite/trusted.
 - `kind` is one of: `follow`, `vouch`, `stand_behind`, `dispute_signed`, `nft_held`, `hall_member`. Determines which verb the headline uses.
 - `weighted: true` means the headline applied trust weighting; `false` means raw count (used only on internal admin views, never on public surfaces — kept in the contract for symmetry).
+- **Feed items: `recent_reactors` (v1.114).** Up to 3 most recent reactors as `{handle, display_name, avatar_url}`, for the stacked avatar faces. It never includes a **suspended** member, or, for a signed-in viewer, anyone they blocked or who blocked them. If either check cannot be read, the key is omitted for the whole page (faces are decoration). On a feed item in a group the viewer cannot read, `headline` is `null` and `recent_reactors` is omitted.
 
 **Anti-rule:** the frontend MUST NOT show `additional_count` as a separate UI element. The server has already incorporated it into `headline`. Showing it twice is a rendering bug.
 
@@ -889,6 +892,7 @@ Appears on Feed item view-models and on Card view-models that support reactions.
 - `kind_grammar` is **required** on every `reactions` block. Frontend MUST branch on it; deriving the rail from `post_kind` is forbidden (a future grammar change must not require a frontend rebuild).
 - `counts` always has all kinds for the active grammar, even if zero. Eliminates `undefined` checks on the client.
 - `viewer_reaction` is `null` when the viewer is anonymous or hasn't reacted; otherwise the kind name (a string belonging to the active grammar).
+- **Group-gated (v1.114):** on a feed item in a group the viewer cannot read (anonymous, or not a member with a read-allowed status), every `counts` value is `0`, `heat_stage` is `1` and `stoke_count` is `0`, exactly what an unreacted post shows. This is the same rule that already zeroes `comment_count` there. The viewer's own `viewer_reaction` / `viewer_has_stoked` are kept. Keys and shapes are unchanged.
 - A reaction kind from one grammar MUST NOT appear on a `reactions` block of another grammar. The server rejects cross-grammar set-reaction requests with `bcc_invalid_request`.
 - _(Legacy fields `my_reactions` and `totals` shown in earlier drafts of this section were never emitted by the V1 implementation; the canonical shape has always been `viewer_reaction: string | null`.)_
 
@@ -1351,6 +1355,8 @@ V1.5 transition rules: clients tolerant of unknown fields ride forward without c
 `grade` ∈ {`trust`, `neutral`, `caution`} (from `vote_type` 1/0/-1). `text` is the review body (≤ 4000 chars; falls back to the short `reason` slug for bare-vote rows). `page_kind` ∈ {`validator`, `project`, `creator`, `member`, `""`} and drives the target link prefix (`/v`|`/p`|`/c`|`/u`; `""` → no link).
 
 Only a review whose vote is **active** is emitted (v1.94). When the vote has been retracted by its author, removed by an accepted dispute, or removed by moderation, the `review` item is **omitted** from every feed surface (it is never emitted with an empty or placeholder body), and its permalink (`GET /feed/:id`) answers `bcc_not_found` 404. The omission is read-time, so a vote that is restored or re-cast brings the item back.
+
+Unpublished targets (v1.114): only a **published** page resolves. When the reviewed page is a draft, private or trashed, `page_handle`, `page_name` and `page_kind` are `""`, the same as for a missing page, so the card never shows an unpublished page's title or slug and the frontend suppresses the link.
 
 Member-target rows (v1.48): `page_id` is the member's **self-page id** (`MemberSelfPageService::selfPageId(user_id)`), `page_name` is the member's display name, and `page_handle` is their `bcc_handle` — `""` when unset (the frontend suppresses the link; `user_login`/nicename are never projected).
 
@@ -6421,8 +6427,8 @@ Change the viewer's public handle (§B6). 7-day cooldown. Registered as `WP_REST
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
 - **Body (JSON):** `handle` (**required**) — lowercased + trimmed; §B6 rules (3–20 chars, `a-z`/digits/`-`, no leading/trailing/consecutive hyphens, not reserved).
 - **Response 200:** `{ "data": { "handle": "ramona-v", "next_change_at": "2026-06-17T14:05:00Z" } }` — `next_change_at` is now + 7 days, **null on a no-op rename** (submitting the existing handle short-circuits without arming the cooldown).
-- **Errors (checked in this order):** `bcc_unauthorized` 401 · `bcc_rate_limited` 429 (within the 7-day cooldown; checked FIRST so a locked-out user can't probe availability; carries `Retry-After`) · `bcc_invalid_handle` 422 · `bcc_handle_reserved` 422 · `bcc_conflict` 409 (taken)
-- **Rate limit:** one successful change per 7 days (`HandleService::COOLDOWN_SECONDS = 604800`)
+- **Errors (checked in this order):** `bcc_unauthorized` 401 · `bcc_rate_limited` 429 (the shared per-account attempt bucket, §1.4.4 — since v1.115) · `bcc_forbidden` 403 (account suspended) · `bcc_rate_limited` 429 (within the 7-day cooldown; checked before the handle itself so a locked-out user can't probe availability; carries `Retry-After`) · `bcc_invalid_handle` 422 · `bcc_handle_reserved` 422 · `bcc_conflict` 409 (taken) · `bcc_rate_limited` 429 (the change cap below — only when a real change is about to be written)
+- **Rate limit:** one successful change per 7 days (`HandleService::COOLDOWN_SECONDS = 604800`). Every attempt also counts against the shared per-account bucket (120 attempts / 60 s, §1.4.4). *(since v1.115)* A backstop of **10 changes per hour** per account is charged only when a change passes every check and is about to be written — attempts on taken, invalid or unchanged handles never count against it; the 7-day cooldown normally binds first.
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** `OnboardingEndpoint::updateHandle` (route `OnboardingEndpoint.php:102`, EDITABLE) → `HandleService`; on a real rename writes `bcc_handle` + `bcc_handle_last_changed`, audit-logs `handle_changed`, fires `do_action('bcc_handle_changed', …)`.
 
@@ -6756,9 +6762,9 @@ Watchers-tab data plane — people watching this entity. Offset-paginated to mat
 - **Path:** `target_kind` ∈ `validator_card|project_card|creator_card` · `target_id` (int > 0).
 - **Query:** `offset` (default 0) · `limit` (default 24, max 100)
 - **Response 200:** `{ items: Card[], pagination: { offset, limit, total, has_more } }`, each `Card` the **full member Card view-model (§3.2, with `member_dossier`)** (hydrated via `CardViewService::getMemberCardForList`). Unclaimed cards (no resolvable `post_author`) return an empty page.
-- **Target (v1.9X):** `target_id` must be a **published** `peepso-page` whose page type matches `target_kind`. Any other id, such as a status post, a draft, or another kind's page, returns the same empty page as a missing one. It previously accepted any post id, which listed that post author's followers.
-- **Owner privacy (v1.9X):** the watchers are the owner's followers, so they answer to the owner's profile exactly like `GET /users/:handle/followers`. If the owner's `profile_visibility` does not admit this viewer, or the owner is suspended (§F-182; an *unknown* suspension does not hide), the route answers `bcc_forbidden` **403** with `error.data.reason: "profile_private"`. The owner's `watching_hidden` flag still does not propagate.
-- **Errors:** `bcc_invalid_request` 400 · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` (v1.9X, see above)
+- **Target (v1.116):** `target_id` must be a **published** `peepso-page` whose page type matches `target_kind`. Any other id, such as a status post, a draft, or another kind's page, returns the same empty page as a missing one. It previously accepted any post id, which listed that post author's followers.
+- **Owner privacy (v1.116):** the watchers are the owner's followers, so they answer to the owner's profile exactly like `GET /users/:handle/followers`. If the owner's `profile_visibility` does not admit this viewer, or the owner is suspended (§F-182; an *unknown* suspension does not hide), the route answers `bcc_forbidden` **403** with `error.data.reason: "profile_private"`. The owner's `watching_hidden` flag still does not propagate.
+- **Errors:** `bcc_invalid_request` 400 · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` (v1.116, see above)
 - **Cache:** anon → `public, max-age=30`; authed → `private, max-age=30` + `Vary`; invalid and `profile_private` → `private, no-store`.
 - **Mapping:** `CardWatchersEndpoint::list` (route `CardWatchersEndpoint.php:46`) → `CardWatchersService::listWatchers`. FE `card-tabs-endpoints.ts:getCardWatchers`.
 
@@ -8908,14 +8914,29 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.9X — 2026-11-11 — behaviour change — entity watchers answer to the owner's profile privacy
+### v1.116 — 2026-11-11 — behaviour change — entity watchers answer to the owner's profile privacy
 
-Placeholder version; main agent assigns the number at merge. Ships with bcc-trust's F-26 change.
+Ships with bcc-trust's F-26 change (bcc-trust #547).
 
 - **`GET /entities/:target_kind/:target_id/watchers`:**
   - If the owner's profile is not viewable by the viewer (private, members-only, friends-only, or a suspended owner), the route now returns `bcc_forbidden` **403** `profile_private`. That's the same gate and the same answer as `GET /users/:handle/followers`, since the watchers *are* the owner's followers.
   - `target_id` must be a published entity page of `target_kind`; any other post id returns an empty page. It used to accept any post id, a back door to any member's follower list.
 - **Clients:** render a `profile_private` 403 on the Watchers tab as "watchers hidden" rather than as a load failure. No shape change.
+
+### v1.115 — 2026-11-11 — behaviour change — self-scoped writes are rate limited per account
+
+Ships with bcc-trust #532.
+
+- **§1.4.4 (F-134):** the cheap `/me/*` writes that had no rate limit (profile, profile fields, prefs, privacy, onboarding, handle, mark-read, celebrations, highlights, primary hall, push-subscription revoke, review removal) now share one per-account bucket of 120 attempts / 60 s (an explicit per-account-only exception to §1.4.4's per-user-and-per-IP rule). `PATCH /me/handle` attempts count against it too, and a backstop of 10 changes per hour is charged only on a change about to be written (the 7-day cooldown is unchanged and normally binds first). Tripped → `429 bcc_rate_limited`. Normal UI use stays far below the limits; clients already handle 429 per §1.4.4.
+
+### v1.114 — 2026-11-11 — behaviour change — feed items stop leaking unpublished pages, blocked reactors and group engagement
+
+Ships with bcc-trust's F-90 change (bcc-trust #539).
+
+- **§3.3.2 `review` body:** a review of a draft, private or trashed page now renders that page like a missing one (`page_handle` / `page_name` / `page_kind` = `""`). Only published pages resolve.
+- **§2.2 `social_proof.recent_reactors`** (now documented): never includes suspended members, or, for a signed-in viewer, mutually blocked ones. It is omitted for the page if either check cannot be read.
+- **Group-gated engagement:** on a feed item in a group the viewer cannot read, `reactions.counts` are all `0`, `heat_stage` is `1`, `stoke_count` is `0`, `social_proof.headline` is `null` and `recent_reactors` is omitted. That's the same rule that already zeroed `comment_count`. The viewer's own `viewer_reaction` / `viewer_has_stoked` are kept.
+- No new fields, codes or shapes. **Clients:** no change needed.
 
 ### v1.113 — 2026-11-11 — additive — IPFS NFT images: configured gateway + `image_fallback_url`
 
