@@ -776,7 +776,7 @@ F-324 post analytics. Short-retention guard so one reader is counted once per po
 UTC day, which is what makes `post_reach_daily.unique_viewers` meaningful. The ONLY
 table in this feature holding anything viewer-derived, and what it holds is a keyed
 one-way hash: `HMAC-SHA256(key = BCC_ENCRYPTION_KEY, msg = day || subject)` truncated to
-16 bytes, where subject is the viewer's user id when signed in, or the /24-or-/64 subnet
+16 bytes, where subject is the viewer's user id when signed in, or the /24-or-/48 subnet
 plus user-agent when signed out (signed-out views count; bots never fire the beacon).
 Mixing the DAY into the message is what bounds linkability — the same reader hashes
 differently tomorrow, so rows cannot be correlated across days and no durable pseudonym
