@@ -2152,21 +2152,22 @@ Second factor: exchanges the `/auth/login` challenge token + emailed 6-digit cod
   `expires_in` is the 7-day JWT TTL (`JwtToken::TTL_SECONDS`). `in_good_standing` per §A2.
 - **Errors:** `bcc_invalid_request` 422 (missing challenge_token or code) · `bcc_invalid_2fa_token` 401 (challenge expired/unknown, **superseded by a newer login**, or **burned after 5 wrong codes** — restart login) · `bcc_invalid_2fa_code` 401 (wrong/expired code — challenge preserved, retry in place, up to the attempt cap) · `bcc_invalid_state` 404/409 (account vanished / no handle) · `bcc_rate_limited` 429
 - **Attempt cap (since v1.97):** at most **5 wrong codes per (user, challenge)**. Wrong codes 1–4 → `bcc_invalid_2fa_code`; the 5th burns that challenge's code **and** the challenge → `401 bcc_invalid_2fa_token` "Too many incorrect codes. Please sign in again." The code is bound to its challenge, and only the user's **most recent** challenge is live — a new `/auth/login` supersedes any earlier one (so a second concurrent sign-in cancels the first's pending 2FA), and `/auth/2fa/resend` re-sends a code for the same challenge without resetting its count.
-- **Rate limit:** IP-bucketed, 10 / 60s (a second fence; the per-challenge attempt cap above is the primary one, the 10-min challenge TTL the outer bound)
+- **Attempt cap across resends (since v1.NEXT, F-292):** the wrong-code count lives for the challenge's whole possible life (a 6 h sliding window, against a challenge that lives at most 35 min), so it is **5 per challenge however many resends** keep the challenge alive.
+- **Rate limit:** IP-bucketed, 10 / 60s (a second fence; the per-challenge attempt cap above is the primary one, the challenge lifetime — 10 min, extendable by resends to at most 35 min — the outer bound)
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** peeks `bcc_2fa_ct_<token>` (and that it is the user's current challenge), timing-safely consumes the challenge-bound `bcc_2fa_otp_<first 40 hex of sha256(token)>` (`hash_equals`), consumes the challenge token only after the OTP matches, sets the WP auth cookie, mints the JWT (`JwtToken::encode`), emits the `user_login` audit log (`via: 2fa`), fires `do_action('bcc_user_login', …)`. Handler `AuthEndpoint::twoFaVerify` (route `AuthEndpoint.php:546`). Standard envelope per §1.4.
 
 #### `POST /bcc/v1/auth/2fa/resend`
 
-Re-sends a fresh 2FA code for an in-progress login challenge. Always returns `ok: true` whether or not the challenge token is valid (anti-enumeration; mirrors `/auth/resend-verification`).
+Re-sends a fresh 2FA code for an in-progress login challenge.
 
 - **Auth:** Anonymous (no token)
 - **Body:** `{ "challenge_token": "<64-hex>" }`
-- **Response 200:** `{ "ok": true }` (identical for valid and invalid tokens)
-- **Errors:** `bcc_rate_limited` 429
+- **Response 200:** `{ "ok": true }` — a new code was mailed, and the challenge is kept alive for that code's lifetime (5 min from now), so the new code can always be used.
+- **Errors:** `bcc_rate_limited` 429 (checked first) · `bcc_invalid_2fa_token` 401 "This session has expired. Please sign in again." (since v1.NEXT, F-292) — the challenge has ended: expired, unknown, **superseded by a newer login**, **burned after 5 wrong codes**, or **older than 30 minutes** (a challenge's absolute resend limit). Same code and copy as verify; restart login. Before v1.NEXT this answered `ok: true` and sent nothing. No anti-enumeration concern: the token is a 256-bit bearer secret, so a 401 reveals nothing guessable.
 - **Rate limit:** IP-bucketed, 3 / 60s (email-bomb fence)
 - **Cache:** `Cache-Control: no-store`
-- **Mapping:** peeks the challenge token without consuming it; when valid (and still the user's current challenge), overwrites that challenge's `bcc_2fa_otp_<first 40 hex of sha256(token)>` with a fresh HMAC-hashed code (the prior code immediately stops working; the challenge's wrong-code count is NOT reset) and re-dispatches `AuthMailer::send2faCode`. Handler `AuthEndpoint::twoFaResend` (route `AuthEndpoint.php:563`). Standard envelope per §1.4.
+- **Mapping:** peeks the challenge token without consuming it; when valid (and still the user's current challenge, and under 30 min old per its `bcc_2fa_iat_…` issue stamp), re-arms the challenge and the user's current-challenge pointer for `TWO_FA_OTP_TTL`, overwrites that challenge's `bcc_2fa_otp_<first 40 hex of sha256(token)>` with a fresh HMAC-hashed code (the prior code immediately stops working; the challenge's wrong-code count is NOT reset) and re-dispatches `AuthMailer::send2faCode`. Handler `AuthEndpoint::twoFaResend` (route `AuthEndpoint.php:563`). Standard envelope per §1.4.
 
 #### `POST /bcc/v1/auth/oauth-complete`
 
@@ -8956,6 +8957,14 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-12 — behaviour change — 2FA resend reports an ended challenge, and its code always works
+
+Ships with bcc-trust #646 (F-292). Draft number: renumbered in merge order.
+
+- **`POST /auth/2fa/resend`:** an ended challenge (expired, superseded, burned, or older than 30 min) now answers `bcc_invalid_2fa_token` 401, the same as verify, instead of `ok: true` with nothing sent. A successful resend keeps the challenge alive for the new code's 5 minutes, so a late resend no longer mails a code that fails with "session expired". A challenge lives at most 35 minutes.
+- **`POST /auth/2fa/verify`:** no shape change. The 5-wrong-codes cap now holds across any number of resends.
+- **Clients:** handle `bcc_invalid_2fa_token` on resend exactly as on verify (back to sign-in).
 
 ### v1.128 — 2026-11-12 — behaviour change — sign-in and search use the current handle; renamed handles are retired
 
