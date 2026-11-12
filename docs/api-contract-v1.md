@@ -937,6 +937,14 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
     "slug": "cosmos-hall",
     "name": "Cosmos Hall"
   },
+  // ⚠ VIEWER-FILTERED since v1.127 (F-323). Despite the name this
+  // carries EVERY group the member is in, not only Halls, and it is
+  // narrowed by the same rules as `GET /users/:slug/groups`: the owner's
+  // `show_groups_on_profile` preference, secret groups only for fellow
+  // members, and holder/delegator groups only for signed-in viewers.
+  // Before v1.127 it was unfiltered and ignored the viewer entirely.
+  // `primary_hall` above is derived from this list, which is why Halls
+  // survive the toggle.
   "halls": [
     { "id": 12, "slug": "cosmos-hall", "name": "Cosmos Hall", "is_primary": true },
     { "id": 18, "slug": "osmosis-hall", "name": "Osmosis Hall", "is_primary": false }
@@ -2117,7 +2125,7 @@ First factor of the password login. Validates credentials, then **always** initi
   ```json
   { "identifier": "alice@example.com", "password": "<password>" }
   ```
-  `identifier` (v1.33, replaces `email`) accepts **either** the account email **or** the handle. Shape is server-detected: anything passing `is_email()` is looked up by email; everything else is treated as a handle (lowercased, one leading `@` stripped) and looked up via the same `u_<handle>` login convention signup uses. The old `email` key is **not** accepted — renamed in place pre-launch (no external consumers; frontend shipped atomically).
+  `identifier` (v1.33, replaces `email`) accepts **either** the account email **or** the handle. Shape is server-detected: anything passing `is_email()` is looked up by email; everything else is treated as a handle (lowercased, one leading `@` stripped) and looked up by the account's **current** handle *(since v1.128, F-280; previously via the `u_<handle>` login, which is minted at signup and never changes, so a renamed member could not sign in by their new handle)*. A **retired** handle (see `PATCH /me/handle`) never signs in, and a handle more than one account holds signs in nobody; both answer the generic `bcc_invalid_credentials` 401. The old `email` key is **not** accepted — renamed in place pre-launch (no external consumers; frontend shipped atomically).
 - **Response 200:**
   ```json
   { "status": "2fa_required", "method": "email", "challenge_token": "<64-hex>" }
@@ -3397,9 +3405,12 @@ Cross-kind list of all PeepSo groups a target user is an active member of: holde
 - **Errors:** `bcc_not_found` **404** (invalid or unknown handle) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer, **or the account is suspended** *(v1.112)*. *(This block carried no `Errors:` line before v1.91; the 404 above was documented in prose only.)*
 - **Privacy filtering (server-authoritative):**
   - ⚠ *v1.91:* the per-group filtering below is **unchanged and still applies**, but it is now reached only after the profile gate admits the viewer. The two are separate: the gate asks "may this viewer see this person", the filtering asks "which of their groups may this viewer see". Previously only the second question was asked, so a stranger could confirm an "only me" profile's open-group memberships.
+  - ⚠ *v1.127 (F-270):* the member's own **`show_groups_on_profile`** preference is applied FIRST. When it is off, a viewer other than the owner (and other than an admin) sees **only Halls** — every other group is omitted. Halls are auto-provisioned one-per-chain with open membership, so they disclose nothing, and keeping them preserves the home-Hall chip. The owner always sees all of their own groups.
+  - ⚠ *v1.127 (F-270):* **NFT-holder (`type: "nft"`) and delegator (`type: "validator"`) groups are returned only to a SIGNED-IN viewer**, even when `show_groups_on_profile` is on. Membership of either discloses an on-chain financial position — that the member holds a qualifying NFT on a named chain, or delegates to a named validator — and the rows carry `chain_slug`. Anonymous callers receive neither kind.
   - `secret` groups → included **only if the viewer is also a member**
   - `closed` groups → always included; non-members see name + member_count, content stays private at PeepSo's layer
   - `open` groups → always included
+  - ⚠ **An empty `items` array is a valid 200 and is NOT an error.** A refusal would itself disclose that the member has groups being withheld, so a hidden list is indistinguishable from no memberships. Clients must render the empty state, never an error.
 - **Response 200:**
   ```json
   {
@@ -4131,6 +4142,7 @@ Users vertical — separate cache + rate-limit bucket from project search so the
 - **Query:**
   - `q` (string) — 2..100 chars (`QueryQualityGate` shared with project search). Over 100 chars → `rest_invalid_param` 400 (v1.47).
   - `limit` (int, optional) — default 20, capped at 50
+- **Matching (since v1.128, F-302):** a member is returned when `q` matches their **display name or current @handle only** (bcc-trust's shared member matcher, also used by `/members` and the @-mention picker). Never the login, the email or a first/last name, and a hidden real name matches by handle only; the query is never passed to PeepSo's own search. Every candidate still passes PeepSo's privacy filter set (bans, profile level, blocks, hidden-from-listing). Retired handles are not searchable. Without bcc-trust active the endpoint returns no results.
 - **Response 200:**
   ```json
   {
@@ -4795,6 +4807,7 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
     "hide_online":               false,
     "hide_from_search":          false,
     "default_post_audience":     "public" | "members" | "friends" | "private",
+    "show_groups_on_profile":    true,
     "mentor_opt_in":             false,
     "mentor_listed":             false,
     "mentor_eligibility_reason": "below_veteran"
@@ -4810,6 +4823,8 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
   - `hide_online` *(documented v1.64 — shipped earlier)* → `peepso_hide_online_status` user_meta, "1"/"0" — PeepSo's presence indicators treat "1" as "hide the green dot".
   - `hide_from_search` *(documented v1.64 — shipped earlier)* → `peepso_is_hide_profile_from_user_listing` user_meta, "1"/"0" — "1" excludes the user from directory + member search (direct profile links still work).
   - `default_post_audience` *(documented v1.64 — shipped earlier; `friends` added v1.121)* → `peepso_last_used_post_privacy` user_meta (int 10/20/30/40 ↔ public/members/friends/private) — defaults PeepSo's audience picker; PeepSo itself overwrites it on every post, so this is a default, not a lock. ⚠ The column is not a validated enum, so a value with no token at all is reported as `members`.
+  - `show_groups_on_profile` *(v1.127 — F-270)* -> `bcc_show_groups_on_profile` user_meta, "1"/"0". Read/write bool. **⚠ ABSENT MEANS `true`.** The default preserves the pre-F-270 behaviour, so an account that has never touched the setting keeps listing its groups; only an explicit falsey value hides them. This is the only *permissive* default among the privacy prefs here.
+    - ⚠ **It governs only the toggleable part of the policy.** Two rules apply regardless of it, and a client must not present it as "all of my group privacy": secret groups are never shown to non-members, and NFT-holder / delegator groups are shown only to **signed-in** viewers. See `GET /users/:slug/groups`.
   - `mentor_opt_in` *(v1.62 — Rank Phase 7, spec §21.4)* → `bcc_mentor_opt_in` user_meta, "1"/"0" (via `MentorListingService`). Read/write bool. Opting in requires **no** eligibility — a non-Veteran may pre-opt-in and lists automatically the day they qualify.
 - **Read-only mentor pair (v1.62, GET response only — never writable):** `mentor_listed` (bool) — whether the user is **actively listed** in the mentor directory *right now*; the listing composes **live** as opt-in AND `can('list_as_mentor')` (**Veteran** rank AND trust tier ≥ **Trusted** AND not suspended AND not in §14.2 Rank recovery). Nothing is materialized — when any condition fails the listing **pauses automatically on the next read** (no sweep, no flag to un-stick). `mentor_eligibility_reason` (string|null) — the resolver's stable deny slug ∈ `suspended|new_member|below_veteran|below_trusted|in_recovery` so the frontend can explain a paused listing; `null` while eligible (regardless of opt-in).
 - **PATCH** is partial — missing keys are untouched.
@@ -6456,10 +6471,11 @@ Change the viewer's public handle (§B6). 7-day cooldown. Registered as `WP_REST
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
 - **Body (JSON):** `handle` (**required**) — lowercased + trimmed; §B6 rules (3–20 chars, `a-z`/digits/`-`, no leading/trailing/consecutive hyphens, not reserved).
 - **Response 200:** `{ "data": { "handle": "ramona-v", "next_change_at": "2026-06-17T14:05:00Z" } }` — `next_change_at` is now + 7 days, **null on a no-op rename** (submitting the existing handle short-circuits without arming the cooldown).
-- **Errors (checked in this order):** `bcc_unauthorized` 401 · `bcc_rate_limited` 429 (the shared per-account attempt bucket, §1.4.4 — since v1.115) · `bcc_forbidden` 403 (account suspended) · `bcc_rate_limited` 429 (within the 7-day cooldown; checked before the handle itself so a locked-out user can't probe availability; carries `Retry-After`) · `bcc_invalid_handle` 422 · `bcc_handle_reserved` 422 · `bcc_conflict` 409 (taken) · `bcc_rate_limited` 429 (the change cap below — only when a real change is about to be written)
+- **Old handles are retired, not freed (since v1.128, F-280).** A rename records the outgoing handle as **retired** for this member before the new one is written. A retired handle keeps resolving to the member on every per-user route (`/u/{handle}`, `/users/{handle}/…`, cards, so old links and `@mentions` keep working; the response carries the current handle and the client redirects), never signs in, and is `bcc_conflict` 409 for every **other** member and for signup. Its **owner may reclaim it** (normal cooldown applies); it then stops being retired. Exception: a handle equal to the account's login (retired by the 2026 login-handle rotation) stays locked for its owner too. A handle some account's original signup login was derived from is also reported taken (signup could never mint it).
+- **Errors (checked in this order):** `bcc_unauthorized` 401 · `bcc_rate_limited` 429 (the shared per-account attempt bucket, §1.4.4 — since v1.115) · `bcc_forbidden` 403 (account suspended) · `bcc_rate_limited` 429 (within the 7-day cooldown; checked before the handle itself so a locked-out user can't probe availability; carries `Retry-After`) · `bcc_invalid_handle` 422 · `bcc_handle_reserved` 422 · `bcc_conflict` 409 (taken, or retired by another member) · `bcc_rate_limited` 429 (the change cap below — only when a real change is about to be written) · `bcc_internal_error` 500 (since v1.128: the old handle could not be recorded as retired; nothing was changed, retry)
 - **Rate limit:** one successful change per 7 days (`HandleService::COOLDOWN_SECONDS = 604800`). Every attempt also counts against the shared per-account bucket (120 attempts / 60 s, §1.4.4). *(since v1.115)* A backstop of **10 changes per hour** per account is charged only when a change passes every check and is about to be written — attempts on taken, invalid or unchanged handles never count against it; the 7-day cooldown normally binds first.
 - **Cache:** `Cache-Control: no-store`
-- **Mapping:** `OnboardingEndpoint::updateHandle` (route `OnboardingEndpoint.php:102`, EDITABLE) → `HandleService`; on a real rename writes `bcc_handle` + `bcc_handle_last_changed`, audit-logs `handle_changed`, fires `do_action('bcc_handle_changed', …)`.
+- **Mapping:** `OnboardingEndpoint::updateHandle` (route `OnboardingEndpoint.php:102`, EDITABLE) → `HandleService`; on a real rename adds a `bcc_handle_retired` row for the old handle (v1.128), writes `bcc_handle` + `bcc_handle_last_changed`, removes the new handle's own retired row if it was one, audit-logs `handle_changed`, fires `do_action('bcc_handle_changed', …)`.
 
 #### `DELETE /bcc/v1/me/reviews/:id`
 
@@ -8954,6 +8970,25 @@ Ships with bcc-core's F-266 change (bcc-core #108, merged) and bcc-trust's F-267
   - `GET /me/holder-groups` and `GET /me/validator-groups`: a banned group is listed in `opted_out` with `opt_out_kind: "removed"`, never in `eligible_to_join`;
   - holder and delegator joins refuse a ban with the existing `bcc_permission_denied` 403 `opt_out_active`. The plain-group join refuses it with `bcc_permission_denied` 403, and the Hall join with `bcc_forbidden` 403. All used to return a 503.
 - **Clients:** treat `reason_code: "removed"` like the other non-unlockable codes, with no Join button. The new 403s need no retry; a 503 on these joins now means only an outage.
+
+### v1.128 — 2026-11-12 — behaviour change — sign-in and search use the current handle; renamed handles are retired
+
+Ships with bcc-trust #634 (F-280) and bcc-search #36 (F-302). Draft number: renumbered in merge order.
+
+- **`POST /auth/login`:** a handle-shaped `identifier` resolves the account's current handle, not the `u_<handle>` signup login. A renamed member signs in with their new handle; the old handle no longer signs in. A handle two accounts hold signs in nobody. Errors and their shapes are unchanged.
+- **`PATCH /me/handle`:** the outgoing handle is retired (it keeps resolving to the member, so old `/u/` links and `@mentions` work, and no other member can take it). The owner may reclaim it. New error `bcc_internal_error` 500 when the old handle cannot be recorded; nothing changes. A one-shot migration retires the original handle of members who renamed before this change.
+- **Availability:** a retired handle, or one a signup login was derived from, is reported taken (`bcc_conflict` 409) to signup and to other members' renames, so the availability answer matches what signup will do.
+- **`GET /search/users` (and `GET /cards/search` member suggestions):** matching is by display name or current @handle only. A renamed member is found by the new handle; the login, first/last name and a hidden real name no longer match (the query no longer reaches PeepSo's own search). No shape change.
+- **Clients:** no change required. The frontend already redirects a `/u/{old}` response to the current handle.
+
+### v1.127 — 2026-11-12 — additive + behaviour change — a member can hide their groups, and the profile payload stops leaking secret ones
+
+Ships with bcc-trust #625 (F-270 + F-323).
+
+- **`GET`/`PATCH /me/profile-prefs` (additive):** new rw bool **`show_groups_on_profile`**. ⚠ **Absent means `true`** — the default preserves today's behaviour, so no existing profile changes until its owner opts out. It is the only permissive default among these prefs.
+- **`GET /users/:slug/groups` (behaviour change, narrowing):** three rules now narrow the list, in this order — the owner's `show_groups_on_profile` (off => a non-owner sees **only Halls**); **holder and delegator groups only for signed-in viewers**, regardless of that toggle; then the existing secret-group rule. The owner always sees all of their own groups, and admins keep the §F-02 exemption. An **empty `items` is a valid 200**, never an error — a refusal would disclose that something is being withheld.
+- **SECURITY FIX — `GET /users/:slug` -> `halls` (F-323):** this field carries **every** group the member is in, not only Halls, and it was **unfiltered** — it ignored the viewer completely and so published the owner's full membership, **secret groups included**, to anyone who could read the profile. It is now narrowed by the same rules as the Groups tab. The two surfaces published the same fact and only one of them filtered it; they now share a single implementation.
+- **Clients:** add the toggle to the privacy settings UI, and **do not** label it as covering all group privacy — the holder/delegator and secret rules apply regardless of it. Expect both surfaces to return fewer groups than before for non-owner viewers, and expect `primary_hall` to stay populated when the toggle is off (Halls survive it deliberately).
 
 ### v1.126 — 2026-11-12 — behaviour change — the tag feed matches whole hashtags, like trending
 
