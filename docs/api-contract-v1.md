@@ -4883,8 +4883,10 @@ Returns an `NftPiece` view-model (§3.7) for one specific NFT.
   - `bcc_invalid_request` (422) — malformed `contractAddress` (wrong format for the chain) or empty `tokenId`.
   - `bcc_not_found` (404) — collection unknown to the indexer AND the read-time fetch failed (Cosmos), OR the token ID does not exist on-chain. Distinguished at the application layer by whether the COLLECTION row exists; the wire response is the same `bcc_not_found` shape.
   - `bcc_unsupported_standard` (422) — the contract resolves but its `token_standard` is not in {`ERC-721`, `ERC-1155`, `SPL`, `CW-721`} (e.g., a fungible ERC-20 contract). Frontend should never reach this if it follows the gallery; included for defense-in-depth.
-  - `bcc_upstream_unavailable` (503) — Cosmos read-time fetch failed (LCD endpoint timeout / 5xx) AND no cached metadata is available. Retry with backoff.
+  - `bcc_upstream_unavailable` (503) — Cosmos read-time fetch failed (LCD endpoint timeout / 5xx) AND no cached metadata is available, OR the site-wide upstream budget (below) is spent and no stale cached row exists. Retry with backoff.
+  - `bcc_rate_limited` (429) — the per-request rate limit, OR the caller's own upstream budget (below).
 - **Rate limit:** 60/min/user (anonymous: 60/min/IP). Indexed chains hit local DB; Cosmos read-time path hits the LCD endpoint which is the actual capacity bottleneck.
+- **Upstream budget (F-57):** separate from the rate limit, and charged only when a request actually calls a provider: an indexed-chain cache miss or stale refresh, or any Cosmos read. Cache hits are free. 20/min per caller (anonymous: per IP) → `bcc_rate_limited` (429); then 300/min site-wide → `bcc_upstream_unavailable` (503). When either budget refuses and a stale cached row exists, the stale row is served (`X-BCC-Cache: STALE`) instead of an error.
 - **Cache:**
   - **EVM / Solana (indexed):** `Cache-Control: max-age=300, stale-while-revalidate=1800` — 5m fresh, 30m stale per §1.6 NFT-gallery row.
   - **Cosmos (read-time):** `Cache-Control: max-age=60, stale-while-revalidate=600` — shorter window because there is no persistent backing store and we don't want stale-while-revalidate to mask a chain outage for too long.
@@ -8909,6 +8911,14 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.11Z — <merge date> — behaviour change — NFT piece upstream budget
+
+Ships with bcc-trust's F-57 change (bcc-trust #562).
+
+- **§4.17 `GET /nft-pieces/{chainSlug}/{contractAddress}/{tokenId}`:** a new upstream budget, charged only when the request calls a provider (an indexed-chain cache miss or stale refresh, or any Cosmos read). Cache hits are not charged. 20/min per caller → `bcc_rate_limited` (429), then 300/min site-wide → `bcc_upstream_unavailable` (503). When either budget refuses and a stale cached row exists, the stale row is served instead.
+- `bcc_rate_limited` (429) is now listed in §4.17's errors. It was already returned by the per-request rate limit.
+- No new fields, codes or shapes. **Clients:** no change needed. Both codes were already handled.
 
 ### v1.114 — 2026-11-11 — behaviour change — feed items stop leaking unpublished pages, blocked reactors and group engagement
 
