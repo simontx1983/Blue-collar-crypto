@@ -115,6 +115,8 @@ schema-install path in `tables.php` is itself routed through the same runner.
 | wp_bcc_trust_user_verifications | 2 | Per-user external verifications (GitHub/X/domain/wallet) | TableRegistry::userVerifications | Active |
 | wp_bcc_trust_quest_log | 9 | Onboarding quest completions per user | TableRegistry::questLog | Active |
 | wp_bcc_post_shortcodes | 133 | Sidecar act_id → 8-letter public shortcode for post permalinks (`/u/{handle}/post/{code}`) | PostShortcodeRepository / schema-post-shortcodes.php | Active |
+| wp_bcc_trust_post_reach_daily | 0 | F-324 post analytics REACH: additive views / daily-unique-viewers / profile-visits per (post, UTC day, source). Day-keyed so no lifetime row goes hot; deliberately NO 'cold-start' source (FeedColdStartService forbids per-block comparison) | TableRegistry::postReachDaily / schema-post-reach-daily.php | Active |
+| wp_bcc_trust_post_view_dedupe | 0 | F-324 post analytics: 48-hour guard so one reader counts once per post per day. Holds a per-day-salted keyed HMAC, never an identity — the TTL IS the erasure story (no on-request delete path; the hash is not reversible to a user id) | TableRegistry::postViewDedupe / schema-post-view-dedupe.php | Active |
 | wp_bcc_user_ranks | 0 | Awarded ranks per user — backed the never-built conferred-Foreman role | none (repo + schema deleted 2026-07-09); dropped by `includes/database/drop-user-ranks-table.php` | RETIRED |
 | wp_bcc_page_read_model | 2777 | Denormalized page read model for discovery/search | TableRegistry::pageReadModel / schema-project.php | Active |
 | wp_bcc_rm_dirty_queue | 0 | Dirty-page queue driving read-model recompute | TableRegistry::dirtyQueue | Active |
@@ -739,6 +741,66 @@ Sidecar (not a column) because PeepSo owns `peepso_activities`.
 - short_id · char(8) · NO · UQ (letters-only — disjoint from the numeric /feed/{id} route)
 - created_at · datetime · NO (UTC via gmdate(); never a DB default — clock-split norm)
 - Indexes: PRIMARY (act_id) [uq]; short_id (short_id) [uq]
+
+#### wp_bcc_trust_post_reach_daily
+F-324 post analytics, REACH half. One row per (post, UTC day, distribution source)
+holding three additive counters, written on the request path via a single
+`INSERT … ON DUPLICATE KEY UPDATE col = col + 1`. Day-keyed on purpose: a
+lifetime-per-post row would serialise every view of a popular post behind one row
+lock. `source` is part of the PRIMARY KEY because one post legitimately accrues views
+from several surfaces the same day. Natural composite PK rather than the surrogate
+id + unique key used by `wp_bcc_search_terms`, because these key columns are narrow
+(8+3+20 bytes) so the extra secondary index would buy nothing.
+Source values: feed | hot | tag | profile | group | direct — there is deliberately NO
+'cold-start' value (`FeedColdStartService` forbids per-block performance comparison;
+cold-start views record as 'feed'). Writes fail open — analytics must never break a
+feed render. Reads fail closed, so a broken query never reports as zero views.
+`unique_viewers` is a DAILY figure (see the dedupe table); summing days overcounts a
+returning reader, so any lifetime engagement rate derived from it is a conservative
+LOWER bound and must be labelled "per daily unique viewer".
+Retention: NONE — daily rows are kept indefinitely, with no collapse and no prune.
+An earlier draft planned a 90-day window collapsed into a lifetime totals row; the
+rows are too small to earn it (~70 bytes each, and a row exists only for a (day,
+source) pair that actually delivered a view — on the order of ~11 MB/year at a modest
+modelled posting rate). Not collapsing is also safer: a collapse would have to be
+archive-then-delete in one guarded method, since a standalone audit purge once
+preempted an archive path and silently emptied that table in production, and keeping
+the rows means that class of defect cannot arise here. Growth is watched via
+`RetentionHealthRepository`. The 48-hour purge on the dedupe table is unaffected and
+stays mandatory — that retention is a privacy promise, this one was housekeeping.
+- post_id · bigint unsigned · NO · PK (peepso_activities.act_id)
+- day · date · NO · PK (UTC, gmdate('Y-m-d'))
+- source · varchar(20) · NO · PK
+- views · int unsigned · NO · default 0
+- unique_viewers · int unsigned · NO · default 0
+- profile_visits · int unsigned · NO · default 0
+- created_at · datetime · NO
+- Indexes: PRIMARY (post_id,day,source) [uq]; idx_day (day)
+
+#### wp_bcc_trust_post_view_dedupe
+F-324 post analytics. Short-retention guard so one reader is counted once per post per
+UTC day, which is what makes `post_reach_daily.unique_viewers` meaningful. The ONLY
+table in this feature holding anything viewer-derived, and what it holds is a keyed
+one-way hash: `HMAC-SHA256(key = BCC_ENCRYPTION_KEY, msg = 'viewer:' || day || subject)`
+truncated to
+16 bytes, where subject is the viewer's user id when signed in, or the /24-or-/48 subnet
+plus user-agent when signed out (signed-out views count; bots never fire the beacon).
+Mixing the DAY into the message is what bounds linkability — the same reader hashes
+differently tomorrow, so rows cannot be correlated across days and no durable pseudonym
+exists anywhere. That is also exactly why `unique_viewers` can only ever be a per-day
+figure. Mints nothing if the HMAC key is absent (fail closed, per AuthSupport): an
+unkeyed digest of a low-entropy subject is a confirmation oracle.
+⚠ Retention IS the erasure story. Rows delete within 48 hours and there is deliberately
+NO on-request delete path — `viewer_hash` is not reversible to a user id, so a per-user
+erasure request could not target this table. Belt and suspenders per
+`HeliusSeenSignaturesRepository`: an age TTL AND a row cap, with the overgrown alarm via
+RetentionHealthRepository, because here a silently-unkept 48-hour promise IS a broken
+privacy guarantee.
+- post_id · bigint unsigned · NO · PK (peepso_activities.act_id)
+- day · date · NO · PK (UTC, gmdate('Y-m-d'))
+- viewer_hash · binary(16) · NO · PK (keyed HMAC, per-day salt — never an identity)
+- seen_at · datetime · NO
+- Indexes: PRIMARY (post_id,day,viewer_hash) [uq]; idx_seen_at (seen_at)
 
 #### wp_bcc_search_terms (bcc-search)
 Search-analytics aggregate: one row per (norm_term, vertical, day), UPSERT-collided on the
