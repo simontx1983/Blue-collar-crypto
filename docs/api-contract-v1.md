@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.111 · 2026-11-11 · Phase 1 deliverable
+**Status:** Draft v1.113 · 2026-11-11 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1790,7 +1790,9 @@ Per-piece detail view-model used by §4.17. One row per uniquely-identified NFT,
   "name":         "Welder Genesis #042",
   "description":  "The forty-second piece in the Welder Genesis drop.",
   "image_url":    "https://cdn.bluecollar.crypto/nft/eth/0x1a2b3c.../042.png",
+  "image_fallback_url": null,
   "image_url_thumb": "https://cdn.bluecollar.crypto/nft/eth/0x1a2b3c.../042_thumb.png",
+  "image_url_thumb_fallback_url": null,
   "attributes": [
     { "trait_type": "Background", "value": "Workshop",   "rarity_pct": 12.5 },
     { "trait_type": "Tool",       "value": "MIG Welder", "rarity_pct": 4.2  }
@@ -1822,6 +1824,7 @@ Per-piece detail view-model used by §4.17. One row per uniquely-identified NFT,
 - `collection.is_verified` mirrors the admin-managed flag. Unverified pieces are still served — the field is rendered as a tier hint, not a hard gate.
 - `token_id` is a STRING, not a number. CW-721 token IDs are arbitrary strings; ERC-1155 token IDs are uint256 and exceed JS `Number.MAX_SAFE_INTEGER`. Always render verbatim; never coerce to Number.
 - `image_url` is the full asset URL; `image_url_thumb` is a CDN-resized thumbnail (≤ 512 px on the long edge). Both are absolute URLs per §1.7. `image_url_thumb` falls back to `image_url` when no resize is available.
+- **IPFS images and `*_fallback_url` (v1.113, F-165).** `image_url` / `image_url_thumb` are always an absolute `https://` URL or `null` — never `ipfs://`, `http://`, `data:` or `javascript:` (anything else is dropped to `null` server-side, including legacy stored values). An IPFS-hosted image is served on the site's configured IPFS gateway, and the sibling **`image_fallback_url`** (`image_url_thumb_fallback_url` for the thumb) carries the same image on the public `ipfs.io` gateway. The fallback is `null` when the image is not on IPFS, or when the configured gateway already is `ipfs.io`. **Client rule:** render `<img crossorigin="anonymous" src={image_url}>`; on the first load error switch to the fallback when it is non-null; on the next error (or a null fallback) show the placeholder. Do **not** proxy these through `next/image`, and never append a gateway key or token to any image URL — the gateway is opened to our origins, not by key. The same rule and field apply to §4.21 (picker + selections) and §4.31 (collection-stances panel).
 - `attributes[]` is the standard NFT trait array (OpenSea convention). `rarity_pct` is OPTIONAL — present only when the indexer has computed the trait's frequency across the collection. Empty array `[]` when the piece has no metadata; never `null`.
 - `owner` is the single dominant holder, reduced to **one field: `is_linked`**.
   - `null` when no on-chain holder is known (cold-cache, freshly minted, indexer behind).
@@ -5572,7 +5575,8 @@ Live holdings across the viewer's linked wallets, annotated with which are alrea
       "chain_id": 1, "contract_address": "0x…", "token_id": "42",
       "wallet_link_id": 15, "is_selected": true,
       "name": "Genesis #042", "collection_name": null,
-      "image_url": "https://…", "metadata_uri": "ipfs://…",
+      "image_url": "https://…", "image_fallback_url": "https://ipfs.io/ipfs/…",
+      "metadata_uri": "ipfs://…",
       "token_standard": "ERC-721",
       "collection_verified": true
     }],
@@ -5586,6 +5590,7 @@ Live holdings across the viewer's linked wallets, annotated with which are alrea
     }
   }
   ```
+  - `image_url` / `image_fallback_url` (v1.113) follow the §3.7 IPFS image rule. `metadata_uri` is the token's raw metadata pointer and is **not** an image URL — never render it.
   - `refreshed_at` is keyed by `wallet_link_id` (not chain). Value is MySQL UTC datetime (`YYYY-MM-DD HH:MM:SS`); frontend normalizes to ISO at the boundary.
   - `meta.indexer_state` ∈ {`healthy`, `syncing`, `degraded`} per §3.6. `indexer_state_label` is `""` for `healthy` — the contract's "no chip" signal.
   - `collection_verified` (v1.31) — whether the operator has verified the item's collection (Verify Collections). **Display-only**: nothing gates on this flag. *(doc corrected 2026-11-09, RE-corrected twice on 2026-11-10 — see #218: the Cosmos behaviour was reversed by PR #204, and the frontend-treatment paragraph below has now been wrong in BOTH directions, so read that paragraph rather than this summary for the current treatment.)* **Its meaning differs by chain family**, because the holdings for each arrive from a different place:
@@ -5610,7 +5615,8 @@ The viewer's currently saved selections, joined with chain metadata so the UI ca
       "id": 142, "user_id": 7, "wallet_link_id": 15,
       "chain_id": 1, "contract_address": "0x…", "token_id": "42",
       "collection_name": null, "name": "Genesis #042",
-      "image_url": "https://…", "metadata_uri": "ipfs://…",
+      "image_url": "https://…", "image_fallback_url": null,
+      "metadata_uri": "ipfs://…",
       "token_standard": "ERC-721",
       "display_order": 0, "added_at": "2026-05-15 14:00:00",
       "chain_slug": "ethereum", "chain_name": "Ethereum",
@@ -5620,6 +5626,7 @@ The viewer's currently saved selections, joined with chain metadata so the UI ca
   ```
   - Numeric fields may arrive as strings from `$wpdb->get_results`; client types accept both per §A2 boundary tolerance.
   - `display_order` is 0-indexed; new selections get `MAX + 1`.
+  - `image_url` / `image_fallback_url` (v1.113) follow the §3.7 IPFS image rule. The stored snapshot is sanitized at read time, so a selection saved before v1.113 with a non-https image now reads `null`.
 - **Errors:** `bcc_unauthorized 401`.
 - **Rate limit:** unthrottled (read-only, single index lookup bounded to 200 rows).
 - **Cache:** `no-store`. React Query `staleTime: 30_000`; mutations invalidate the namespace.
@@ -6908,6 +6915,7 @@ Every collection the viewer's linked wallets hold, with the state that picks the
   { "items": [{
       "chain_id": 8, "chain_slug": "cosmos",
       "contract_address": "cosmos1…", "name": "ATLAS", "image_url": "https://…",
+      "image_fallback_url": null,
       "collection_verified": false,
       "state": "waitlist",
       "group_id": null,
@@ -6916,6 +6924,8 @@ Every collection the viewer's linked wallets hold, with the state that picks the
   }],
     "holdings_status": "complete" }
   ```
+  `image_url` / `image_fallback_url` (v1.113) follow the §3.7 IPFS image rule; the panel previously emitted the holdings image unchecked.
+
   `state` ∈ {`live`, `waitlist`} — `live` means verified + community provisioned (`group_id` non-null → feed it to §4.7.1 join). `waitlist_count` is public social proof. Rows sort live-first, then by waitlist momentum; capped at 60.
 
   **`holdings_status`** (additive, v1.77) ∈ {`complete`, `partial`, `unavailable`} — whether every holdings source finished, so an empty `items` stops answering two different questions with the same silence:
@@ -8895,6 +8905,14 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.113 — 2026-11-11 — additive — IPFS NFT images: configured gateway + `image_fallback_url`
+
+Ships with bcc-trust's F-165 change (bcc-trust #534).
+
+- **New, nullable:** `image_fallback_url` on §3.7 `NftPiece` (plus `image_url_thumb_fallback_url`), on §4.21 `GET /nft-selections/picker` and `GET /nft-selections` items, and on §4.31 `GET /me/collection-stances/panel` items.
+- **Behaviour:** IPFS-hosted images (previously refused, so `null`) are now served on the site's configured IPFS gateway, with the public `ipfs.io` copy in the fallback field. `image_url` on these surfaces is now always `https://` or `null`: holdings, picker, selections and stances images were previously passed through unchecked, so an `http://`, `ipfs://` or `javascript:` value could reach the client.
+- **Clients:** `<img crossorigin="anonymous">`; first error → fallback when non-null; next error → placeholder. No `next/image` proxy; never add a key to an image URL. An older client that ignores the new field keeps working (it just has no fallback). The shared `collection-stance-panel.contract.json` fixture lists the new field.
 
 ### v1.112 — 2026-11-11 — behaviour change — a suspended member's profile is hidden, and so is their directory row
 
