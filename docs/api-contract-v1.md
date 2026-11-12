@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.132 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.134 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1639,7 +1639,7 @@ The wire format on disk is PeepSo's mention shortcode `@peepso_user_<id>(<name>)
 **Server-side enforcement (write-time):**
 
 - Mentions are extracted via the canonical regex `@peepso_user_([a-z]*\d+)(?:\(([^\)]+)\))?` ([peepso/classes/tags.php#L77](app/public/wp-content/plugins/peepso/classes/tags.php) — same regex PeepSo's notification dispatcher uses).
-- Each candidate user_id is validated against the `MentionPolicy` privacy filter (PeepSo's ban filter + `profile_acc != PRIVATE` + bidirectional `peepso_user_blocked` + `allow_hide_user_from_user_listing` + BCC's `bcc_privacy_discovery_optout`).
+- Each candidate user_id is validated against the `MentionPolicy` privacy filter (PeepSo's ban filter + `profile_acc != PRIVATE` + bidirectional `peepso_user_blocked` + `allow_hide_user_from_user_listing` + BCC's `hide_from_search` clause, which `discovery_optout` aliases since v1.133).
 - Failing the policy returns `bcc_invalid_mention_target` (with the offending `user_id` echoed in the error payload, but NOT the reason — privacy posture preserved). The post is rejected; nothing is written. Strict reject, not silent strip.
 - Cap: **10 mentions per post**. Over-cap returns `bcc_too_many_mentions` (echoes the cap as `max`).
 
@@ -2167,21 +2167,22 @@ Second factor: exchanges the `/auth/login` challenge token + emailed 6-digit cod
   `expires_in` is the 7-day JWT TTL (`JwtToken::TTL_SECONDS`). `in_good_standing` per §A2.
 - **Errors:** `bcc_invalid_request` 422 (missing challenge_token or code) · `bcc_invalid_2fa_token` 401 (challenge expired/unknown, **superseded by a newer login**, or **burned after 5 wrong codes** — restart login) · `bcc_invalid_2fa_code` 401 (wrong/expired code — challenge preserved, retry in place, up to the attempt cap) · `bcc_invalid_state` 404/409 (account vanished / no handle) · `bcc_rate_limited` 429
 - **Attempt cap (since v1.97):** at most **5 wrong codes per (user, challenge)**. Wrong codes 1–4 → `bcc_invalid_2fa_code`; the 5th burns that challenge's code **and** the challenge → `401 bcc_invalid_2fa_token` "Too many incorrect codes. Please sign in again." The code is bound to its challenge, and only the user's **most recent** challenge is live — a new `/auth/login` supersedes any earlier one (so a second concurrent sign-in cancels the first's pending 2FA), and `/auth/2fa/resend` re-sends a code for the same challenge without resetting its count.
-- **Rate limit:** IP-bucketed, 10 / 60s (a second fence; the per-challenge attempt cap above is the primary one, the 10-min challenge TTL the outer bound)
+- **Attempt cap across resends (since v1.134, F-292):** the wrong-code count lives for the challenge's whole possible life (a 6 h sliding window, against a challenge that lives at most 35 min), so it is **5 per challenge however many resends** keep the challenge alive.
+- **Rate limit:** IP-bucketed, 10 / 60s (a second fence; the per-challenge attempt cap above is the primary one, the challenge lifetime — 10 min, extendable by resends to at most 35 min — the outer bound)
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** peeks `bcc_2fa_ct_<token>` (and that it is the user's current challenge), timing-safely consumes the challenge-bound `bcc_2fa_otp_<first 40 hex of sha256(token)>` (`hash_equals`), consumes the challenge token only after the OTP matches, sets the WP auth cookie, mints the JWT (`JwtToken::encode`), emits the `user_login` audit log (`via: 2fa`), fires `do_action('bcc_user_login', …)`. Handler `AuthEndpoint::twoFaVerify` (route `AuthEndpoint.php:546`). Standard envelope per §1.4.
 
 #### `POST /bcc/v1/auth/2fa/resend`
 
-Re-sends a fresh 2FA code for an in-progress login challenge. Always returns `ok: true` whether or not the challenge token is valid (anti-enumeration; mirrors `/auth/resend-verification`).
+Re-sends a fresh 2FA code for an in-progress login challenge.
 
 - **Auth:** Anonymous (no token)
 - **Body:** `{ "challenge_token": "<64-hex>" }`
-- **Response 200:** `{ "ok": true }` (identical for valid and invalid tokens)
-- **Errors:** `bcc_rate_limited` 429
+- **Response 200:** `{ "ok": true }` — a new code was mailed, and the challenge is kept alive for that code's lifetime (5 min from now), so the new code can always be used.
+- **Errors:** `bcc_rate_limited` 429 (checked first) · `bcc_invalid_2fa_token` 401 "This session has expired. Please sign in again." (since v1.134, F-292) — the challenge has ended: expired, unknown, **superseded by a newer login**, **burned after 5 wrong codes**, or **older than 30 minutes** (a challenge's absolute resend limit). Same code and copy as verify; restart login. Before v1.134 this answered `ok: true` and sent nothing. No anti-enumeration concern: the token is a 256-bit bearer secret, so a 401 reveals nothing guessable.
 - **Rate limit:** IP-bucketed, 3 / 60s (email-bomb fence)
 - **Cache:** `Cache-Control: no-store`
-- **Mapping:** peeks the challenge token without consuming it; when valid (and still the user's current challenge), overwrites that challenge's `bcc_2fa_otp_<first 40 hex of sha256(token)>` with a fresh HMAC-hashed code (the prior code immediately stops working; the challenge's wrong-code count is NOT reset) and re-dispatches `AuthMailer::send2faCode`. Handler `AuthEndpoint::twoFaResend` (route `AuthEndpoint.php:563`). Standard envelope per §1.4.
+- **Mapping:** peeks the challenge token without consuming it; when valid (and still the user's current challenge, and under 30 min old per its `bcc_2fa_iat_…` issue stamp), re-arms the challenge and the user's current-challenge pointer for `TWO_FA_OTP_TTL`, overwrites that challenge's `bcc_2fa_otp_<first 40 hex of sha256(token)>` with a fresh HMAC-hashed code (the prior code immediately stops working; the challenge's wrong-code count is NOT reset) and re-dispatches `AuthMailer::send2faCode`. Handler `AuthEndpoint::twoFaResend` (route `AuthEndpoint.php:563`). Standard envelope per §1.4.
 
 #### `POST /bcc/v1/auth/oauth-complete`
 
@@ -2634,7 +2635,7 @@ Slim prefix-search endpoint backing the composer's `@`-mention autocomplete (§3
   - `bcc_invalid_request 400` — `q` missing, empty after trim, or > 32 chars.
   - `bcc_rate_limited 429` — per-viewer throttle (60 keystrokes / 60s rolling window).
 - **Cache:** `Cache-Control: private, max-age=10`; `Vary: Authorization, Cookie`. Short TTL deliberate — the typical autocomplete burst (3-6 keystrokes typed in succession) hits the cache for the steady-state prefix; a 10s window is long enough to absorb the burst, short enough that a recent join/ban/block updates within a session.
-- **Privacy / mapping:** routed through `PeepSoUserSearch` ([peepso/classes/usersearch.php](app/public/wp-content/plugins/peepso/classes/usersearch.php)) which applies the canonical filter set: ban filter, `profile_acc != PRIVATE`, bidirectional `peepso_user_blocked` (viewer→target AND target→viewer), `allow_hide_user_from_user_listing`, plus the `peepso_user_search_args` hook BCC's [PrivacySettings::filterPeepSoSearchArgs](app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Support/PrivacySettings.php) attaches for `bcc_privacy_discovery_optout`. **Do NOT route this through the dormant `bcc-search` `UserSearchRepository`** — that one runs raw `wp_users` LIKE and bypasses every filter above; it would leak hidden users into the dropdown.
+- **Privacy / mapping:** routed through `PeepSoUserSearch` ([peepso/classes/usersearch.php](app/public/wp-content/plugins/peepso/classes/usersearch.php)) which applies the canonical filter set: ban filter, `profile_acc != PRIVATE`, bidirectional `peepso_user_blocked` (viewer→target AND target→viewer), `allow_hide_user_from_user_listing`, plus the `peepso_user_search_args` hook BCC's [PrivacySettings::filterPeepSoSearchArgs](app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Support/PrivacySettings.php) attaches for `hide_from_search` (which `discovery_optout` aliases since v1.133). **Do NOT route this through the dormant `bcc-search` `UserSearchRepository`** — that one runs raw `wp_users` LIKE and bypasses every filter above; it would leak hidden users into the dropdown.
 - **Ranking:** prefix match on `user_login` + `display_name` + `bcc_handle` user-meta, ordered by handle ASC. V1d does NOT bias by follower edges (deferred — see §3.3.12 deferred). When two candidates share a prefix, alphabetical order wins; ties broken by `ID ASC`.
 - **Side effects:** none. Pure read; no notification, no logging beyond the rate-limit counter.
 - **Sister endpoints:** the composer's full-name → user_id resolution at submit time is **not** exposed as a separate endpoint — the picker emits the wire-format token `@peepso_user_<id>(name)` directly into the post body using `user_id` from this response, and the server's `MentionPolicy` re-validates on `POST /posts*` (§3.3.12 server-side enforcement). A user picked from the dropdown but who turns hidden between picker-select and submit gets rejected at write-time with `bcc_invalid_mention_target` — picker results are advisory, not authoritative.
@@ -4922,7 +4923,7 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
   - `post_visibility` → `peepso_profile_post_acc` user_meta. PUBLIC is intentionally absent (matches PeepSo's `access-profile-post` UI which strips it).
   - `hide_birthday_year` → `peepso_hide_birthday_year` user_meta, "1"/"0".
   - `hide_online` *(documented v1.64 — shipped earlier)* → `peepso_hide_online_status` user_meta, "1"/"0" — PeepSo's presence indicators treat "1" as "hide the green dot".
-  - `hide_from_search` *(documented v1.64 — shipped earlier)* → `peepso_is_hide_profile_from_user_listing` user_meta, "1"/"0" — "1" excludes the user from directory + member search (direct profile links still work).
+  - `hide_from_search` *(documented v1.64 — shipped earlier)* → `peepso_is_hide_profile_from_user_listing` user_meta, "1"/"0" — "1" excludes the user from directory + member search (direct profile links still work). **Since v1.133 (F-257) this is THE one hidden-from-search flag:** `/me/privacy`'s `discovery_optout` is an alias that reads and writes it, so the two always agree.
   - `default_post_audience` *(documented v1.64 — shipped earlier; `friends` added v1.121)* → `peepso_last_used_post_privacy` user_meta (int 10/20/30/40 ↔ public/members/friends/private) — defaults PeepSo's audience picker; PeepSo itself overwrites it on every post, so this is a default, not a lock. ⚠ The column is not a validated enum, so a value with no token at all is reported as `members`.
   - `show_groups_on_profile` *(v1.127 — F-270)* -> `bcc_show_groups_on_profile` user_meta, "1"/"0". Read/write bool. **⚠ ABSENT MEANS `true`.** The default preserves the pre-F-270 behaviour, so an account that has never touched the setting keeps listing its groups; only an explicit falsey value hides them. This is the only *permissive* default among the privacy prefs here.
     - ⚠ **It governs only the toggleable part of the policy.** Two rules apply regardless of it, and a client must not present it as "all of my group privacy": secret groups are never shown to non-members, and NFT-holder / delegator groups are shown only to **signed-in** viewers. See `GET /users/:slug/groups`.
@@ -6295,7 +6296,7 @@ Read the signed-in viewer's privacy toggles (§K2 + §G1 discovery opt-out).
   ```json
   { "data": { "watching_hidden": false, "reviews_hidden": false, "disputes_hidden": false, "delegations_hidden": false, "follower_count_hidden": false, "real_name_hidden": false, "email_hidden": false, "discovery_optout": false } }
   ```
-  - `discovery_optout` (§G1) is owner-only and appears ONLY here (the other 7 also surface inside the User view-model).
+  - `discovery_optout` (§G1) is owner-only and appears ONLY here (the other 7 also surface inside the User view-model). **Since v1.133 (F-257) it is an alias of `/me/profile-prefs` `hide_from_search`:** both read and write the same flag (`peepso_is_hide_profile_from_user_listing`), so a change through either endpoint shows on the other. The field is kept for compatibility; new clients should use `hide_from_search`.
 - **Errors:** `bcc_unauthorized` (401)
 - **Mapping:** `MyPrivacyEndpoint::get` (route `MyPrivacyEndpoint.php:48`, READABLE) → `PrivacySettings::readAll`. FE `privacy-endpoints.ts:getMyPrivacy`.
 
@@ -9073,6 +9074,23 @@ Ships with bcc-trust #659 (F-255 follow-up + F-335). Version number to be assign
 
 - **`viewer_is_watching` is three-state** on page and member cards (§3.2) and on `GET /users/:handle`: `true` / `false` / **`null` = unknown** (the watch-state read failed; `viewer_watch` is `null` too). Was: a failed read read as `false`, which drew a "Watch" button on something the member may already watch. **Clients:** render `null` as a neutral, non-actionable state.
 - **`GET /suggestions/users`:** the already-following exclusion is exact. It used the first 200 follows only, so a viewer following more than 200 members could be suggested one they already watch. No shape change.
+
+### v1.134 — 2026-11-12 — behaviour change — 2FA resend reports an ended challenge, and its code always works
+
+Ships with bcc-trust #646 (F-292). Draft number: renumbered in merge order.
+
+- **`POST /auth/2fa/resend`:** an ended challenge (expired, superseded, burned, or older than 30 min) now answers `bcc_invalid_2fa_token` 401, the same as verify, instead of `ok: true` with nothing sent. A successful resend keeps the challenge alive for the new code's 5 minutes, so a late resend no longer mails a code that fails with "session expired". A challenge lives at most 35 minutes.
+- **`POST /auth/2fa/verify`:** no shape change. The 5-wrong-codes cap now holds across any number of resends.
+- **Clients:** handle `bcc_invalid_2fa_token` on resend exactly as on verify (back to sign-in).
+
+### v1.133 — 2026-11-12 — behaviour change — one hidden-from-search flag: `discovery_optout` is an alias of `hide_from_search`
+
+Ships with bcc-trust #648 (F-257, option A).
+
+- **`GET`/`PATCH /me/privacy` `discovery_optout`:** now reads and writes the same flag as `/me/profile-prefs` `hide_from_search` (`peepso_is_hide_profile_from_user_listing`). The field stays for compatibility; the two can no longer disagree. No shape change.
+- **Migration:** a one-shot migration turns `hide_from_search` ON for every member whose `discovery_optout` was on, so nobody hidden before the change becomes visible. It never turns the flag off. Until it has finished, search also honours the old setting.
+- **Search** (member directory, `/search/users`, the @-mention picker): excludes on the one flag. Admins stay exempt, as before.
+- **Clients:** none required. A settings UI showing both toggles will now see them move together; show one.
 
 ### v1.132 — 2026-11-12 — additive + behaviour change — request to join closed groups, invitations to closed and secret ones; a failed leave is 503 (F-272, F-329)
 
