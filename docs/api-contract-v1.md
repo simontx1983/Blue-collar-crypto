@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.118 · 2026-11-11 · Phase 1 deliverable
+**Status:** Draft v1.119 · 2026-11-11 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -807,11 +807,13 @@ Used on Card view-models. The visual identity of the entity.
   "monogram_color": "#1a0f3e",
   "background_kind": "chain",
   "background_value": "cosmos",
-  "image_url": null
+  "image_url": null,
+  "image_fallback_url": null
 }
 ```
 
 - `image_url` is non-null when the entity has uploaded a custom crest; the frontend prefers it over `initials + monogram_color`.
+- `image_fallback_url` (v1.119, F-187) is non-null only when `image_url` is an IPFS image (NFT collection art) served on the configured gateway; it carries the same image on `ipfs.io`. Follow the §3.7 IPFS image rule (v1.113): first load error → the fallback, next error → the monogram. Uploaded (non-IPFS) crest images are unchanged and have a `null` fallback.
 - `background_kind` is `chain` (background_value = chain slug), `tier` (= reputation_tier), or `solid` (= hex).
 
 ### 2.10 `Links`
@@ -3185,7 +3187,7 @@ No `/bcc/v1/halls/:slug/feed` endpoint exists or is planned. The two read calls 
     }
   ],
   "collections": [
-    { "id": 5, "name": "Bad Kids", "image_url": "https://…", "contract_address": "cosmos1…" }
+    { "id": 5, "name": "Bad Kids", "image_url": "https://…", "image_fallback_url": null, "contract_address": "cosmos1…" }
   ]
 }
 ```
@@ -3284,7 +3286,8 @@ The user's holder-groups state — joined groups, eligible-to-join suggestions, 
           "chain": "ethereum",
           "contract": "0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d",
           "name": "Bored Apes",
-          "image_url": "https://bluecollar.crypto/wp-content/uploads/.../bayc.png"
+          "image_url": "https://bluecollar.crypto/wp-content/uploads/.../bayc.png",
+          "image_fallback_url": null
         },
         "verification": { "kind": "on_chain", "label": "On-Chain Verified" },
         "activity": {
@@ -3498,6 +3501,7 @@ Cross-kind discovery list. Sort key: `verified DESC, heat_score DESC, member_cou
         "verification": { "kind": "on_chain", "label": "On-Chain Verified" },
         "description": "On-chain verified holders of Bored Apes. Auto-managed.",
         "image_url": "https://bluecollar.crypto/wp-content/uploads/.../bayc.png",
+        "image_fallback_url": null,
         "collection_stats": {
           "token_standard": "ERC-721",
           "total_supply": 10000,
@@ -6657,7 +6661,7 @@ Cross-kind single-group detail view-model (`nft`/`hall`/`system`/`user`). Powers
 - **Path:** `slug` — `[a-z0-9][a-z0-9-]{0,99}`, required.
 - **Response 200:**
   ```json
-  { "id": 4231, "slug": "holders-bored-apes", "name": "Holders: Bored Apes", "type": "nft", "privacy": "closed", "description": "…", "image_url": "https://…", "member_count": 87, "verification": { "kind": "on_chain", "label": "On-Chain Verified" }, "activity": { "posts_last_7d": 14, "active_members_7d": 5, "last_activity_at": "2026-05-04T14:22:00Z", "heat": "warm", "heat_label": "Warm" }, "collection_stats": { "...": "§4.7.4 block, NFT-type only else null" }, "viewer_membership": { "is_member": true, "joined_at": "2026-01-12T00:00:00Z" }, "permissions": { "can_join": { "allowed": false, "unlock_hint": null, "reason_code": "already_member" }, "can_leave": { "allowed": true, "unlock_hint": null, "reason_code": null }, "can_read_feed": { "allowed": true, "unlock_hint": null, "reason_code": null } }, "feed_visible": true, "members_visible": true, "can_use_public_all": true, "can_manage_public_all_policy": false, "public_all_members_enabled": false, "chain_tag": "ethereum", "trust_min": null, "links": { "self": "/groups/holders-bored-apes" }, "card": { "...": "community Card view-model per §3.2.4 — card_kind: \"community\", community_dossier populated" } }
+  { "id": 4231, "slug": "holders-bored-apes", "name": "Holders: Bored Apes", "type": "nft", "privacy": "closed", "description": "…", "image_url": "https://…", "image_fallback_url": null, "member_count": 87, "verification": { "kind": "on_chain", "label": "On-Chain Verified" }, "activity": { "posts_last_7d": 14, "active_members_7d": 5, "last_activity_at": "2026-05-04T14:22:00Z", "heat": "warm", "heat_label": "Warm" }, "collection_stats": { "...": "§4.7.4 block, NFT-type only else null" }, "viewer_membership": { "is_member": true, "joined_at": "2026-01-12T00:00:00Z" }, "permissions": { "can_join": { "allowed": false, "unlock_hint": null, "reason_code": "already_member" }, "can_leave": { "allowed": true, "unlock_hint": null, "reason_code": null }, "can_read_feed": { "allowed": true, "unlock_hint": null, "reason_code": null } }, "feed_visible": true, "members_visible": true, "can_use_public_all": true, "can_manage_public_all_policy": false, "public_all_members_enabled": false, "chain_tag": "ethereum", "trust_min": null, "links": { "self": "/groups/holders-bored-apes" }, "card": { "...": "community Card view-model per §3.2.4 — card_kind: \"community\", community_dossier populated" } }
   ```
   - `card` (v1.27, additive): the full §3.2.4 community Card, composed from the same data already resolved for the flat fields (zero extra queries). New consumers render `group.card` via the CardFactory; the flat fields remain during the migration window.
   - `type` ∈ `nft|validator|hall|system|user`; `privacy` ∈ `open|closed|secret`. `image_url`/`collection_stats` are NFT-type only (else `null`); `validator_stats` (v1.52, §4.7.4 block) is `validator`-type only (else `null`); `verification` is present for both on-chain-gated kinds (`nft`, `validator`) and `null` elsewhere. `can_join` for a `validator` group is always `{allowed: false, reason_code: "not_eligible", unlock_hint: "Delegate to this validator to join its community."}` — the join round-trip happens via §4.7.8. `activity` is the §4.7.1 heat tile (defaults `posts_last_7d: 0, heat: "cold", heat_label: "Quiet"`). `viewer_membership`: `null` (anon), `{is_member: false, joined_at: null}` (authed non-member), `{is_member: true, joined_at}` (member). `permissions.*` each `{allowed, unlock_hint, reason_code}` (render `unlock_hint` verbatim per §A2/§N7); `can_join.reason_code` ∈ `auth_required|already_member|not_eligible|trust_threshold|requires_approval|invite_only`; `can_leave.reason_code` ∈ `auth_required|not_member|owner_cannot_leave`; `can_read_feed.allowed` always `true` for a built view-model (per-post visibility teaser, v1.24 — secret-non-member never gets a view-model). `feed_visible` mirrors `can_read_feed.allowed`. `members_visible` true for open groups, else only for active members. `can_use_public_all` (bool) — whether **this viewer** may set `visibility=public_all` when posting here (drives the composer's "PUBLIC" option; `false` for anon/non-members and members not authorized to syndicate — see §4.14). `can_manage_public_all_policy` (bool) — whether **this viewer** may change the group-wide ordinary-member opt-in (drives the owner control; `true` for the group **owner / manager** or a **site admin (`manage_options`)**, `false` for moderators, ordinary members, and anon). Distinct from `can_use_public_all`: a moderator may *use* `public_all` on their own post but may **not** manage the group policy. `public_all_members_enabled` (bool) — the group's ordinary-member opt-in state. **Minimum exposure:** it reflects the real value only for viewers who can manage the policy (`can_manage_public_all_policy = true`); every other viewer sees `false` (the raw config is not disclosed to ordinary/anon viewers — they rely on `can_use_public_all`). Toggled via `POST /me/groups/:id/post-policy` (§4.7.3). `chain_tag` slug or `null`. `trust_min` ∈ `25|50|75|null`.
@@ -6780,7 +6784,7 @@ Paginated NFT collection gallery for a creator page (`/c/[slug]`). **Supersedes 
 - **Query:** `page` (default 1, **max 20** — over → 400) · `per_page` (default 12, max 50, over clamps) · `sort` ∈ `total_volume`(default)`|floor_price|unique_holders|total_supply|collection_name`
 - **Response 200:**
   ```json
-  { "items": [ { "id": 88, "contract_address": "0xbc4c…f13d", "chain_slug": "ethereum", "chain_name": "Ethereum", "name": "Bored Apes", "image_url": "https://…", "total_supply": 10000, "floor_price_label": "12.34 ETH", "total_volume_label": "987.7K ETH volume", "unique_holders_label": "5,421 holders", "explorer_url": "https://etherscan.io/address/0xbc4c…f13d" } ], "pagination": { "page": 1, "per_page": 12, "total": 7, "total_pages": 1, "has_more": false }, "is_stale": false, "last_refreshed_at": "2026-06-09T18:02:11Z" }
+  { "items": [ { "id": 88, "contract_address": "0xbc4c…f13d", "chain_slug": "ethereum", "chain_name": "Ethereum", "name": "Bored Apes", "image_url": "https://…", "image_fallback_url": null, "total_supply": 10000, "floor_price_label": "12.34 ETH", "total_volume_label": "987.7K ETH volume", "unique_holders_label": "5,421 holders", "explorer_url": "https://etherscan.io/address/0xbc4c…f13d" } ], "pagination": { "page": 1, "per_page": 12, "total": 7, "total_pages": 1, "has_more": false }, "is_stale": false, "last_refreshed_at": "2026-06-09T18:02:11Z" }
   ```
   Per §A2, floor/volume/holders are **pre-formatted display strings** (render verbatim, no `Intl.NumberFormat` in TS); each `null` when missing/zero. `name` falls back to a truncated contract; `image_url`/`explorer_url`/`total_supply` nullable. `is_stale` true when the visible page has an expired row (refresh already dispatched). `last_refreshed_at` is the newest `fetched_at` across the page (`null` when empty). V1 fetcher coverage: ETH + Solana; other chains return empty arrays ("Coming soon").
 - **Errors:** `bcc_invalid_request` 400 (empty slug or `page > 20`) · `bcc_not_found` 404 (slug not an `nft` page)
@@ -8916,6 +8920,14 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.119 — 2026-11-11 — additive — collection images: configured IPFS gateway + `image_fallback_url`
+
+Ships with bcc-trust's F-187 change (bcc-trust #570). Extends v1.113 (token-level images) to collection-level images.
+
+- **New, nullable `image_fallback_url`** beside `image_url` on: §2.9 `Crest` (every Card); the Hall detail chain preview `collections[]` (composition note); `GET /me/holder-groups` `collection`; `GET /groups` (discovery) items; `GET /groups/:slug`; `GET /creators/:slug/gallery` items.
+- **Behaviour:** an NFT collection's IPFS cover (stored on `ipfs.io` since v1.113) is now served on the site's configured IPFS gateway, with the `ipfs.io` copy in the fallback. Non-IPFS images (uploaded crests, CDN covers) are unchanged, with a `null` fallback.
+- **Clients:** the §3.7 IPFS image rule — `<img crossorigin="anonymous">`, first error → fallback when non-null, next error → placeholder/monogram; no `next/image` proxy; never a key in an image URL. An older client that ignores the field keeps working.
 
 ### v1.118 — 2026-11-11 — behaviour change — public handles never expose a login; retired handles still resolve
 
