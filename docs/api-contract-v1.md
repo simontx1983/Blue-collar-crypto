@@ -953,11 +953,14 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
   // for an open group or a Hall, or for a group the viewer is an active
   // member of. Everywhere else both are null (render no badge) — a profile
   // never reveals who moderates a closed or secret group. Also null when
-  // the membership could not be read (never a guessed role). Present on
-  // GET /users/:handle (the full profile) only; summary payloads omit them.
+  // the membership could not be read (never a guessed role). Each row
+  // also carries `type` (hall | user | system | nft | validator) — the
+  // group kind, so a client can show Halls apart from other groups
+  // without guessing from a name or slug. Present on GET /users/:handle
+  // (the full profile) only; summary payloads omit role, role_label, type.
   "halls": [
-    { "id": 12, "slug": "cosmos-hall", "name": "Cosmos Hall", "is_primary": true, "role": "moderator", "role_label": "MODERATOR" },
-    { "id": 18, "slug": "osmosis-hall", "name": "Osmosis Hall", "is_primary": false, "role": "member", "role_label": "MEMBER" }
+    { "id": 12, "slug": "cosmos-hall", "name": "Cosmos Hall", "is_primary": true, "role": "moderator", "role_label": "MODERATOR", "type": "hall" },
+    { "id": 18, "slug": "osmosis-hall", "name": "Osmosis Hall", "is_primary": false, "role": "member", "role_label": "MEMBER", "type": "hall" }
   ],
   // OWN-ACCOUNT ONLY. This array is populated exactly as shown when
   // `is_self` is true, and is `[]` for every other viewer (see §3.1
@@ -9082,7 +9085,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 Ships with bcc-trust #671.
 
-- **Additive (§3.1 `MemberProfile.halls`, full profile only):** `role` (`owner|moderator|member`) and `role_label` per row — the §4.7.7 roster vocabulary, now one shared helper. Shown only where the viewer could already see that group's roster (the member themself, an open group or a Hall, or a group the viewer is an active member of); otherwise both `null`. `null` too when the membership could not be read.
+- **Additive (§3.1 `MemberProfile.halls`, full profile only):** `role` (`owner|moderator|member`), `role_label` and `type` (the group kind: `hall|user|system|nft|validator`) per row — the §4.7.7 roster vocabulary, now one shared helper. Shown only where the viewer could already see that group's roster (the member themself, an open group or a Hall, or a group the viewer is an active member of); otherwise both `null`. `null` too when the membership could not be read.
 - **Clients:** render a badge from `role_label` when it is non-null; render nothing when it is null (never infer a role).
 
 ### v1.134 — 2026-11-12 — behaviour change — 2FA resend reports an ended challenge, and its code always works
