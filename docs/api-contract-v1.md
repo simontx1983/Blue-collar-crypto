@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.114 · 2026-11-11 · Phase 1 deliverable
+**Status:** Draft v1.117 · 2026-11-11 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -163,6 +163,8 @@ The canonical envelope's `message` is presentation; the *behavior fork* is on `c
 `bcc_rate_limited` (429) is retryable with backoff. The server MAY include `data.retry_after_seconds` (positive integer). When present, clients SHOULD wait at least that long before retrying. When absent, clients SHOULD apply at least 1.5× exponential backoff starting from 2 seconds.
 
 Rate-limit buckets are per-user (when authenticated) AND per-IP. Both must allow the request through; the more conservative rejection wins. The server never returns 429 from cached read paths (cached responses bypass throttling).
+
+**Self-scoped writes (since v1.115, F-134) — a per-ACCOUNT-only exception to the per-user-AND-per-IP rule above.** Every signed-in write to the caller's own state under `/me/*` that §4 does not give its own rate limit — profile, profile fields, prefs, privacy, onboarding, handle, mark-read, celebrations, highlights, primary hall, push-subscription revoke, review removal — shares **one bucket of 120 ATTEMPTS / 60 s per account**, keyed on the account and never on the IP (calls come from the frontend server's few IPs). Every attempt counts, successful or not. A tripped bucket answers `429 bcc_rate_limited`. Routes with their own documented limit (account email/password/recovery, uploads, reports, joins, blocks, …) keep it and are not counted here. `PATCH /me/handle` has further limits of its own — see its §4 entry.
 
 #### 1.4.5 Capability-denied semantics
 
@@ -6427,8 +6429,8 @@ Change the viewer's public handle (§B6). 7-day cooldown. Registered as `WP_REST
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
 - **Body (JSON):** `handle` (**required**) — lowercased + trimmed; §B6 rules (3–20 chars, `a-z`/digits/`-`, no leading/trailing/consecutive hyphens, not reserved).
 - **Response 200:** `{ "data": { "handle": "ramona-v", "next_change_at": "2026-06-17T14:05:00Z" } }` — `next_change_at` is now + 7 days, **null on a no-op rename** (submitting the existing handle short-circuits without arming the cooldown).
-- **Errors (checked in this order):** `bcc_unauthorized` 401 · `bcc_rate_limited` 429 (within the 7-day cooldown; checked FIRST so a locked-out user can't probe availability; carries `Retry-After`) · `bcc_invalid_handle` 422 · `bcc_handle_reserved` 422 · `bcc_conflict` 409 (taken)
-- **Rate limit:** one successful change per 7 days (`HandleService::COOLDOWN_SECONDS = 604800`)
+- **Errors (checked in this order):** `bcc_unauthorized` 401 · `bcc_rate_limited` 429 (the shared per-account attempt bucket, §1.4.4 — since v1.115) · `bcc_forbidden` 403 (account suspended) · `bcc_rate_limited` 429 (within the 7-day cooldown; checked before the handle itself so a locked-out user can't probe availability; carries `Retry-After`) · `bcc_invalid_handle` 422 · `bcc_handle_reserved` 422 · `bcc_conflict` 409 (taken) · `bcc_rate_limited` 429 (the change cap below — only when a real change is about to be written)
+- **Rate limit:** one successful change per 7 days (`HandleService::COOLDOWN_SECONDS = 604800`). Every attempt also counts against the shared per-account bucket (120 attempts / 60 s, §1.4.4). *(since v1.115)* A backstop of **10 changes per hour** per account is charged only when a change passes every check and is about to be written — attempts on taken, invalid or unchanged handles never count against it; the 7-day cooldown normally binds first.
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** `OnboardingEndpoint::updateHandle` (route `OnboardingEndpoint.php:102`, EDITABLE) → `HandleService`; on a real rename writes `bcc_handle` + `bcc_handle_last_changed`, audit-logs `handle_changed`, fires `do_action('bcc_handle_changed', …)`.
 
@@ -6762,8 +6764,10 @@ Watchers-tab data plane — people watching this entity. Offset-paginated to mat
 - **Path:** `target_kind` ∈ `validator_card|project_card|creator_card` · `target_id` (int > 0).
 - **Query:** `offset` (default 0) · `limit` (default 24, max 100)
 - **Response 200:** `{ items: Card[], pagination: { offset, limit, total, has_more } }`, each `Card` the **full member Card view-model (§3.2, with `member_dossier`)** (hydrated via `CardViewService::getMemberCardForList`). Unclaimed cards (no resolvable `post_author`) return an empty page.
-- **Errors:** `bcc_invalid_request` 400
-- **Cache:** anon → `public, max-age=30`; authed → `private, max-age=30` + `Vary`; invalid → `private, no-store`.
+- **Target (v1.116):** `target_id` must be a **published** `peepso-page` whose page type matches `target_kind`. Any other id, such as a status post, a draft, or another kind's page, returns the same empty page as a missing one. It previously accepted any post id, which listed that post author's followers.
+- **Owner privacy (v1.116):** the watchers are the owner's followers, so they answer to the owner's profile exactly like `GET /users/:handle/followers`. If the owner's `profile_visibility` does not admit this viewer, or the owner is suspended (§F-182; an *unknown* suspension does not hide), the route answers `bcc_forbidden` **403** with `error.data.reason: "profile_private"`. The owner's `watching_hidden` flag still does not propagate.
+- **Errors:** `bcc_invalid_request` 400 · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` (v1.116, see above)
+- **Cache:** anon → `public, max-age=30`; authed → `private, max-age=30` + `Vary`; invalid and `profile_private` → `private, no-store`.
 - **Mapping:** `CardWatchersEndpoint::list` (route `CardWatchersEndpoint.php:46`) → `CardWatchersService::listWatchers`. FE `card-tabs-endpoints.ts:getCardWatchers`.
 
 #### `GET /bcc/v1/creators/:slug/gallery`
@@ -8912,13 +8916,28 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.11Z — <merge date> — behaviour change — NFT piece upstream budget
+### v1.117 — 2026-11-11 — behaviour change — NFT piece upstream budget
 
 Ships with bcc-trust's F-57 change (bcc-trust #562).
 
 - **§4.17 `GET /nft-pieces/{chainSlug}/{contractAddress}/{tokenId}`:** a new upstream budget, charged only when the request calls a provider (an indexed-chain cache miss or stale refresh, or any Cosmos read). Cache hits are not charged. 20/min per caller → `bcc_rate_limited` (429), then 300/min site-wide → `bcc_upstream_unavailable` (503). When either budget refuses and a stale cached row exists, the stale row is served instead.
 - `bcc_rate_limited` (429) is now listed in §4.17's errors. It was already returned by the per-request rate limit.
 - No new fields, codes or shapes. **Clients:** no change needed. Both codes were already handled.
+
+### v1.116 — 2026-11-11 — behaviour change — entity watchers answer to the owner's profile privacy
+
+Ships with bcc-trust's F-26 change (bcc-trust #547).
+
+- **`GET /entities/:target_kind/:target_id/watchers`:**
+  - If the owner's profile is not viewable by the viewer (private, members-only, friends-only, or a suspended owner), the route now returns `bcc_forbidden` **403** `profile_private`. That's the same gate and the same answer as `GET /users/:handle/followers`, since the watchers *are* the owner's followers.
+  - `target_id` must be a published entity page of `target_kind`; any other post id returns an empty page. It used to accept any post id, a back door to any member's follower list.
+- **Clients:** render a `profile_private` 403 on the Watchers tab as "watchers hidden" rather than as a load failure. No shape change.
+
+### v1.115 — 2026-11-11 — behaviour change — self-scoped writes are rate limited per account
+
+Ships with bcc-trust #532.
+
+- **§1.4.4 (F-134):** the cheap `/me/*` writes that had no rate limit (profile, profile fields, prefs, privacy, onboarding, handle, mark-read, celebrations, highlights, primary hall, push-subscription revoke, review removal) now share one per-account bucket of 120 attempts / 60 s (an explicit per-account-only exception to §1.4.4's per-user-and-per-IP rule). `PATCH /me/handle` attempts count against it too, and a backstop of 10 changes per hour is charged only on a change about to be written (the 7-day cooldown is unchanged and normally binds first). Tripped → `429 bcc_rate_limited`. Normal UI use stays far below the limits; clients already handle 429 per §1.4.4.
 
 ### v1.114 — 2026-11-11 — behaviour change — feed items stop leaking unpublished pages, blocked reactors and group engagement
 
