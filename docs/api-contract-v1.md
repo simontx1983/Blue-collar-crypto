@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.125 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.127 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2117,7 +2117,7 @@ First factor of the password login. Validates credentials, then **always** initi
   ```json
   { "identifier": "alice@example.com", "password": "<password>" }
   ```
-  `identifier` (v1.33, replaces `email`) accepts **either** the account email **or** the handle. Shape is server-detected: anything passing `is_email()` is looked up by email; everything else is treated as a handle (lowercased, one leading `@` stripped) and looked up via the same `u_<handle>` login convention signup uses. The old `email` key is **not** accepted — renamed in place pre-launch (no external consumers; frontend shipped atomically).
+  `identifier` (v1.33, replaces `email`) accepts **either** the account email **or** the handle. Shape is server-detected: anything passing `is_email()` is looked up by email; everything else is treated as a handle (lowercased, one leading `@` stripped) and looked up by the account's **current** handle *(since v1.127, F-280; previously via the `u_<handle>` login, which is minted at signup and never changes, so a renamed member could not sign in by their new handle)*. A **retired** handle (see `PATCH /me/handle`) never signs in, and a handle more than one account holds signs in nobody; both answer the generic `bcc_invalid_credentials` 401. The old `email` key is **not** accepted — renamed in place pre-launch (no external consumers; frontend shipped atomically).
 - **Response 200:**
   ```json
   { "status": "2fa_required", "method": "email", "challenge_token": "<64-hex>" }
@@ -4129,6 +4129,7 @@ Users vertical — separate cache + rate-limit bucket from project search so the
 - **Query:**
   - `q` (string) — 2..100 chars (`QueryQualityGate` shared with project search). Over 100 chars → `rest_invalid_param` 400 (v1.47).
   - `limit` (int, optional) — default 20, capped at 50
+- **Matching (since v1.127, F-302):** a member is returned when `q` matches their **current @handle** or their display name (bcc-trust's shared member matcher, also used by `/members` and the @-mention picker), in addition to PeepSo's first/last-name search. Never the login or email. Every candidate still passes PeepSo's privacy filter set (bans, profile level, blocks, hidden-from-listing, discovery opt-out), and a hidden real name matches by handle only. Retired handles are not searchable. Without bcc-trust active only the PeepSo name search runs.
 - **Response 200:**
   ```json
   {
@@ -6454,10 +6455,11 @@ Change the viewer's public handle (§B6). 7-day cooldown. Registered as `WP_REST
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
 - **Body (JSON):** `handle` (**required**) — lowercased + trimmed; §B6 rules (3–20 chars, `a-z`/digits/`-`, no leading/trailing/consecutive hyphens, not reserved).
 - **Response 200:** `{ "data": { "handle": "ramona-v", "next_change_at": "2026-06-17T14:05:00Z" } }` — `next_change_at` is now + 7 days, **null on a no-op rename** (submitting the existing handle short-circuits without arming the cooldown).
-- **Errors (checked in this order):** `bcc_unauthorized` 401 · `bcc_rate_limited` 429 (the shared per-account attempt bucket, §1.4.4 — since v1.115) · `bcc_forbidden` 403 (account suspended) · `bcc_rate_limited` 429 (within the 7-day cooldown; checked before the handle itself so a locked-out user can't probe availability; carries `Retry-After`) · `bcc_invalid_handle` 422 · `bcc_handle_reserved` 422 · `bcc_conflict` 409 (taken) · `bcc_rate_limited` 429 (the change cap below — only when a real change is about to be written)
+- **Old handles are retired, not freed (since v1.127, F-280).** A rename records the outgoing handle as **retired** for this member before the new one is written. A retired handle keeps resolving to the member on every per-user route (`/u/{handle}`, `/users/{handle}/…`, cards, so old links and `@mentions` keep working; the response carries the current handle and the client redirects), never signs in, and is `bcc_conflict` 409 for every **other** member and for signup. Its **owner may reclaim it** (normal cooldown applies); it then stops being retired. Exception: a handle equal to the account's login (retired by the 2026 login-handle rotation) stays locked for its owner too. A handle some account's original signup login was derived from is also reported taken (signup could never mint it).
+- **Errors (checked in this order):** `bcc_unauthorized` 401 · `bcc_rate_limited` 429 (the shared per-account attempt bucket, §1.4.4 — since v1.115) · `bcc_forbidden` 403 (account suspended) · `bcc_rate_limited` 429 (within the 7-day cooldown; checked before the handle itself so a locked-out user can't probe availability; carries `Retry-After`) · `bcc_invalid_handle` 422 · `bcc_handle_reserved` 422 · `bcc_conflict` 409 (taken, or retired by another member) · `bcc_rate_limited` 429 (the change cap below — only when a real change is about to be written) · `bcc_internal_error` 500 (since v1.127: the old handle could not be recorded as retired; nothing was changed, retry)
 - **Rate limit:** one successful change per 7 days (`HandleService::COOLDOWN_SECONDS = 604800`). Every attempt also counts against the shared per-account bucket (120 attempts / 60 s, §1.4.4). *(since v1.115)* A backstop of **10 changes per hour** per account is charged only when a change passes every check and is about to be written — attempts on taken, invalid or unchanged handles never count against it; the 7-day cooldown normally binds first.
 - **Cache:** `Cache-Control: no-store`
-- **Mapping:** `OnboardingEndpoint::updateHandle` (route `OnboardingEndpoint.php:102`, EDITABLE) → `HandleService`; on a real rename writes `bcc_handle` + `bcc_handle_last_changed`, audit-logs `handle_changed`, fires `do_action('bcc_handle_changed', …)`.
+- **Mapping:** `OnboardingEndpoint::updateHandle` (route `OnboardingEndpoint.php:102`, EDITABLE) → `HandleService`; on a real rename adds a `bcc_handle_retired` row for the old handle (v1.127), writes `bcc_handle` + `bcc_handle_last_changed`, removes the new handle's own retired row if it was one, audit-logs `handle_changed`, fires `do_action('bcc_handle_changed', …)`.
 
 #### `DELETE /bcc/v1/me/reviews/:id`
 
@@ -8940,6 +8942,16 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.127 — 2026-11-12 — behaviour change — sign-in and search use the current handle; renamed handles are retired
+
+Ships with bcc-trust #634 (F-280) and bcc-search #36 (F-302). Draft number: renumbered in merge order.
+
+- **`POST /auth/login`:** a handle-shaped `identifier` resolves the account's current handle, not the `u_<handle>` signup login. A renamed member signs in with their new handle; the old handle no longer signs in. A handle two accounts hold signs in nobody. Errors and their shapes are unchanged.
+- **`PATCH /me/handle`:** the outgoing handle is retired (it keeps resolving to the member, so old `/u/` links and `@mentions` work, and no other member can take it). The owner may reclaim it. New error `bcc_internal_error` 500 when the old handle cannot be recorded; nothing changes. A one-shot migration retires the original handle of members who renamed before this change.
+- **Availability:** a retired handle, or one a signup login was derived from, is reported taken (`bcc_conflict` 409) to signup and to other members' renames, so the availability answer matches what signup will do.
+- **`GET /search/users` (and `GET /cards/search` member suggestions):** members are also found by their current @handle and display name. No shape change.
+- **Clients:** no change required. The frontend already redirects a `/u/{old}` response to the current handle.
 
 ### v1.125 — 2026-11-12 — additive — claim re-verify: badge-removed bell; revoked claims leave the feed
 
