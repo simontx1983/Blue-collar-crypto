@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.140 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.141 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1216,10 +1216,17 @@ Locked field rules:
     "chain_tag": "cosmos",
     "trust_min": null,
     "collection_stats": { "...": "§4.7.4 NFT market block, null for non-NFT kinds" },
-    "viewer_is_member": true
+    "viewer_is_member": true,
+    "can_join":                 { "allowed": false, "unlock_hint": null, "reason_code": "already_member" },
+    "can_request_join":         { "allowed": false, "unlock_hint": null, "reason_code": "already_member" },
+    "viewer_membership_status": "member"
   }
   ```
   `verification` is the §4.7.x GroupVerification object or `null`; `viewer_is_member` is always `false` for anonymous viewers.
+  **(v1.141, F-244) — the server's join verdict on the card.** `can_join`, `can_request_join` and `viewer_membership_status` are computed by the **same** logic as the group detail's `permissions` (§4.7.5), so a card never offers what the group page refuses. Render the JOIN cell from them; do **not** recompute eligibility from `privacy` / `type` / `trust_min`.
+  - `can_join` / `can_request_join`: `{allowed, unlock_hint, reason_code}`, the §4.7.5 vocabularies. Two list-only values: **`verify_on_join`** — `can_join` on a holder (`nft`) group in a **list** (discovery): `allowed: true`, and the join itself verifies the viewer's wallet (no live check per list item; the detail card carries the real holder verdict); **`unavailable`** — the viewer's membership could not be read: `allowed: false`, retry later, never offer Join.
+  - `viewer_membership_status` ∈ `none|requested|invited|member`, or `null` for anonymous viewers and when the read failed. A banned viewer reads `none` (`can_join.reason_code: "removed"` says why).
+  - All three are `null` only on community cards built by a surface that has not adopted them yet; treat `null` as "ask the group page".
 - **Links + actions:** `links: { "self": "/communities/{slug}" }`. `actions` emits **`open` only** — a self-describing GET of the §4.7.5 detail endpoint (`{ "method": "GET", "href": "/wp-json/bcc/v1/groups/{slug}", "idempotent": true, "requires_auth": false }`). No `watch`/`pull` action: groups are joined, not watched.
 - **Privacy:** no new privacy logic. The producing endpoints already gate visibility (secret-non-member → absent/404); any group an endpoint returns gets a card.
 
@@ -3492,7 +3499,12 @@ Cross-kind list of all PeepSo groups a target user is an active member of: holde
     Halls are included and always mean the **main** feed; a blog can never target a Hall's ranked channel. Which `visibility` values a given group permits is **not** restated here — that stays with `POST /me/groups/{id}/post-policy`.
   - `verification` is present for the on-chain-gated kinds (`nft` **and, since v1.52, `validator`**) and `null` elsewhere. Both carry `kind: "on_chain"` — one badge vocabulary, not one per gate. Future verification kinds (e.g. `creator_verified`) will appear here without API shape changes.
   - `actions.join.url` / `actions.leave.url` vary by `type`: `/me/holder-groups/{id}/{action}` for `nft`, **`/me/validator-groups/{id}/{action}` for `validator`**, `/me/halls/{id}/{action}` for `hall`, `/me/groups/{id}/{action}` for `user`/`system`. Frontend follows whatever URL the server returns.
-- **Permission shape (per §A4 / §N7 — gated actions always visible):**
+- **Permission shape (v1.141, F-244) — the VIEWER's verdict, the same as the group page's.** Every row's `can_join`, `can_request_join`, `can_leave` and the row's `viewer_membership_status` are computed from **the viewer's own** membership of that group (one batched read for the page) by the same logic as §4.7.5, on the owner's profile and on anyone else's. A viewer who is already in one of the member's groups sees `already_member` / a live Leave there; a banned viewer sees `removed`; a closed group they asked to join reads `requested`.
+  - `can_join.reason_code` — the §4.7.5 vocabulary, plus `verify_on_join` is **not** used here (this tab checks holder eligibility itself) and **`unavailable`** when the viewer's membership could not be read (never offer Join then).
+  - `can_leave.reason_code` ∈ `auth_required|not_member|owner_cannot_leave|unavailable` — the group's **owner** gets `owner_cannot_leave` (it used to be a live Leave that the server refused). **`not_self` is retired** for `can_leave`.
+  - `can_post_blog` is unchanged (self only; `not_self` elsewhere — see above).
+  - `viewer_membership_status` ∈ `none|requested|invited|member` (`null` for anonymous viewers or a failed read); `permissions.can_request_join` as §4.7.5.
+- **Before v1.141** (for reference — superseded):
   - **Self profile** (viewer is the target): `can_leave.allowed = true` for every group; `can_join.allowed = false` with `reason_code: "already_member"`.
   - **Other profile**:
     - `can_leave.allowed = false` always (`reason_code: "not_self"`).
@@ -3680,7 +3692,7 @@ Cross-kind discovery list. Sort key: `verified DESC, heat_score DESC, member_cou
     "pagination": { "page": 1, "page_size": 20, "total": 142, "total_pages": 8 }
   }
   ```
-- **`card` (v1.27, additive):** the full §3.2.4 community Card, composed from the same row data as the flat fields (zero per-item queries; viewer membership for `community_dossier.viewer_is_member` is one batched lookup over the page of items). New consumers render `item.card` via the CardFactory; the flat fields remain during the migration window.
+- **`card` (v1.27, additive):** the full §3.2.4 community Card, composed from the same row data as the flat fields (zero per-item queries; viewer membership for `community_dossier.viewer_is_member` is one batched lookup over the page of items). **(v1.141, F-244)** that lookup now reads the viewer's **raw** status per group (pending and banned included), and each card's `community_dossier` carries `can_join` / `can_request_join` / `viewer_membership_status` — the §4.7.5 verdict, with `verify_on_join` for holder groups. If the lookup fails, every card says `unavailable`. New consumers render `item.card` via the CardFactory; the flat fields remain during the migration window.
 - **Cache:** anon → `Cache-Control: public, max-age=60` (60s window keeps newly-warming groups discoverable quickly); authed → `private, no-store` (v1.27 — each item's `card.community_dossier.viewer_is_member` is viewer-scoped, so authed responses must never sit in a shared cache; this matches the §4.7.5 detail posture).
 - **Privacy:** `secret` groups never appear here regardless of viewer. `closed` groups appear with name + member_count visible; content stays private at PeepSo's layer.
 - **Filter `verified=1`:** restricts to groups with `_bcc_group_kind IN ('holders','delegators')`. Use this to render an "On-Chain Verified only" filter chip on the discovery page. **Widened in v1.52** — it previously meant `'holders'` alone. Both kinds emit `verification.kind = "on_chain"`, so an existing chip keeps working and simply returns delegator communities too; the same widening applies to the `verified` component of the sort key.
@@ -9103,6 +9115,14 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.141 — 2026-11-12 — additive + behaviour change — cards and the profile Groups tab carry the group page's join verdict (F-244)
+
+Ships with bcc-core #115 (batched membership-status read) and bcc-trust #667. Deploy core #115 first.
+
+- **Additive (§3.2.4):** `community_dossier.can_join`, `.can_request_join`, `.viewer_membership_status` — computed by the same logic as the group detail (§4.7.5). New list-only reason codes: `verify_on_join` (holder group in a list: Join verifies the wallet) and `unavailable` (membership unreadable: never offer Join). Discovery (§4.7.4) and the detail page's hero card both fill them.
+- **Behaviour change (§4.7.2):** the profile Groups tab's `can_join` / `can_leave` are the **viewer's** verdict from the same logic, on every profile. `can_leave` no longer answers `not_self` — a viewer who is in the group can leave it from the tab, and the group's owner gets `owner_cannot_leave`. Rows gain `viewer_membership_status` and `permissions.can_request_join`.
+- **Clients:** render the JOIN cell from `community_dossier.can_join` (and Request/Requested/Invited from `can_request_join` / `viewer_membership_status`) instead of deriving it from `privacy` / `type` / `trust_min`.
 
 ### v1.140 — 2026-11-12 — behaviour change + additive — notifications open the post
 
