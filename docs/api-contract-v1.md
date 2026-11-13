@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.136 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.137 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -3038,7 +3038,11 @@ Claims a validator/creator/project page using a wallet signature (§B5, §N8).
 - **Errors:** the complete set this route can emit, each with its HTTP status. Corrected and completed in **v1.86** against the implementation; see the changelog for what was wrong and why it mattered.
   - `bcc_unauthorized` **401** — not signed in.
   - `bcc_invalid_request` **400** — missing or malformed `page_id` or `entity_id`, or an `entity_type` outside the accepted set.
-  - `bcc_forbidden` **403** — two distinct causes behind one code: the entity is **not bound to this page**, or the caller's connected wallet **does not match the entity's operator** (§B5 — operator address + consensus pubkey only; delegators excluded).
+  - `bcc_forbidden` **403** — four distinct causes behind one code, each with its own message and, **since v1.137, a machine-readable `error.data.reason`** a client MUST branch on instead of the message:
+    - `suspended` — the account is suspended (`Your account is suspended.`). **Final**: no wallet or retry will help.
+    - `entity_not_bound` — the entity is **not bound to this page** (`That entity is not attached to this page.`).
+    - `not_operator` — the caller's connected wallet **does not match the entity's operator** (§B5 — operator address + consensus pubkey only; delegators excluded). The one cause where connecting a different wallet can help.
+    - `holder_not_owner` *(new in v1.137)* — the wallet only **holds** the collection (`Holding an NFT doesn't make you this collection's creator.`). Only an **operator** or **creator** can claim a page; a holder result records nothing.
     ⚠ **This replaces `bcc_permission_denied`, which this route has never emitted.** Measured against the implementation: the endpoint produces zero `bcc_permission_denied`, and its 403 is `bcc_forbidden`. Same defect class as the `/members` `bcc_validation` line corrected in v1.80 — a documented code no producer emits is a code a client would wait forever to see.
   - `bcc_not_found` **404** — the page does not exist or is not a `peepso-page`; **or (new in v1.86) the claimed entity itself could not be found.**
   - `bcc_conflict` **409** — the entity is already claimed by another user.
@@ -9088,6 +9092,17 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
+### v1.137 — 2026-11-12 — behaviour change (security) + additive — a collection holder can never claim its page; every claim 403 names its reason
+
+Scope: §4's `POST /bcc/v1/pages/:id/claim` errors only: one new refusal cause, and one new field (`error.data.reason`) on this route's 403s. No route, envelope or view-model changes.
+
+- **New cause of `bcc_forbidden` 403:** a wallet that only **holds** the collection is refused with `Holding an NFT doesn't make you this collection's creator.` Nothing is recorded: no claim row, no page mirror, no `bcc_page_claimed`, no change of page owner.
+- **Why:** collection claims had never worked (a wrong class name in the role lookup made every one "no match"). Fixing that alone would have let any holder of one token claim an unowned collection page, because this route mirrors a successful claim as the page's exclusive claim and an unowned page passes to its first claimant. Holding is not owning; holder status is served by the holder-group flows.
+- **Collection CREATOR claims start working with this release.** They never could before: every collection claim failed as "no match". A collection's **creator** can now claim its page (200, role `creator`), as §B5 always intended. Creator status is checked across the caller's wallets on the collection's chain (at most **3** per attempt, since each check is a live on-chain call), so a holder wallet does not shadow a creator wallet. ⚠ **EVM collections only:** Solana creator verification is not implemented (it always answers "not the creator"), so a Solana collection page cannot be claimed yet.
+- **Additive: `error.data.reason` on every 403 of this route** — `suspended` | `entity_not_bound` | `not_operator` | `holder_not_owner`. The four causes share `bcc_forbidden`, and clients were left to guess from the message; a suspended member was told to try a different wallet. Branch on `reason`: only `not_operator` is a wallet problem; `suspended` is final.
+- **Fix behind the field:** `ClaimService`'s own suspension refusal used to fall through to the wallet-mismatch 403. It now returns the `suspended` 403 like the endpoint's gate.
+- **Clients:** show the server's `message`; never suggest another wallet unless `reason` is `not_operator`.
+- ⚠ **Coordination:** ships with bcc-trust F-303 (`fix/f303-collection-claim-query-class`). **That PR merges first.** bcc-frontend #263 already treats `reason: "suspended"` as final.
 ### v1.136 — 2026-11-12 — behaviour change — suspended members sign in read-only; `can_claim`
 
 Ships with bcc-trust's F-305/F-301 change. User decision 2026-11-12.
