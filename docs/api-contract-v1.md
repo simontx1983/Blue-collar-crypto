@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.144 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.145 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2543,7 +2543,7 @@ Full User view-model.
   - `progression` ← `RankStateService::progressionFor` (§2.5 — same builder as `GET /me/progression`, §4.8)
   - `capabilities` ← `RankStateService::capabilitiesBlock` (§2.6; replaced `feature_access` at v1.59)
   - `wallets` ← `bcc_wallet_links`
-  - `vouched_by_watched_count` / `top_vouchers` *(v1.NEXT, F-340 — the trust header's vouch line)* ← active **`vouch`** attestations on this member's profile (`target_kind = user_profile`; a "back" / `stand_behind` is NOT counted). Only vouches the public attestation roster also shows: the attestor exists and is not suspended. A voucher who hid their real name **counts** (the roster lists them) and appears in `top_vouchers` as `@handle`.
+  - `vouched_by_watched_count` / `top_vouchers` *(v1.145, F-340 — the trust header's vouch line)* ← active **`vouch`** attestations on this member's profile (`target_kind = user_profile`; a "back" / `stand_behind` is NOT counted). Only vouches the public attestation roster also shows: the attestor exists and is not suspended. A voucher who hid their real name **counts** (the roster lists them) and appears in `top_vouchers` as `@handle`.
     - `vouched_by_watched_count: int | null` — **signed in, someone else's profile:** how many of the people the viewer watches (follows) vouch for this member, exact and uncapped; an attestor mutually blocked with the viewer is not counted. `0` → hide the line ("Vouched for by N people you watch"). `null` on your own profile, for anonymous viewers, and when the read failed (unknown: never a wrong number).
     - `top_vouchers: list<{ handle, display_name, avatar_url }>` (≤ 3) — **signed out only** ("Top vouched by [avatars]"): the eligible vouchers, highest trust score first, then the newest vouch. `[]` → hide the line (also when there are no vouches, and on a failed read). Always `[]` for signed-in viewers. No wallet data.
   - `primary_hall`, `halls` ← `peepso_group_members` (joined to `peepso_groups`; single graph rule) + `bcc_primary_hall_group_id` usermeta for the primary pointer
@@ -9178,7 +9178,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-12 — additive — the profile's vouch line: "Vouched for by N people you watch" / "Top vouched by"
+### v1.145 — 2026-11-12 — additive — the profile's vouch line: "Vouched for by N people you watch" / "Top vouched by"
 
 Ships with bcc-trust #674 (F-340). Version number to be assigned at merge.
 
