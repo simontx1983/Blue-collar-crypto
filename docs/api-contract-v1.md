@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.137 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.138 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2218,6 +2218,7 @@ Silent-refresh seam: exchanges a recently-expired (or near-expiry) Bearer JWT fo
 - **Rate limit:** IP-bucketed, 30 / 60s
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** decodes via `JwtToken::decodeForRefresh`, re-reads `bcc_handle` from authoritative storage (a handle change since the original mint is reflected; the JWT payload is not trusted), mints a fresh JWT, emits the `token_refreshed` audit log. No cookie set, no DB mutation beyond the audit row. Handler `AuthEndpoint::refresh` (route `AuthEndpoint.php:292`). Standard envelope per §1.4.
+- **The old token is retired (since v1.138, F-282):** once a refresh succeeds, the token it replaced keeps working for **120 seconds** (`REFRESH_OVERLAP_SECONDS`) — so the session's other tabs and in-flight requests can switch to the new one — and then fails everywhere (authenticated routes, `GET /auth/session`, another `/auth/refresh`) with the usual `bcc_unauthorized` 401. Refreshing the same old token again within those 120 s returns another fresh token but never extends the old one's cutoff. Before, the old token stayed valid until its own expiry plus the 24-h grace, so a copy taken before the refresh — or one a sign-out never reached — outlived it by days. **Clients:** switch to the returned token (the frontend already does); a request still carrying the old one after 120 s gets 401 and takes the normal refresh path with its newer token.
 
 #### `GET /bcc/v1/auth/session`
 
@@ -9091,6 +9092,12 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.138 — 2026-11-12 — behaviour change — a refresh retires the token it replaced after 120 seconds (F-282)
+
+Ships with bcc-trust #662. Version number assigned at merge.
+
+- **`POST /auth/refresh`:** the presented token keeps working for 120 s after a successful refresh, then gets `bcc_unauthorized` 401 everywhere. Shape unchanged. **Clients:** use the returned token; no new handling.
 
 ### v1.137 — 2026-11-12 — behaviour change (security) + additive — a collection holder can never claim its page; every claim 403 names its reason
 
