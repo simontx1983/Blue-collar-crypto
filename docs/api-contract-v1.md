@@ -949,10 +949,12 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
   // `role` ∈ "owner"|"moderator"|"member" (manager reads as moderator)
   // and the server-rendered `role_label` (the §4.7.7 roster vocabulary,
   // filterable via `bcc_group_role_labels`). Shown ONLY where this viewer
-  // could already see that group's roster: on the member's own profile,
-  // for an open group or a Hall, or for a group the viewer is an active
-  // member of. Everywhere else both are null (render no badge) — a profile
-  // never reveals who moderates a closed or secret group. Also null when
+  // could already see that group's roster — the group page's own rule
+  // (§4.7.7 / `members_visible`): on the member's own profile, for an OPEN
+  // group (Halls included when open), or for a group the viewer is an
+  // active member of. A closed or secret group — a closed Hall too — shows
+  // a non-member no role. Everywhere else both are null (render no badge) —
+  // a profile never reveals who moderates a closed or secret group. Also null when
   // the membership could not be read (never a guessed role). Each row
   // also carries `type` (hall | user | system | nft | validator) — the
   // group kind, so a client can show Halls apart from other groups
@@ -9085,7 +9087,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 Ships with bcc-trust #671.
 
-- **Additive (§3.1 `MemberProfile.halls`, full profile only):** `role` (`owner|moderator|member`), `role_label` and `type` (the group kind: `hall|user|system|nft|validator`) per row — the §4.7.7 roster vocabulary, now one shared helper. Shown only where the viewer could already see that group's roster (the member themself, an open group or a Hall, or a group the viewer is an active member of); otherwise both `null`. `null` too when the membership could not be read.
+- **Additive (§3.1 `MemberProfile.halls`, full profile only):** `role` (`owner|moderator|member`), `role_label` and `type` (the group kind: `hall|user|system|nft|validator`) per row — the §4.7.7 roster vocabulary, now one shared helper. Shown only where the viewer could already see that group's roster (the member themself, an open group — Halls included only when open, or a group the viewer is an active member of; the same rule as the group page's `members_visible`); otherwise both `null`. `null` too when the membership could not be read.
 - **Clients:** render a badge from `role_label` when it is non-null; render nothing when it is null (never infer a role).
 
 ### v1.134 — 2026-11-12 — behaviour change — 2FA resend reports an ended challenge, and its code always works
