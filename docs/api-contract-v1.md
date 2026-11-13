@@ -9215,7 +9215,7 @@ Ships with bcc-trust #674 (F-340).
 
 ### v1.144 — 2026-11-12 — behaviour change — administrators can take a reported announcement down
 
-Ships with bcc-trust F-307 B1. ⚠ `v1.144` is a placeholder: the number is assigned at merge.
+Ships with bcc-trust F-307 B1.
 
 - **Behaviour (§4.32.1, §4.32.16):** a new public-visibility predicate. A notice an administrator took down is not publicly readable: the list, the detail/permalink read (`404`, same as missing), comments and the rotator drop it, and its feed item is hidden. Archiving is unchanged; a taken-down notice is dropped from the archived list as well.
 - **Moderation queue:** Hide, Restore and Dismiss now act on announcement reports instead of every action being recorded as a dismiss. A report on the notice's feed item takes the same path.
