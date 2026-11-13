@@ -158,7 +158,7 @@ Two distinct codes, two distinct UX paths:
 
 The canonical envelope's `message` is presentation; the *behavior fork* is on `code` alone.
 
-**When each is sent (since v1.NEXT, F-288 — before, neither code was emitted and every case read `bcc_unauthorized`):** a route that requires sign-in and answers 401 `bcc_unauthorized` says `bcc_token_expired` when the request PRESENTED a bearer token whose only problem is its expiry, and `bcc_token_invalid` when the presented token is malformed, wrongly signed, revoked (sign out everywhere, a credential change, a suspension), signed out (`POST /auth/logout`), superseded by a refresh (after its 120 s overlap), or belongs to a deleted account. With no bearer token it stays `bcc_unauthorized`. Status and envelope shape are the same. **Public routes** (those that serve signed-out visitors) never fail on a bad bearer token: they serve the anonymous view, as before. Other 401 codes (e.g. `bcc_invalid_credentials`, `bcc_signature_invalid`) are unaffected.
+**When each is sent (since v1.NEXT, F-288 — before, neither code was emitted and every case read `bcc_unauthorized`):** a route that requires sign-in and answers 401 `bcc_unauthorized` says `bcc_token_expired` when the request PRESENTED a bearer token whose only problem is its expiry, and `bcc_token_invalid` when the presented token is malformed, wrongly signed, revoked (sign out everywhere, a credential change, a suspension), signed out (`POST /auth/logout`), superseded by a refresh (after its 120 s overlap), or belongs to a deleted account. With no bearer token it stays `bcc_unauthorized`. Status and envelope shape are the same. **Public routes** (those that serve signed-out visitors) never fail on a bad bearer token: they serve the anonymous view, as before. Other 401 codes (e.g. `bcc_invalid_credentials`, `bcc_signature_invalid`) are unaffected. **Exception: `POST /auth/refresh` itself** keeps `bcc_unauthorized` for a token it can't refresh (e.g. past the 24-h grace) — a `bcc_token_expired` there would tell a client to refresh again, in a loop. A refused refresh means sign in again.
 
 #### 1.4.4 Rate-limit semantics
 
@@ -9094,7 +9094,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 Ships with bcc-trust #673. Version number assigned at merge.
 
-- A 401 `bcc_unauthorized` on a route that requires sign-in becomes **`bcc_token_expired`** (the presented token only expired — refresh and retry) or **`bcc_token_invalid`** (malformed, revoked, signed out, superseded, deleted account — sign out), per §1.4.3. No token presented: unchanged. Public routes: unchanged (anonymous view). **Clients:** the existing "refresh on 401, then classify" path keeps working; these codes let a client skip the refresh for `bcc_token_invalid`.
+- A 401 `bcc_unauthorized` on a route that requires sign-in (except `POST /auth/refresh`, whose refusal stays `bcc_unauthorized`) becomes **`bcc_token_expired`** (the presented token only expired — refresh and retry) or **`bcc_token_invalid`** (malformed, revoked, signed out, superseded, deleted account — sign out), per §1.4.3. No token presented: unchanged. Public routes: unchanged (anonymous view). **Clients:** the existing "refresh on 401, then classify" path keeps working; these codes let a client skip the refresh for `bcc_token_invalid`.
 
 ### v1.136 — 2026-11-12 — behaviour change — suspended members sign in read-only; `can_claim`
 
