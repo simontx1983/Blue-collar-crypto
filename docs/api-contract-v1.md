@@ -2636,7 +2636,7 @@ Slim prefix-search endpoint backing the composer's `@`-mention autocomplete (§3
   - `bcc_rate_limited 429` — per-viewer throttle (60 keystrokes / 60s rolling window).
 - **Cache:** `Cache-Control: private, max-age=10`; `Vary: Authorization, Cookie`. Short TTL deliberate — the typical autocomplete burst (3-6 keystrokes typed in succession) hits the cache for the steady-state prefix; a 10s window is long enough to absorb the burst, short enough that a recent join/ban/block updates within a session.
 - **Privacy / mapping:** routed through `PeepSoUserSearch` ([peepso/classes/usersearch.php](app/public/wp-content/plugins/peepso/classes/usersearch.php)) which applies the canonical filter set: ban filter, `profile_acc != PRIVATE`, bidirectional `peepso_user_blocked` (viewer→target AND target→viewer), `allow_hide_user_from_user_listing`, plus the `peepso_user_search_args` hook BCC's [PrivacySettings::filterPeepSoSearchArgs](app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Support/PrivacySettings.php) attaches for `hide_from_search` (which `discovery_optout` aliases since v1.133). **Do NOT route this through the dormant `bcc-search` `UserSearchRepository`** — that one runs raw `wp_users` LIKE and bypasses every filter above; it would leak hidden users into the dropdown.
-- **Ranking:** prefix match on `user_login` + `display_name` + `bcc_handle` user-meta, ordered by handle ASC. V1d does NOT bias by follower edges (deferred — see §3.3.12 deferred). When two candidates share a prefix, alphabetical order wins; ties broken by `ID ASC`.
+- **Matching and order** *(corrected v1.NEXT: the previous text predates #601)*: a member matches when the query is **contained in** their display name (not when they hide their real name, and not when the display name is their login) or their current `@handle`, through the shared `MemberSearchCandidates` matcher; **never** the login or email. Candidates then pass PeepSo's privacy filter set, which returns them in PeepSo's `username` sort order. V1d does NOT bias by follower edges (deferred — see §3.3.12 deferred).
 - **Side effects:** none. Pure read; no notification, no logging beyond the rate-limit counter.
 - **Sister endpoints:** the composer's full-name → user_id resolution at submit time is **not** exposed as a separate endpoint — the picker emits the wire-format token `@peepso_user_<id>(name)` directly into the post body using `user_id` from this response, and the server's `MentionPolicy` re-validates on `POST /posts*` (§3.3.12 server-side enforcement). A user picked from the dropdown but who turns hidden between picker-select and submit gets rejected at write-time with `bcc_invalid_mention_target` — picker results are advisory, not authoritative.
 
@@ -9072,8 +9072,10 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ### v1.NEXT — 2026-11-12 — additive + fix — the handle cooldown is readable before submit, and its Retry-After is the real wait
 
-Ships with bcc-trust #653 (F-333, F-294). Version number assigned at merge.
+Ships with bcc-trust #653 (F-333, F-294) and #661 (F-328). Version number assigned at merge.
 
+- **Display names (F-328, bcc-trust #661):** a `display_name` shaped like a signup login (`u_` + a handle, any case) now shows the handle, like one equal to the member's own login; it no longer has to be the CURRENT login.
+- **`GET /users/mention-search`:** the Ranking line is corrected to what the endpoint has done since #601 (no contract change).
 - **`GET`/`PATCH /me/profile-prefs`:** new read-only **`handle_next_change_at`** (ISO-8601 UTC, or `null` when the owner can change their handle now).
 - **`PATCH /me/handle`:** the cooldown `429` now also carries **`error.data.next_change_at`** (same format, same instant). **Fix:** its `Retry-After` is now the real remaining wait. It used to be overwritten with `60` (the shared per-account write bucket's window) alongside a misleading `error.data.retry_after_seconds: 60`; neither is added to a 429 that sets its own `Retry-After` any more.
 - **Clients:** optional. The handle editor can show the date before a submit, and read it from the 429 body instead of the header.
