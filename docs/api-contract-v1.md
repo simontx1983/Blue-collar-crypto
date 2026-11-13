@@ -9110,7 +9110,6 @@ Ships with bcc-trust #674 (F-340). Version number to be assigned at merge.
 
 - **`GET /users/:handle`:** new `vouched_by_watched_count` (`int | null`, signed-in viewers on someone else's profile; `0` hides the line, `null` = not applicable or unknown) and `top_vouchers` (≤ 3 `{ handle, display_name, avatar_url }`, signed-out viewers only; `[]` hides the line). Both count active `vouch` attestations only, and only ones the public roster would show (no suspended attestors; a name-hidden voucher counts and shows as `@handle`). See §4.4.
 
-
 ### v1.139 — 2026-11-12 — additive + behaviour change — a wallet-signup email counts once verified; when a recovery email can be added (F-332)
 
 Ships with bcc-trust #658. Version number assigned at merge.
