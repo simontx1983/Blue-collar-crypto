@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.148 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.NEXT · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -965,6 +965,28 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
     { "id": 12, "slug": "cosmos-hall", "name": "Cosmos Hall", "is_primary": true, "role": "moderator", "role_label": "MODERATOR", "type": "hall" },
     { "id": 18, "slug": "osmosis-hall", "name": "Osmosis Hall", "is_primary": false, "role": "member", "role_label": "MEMBER", "type": "hall" }
   ],
+  // ⚠ SECTION VISIBILITY (v1.NEXT, F-341). Which profile sections this
+  // VIEWER may see, after the owner's "Show on profile" switches. The
+  // owner always sees every section as true, and admins keep the §F-02
+  // exemption.
+  //
+  // Read this to decide which TABS to render: without it a client cannot
+  // tell a HIDDEN section from an EMPTY one, and would show an empty
+  // Reviews tab on someone's profile instead of omitting the tab.
+  //
+  // ⛔ PR 1 of 3 enforces the PAYLOAD only. The per-user tab ROUTES
+  // (/users/:handle/blog, /photos, /albums …) are gated in PR 2, so until
+  // that ships a hidden section is still reachable by calling its route
+  // directly. Treat this as the DISPLAY contract, not yet a boundary.
+  "sections": {
+    "about": true,
+    "verifications": true,
+    "halls": true,
+    "operator": true,
+    "blogs": true,
+    "reviews": true,
+    "disputes": true
+  },
   // OWN-ACCOUNT ONLY. This array is populated exactly as shown when
   // `is_self` is true, and is `[]` for every other viewer (see §3.1
   // "Viewing someone else's profile"). Never render it on a surface a
@@ -4979,6 +5001,12 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
     "hide_from_search":          false,
     "default_post_audience":     "public" | "members" | "friends" | "private",
     "show_groups_on_profile":    true,
+    "show_about_on_profile":         true,
+    "show_verifications_on_profile": true,
+    "show_operator_on_profile":      true,
+    "show_blogs_on_profile":         true,
+    "show_reviews_on_profile":       true,
+    "show_disputes_on_profile":      true,
     "mentor_opt_in":             false,
     "mentor_listed":             false,
     "mentor_eligibility_reason": "below_veteran",
@@ -4996,6 +5024,12 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
   - `hide_from_search` *(documented v1.64 — shipped earlier)* → `peepso_is_hide_profile_from_user_listing` user_meta, "1"/"0" — "1" excludes the user from directory + member search (direct profile links still work). **Since v1.133 (F-257) this is THE one hidden-from-search flag:** `/me/privacy`'s `discovery_optout` is an alias that reads and writes it, so the two always agree.
   - `default_post_audience` *(documented v1.64 — shipped earlier; `friends` added v1.121)* → `peepso_last_used_post_privacy` user_meta (int 10/20/30/40 ↔ public/members/friends/private) — defaults PeepSo's audience picker; PeepSo itself overwrites it on every post, so this is a default, not a lock. ⚠ The column is not a validated enum, so a value with no token at all is reported as `members`.
   - `show_groups_on_profile` *(v1.127 — F-270)* -> `bcc_show_groups_on_profile` user_meta, "1"/"0". Read/write bool. **⚠ ABSENT MEANS `true`.** The default preserves the pre-F-270 behaviour, so an account that has never touched the setting keeps listing its groups; only an explicit falsey value hides them. This is the only *permissive* default among the privacy prefs here.
+  - `show_<section>_on_profile` *(v1.NEXT — F-341)* → the profile **SECTION** switches: `show_about_on_profile`, `show_verifications_on_profile`, `show_operator_on_profile`, `show_blogs_on_profile`, `show_reviews_on_profile`, `show_disputes_on_profile`. Read/write bools, **all ABSENT MEANS `true`**, so no existing profile changes until its owner opts out.
+    - ⚠ **THREE storage conventions behind one vocabulary.** Do not infer storage from the field name:
+      - `about` / `verifications` / `operator` / `blogs` → new `bcc_show_*_on_profile` user_meta, `"1"`/`"0"`;
+      - **HALLS has no `show_halls_on_profile` field.** Its switch is `show_groups_on_profile` above (v1.127, F-270) — a deliberate exception to the naming pattern, because renaming a live field breaks clients for no behavioural gain;
+      - `show_reviews_on_profile` / `show_disputes_on_profile` are **INVERTED VIEWS** of the §K2 `reviews_hidden` / `disputes_hidden` flags, which remain the **only** storage and are still writable through `PATCH /me/privacy`. `show_* = false` ⇔ `*_hidden = true`. One source of truth, so the two endpoints cannot disagree.
+    - ⚠ §K2's own **route** behaviour is **unchanged** by F-341: `/users/:handle/reviews` and `/disputes` answer exactly as before. F-341 only adds the wire vocabulary for those two.
     - ⚠ **It governs only the toggleable part of the policy.** Two rules apply regardless of it, and a client must not present it as "all of my group privacy": secret groups are never shown to non-members, and NFT-holder / delegator groups are shown only to **signed-in** viewers. See `GET /users/:slug/groups`.
   - `mentor_opt_in` *(v1.62 — Rank Phase 7, spec §21.4)* → `bcc_mentor_opt_in` user_meta, "1"/"0" (via `MentorListingService`). Read/write bool. Opting in requires **no** eligibility — a non-Veteran may pre-opt-in and lists automatically the day they qualify.
 - **Read-only mentor pair (v1.62, GET response only — never writable):** `mentor_listed` (bool) — whether the user is **actively listed** in the mentor directory *right now*; the listing composes **live** as opt-in AND `can('list_as_mentor')` (**Veteran** rank AND trust tier ≥ **Trusted** AND not suspended AND not in §14.2 Rank recovery). Nothing is materialized — when any condition fails the listing **pauses automatically on the next read** (no sweep, no flag to un-stick). `mentor_eligibility_reason` (string|null) — the resolver's stable deny slug ∈ `suspended|new_member|below_veteran|below_trusted|in_recovery` so the frontend can explain a paused listing; `null` while eligible (regardless of opt-in).
@@ -9181,6 +9215,22 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-12 — additive + behaviour change — "Show on profile" section switches, server-enforced (F-341 PR 1 of 3)
+
+Ships with bcc-trust's F-341 PR 1.
+
+- **`GET`/`PATCH /me/profile-prefs` (additive):** six new rw bools — `show_about_on_profile`, `show_verifications_on_profile`, `show_operator_on_profile`, `show_blogs_on_profile`, `show_reviews_on_profile`, `show_disputes_on_profile`. ⚠ **All default ON** (absent = shown), so no existing profile changes until its owner opts out. See the endpoint's storage notes for the three conventions behind them — in particular that **Halls keeps the field name `show_groups_on_profile`** and that reviews/disputes are inverted views of the §K2 flags rather than new storage.
+- **`GET /users/:handle` — additive `sections` block:** `{about, verifications, halls, operator, blogs, reviews, disputes}` → bool. Read it to decide which tabs to render.
+- **`GET /users/:handle` — behaviour change, narrowing.** For a non-owner, a hidden section returns a **documented empty** — never an omitted key and never a 403. A missing key breaks client shape, and a refusal would itself disclose that something is being withheld:
+  - `about` hidden → `bio: null`
+  - `verifications` hidden → every claim `false`, usernames `null`, `wallets_verified: 0`
+  - `operator` hidden → `owned_pages_count: 0`, and `owned_pages_by_type` with **all four keys at `0`** (`validator`/`project`/`nft`/`dao`) — ⚠ **not** `{}`: the shape is fixed, so a client never has to special-case a second shape
+  - `blogs` hidden → `counts.blog_posts_written: 0`
+  - `halls` hidden → unchanged from v1.127
+- ⚠ **`verifications` and `operator` are narrowed on the MEMBER CARD too** (`member_dossier`), because the card carries the same resolved block. The same fact on two surfaces is narrowed in one place deliberately; narrowing only the profile would leave it readable on the card.
+- ⛔ **NOT YET A COMPLETE BOUNDARY.** PR 1 enforces the profile **payload**. The per-user **tab routes** are **PR 2**; per-Hall hiding (`hidden_hall_ids`) is **PR 3**. Until PR 2 ships, a hidden section is still reachable by calling its own route.
+- **Clients:** read `sections` for tab rendering; expect documented empties rather than missing keys; and do **not** present `show_reviews_on_profile` / `show_disputes_on_profile` as separate from the §K2 privacy toggles — they are the same setting under a second name.
 
 ### v1.148 — 2026-11-12 — additive + fix — the handle cooldown is readable before submit, and its Retry-After is the real wait
 
