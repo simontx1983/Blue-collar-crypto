@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.136 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.146 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -946,9 +946,24 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
   // Before v1.127 it was unfiltered and ignored the viewer entirely.
   // `primary_hall` above is derived from this list, which is why Halls
   // survive the toggle.
+  // v1.143: each row carries the MEMBER's role in that group —
+  // `role` ∈ "owner"|"moderator"|"member" (manager reads as moderator)
+  // and the server-rendered `role_label` (the §4.7.7 roster vocabulary,
+  // filterable via `bcc_group_role_labels`). Shown ONLY where this viewer
+  // could already see that group's roster — the group page's own rule
+  // (§4.7.7 / `members_visible`): on the member's own profile, for an OPEN
+  // group (Halls included when open), or for a group the viewer is an
+  // active member of. A closed or secret group — a closed Hall too — shows
+  // a non-member no role. Everywhere else both are null (render no badge) —
+  // a profile never reveals who moderates a closed or secret group. Also null when
+  // the membership could not be read (never a guessed role). Each row
+  // also carries `type` (hall | user | system | nft | validator) — the
+  // group kind, so a client can show Halls apart from other groups
+  // without guessing from a name or slug. Present on GET /users/:handle
+  // (the full profile) only; summary payloads omit role, role_label, type.
   "halls": [
-    { "id": 12, "slug": "cosmos-hall", "name": "Cosmos Hall", "is_primary": true },
-    { "id": 18, "slug": "osmosis-hall", "name": "Osmosis Hall", "is_primary": false }
+    { "id": 12, "slug": "cosmos-hall", "name": "Cosmos Hall", "is_primary": true, "role": "moderator", "role_label": "MODERATOR", "type": "hall" },
+    { "id": 18, "slug": "osmosis-hall", "name": "Osmosis Hall", "is_primary": false, "role": "member", "role_label": "MEMBER", "type": "hall" }
   ],
   // OWN-ACCOUNT ONLY. This array is populated exactly as shown when
   // `is_self` is true, and is `[]` for every other viewer (see §3.1
@@ -1133,7 +1148,7 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
 - Risky entities render like any other tier (v1.57). They previously had no `card_tier` at all, and the contract instructed frontends to render nothing visible for them — which meant the platform actively hid its own strongest warning. The tier strip now renders for all five bands.
 - `permissions.can_watch.allowed` is `false` when (a) viewer is anonymous, (b) viewer is the card subject (you can't follow yourself), or (c) the card is hidden (risky tier). In cases (a) and (c), `unlock_hint` is `null` — these aren't hints the user can resolve. (Legacy permission key `permissions.can_watch` is emitted alongside `can_watch` during the §1.1.1 deprecation window.)
 - `viewer_has_reviewed` / `viewer_has_endorsed` (per §D2 / §V1.5) — drives "WRITE A REVIEW" → "REMOVE YOUR REVIEW" CTA swaps. Always `false` for anonymous viewers. **v1.49:** `viewer_has_reviewed` is REAL on `member` cards too (has the viewer reviewed this member — a vote on their self-page); the old "always false on member cards" rule is retired. `viewer_has_endorsed` stays `false` on member cards (endorsements target page cards only).
-- `viewer_is_watching` / `viewer_watch` (v1.131, F-255; page and member cards, and the `GET /users/:handle` profile) — is the viewer watching this card, and the handle to unwatch it with: `viewer_watch = { follow_id: int, source: "peepso" | "page" } | null`, exactly the `:follow_id` and `?source=` that `DELETE /me/watching/:follow_id` takes. `viewer_is_watching` is `viewer_watch !== null`. **This is the source of truth for every watch button: never derive it from a page of `GET /me/watching`** — there is no cap on how many things a member watches, so any page is a partial list. Resolved the way `POST /me/watching/watch` writes: a member card → the viewer's follow of that member; a page card with an owner → the viewer's follow of the **owner** (watching a claimed page is following its operator, so every page that operator owns reads as watched); a pre-claim placeholder page → the viewer's `bcc_page_follows` row (`source: "page"`). `false` / `null` for anonymous viewers and on the viewer's own card. Batched per card page (two bounded `IN()` reads, whatever the watchlist size). Absent on community cards.
+- `viewer_is_watching` / `viewer_watch` (v1.131, F-255; page and member cards, and the `GET /users/:handle` profile) — is the viewer watching this card, and the handle to unwatch it with: `viewer_watch = { follow_id: int, source: "peepso" | "page" } | null`, exactly the `:follow_id` and `?source=` that `DELETE /me/watching/:follow_id` takes. `viewer_is_watching` is **three-state** (v1.146): `true` (watching; `viewer_watch` is the handle), `false` (not watching; `viewer_watch` is `null`), or **`null` — unknown**: the read that answers it failed, so the server cannot say. Render `null` as a neutral / disabled state ("couldn't check"), **never** as a "Watch" button, which would offer to watch something the member may already watch. A failed read never fails the card or the page. **This is the source of truth for every watch button: never derive it from a page of `GET /me/watching`** — there is no cap on how many things a member watches, so any page is a partial list. Resolved the way `POST /me/watching/watch` writes: a member card → the viewer's follow of that member; a page card with an owner → the viewer's follow of the **owner** (watching a claimed page is following its operator, so every page that operator owns reads as watched); a pre-claim placeholder page → the viewer's `bcc_page_follows` row (`source: "page"`). `false` / `null` for anonymous viewers and on the viewer's own card. Batched per card page (two bounded `IN()` reads, whatever the watchlist size). Absent on community cards.
 - `review_target_id` (v1.49, **member cards only** — absent on other kinds) — the member's deterministic self-page id (`MemberSelfPageService::selfPageId(user_id)`), i.e. the page member reviews live on. This is the `:id` the frontend passes to `DELETE /me/reviews/:id` to remove its review of the member; the frontend must never derive `ID_BASE` itself (§L5). The WRITE path is unchanged (`POST /posts kind=review target_kind=user_profile target_user_id`).
 - `endorse_unlock_hint` mirrors `permissions.can_endorse.unlock_hint` so the EndorseButton can render the hover hint without reaching into the permission object.
 - `watching_size` (on member cards' stats and on `User.counts.watching_size`) **counts member follows alongside entity follows.** Watching another member is a first-class watchlist action, no separate `following_count` field exists.
@@ -1216,10 +1231,17 @@ Locked field rules:
     "chain_tag": "cosmos",
     "trust_min": null,
     "collection_stats": { "...": "§4.7.4 NFT market block, null for non-NFT kinds" },
-    "viewer_is_member": true
+    "viewer_is_member": true,
+    "can_join":                 { "allowed": false, "unlock_hint": null, "reason_code": "already_member" },
+    "can_request_join":         { "allowed": false, "unlock_hint": null, "reason_code": "already_member" },
+    "viewer_membership_status": "member"
   }
   ```
   `verification` is the §4.7.x GroupVerification object or `null`; `viewer_is_member` is always `false` for anonymous viewers.
+  **(v1.141, F-244) — the server's join verdict on the card.** `can_join`, `can_request_join` and `viewer_membership_status` are computed by the **same** logic as the group detail's `permissions` (§4.7.5), so a card never offers what the group page refuses. Render the JOIN cell from them; do **not** recompute eligibility from `privacy` / `type` / `trust_min`.
+  - `can_join` / `can_request_join`: `{allowed, unlock_hint, reason_code}`, the §4.7.5 vocabularies. Two list-only values: **`verify_on_join`** — `can_join` on a holder (`nft`) group in a **list** (discovery): `allowed: true`, and the join itself verifies the viewer's wallet (no live check per list item; the detail card carries the real holder verdict); **`unavailable`** — the viewer's membership could not be read: `allowed: false`, retry later, never offer Join.
+  - `viewer_membership_status` ∈ `none|requested|invited|member`, or `null` for anonymous viewers and when the read failed. A banned viewer reads `none` (`can_join.reason_code: "removed"` says why).
+  - All three are `null` only on community cards built by a surface that has not adopted them yet; treat `null` as "ask the group page".
 - **Links + actions:** `links: { "self": "/communities/{slug}" }`. `actions` emits **`open` only** — a self-describing GET of the §4.7.5 detail endpoint (`{ "method": "GET", "href": "/wp-json/bcc/v1/groups/{slug}", "idempotent": true, "requires_auth": false }`). No `watch`/`pull` action: groups are joined, not watched.
 - **Privacy:** no new privacy logic. The producing endpoints already gate visibility (secret-non-member → absent/404); any group an endpoint returns gets a card.
 
@@ -1275,6 +1297,7 @@ Feed items share an envelope and vary by `post_kind`.
     "avatar_url": "https://bluecollar.crypto/wp-content/uploads/2026/04/simontx-avatar.jpg",
     "rank_label": "Journeyman",
     "reputation_tier": "trusted",
+    "trust_score": 72,
     "is_operator": false,
     "viewer_attestation": { "vouch": { "id": 5012, "created_at": "2026-06-20T09:00:00Z" }, "stand_behind": null },
     "can_vouch": { "allowed": true, "unlock_hint": null }
@@ -1315,6 +1338,7 @@ Feed items share an envelope and vary by `post_kind`.
   - **No server-side ranking is applied based on this field in v1.** The Floor feed continues to order strictly by recency. The `group` block is metadata for badge rendering and (optional) client-side prioritization. A scored ranking layer is deferred until usage telemetry exists to tune it honestly.
   - **Mapping:** `peepso_group_id` post-meta on the activity's wp_post (PeepSo writes this when a status post is created inside a group) → `GroupContextResolver::forManyGroups`. Batched per page; no N+1.
 - V1 author block is **user-only** — every post in V1 is authored by a WP user (status, review, watch_batch, page_claim, dispute_signed, blog). System-emitted signals (§3.3.5) currently ride the same shape with the system actor's user_id; their `post_kind` discriminates them, not the author block.
+- `author.trust_score` *(v1.142, additive)* — the author's trust score, `int` 0–100: **the same number the profile hero shows** (`User.trust_score` / Card `trust_score`, one server-side display rule: clamped to 0–100, rounded). With `reputation_tier_label` it renders e.g. "TRUSTED 72". Batched per page (one bounded read for all of the page's authors). Optional for one release: an older payload omits it, and the client then shows the tier alone. Same field on `FeedAuthor` (§3.3) and `CommentAuthor` (§3.5).
 - `author.is_operator` — true when the author holds a verified operator/creator claim on any entity (per §N8). Drives the OPERATOR chip next to the author name.
 - `author.viewer_attestation` + `author.can_vouch` — **authed-only**, the per-author **Vouch toggle** state next to the byline (vouch is *author credibility*, not a post reaction). `viewer_attestation` is the viewer's own active attestation on this author's self-page (`{ vouch: {id,created_at}|null, stand_behind: {id,created_at}|null }`, reused from the §3.2 card shape); `can_vouch` is `{ allowed, unlock_hint }` (self/below-Neutral come back `allowed=false`). **Both fields are OMITTED for anonymous viewers** (the anon feed payload is unchanged; the sign-in CTA lives on the profile cluster, not every byline). Because the vouch targets the *author* (one vouch per person, full-weight via `POST /bcc/v1/me/attestations` `{kind:'vouch', target_kind:'user_profile', target_id: author.id}`), the toggle reads identically wherever that author appears — feed bylines and commenter names alike. Batched server-side across the page's distinct authors (no N+1).
 - `attached_card` is omitted (not `null`) when no card is attached.
@@ -1715,6 +1739,7 @@ The `Comment` view-model used by §4.13 endpoints. One row per visible comment o
     "handle":       "simontx",
     "display_name": "Simon TX",
     "avatar_url":   "https://bluecollar.crypto/wp-content/uploads/2026/05/simontx-avatar.jpg",
+    "trust_score":  72,
     "viewer_attestation": { "vouch": null, "stand_behind": null },
     "can_vouch":    { "allowed": true, "unlock_hint": null }
   },
@@ -1735,6 +1760,7 @@ The `Comment` view-model used by §4.13 endpoints. One row per visible comment o
 **Field rules:**
 
 - `id` and `comment_id` are the same opaque identifier (the duplicate `comment_id` is for symmetry with §4.13 DELETE which takes the id as a path param). Form: `comment_<int>`. Treat as opaque.
+- `author.trust_score` *(v1.142, additive)* — as on the §3.3 FeedItem author: the profile's 0–100 trust score, optional for one release.
 - `feed_id` echoes the **parent post's** feed_id, not the comment's own — useful for re-resolving the parent if the drawer was deep-linked. Form: `feed_<int>`.
 - `body` is server-sanitized (PeepSo's `htmlspecialchars` + `strip_content`); the frontend SHOULD render plain text only and respect newlines but NOT trust HTML entities. The raw wire format `@peepso_user_<id>(name)` may appear in `body`; clients MUST overlay `mentions[]` to render those tokens as `<Link href="/u/:handle">@displayName</Link>` — see §3.3.12 invariant.
 - `mentions` is the §3.3.12 `Mention[]` overlay extracted from the raw `body`. Range offsets reference raw stored content. Always present (`[]` when no mentions). V1d does NOT ship the comment-composer autocomplete picker — the array is still populated for any wire tokens authored via PeepSo's native UI or hand-typed by power users.
@@ -2059,6 +2085,7 @@ Verifies a signed nonce, creates a new user (placeholder email if none supplied)
 - **Cache:** `Cache-Control: no-store`
 - **Side effects:** sets `wp_set_auth_cookie`, fires `bcc_wallet_verified` (seeds trust-engine + onchain-signals rows just like `verifyAndLink`), emits `user_signup` audit row, fires `bcc_user_signup` action. **Note:** does NOT emit the `bcc_first_wallet_link` celebration on the response — celebration delivery for wallet-signup is reserved for a future contract revision.
 - **Email state (changed in v1.88):** sets `_bcc_email_verified='0'` — a wallet signature proves control of the wallet, not of the inbox. A **caller-supplied** email gets the standard verification email (OTP + one-shot link, completed via `POST /auth/verify-email`) once the wallet link commits; a **placeholder** gets none and stays `'0'`. Previously this route set `'1'` with no inbox proof, which let a wallet signup typed with someone else's address receive that person's later Google sign-in (see `/auth/oauth-complete` → the anti-pre-registration gate). `'0'` does not affect the user's own sign-in: they sign in with the wallet.
+- **The email becomes the recovery email once verified (since v1.139, F-332):** a member who gives an `email` here confirms it with the 6-digit code from that email through **`POST /auth/verify-email`** (`{ "email", "code" }`, the same route as email sign-up; or the email's one-shot link). Until then the address is pending: `GET /wallets` → `recovery.has_recovery_email` stays `false`, and `POST /me/account/recovery-email` may replace it (a typo). Once verified, `has_recovery_email` is `true`. A wrong or expired code changes nothing (request a new one with `POST /auth/resend-verification`).
 - **Race protection:** if a concurrent signup wins the wallet-link race between the `existsForOtherUser` check and the actual link write, the inserted user is rolled back (`wp_delete_user`) and `bcc_wallet_already_linked` is returned. No orphan user is left behind.
 
 #### `POST /bcc/v1/auth/forgot-password`
@@ -2220,6 +2247,7 @@ Silent-refresh seam: exchanges a recently-expired (or near-expiry) Bearer JWT fo
 - **Rate limit:** IP-bucketed, 30 / 60s
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** decodes via `JwtToken::decodeForRefresh`, re-reads `bcc_handle` from authoritative storage (a handle change since the original mint is reflected; the JWT payload is not trusted), mints a fresh JWT, emits the `token_refreshed` audit log. No cookie set, no DB mutation beyond the audit row. Handler `AuthEndpoint::refresh` (route `AuthEndpoint.php:292`). Standard envelope per §1.4.
+- **The old token is retired (since v1.138, F-282):** once a refresh succeeds, the token it replaced keeps working for **120 seconds** (`REFRESH_OVERLAP_SECONDS`) — so the session's other tabs and in-flight requests can switch to the new one — and then fails everywhere (authenticated routes, `GET /auth/session`, another `/auth/refresh`) with the usual `bcc_unauthorized` 401. Refreshing the same old token again within those 120 s returns another fresh token but never extends the old one's cutoff. Before, the old token stayed valid until its own expiry plus the 24-h grace, so a copy taken before the refresh — or one a sign-out never reached — outlived it by days. **Clients:** switch to the returned token (the frontend already does); a request still carrying the old one after 120 s gets 401 and takes the normal refresh path with its newer token.
 
 #### `GET /bcc/v1/auth/session`
 
@@ -2487,7 +2515,7 @@ Personalized "who to follow" recommender. **Relevance/affinity-based, NOT popula
   - `suggestion_reason` is the single highest-CONTRIBUTING affinity signal, or `null` for civic cold-start fallback rows. `code` ∈ `follows_you | mutual_follows | co_hall | co_validator | co_nft_community`; `label` is a server-rendered §A2 string (e.g. `"Watches you"`, `"Watched by N you watch"`, `"In the Cosmos Hall with you"`, `"Backs Stakecito too"`, `"In Bored Apes with you"` — the two follow-graph labels moved to watch vocabulary in v1.61).
   - *(v1.61, additive)* `mutual_follows` rows may carry `suggestion_reason.avatars` — up to 3 `{ "handle": string, "avatar_url": string }` sampled mutual connections (`getSecondDegreeCandidatesWithSamples`) so the row can render avatar chips beside the count. Absent for other codes and on older backends; consumers treat missing as empty.
 - **Scoring (affinity only):** `W_RECIP·followsViewer + W_MUTUAL·min(mutualFollows, MUTUAL_CAP) + W_HALL·sharedHalls + W_VALIDATOR·sharedValidatorBacking + W_NFT·sharedHolderCommunities`. Weights are server constants (tunable). **No popularity/trust term participates in ranking.**
-- **Exclusions (security-sensitive):** self; already-following; caution/risky reputation tier; active suspensions; mutual blocks (either direction); and any candidate who hid their watching graph (`watching_hidden`).
+- **Exclusions (security-sensitive):** self; already-following (**exact, whatever the size of the viewer's follow graph**, v1.146: checked over the final candidates, so a viewer following more than 200 members is never suggested one of them); caution/risky reputation tier; active suspensions; mutual blocks (either direction); and any candidate who hid their watching graph (`watching_hidden`).
 - **Cold-start fallback:** when fewer than `limit` candidates survive scoring + exclusions (the dominant empty-graph case), the response tops up from the same civic recent-operators source the cold-start feed uses (recency + stable daily shuffle, NOT ranked), with `suggestion_reason: null`.
 - **Errors:** `bcc_unauthorized` (anonymous)
 - **Rate limit:** 60/min/user
@@ -2510,13 +2538,16 @@ Full User view-model.
 - **Cache:** `Cache-Control: private, max-age=30` (own: `no-store`); React Query `staleTime: 30s` (own: 0)
 - **Mapping:**
   - Identity fields ← `wp_users` + `wp_usermeta.bcc_handle`
-  - `viewer_is_watching` / `viewer_watch` (v1.131, F-255) ← the viewer's follow of this member, same shape and rule as on the §3.2 Card; `false` / `null` for anonymous viewers and on one's own profile. The profile's watch button reads these, not `GET /me/watching`. (This route is `private, max-age=30`: after a watch or unwatch the client updates from the mutation response rather than refetching.)
+  - `viewer_is_watching` / `viewer_watch` (v1.131, F-255) ← the viewer's follow of this member, same shape and rule as on the §3.2 Card; `false` / `null` for anonymous viewers and on one's own profile; `viewer_is_watching: null` when the read failed (v1.146, see §3.2). The profile's watch button reads these, not `GET /me/watching`. (This route is `private, max-age=30`: after a watch or unwatch the client updates from the mutation response rather than refetching.)
   - `trust_score`, `reputation_tier`, `reputation_tier_label`, `is_in_good_standing`, `flags` ← `bcc-trust` services (§A4)
   - `member_state`, `rank`, `rank_label`, `current_rank_label` ← `RankStateService::memberState` over `wp_bcc_trust_rank_state` (v1.59; missing row = New Member, nullable rank fields)
   - `living` ← derived from `peepso_activities` + `bcc_trust_score_events` (§A4 owns)
   - `progression` ← `RankStateService::progressionFor` (§2.5 — same builder as `GET /me/progression`, §4.8)
   - `capabilities` ← `RankStateService::capabilitiesBlock` (§2.6; replaced `feature_access` at v1.59)
   - `wallets` ← `bcc_wallet_links`
+  - `vouched_by_watched_count` / `top_vouchers` *(v1.145, F-340 — the trust header's vouch line)* ← active **`vouch`** attestations on this member's profile (`target_kind = user_profile`; a "back" / `stand_behind` is NOT counted). Only vouches the public attestation roster also shows: the attestor exists and is not suspended. A voucher who hid their real name **counts** (the roster lists them) and appears in `top_vouchers` as `@handle`.
+    - `vouched_by_watched_count: int | null` — **signed in, someone else's profile:** how many of the people the viewer watches (follows) vouch for this member, exact and uncapped; an attestor mutually blocked with the viewer is not counted. `0` → hide the line ("Vouched for by N people you watch"). `null` on your own profile, for anonymous viewers, and when the read failed (unknown: never a wrong number).
+    - `top_vouchers: list<{ handle, display_name, avatar_url }>` (≤ 3) — **signed out only** ("Top vouched by [avatars]"): the eligible vouchers, highest trust score first, then the newest vouch. `[]` → hide the line (also when there are no vouches, and on a failed read). Always `[]` for signed-in viewers. No wallet data.
   - `primary_hall`, `halls` ← `peepso_group_members` (joined to `peepso_groups`; single graph rule) + `bcc_primary_hall_group_id` usermeta for the primary pointer
 - **Profile-page extension:** the response also carries the
   `MemberProfileComposer` extras shipped alongside §3.1: `user_id`
@@ -3040,7 +3071,11 @@ Claims a validator/creator/project page using a wallet signature (§B5, §N8).
 - **Errors:** the complete set this route can emit, each with its HTTP status. Corrected and completed in **v1.86** against the implementation; see the changelog for what was wrong and why it mattered.
   - `bcc_unauthorized` **401** — not signed in.
   - `bcc_invalid_request` **400** — missing or malformed `page_id` or `entity_id`, or an `entity_type` outside the accepted set.
-  - `bcc_forbidden` **403** — two distinct causes behind one code: the entity is **not bound to this page**, or the caller's connected wallet **does not match the entity's operator** (§B5 — operator address + consensus pubkey only; delegators excluded).
+  - `bcc_forbidden` **403** — four distinct causes behind one code, each with its own message and, **since v1.137, a machine-readable `error.data.reason`** a client MUST branch on instead of the message:
+    - `suspended` — the account is suspended (`Your account is suspended.`). **Final**: no wallet or retry will help.
+    - `entity_not_bound` — the entity is **not bound to this page** (`That entity is not attached to this page.`).
+    - `not_operator` — the caller's connected wallet **does not match the entity's operator** (§B5 — operator address + consensus pubkey only; delegators excluded). The one cause where connecting a different wallet can help.
+    - `holder_not_owner` *(new in v1.137)* — the wallet only **holds** the collection (`Holding an NFT doesn't make you this collection's creator.`). Only an **operator** or **creator** can claim a page; a holder result records nothing.
     ⚠ **This replaces `bcc_permission_denied`, which this route has never emitted.** Measured against the implementation: the endpoint produces zero `bcc_permission_denied`, and its 403 is `bcc_forbidden`. Same defect class as the `/members` `bcc_validation` line corrected in v1.80 — a documented code no producer emits is a code a client would wait forever to see.
   - `bcc_not_found` **404** — the page does not exist or is not a `peepso-page`; **or (new in v1.86) the claimed entity itself could not be found.**
   - `bcc_conflict` **409** — the entity is already claimed by another user.
@@ -3488,7 +3523,12 @@ Cross-kind list of all PeepSo groups a target user is an active member of: holde
     Halls are included and always mean the **main** feed; a blog can never target a Hall's ranked channel. Which `visibility` values a given group permits is **not** restated here — that stays with `POST /me/groups/{id}/post-policy`.
   - `verification` is present for the on-chain-gated kinds (`nft` **and, since v1.52, `validator`**) and `null` elsewhere. Both carry `kind: "on_chain"` — one badge vocabulary, not one per gate. Future verification kinds (e.g. `creator_verified`) will appear here without API shape changes.
   - `actions.join.url` / `actions.leave.url` vary by `type`: `/me/holder-groups/{id}/{action}` for `nft`, **`/me/validator-groups/{id}/{action}` for `validator`**, `/me/halls/{id}/{action}` for `hall`, `/me/groups/{id}/{action}` for `user`/`system`. Frontend follows whatever URL the server returns.
-- **Permission shape (per §A4 / §N7 — gated actions always visible):**
+- **Permission shape (v1.141, F-244) — the VIEWER's verdict, the same as the group page's.** Every row's `can_join`, `can_request_join`, `can_leave` and the row's `viewer_membership_status` are computed from **the viewer's own** membership of that group (one batched read for the page) by the same logic as §4.7.5, on the owner's profile and on anyone else's. A viewer who is already in one of the member's groups sees `already_member` / a live Leave there; a banned viewer sees `removed`; a closed group they asked to join reads `requested`.
+  - `can_join.reason_code` — the §4.7.5 vocabulary, plus `verify_on_join` is **not** used here (this tab checks holder eligibility itself) and **`unavailable`** when the viewer's membership could not be read (never offer Join then).
+  - `can_leave.reason_code` ∈ `auth_required|not_member|owner_cannot_leave|unavailable` — the group's **owner** gets `owner_cannot_leave` (it used to be a live Leave that the server refused). **`not_self` is retired** for `can_leave`.
+  - `can_post_blog` is unchanged (self only; `not_self` elsewhere — see above).
+  - `viewer_membership_status` ∈ `none|requested|invited|member` (`null` for anonymous viewers or a failed read); `permissions.can_request_join` as §4.7.5.
+- **Before v1.141** (for reference — superseded):
   - **Self profile** (viewer is the target): `can_leave.allowed = true` for every group; `can_join.allowed = false` with `reason_code: "already_member"`.
   - **Other profile**:
     - `can_leave.allowed = false` always (`reason_code: "not_self"`).
@@ -3676,7 +3716,7 @@ Cross-kind discovery list. Sort key: `verified DESC, heat_score DESC, member_cou
     "pagination": { "page": 1, "page_size": 20, "total": 142, "total_pages": 8 }
   }
   ```
-- **`card` (v1.27, additive):** the full §3.2.4 community Card, composed from the same row data as the flat fields (zero per-item queries; viewer membership for `community_dossier.viewer_is_member` is one batched lookup over the page of items). New consumers render `item.card` via the CardFactory; the flat fields remain during the migration window.
+- **`card` (v1.27, additive):** the full §3.2.4 community Card, composed from the same row data as the flat fields (zero per-item queries; viewer membership for `community_dossier.viewer_is_member` is one batched lookup over the page of items). **(v1.141, F-244)** that lookup now reads the viewer's **raw** status per group (pending and banned included), and each card's `community_dossier` carries `can_join` / `can_request_join` / `viewer_membership_status` — the §4.7.5 verdict, with `verify_on_join` for holder groups. If the lookup fails, every card says `unavailable`. New consumers render `item.card` via the CardFactory; the flat fields remain during the migration window.
 - **Cache:** anon → `Cache-Control: public, max-age=60` (60s window keeps newly-warming groups discoverable quickly); authed → `private, no-store` (v1.27 — each item's `card.community_dossier.viewer_is_member` is viewer-scoped, so authed responses must never sit in a shared cache; this matches the §4.7.5 detail posture).
 - **Privacy:** `secret` groups never appear here regardless of viewer. `closed` groups appear with name + member_count visible; content stays private at PeepSo's layer.
 - **Filter `verified=1`:** restricts to groups with `_bcc_group_kind IN ('holders','delegators')`. Use this to render an "On-Chain Verified only" filter chip on the discovery page. **Widened in v1.52** — it previously meant `'holders'` alone. Both kinds emit `verification.kind = "on_chain"`, so an existing chip keeps working and simply returns delegator communities too; the same widening applies to the `verified` component of the sort key.
@@ -4337,7 +4377,8 @@ PeepSo's `peepso_notifications` table is the storage layer (§I1 "extend, don't 
     "display_name": "Simon",
     "avatar_url": "https://…"
   },
-  "link": "/?focus=15823"
+  "link": "/post/15823",
+  "target_available": true
 }
 ```
 
@@ -4345,15 +4386,17 @@ PeepSo's `peepso_notifications` table is the storage layer (§I1 "extend, don't 
 - `message` is server-rendered per §A2 — frontend renders verbatim. Plain English, capped at 200 chars (PeepSo's column width).
 - `actor.handle` may be empty when the originating user has been deleted; the frontend renders the message verbatim regardless.
 - `link` is a server-built relative path. Per type:
-  - `bcc_reaction` → `/?focus=<act_id>` (jump back to the post)
+  - `bcc_reaction` → `/post/<act_id>` (the permalink of the post that was reacted to) *(v1.140 — was `/?focus=<act_id>`, which no client route reads)*
   - `bcc_review` → `/v/<page-handle>` etc. (the reviewed page, route prefix per kind)
   - `bcc_card_watched` → `/u/<actor-handle>` (the watcher's profile) — legacy `bcc_card_watched` resolves identically during deprecation
   - `bcc_rank_up` → `/me/progression` *(v1.64 — was `/u/<recipient-handle>`; the standing page is where promotion detail lives)*
   - the other rank/finding self-notices *(v1.64)* — `bcc_rank_demoted`, `bcc_rank_recovery_started`, `bcc_rank_recovery_reminder`, `bcc_rank_decay_warning`, `bcc_rank_finding_issued`, `bcc_rank_appeal_outcome`, `bcc_rank_finding_reversed` → `/me/progression` (previously fell to the `/` default)
   - `bcc_welcome` → `/` (the floor — the user is probably already there when they see it)
-  - `bcc_mention` → `/?focus=<act_id>` (jump to the floor focused on the post containing the @-tag; for comment mentions `act_id` is the **parent post's** act_id — the FE has no comment-anchor consumer in V1)
+  - `bcc_mention` → `/post/<act_id>` *(v1.140 — was `/?focus=<act_id>`)* (the permalink of the post containing the @-tag; for comment mentions `act_id` is the **parent post's** act_id — the FE has no comment-anchor consumer in V1)
   - `bcc_hall_post` → `/halls/<slug>` resolved from `external_id` (the Hall's group_id). Falls back to `/halls` when the group is no longer a Hall (deleted, `_bcc_group_kind` meta cleared).
-  - `bcc_comment_received` → `/?focus=<act_id>` (jump to the floor focused on the parent post that received the comment; mirrors REACTION + MENTION shape — the FE has no comment-anchor consumer in V1). Covers both the "commented on your post" and the v1.45 "replied to your comment" messages — same type, same link shape.
+  - `bcc_comment_received` → `/post/<act_id>` *(v1.140 — was `/?focus=<act_id>`)* (the permalink of the parent post that received the comment; mirrors REACTION + MENTION shape — the FE has no comment-anchor consumer in V1). Covers both the "commented on your post" and the v1.45 "replied to your comment" messages — same type, same link shape.
+- `target_available` *(bool, v1.140, always present)* — `false` only when `link` points at a post (`bcc_reaction`, `bcc_mention`, `bcc_comment_received`) that is **known to be gone**: deleted, unpublished, or moderation-hidden. `true` for every other row, **and when availability could not be read** — unknown is not gone, so the row keeps its link and the permalink makes the final call (`GET /feed/{id}` answers 404). Per-viewer visibility (a block, a gated group) is NOT folded in: the permalink's 404 still covers it. Clients SHOULD render a `false` row as "this post is no longer available" instead of navigating.
+- Push payloads for `bcc_mention` (one mention) and `bcc_comment_received` carry the same `/post/<act_id>` `url` *(v1.140)*; pushes carry no `target_available`.
 - Self-notifications are emitted for `bcc_rank_up` + `bcc_welcome` and *(v1.63)* every rank/finding notice listed above (all are to==from system events). Other types skip the dispatch when actor === recipient.
 
 #### `GET /bcc/v1/me/notifications`
@@ -4486,7 +4529,9 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
     "bcc_claim_badge_removed":    true,
     "bcc_group_join_requested":   true,
     "bcc_group_join_approved":    true,
-    "bcc_group_invited":          true
+    "bcc_group_invited":          true,
+    "bcc_announcement_hidden":    true,
+    "bcc_announcement_restored":  true
   },
   "push": {
     "enabled": false,
@@ -4515,6 +4560,10 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
   - `bcc_group_join_approved` — to the requester; `actor` = the approver. *"You're now a member of {group}."*
   - `bcc_group_invited` — to the invitee; `actor` = the inviter. *"@{handle} invited you to join {group}."*
   - A denied request, a declined or revoked invitation and a cancelled request notify nobody.
+- **v1.144 (F-307):** two new bell keys, both default on, both **in-app only** (no push variant, excluded from the email digest). They tell an announcement's author that an administrator took the notice down after a report, or restored it (§4.32.16). Self-notifications: `actor` is the author; `external_id` is the announcement. `link` is `/`, because a taken-down notice is not publicly readable. Messages, verbatim, `{title}` being the notice's title:
+  - `bcc_announcement_hidden`: *"A moderator hid your announcement "{title}" because it breaks a site rule. It is no longer visible to others."*
+  - `bcc_announcement_restored`: *"Your announcement "{title}" was reviewed and restored."*
+  - **Empty title:** the quoted title and its leading space are dropped (*"A moderator hid your announcement because…"*, *"Your announcement was reviewed and restored."*). These are exactly `NotificationDispatcher::announcementModeratedMessage()`.
 - `email_digest` defaults `false` (opt-in).
 - `push.enabled` is the master toggle. Defaults `false` until the user explicitly enables it (a browser permission prompt fires on enable; no silent dispatch).
 - `push.events.*` defaults are all-on per V2 Phase 1 §P1.C3 — anti-noise carries the load via debounce + 5-min aggregation in `PushDispatcher`. The push event taxonomy is intentionally narrower than the bell ("bell shows everything; push is 'you really need to know'"). Adding a new push event requires extending `NotificationPrefs::PUSH_TYPES` server-side and the corresponding subscriber wiring.
@@ -6037,11 +6086,18 @@ Returns the current user's linked wallets.
     "recovery": {
       "has_recovery_email": false,
       "verified_wallet_count": 1,
-      "has_password": false
+      "has_password": false,
+      "available_at": "2026-11-14T09:30:00Z",
+      "available_reason": "wallet_age"
     }
   }
   ```
-- **`recovery`** (account-recovery posture for the settings UI): `has_recovery_email` is `true` when a real, non-placeholder email is set (a `@noreply.bcc.local` wallet-signup placeholder reads as `false`); `verified_wallet_count` is the number of the user's verified wallets (wallets usable for wallet login). Together they drive the "set up a recovery method" banner and mirror the `DELETE /wallets/{id}` self-lockout guard (`bcc_last_recovery_method`): the account is at lockout risk when `has_recovery_email` is `false` and `verified_wallet_count <= 1`.
+- **`recovery`** (account-recovery posture for the settings UI): `has_recovery_email` is `true` when a real, non-placeholder email is set **and not pending its verification code** *(since v1.139, F-332: an email typed at wallet sign-up counts only after `POST /auth/verify-email` confirms it; a legacy account with no verification flag still counts)* (a `@noreply.bcc.local` wallet-signup placeholder reads as `false`); `verified_wallet_count` is the number of the user's verified wallets (wallets usable for wallet login). Together they drive the "set up a recovery method" banner and mirror the `DELETE /wallets/{id}` self-lockout guard (`bcc_last_recovery_method`): the account is at lockout risk when `has_recovery_email` is `false` and `verified_wallet_count <= 1`.
+- **`recovery.available_at`** / **`recovery.available_reason`** *(since v1.139, F-332)*: when **this session** can attach the account's first recovery email through `POST /me/account/recovery-email` — the same rules that route enforces. `available_at` is ISO-8601 UTC or `null`; `available_reason` is:
+  - `"signup_wallet"` — the wallet the account was created with may do it now (within 48 hours of sign-up): `available_at` = now;
+  - `"wallet_age"` — the earliest a verified wallet becomes established (verified 48h+ ago, before this sign-in): `available_at` = that time, or now if it has passed;
+  - `null` with `available_at: null` — the account already has a recovery email, or no verified wallet can qualify in this session (none linked, or every one verified after this sign-in: signing in again would help).
+  The value depends on the bearer token presented (its sign-in time), so read it from the session that will make the request.
 - **`recovery.has_password`** *(since v1.130, F-253)*: does the member know a password? `true` (they signed up with one, or have set or reset one since), `false` (a wallet or OAuth signup that never set one, or an older wallet signup still on its placeholder email), or **`null`** (unknown: an account from before v1.130 with a real email). It picks the confirmation the email / password / delete forms ask for: `true` **or `null`** → the current-password field only (an account that may have a password can't confirm with a wallet; a `null` account that never knew one sets it through forgot-password); `false` → the wallet signature (with `verified_wallet_count == 0` — a Google/X account with no wallet — point the member at forgot-password, which sets a real password).
 - **Errors:** `bcc_rate_limited` 429.
 - **Rate limit:** 30/min/user.
@@ -7354,6 +7410,14 @@ Predicate 3 exists because status + due time are not sufficient: a row moved to 
 arrived **without ever passing the ownership recheck**. The marker is written only after
 authoritative ownership resolution succeeds. **All four read paths — list, detail, comments and
 feed hydration — enforce all three predicates.**
+
+**v1.144 (F-307) — predicate 4: not taken down by an administrator.** A notice carrying a
+non-empty `_bcc_announcement_moderation_hidden_at` fails the public predicate, so the list,
+the detail/permalink read, comments and the rotator all drop it, and it gains no new feed
+projection. Its existing feed activity is moderation-hidden the same way a reported post is.
+The detail read answers the same `404` as a notice that does not exist, so a takedown is not
+disclosed. Archival stays separate (§4.32.6): an archived notice is still public, a taken-down
+one is not. Only an administrator sets or clears the marker (§4.32.16); a report never does.
 
 #### 4.32.2 Authorization
 
@@ -8799,6 +8863,32 @@ async Phase C subscribers (§K1), which is where the administrator-facing
 moderation queue reads it. Administrator resolution of a reported announcement is
 unchanged by this section and uses the existing moderation surfaces.
 
+##### Administrator takedown (v1.144, F-307)
+
+Filing a report still never changes a notice's visibility, and the auto-hide
+threshold still never applies to announcements. What changed is what an
+**administrator** can do with the report in the moderation queue:
+
+- **Hide** takes the notice down: it sets the takedown marker (§4.32.1 predicate 4)
+  and moderation-hides the notice's feed activity. Every pending report on the
+  notice closes as **upheld** — reports filed against the notice and reports filed
+  against its feed item alike, so the two report paths cannot reach different
+  outcomes.
+- **Restore** lifts the takedown and closes those reports as **not upheld**. A
+  Restore on a notice that is not taken down is refused; nothing changes.
+- **Dismiss** closes the one report and leaves the notice as it is.
+- Hide and Restore carry the queue's 30-second undo, like every queue action.
+- The author is told each way, with the bell types `bcc_announcement_hidden` and
+  `bcc_announcement_restored` (see `GET /me/notification-prefs` for the verbatim
+  copy). Reporters are not notified, the same as for posts today.
+
+Before v1.144 the queue force-dismissed every announcement report whatever action
+the administrator chose, and a report on the feed item hid only the feed copy.
+
+The operator's own list (`GET /bcc/v1/me/validators/:pageId/announcements`) is unchanged in this version: a
+taken-down notice still lists there with no indicator. A `moderation` field and
+the edit/pin refusals for a taken-down notice are a follow-up.
+
 ## 5. Encoded rules — quick reference
 
 ### 5.1 §N7 — gated actions always visible
@@ -9098,6 +9188,83 @@ Ships with bcc-trust #675 (F-285, F-287). Version number assigned at merge.
 - **`POST /auth/reset-password`:** a successful reset confirms a still-pending **email** sign-up, so the following sign-in works. Wallet and OAuth accounts are unchanged.
 - **Clients:** none required. Show the 409 message as given.
 
+### v1.146 — 2026-11-12 — behaviour change — watch state can be unknown; suggestions never offer someone already followed
+
+Ships with bcc-trust #659 (F-255 follow-up + F-335). Version number to be assigned at merge.
+
+- **`viewer_is_watching` is three-state** on page and member cards (§3.2) and on `GET /users/:handle`: `true` / `false` / **`null` = unknown** (the watch-state read failed; `viewer_watch` is `null` too). Was: a failed read read as `false`, which drew a "Watch" button on something the member may already watch. **Clients:** render `null` as a neutral, non-actionable state.
+- **`GET /suggestions/users`:** the already-following exclusion is exact. It used the first 200 follows only, so a viewer following more than 200 members could be suggested one they already watch. No shape change.
+
+### v1.145 — 2026-11-12 — additive — the profile's vouch line: "Vouched for by N people you watch" / "Top vouched by"
+
+Ships with bcc-trust #674 (F-340). Version number to be assigned at merge.
+
+- **`GET /users/:handle`:** new `vouched_by_watched_count` (`int | null`, signed-in viewers on someone else's profile; `0` hides the line, `null` = not applicable or unknown) and `top_vouchers` (≤ 3 `{ handle, display_name, avatar_url }`, signed-out viewers only; `[]` hides the line). Both count active `vouch` attestations only, and only ones the public roster would show (no suspended attestors; a name-hidden voucher counts and shows as `@handle`). See §4.4.
+
+### v1.144 — 2026-11-12 — behaviour change — administrators can take a reported announcement down
+
+Ships with bcc-trust F-307 B1. ⚠ `v1.144` is a placeholder: the number is assigned at merge.
+
+- **Behaviour (§4.32.1, §4.32.16):** a new public-visibility predicate. A notice an administrator took down is not publicly readable: the list, the detail/permalink read (`404`, same as missing), comments and the rotator drop it, and its feed item is hidden. Archiving is unchanged; a taken-down notice is dropped from the archived list as well.
+- **Moderation queue:** Hide, Restore and Dismiss now act on announcement reports instead of every action being recorded as a dismiss. A report on the notice's feed item takes the same path.
+- **Additive:** bell types and preferences `bcc_announcement_hidden` and `bcc_announcement_restored` (default on, in-app only). See `GET /me/notification-prefs` for the verbatim copy.
+- **Unchanged:** reports never hide a notice by themselves, and the auto-hide threshold still excludes announcements.
+- **Clients:** render the new bell rows like any other. A permalink that now `404`s needs no special handling.
+
+### v1.143 — 2026-11-12 — additive — a member's role in each group on their profile
+
+Ships with bcc-trust #671.
+
+- **Additive (§3.1 `MemberProfile.halls`, full profile only):** `role` (`owner|moderator|member`), `role_label` and `type` (the group kind: `hall|user|system|nft|validator`) per row — the §4.7.7 roster vocabulary, now one shared helper. Shown only where the viewer could already see that group's roster (the member themself, an open group — Halls included only when open, or a group the viewer is an active member of; the same rule as the group page's `members_visible`); otherwise both `null`. `null` too when the membership could not be read.
+- **Clients:** render a badge from `role_label` when it is non-null; render nothing when it is null (never infer a role).
+
+### v1.142 — 2026-11-12 — additive — the post and comment author carries the trust score
+
+Ships with bcc-trust #663. Version number to be assigned at merge.
+
+- **`FeedAuthor` (§3.3) and `CommentAuthor` (§3.5):** new `trust_score` (`int`, 0–100), the same number the profile shows (one server display rule), so a post card can render e.g. "TRUSTED 72" from `reputation_tier_label` + `trust_score`. Batched per page. **Optional for one release**: render the tier alone when it is absent.
+
+### v1.141 — 2026-11-12 — additive + behaviour change — cards and the profile Groups tab carry the group page's join verdict (F-244)
+
+Ships with bcc-core #115 (batched membership-status read) and bcc-trust #667. Deploy core #115 first.
+
+- **Additive (§3.2.4):** `community_dossier.can_join`, `.can_request_join`, `.viewer_membership_status` — computed by the same logic as the group detail (§4.7.5). New list-only reason codes: `verify_on_join` (holder group in a list: Join verifies the wallet) and `unavailable` (membership unreadable: never offer Join). Discovery (§4.7.4) and the detail page's hero card both fill them.
+- **Behaviour change (§4.7.2):** the profile Groups tab's `can_join` / `can_leave` are the **viewer's** verdict from the same logic, on every profile. `can_leave` no longer answers `not_self` — a viewer who is in the group can leave it from the tab, and the group's owner gets `owner_cannot_leave`. Rows gain `viewer_membership_status` and `permissions.can_request_join`.
+- **Clients:** render the JOIN cell from `community_dossier.can_join` (and Request/Requested/Invited from `can_request_join` / `viewer_membership_status`) instead of deriving it from `privacy` / `type` / `trust_min`.
+
+### v1.140 — 2026-11-12 — behaviour change + additive — notifications open the post
+
+Scope: the notification view-model (`GET /me/notifications`) and the mention/comment push `url`.
+
+- **Behaviour change:** `bcc_reaction`, `bcc_mention` and `bcc_comment_received` rows link to **`/post/<act_id>`**, the post's permalink (backed by `GET /feed/{id}`). They linked `/?focus=<act_id>`, which no client route reads, so all three of the most common notifications dead-ended on the Floor. The single-mention and comment **push** `url`s change the same way.
+- **Additive:** every notification item now carries **`target_available`** (bool). It is `false` only when a post-linked row's post is **known** to be gone (deleted, unpublished, moderation-hidden); a failed availability read leaves it `true`. Clients SHOULD show "this post is no longer available" for `false` instead of navigating.
+- **Clients:** follow `link` as before; nothing needs to parse it. A client still special-casing `?focus=` can drop that code.
+- ⚠ **Coordination:** ships with bcc-trust F-245 (`fix/f245-notification-post-links`); that PR merges first. The frontend half (rendering `target_available: false`) is public-cb's.
+### v1.139 — 2026-11-12 — additive + behaviour change — a wallet-signup email counts once verified; when a recovery email can be added (F-332)
+
+Ships with bcc-trust #658. Version number assigned at merge.
+
+- **Behaviour change:** `GET /wallets` → `recovery.has_recovery_email` is `false` while the email is pending its verification code (`_bcc_email_verified='0'`): an address typed at wallet sign-up counts only once `POST /auth/verify-email` confirms it. The same definition drives the `DELETE /wallets/{id}` last-recovery-method guard and `POST /me/account/recovery-email`'s first-email check (so a pending typo can be replaced there). Legacy accounts with no flag are unaffected.
+- **Additive:** `recovery.available_at` (ISO-8601 UTC or `null`) and `recovery.available_reason` (`"signup_wallet" | "wallet_age" | null`).
+- **Clients:** after a wallet sign-up that included an email, show the code step and call `POST /auth/verify-email`; use `available_at` / `available_reason` to say when a recovery email can be added.
+
+### v1.138 — 2026-11-12 — behaviour change — a refresh retires the token it replaced after 120 seconds (F-282)
+
+Ships with bcc-trust #662. Version number assigned at merge.
+
+- **`POST /auth/refresh`:** the presented token keeps working for 120 s after a successful refresh, then gets `bcc_unauthorized` 401 everywhere. Shape unchanged. **Clients:** use the returned token; no new handling.
+
+### v1.137 — 2026-11-12 — behaviour change (security) + additive — a collection holder can never claim its page; every claim 403 names its reason
+
+Scope: §4's `POST /bcc/v1/pages/:id/claim` errors only: one new refusal cause, and one new field (`error.data.reason`) on this route's 403s. No route, envelope or view-model changes.
+
+- **New cause of `bcc_forbidden` 403:** a wallet that only **holds** the collection is refused with `Holding an NFT doesn't make you this collection's creator.` Nothing is recorded: no claim row, no page mirror, no `bcc_page_claimed`, no change of page owner.
+- **Why:** collection claims had never worked (a wrong class name in the role lookup made every one "no match"). Fixing that alone would have let any holder of one token claim an unowned collection page, because this route mirrors a successful claim as the page's exclusive claim and an unowned page passes to its first claimant. Holding is not owning; holder status is served by the holder-group flows.
+- **Collection CREATOR claims start working with this release.** They never could before: every collection claim failed as "no match". A collection's **creator** can now claim its page (200, role `creator`), as §B5 always intended. Creator status is checked across the caller's wallets on the collection's chain (at most **3** per attempt, since each check is a live on-chain call), so a holder wallet does not shadow a creator wallet. ⚠ **EVM collections only:** Solana creator verification is not implemented (it always answers "not the creator"), so a Solana collection page cannot be claimed yet.
+- **Additive: `error.data.reason` on every 403 of this route** — `suspended` | `entity_not_bound` | `not_operator` | `holder_not_owner`. The four causes share `bcc_forbidden`, and clients were left to guess from the message; a suspended member was told to try a different wallet. Branch on `reason`: only `not_operator` is a wallet problem; `suspended` is final.
+- **Fix behind the field:** `ClaimService`'s own suspension refusal used to fall through to the wallet-mismatch 403. It now returns the `suspended` 403 like the endpoint's gate.
+- **Clients:** show the server's `message`; never suggest another wallet unless `reason` is `not_operator`.
+- ⚠ **Coordination:** ships with bcc-trust F-303 (`fix/f303-collection-claim-query-class`). **That PR merges first.** bcc-frontend #263 already treats `reason: "suspended"` as final.
 ### v1.136 — 2026-11-12 — behaviour change — suspended members sign in read-only; `can_claim`
 
 Ships with bcc-trust's F-305/F-301 change. User decision 2026-11-12.
