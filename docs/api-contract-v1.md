@@ -2077,7 +2077,7 @@ Requests a password-reset email. **Always returns `ok: true`** regardless of whe
 - **Errors:**
   - `bcc_invalid_request` 422 — missing/malformed email field.
   - `bcc_rate_limited` 429 — IP throttle tripped.
-- **Rate limit:** IP-bucketed `FORGOT_PASSWORD_RATE_LIMIT`/hour (default 3) — caps email-bomb spam against any single inbox from one source.
+- **Rate limit:** *(since v1.NEXT, F-290)* `FORGOT_PASSWORD_RATE_LIMIT` = **20/hour per network** (IPv4 /24, IPv6 /48 — office scale, so members behind one NAT don't share 3 resets an hour) **and** `FORGOT_PASSWORD_EMAIL_RATE_LIMIT` = **3/hour per email address** (caps mail to any one inbox from anywhere). The per-address key is a hash of the normalized email, checked before the account lookup, so it behaves the same whether or not an account exists. Was 3/hour per network.
 - **Cache:** `Cache-Control: no-store`
 - **Side effects (only when email matches a real user):**
   - `get_password_reset_key($user)` writes the WP-native reset key into `user_activation_key` (24h TTL via the `password_reset_expiration` filter — WP default).
@@ -2107,7 +2107,7 @@ Consumes a reset key issued by `/auth/forgot-password` and sets a new password. 
   - `bcc_weak_password` 422 — password shorter than `SIGNUP_MIN_PASSWORD_LENGTH` (8).
   - `bcc_invalid_reset_token` 400 — key is expired, single-use already consumed, or never existed. Generic for both "expired" and "wrong key" to avoid leaking which failed.
   - `bcc_rate_limited` 429 — IP throttle tripped.
-- **Rate limit:** IP-bucketed `RESET_PASSWORD_RATE_LIMIT`/hour (default 10) — defense in depth against key brute force; WP keys are ~20 random chars so this is bug-or-misuse insurance, not an active budget.
+- **Rate limit:** *(since v1.NEXT, F-290)* `RESET_PASSWORD_RATE_LIMIT` = **30/hour per network** (was 10) — abuse insurance; reset keys are ~20 random characters and single-use.
 - **Cache:** `Cache-Control: no-store`
 - **Side effects:**
   - `reset_password($user, $password)` hashes the new password, clears `user_activation_key` (single-use), fires the `password_reset` action — other plugins listening invalidate sessions for this user.
@@ -2150,7 +2150,7 @@ First factor of the password login. Validates credentials, then **always** initi
   ```
   No JWT here. The client routes to the 2FA code screen and completes `/auth/2fa/verify` with the `challenge_token` (10-min TTL) + the 6-digit code emailed to the account (5-min TTL).
 - **Errors:** `bcc_invalid_request` 422 (missing identifier or empty password) · `bcc_invalid_credentials` 401 (user-not-found OR wrong password — generic, anti-enumeration; identical for email- and handle-shaped identifiers) · `bcc_email_not_verified` 403 · `bcc_invalid_state` 409 (account has no handle) · `bcc_rate_limited` 429
-- **Rate limit:** IP-bucketed, 5 / 60s (before the bcrypt compare)
+- **Rate limit:** *(since v1.NEXT, F-290)* **20/min per network** (was 5; before the bcrypt compare). Guessing against one account is bounded by the per-identifier buckets (F-281: 20/15 min per typed identifier per network, 100/15 min per typed identifier, trusted networks exempt from the latter).
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** reads `wp_users` by email or by login (`u_<handle>` via `AuthSupport::deriveLogin`) + `wp_check_password`, reads `bcc_handle` + `_bcc_email_verified`, registers the challenge token (`bcc_2fa_ct_<token>`, 10-min transient) as the user's one live challenge (`bcc_2fa_current_<userId>`, superseding — and dropping the code of — any earlier one; since v1.97) and stores an HMAC-hashed 2FA OTP bound to it (`bcc_2fa_otp_<first 40 hex of sha256(token)>`, 5-min transient), emails the code (`AuthMailer::send2faCode`), emits the `user_login_2fa_initiated` audit log. No auth cookie, no JWT. Handler `PasswordAuthController::login`. Standard envelope per §1.4.
 
@@ -2282,7 +2282,7 @@ Confirms email ownership and completes signup via either an OTP code or a one-sh
   OTP `code` = 6-digit email code (15-min TTL); `token` = self-identifying single-use link token (24-h TTL). The handler requires either `token` or both `email` and `code`.
 - **Response 200:** identical shape to `/auth/login` (`{ user_id, handle, token, expires_in, token_type, in_good_standing }`) so the frontend treats both uniformly, **plus `linked_wallet_count: int` (since v1.90)** — how many wallets are linked to the account whose email was just proven. When it is `> 0` the client asks "this account has a wallet linked — is it yours?", listing them with `GET /wallets` (using the fresh `token`) and removing one with `DELETE /wallets/{id}`. A count only: no wallet detail rides this auth response. If the wallet read fails the count is `0` and verification still succeeds (the prompt is advisory; wallets stay reviewable in Settings) — so **`0` can mean "read failed"**: a client must never take a destructive or irreversible action on `linked_wallet_count: 0`.
 - **Errors:** `bcc_invalid_request` 422 (neither token nor email+code) · `bcc_invalid_verify_token` 400 (token expired/used) · `bcc_invalid_otp` 400 (email unknown — generic; or code wrong/expired) · `bcc_already_verified` 409 (OTP path only) · `bcc_invalid_state` 409 (no handle) · `bcc_rate_limited` 429 · `bcc_internal_error` 500
-- **Rate limit:** IP-bucketed, 10 / 3600s
+- **Rate limit:** *(since v1.NEXT, F-290)* **30/hour per network** (was 10). Guessing is bounded by the per-code cap (5 wrong tries, then the code burns).
 - **Attempt cap (since v1.105, F-48):** at most **5 wrong codes per (account, current code)**; the 5th burns that code. Because a correct code signs the caller in, the per-IP bucket alone did not bound guesses spread across addresses. The answer stays the generic `400 bcc_invalid_otp` "Invalid or expired code." (no new code, no enumeration signal); the user requests a new code via `/auth/resend-verification`, which starts a fresh count, or uses the emailed link — the **token path is not capped and not affected**.
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** token path consumes the `bcc_vt_<token>` transient (single-use); OTP path resolves by email, checks `_bcc_email_verified`, timing-safely (`hash_equals`) consumes the HMAC-hashed `bcc_otp_<userId>` transient. Both converge on `finalizeVerification` → sets `_bcc_email_verified='1'`, sets the auth cookie, **revokes every earlier bearer token for the account (JWT token-version bump, since v1.88)**, mints the JWT, emits `email_verified` audit, fires `do_action('bcc_email_verified', …)`. The revocation means a session held by whoever created the account before the address was proven does not survive the inbox owner's verification; the returned token is the caller's working session and must be stored. Handler `AuthEndpoint::verifyEmail` (route `AuthEndpoint.php:487`). Standard envelope per §1.4.
@@ -2295,7 +2295,7 @@ Re-sends a fresh verification OTP + link to an unverified account. Always return
 - **Body:** `{ "email": "alice@example.com" }`
 - **Response 200:** `{ "ok": true }` (identical whether or not the email matches an account)
 - **Errors:** `bcc_invalid_request` 422 (missing/malformed email) · `bcc_rate_limited` 429
-- **Rate limit:** IP-bucketed, 3 / 3600s
+- **Rate limit:** *(since v1.NEXT, F-290)* **20/hour per network** (was 3) **and 3/hour per email address** (normalized-email hash, checked before the lookup — the same whether or not an account exists).
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** resolves by email; only when `_bcc_email_verified` is `'0'` (pending) **or `''` (legacy, never verified — since v1.88)** and the address is not a wallet placeholder (`@noreply.bcc.local`), generates + stores a fresh HMAC-hashed OTP (overwriting the prior `bcc_otp_<userId>` transient) + verify token, then dispatches the email. Already-verified accounts and placeholders are silently skipped. A legacy account uses this to verify and so become eligible for OAuth link-by-email (`/auth/oauth-complete` → the anti-pre-registration gate). Handler `AuthEndpoint::resendVerification` (route `AuthEndpoint.php:521`). Standard envelope per §1.4.
 
@@ -9092,6 +9092,12 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-12 — behaviour change — anonymous auth limits are office-scale per network, tight per address (F-290)
+
+Ships with bcc-trust #676. Version number assigned at merge.
+
+- `POST /auth/forgot-password` and `POST /auth/resend-verification`: 20/hour per network (was 3) plus 3/hour per email address. `POST /auth/verify-email` and `POST /auth/reset-password`: 30/hour per network (was 10). `POST /auth/login`: 20/min per network (was 5). 2FA: unchanged. Same `bcc_rate_limited` 429. **Clients:** none.
 
 ### v1.138 — 2026-11-12 — behaviour change — a refresh retires the token it replaced after 120 seconds (F-282)
 
