@@ -5621,6 +5621,7 @@ Read the attestation roster for an entity.
   Self-only views (e.g. an operator querying their own
   attestation surface) MAY include the weights — that's a future
   endpoint, not in V1 scope.
+- **Attestor visibility (v1.NEXT, F-356):** an item is **omitted** when the viewer may not see its attestor's profile — the profile gate (`ProfileAccess::canViewProfile`: the attestor's profile privacy level for this viewer, and suspension; the attestor and admins always pass). So an anonymous visitor never gets the handle, name, avatar or score of an attestor whose profile is private to signed-out viewers. **Display only:** `summary` counts and every score still include every attestation. `hide_from_search` does **not** hide an attestor here (it hides a member from search and the directory). No shape change; a page may hold fewer items than `per_page`. The profile vouch line's `top_vouchers` (§4.4) applies the same rule.
 - **Cache:** `private, max-age=30`. Underlying read model is generation-counter invalidated by `POST` / `DELETE` against the same target.
 
 #### §J.5 `GET /bcc/v1/me/reliability`
@@ -9181,6 +9182,13 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-12 — behaviour change (privacy) — rosters and "Top vouched by" omit attestors the viewer may not see
+
+Ships with bcc-trust #683 (F-356). Version number to be assigned at merge.
+
+- **`GET /entities/:target_kind/:target_id/attestations`:** an attestor whose profile the viewer may not see (profile privacy level, suspension) is omitted from `items`. Before, anonymous visitors got the handle, name, avatar and score of attestors with profiles private to them. `summary` and all scores are unchanged (display only); `hide_from_search` is not applied. No shape change.
+- **`GET /users/:handle` `top_vouchers`:** the same rule (candidates the viewer may not see are skipped; up to 3 visible ones are returned).
 
 ### v1.148 — 2026-11-12 — additive + fix — the handle cooldown is readable before submit, and its Retry-After is the real wait
 
