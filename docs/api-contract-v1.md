@@ -2515,6 +2515,9 @@ Full User view-model.
   - `progression` ← `RankStateService::progressionFor` (§2.5 — same builder as `GET /me/progression`, §4.8)
   - `capabilities` ← `RankStateService::capabilitiesBlock` (§2.6; replaced `feature_access` at v1.59)
   - `wallets` ← `bcc_wallet_links`
+  - `vouched_by_watched_count` / `top_vouchers` *(v1.NEXT, F-340 — the trust header's vouch line)* ← active **`vouch`** attestations on this member's profile (`target_kind = user_profile`; a "back" / `stand_behind` is NOT counted). Only vouches the public attestation roster also shows, and fewer: the attestor exists, is not suspended, and has not hidden their real name.
+    - `vouched_by_watched_count: int | null` — **signed in, someone else's profile:** how many of the people the viewer watches (follows) vouch for this member, exact and uncapped; an attestor mutually blocked with the viewer is not counted. `0` → hide the line ("Vouched for by N people you watch"). `null` on your own profile, for anonymous viewers, and when the read failed (unknown: never a wrong number).
+    - `top_vouchers: list<{ handle, display_name, avatar_url }>` (≤ 3) — **signed out only** ("Top vouched by [avatars]"): the eligible vouchers, highest trust score first, then the newest vouch. `[]` → hide the line (also when there are no vouches, and on a failed read). Always `[]` for signed-in viewers. No wallet data.
   - `primary_hall`, `halls` ← `peepso_group_members` (joined to `peepso_groups`; single graph rule) + `bcc_primary_hall_group_id` usermeta for the primary pointer
 - **Profile-page extension:** the response also carries the
   `MemberProfileComposer` extras shipped alongside §3.1: `user_id`
@@ -9087,6 +9090,12 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-12 — additive — the profile's vouch line: "Vouched for by N people you watch" / "Top vouched by"
+
+Ships with bcc-trust #674 (F-340). Version number to be assigned at merge.
+
+- **`GET /users/:handle`:** new `vouched_by_watched_count` (`int | null`, signed-in viewers on someone else's profile; `0` hides the line, `null` = not applicable or unknown) and `top_vouchers` (≤ 3 `{ handle, display_name, avatar_url }`, signed-out viewers only; `[]` hides the line). Both count active `vouch` attestations only, and only ones the public roster would show (no suspended or real-name-hidden attestors). See §4.4.
 
 ### v1.136 — 2026-11-12 — behaviour change — suspended members sign in read-only; `can_claim`
 
