@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.141 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.142 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1282,6 +1282,7 @@ Feed items share an envelope and vary by `post_kind`.
     "avatar_url": "https://bluecollar.crypto/wp-content/uploads/2026/04/simontx-avatar.jpg",
     "rank_label": "Journeyman",
     "reputation_tier": "trusted",
+    "trust_score": 72,
     "is_operator": false,
     "viewer_attestation": { "vouch": { "id": 5012, "created_at": "2026-06-20T09:00:00Z" }, "stand_behind": null },
     "can_vouch": { "allowed": true, "unlock_hint": null }
@@ -1322,6 +1323,7 @@ Feed items share an envelope and vary by `post_kind`.
   - **No server-side ranking is applied based on this field in v1.** The Floor feed continues to order strictly by recency. The `group` block is metadata for badge rendering and (optional) client-side prioritization. A scored ranking layer is deferred until usage telemetry exists to tune it honestly.
   - **Mapping:** `peepso_group_id` post-meta on the activity's wp_post (PeepSo writes this when a status post is created inside a group) → `GroupContextResolver::forManyGroups`. Batched per page; no N+1.
 - V1 author block is **user-only** — every post in V1 is authored by a WP user (status, review, watch_batch, page_claim, dispute_signed, blog). System-emitted signals (§3.3.5) currently ride the same shape with the system actor's user_id; their `post_kind` discriminates them, not the author block.
+- `author.trust_score` *(v1.142, additive)* — the author's trust score, `int` 0–100: **the same number the profile hero shows** (`User.trust_score` / Card `trust_score`, one server-side display rule: clamped to 0–100, rounded). With `reputation_tier_label` it renders e.g. "TRUSTED 72". Batched per page (one bounded read for all of the page's authors). Optional for one release: an older payload omits it, and the client then shows the tier alone. Same field on `FeedAuthor` (§3.3) and `CommentAuthor` (§3.5).
 - `author.is_operator` — true when the author holds a verified operator/creator claim on any entity (per §N8). Drives the OPERATOR chip next to the author name.
 - `author.viewer_attestation` + `author.can_vouch` — **authed-only**, the per-author **Vouch toggle** state next to the byline (vouch is *author credibility*, not a post reaction). `viewer_attestation` is the viewer's own active attestation on this author's self-page (`{ vouch: {id,created_at}|null, stand_behind: {id,created_at}|null }`, reused from the §3.2 card shape); `can_vouch` is `{ allowed, unlock_hint }` (self/below-Neutral come back `allowed=false`). **Both fields are OMITTED for anonymous viewers** (the anon feed payload is unchanged; the sign-in CTA lives on the profile cluster, not every byline). Because the vouch targets the *author* (one vouch per person, full-weight via `POST /bcc/v1/me/attestations` `{kind:'vouch', target_kind:'user_profile', target_id: author.id}`), the toggle reads identically wherever that author appears — feed bylines and commenter names alike. Batched server-side across the page's distinct authors (no N+1).
 - `attached_card` is omitted (not `null`) when no card is attached.
@@ -1722,6 +1724,7 @@ The `Comment` view-model used by §4.13 endpoints. One row per visible comment o
     "handle":       "simontx",
     "display_name": "Simon TX",
     "avatar_url":   "https://bluecollar.crypto/wp-content/uploads/2026/05/simontx-avatar.jpg",
+    "trust_score":  72,
     "viewer_attestation": { "vouch": null, "stand_behind": null },
     "can_vouch":    { "allowed": true, "unlock_hint": null }
   },
@@ -1742,6 +1745,7 @@ The `Comment` view-model used by §4.13 endpoints. One row per visible comment o
 **Field rules:**
 
 - `id` and `comment_id` are the same opaque identifier (the duplicate `comment_id` is for symmetry with §4.13 DELETE which takes the id as a path param). Form: `comment_<int>`. Treat as opaque.
+- `author.trust_score` *(v1.142, additive)* — as on the §3.3 FeedItem author: the profile's 0–100 trust score, optional for one release.
 - `feed_id` echoes the **parent post's** feed_id, not the comment's own — useful for re-resolving the parent if the drawer was deep-linked. Form: `feed_<int>`.
 - `body` is server-sanitized (PeepSo's `htmlspecialchars` + `strip_content`); the frontend SHOULD render plain text only and respect newlines but NOT trust HTML entities. The raw wire format `@peepso_user_<id>(name)` may appear in `body`; clients MUST overlay `mentions[]` to render those tokens as `<Link href="/u/:handle">@displayName</Link>` — see §3.3.12 invariant.
 - `mentions` is the §3.3.12 `Mention[]` overlay extracted from the raw `body`. Range offsets reference raw stored content. Always present (`[]` when no mentions). V1d does NOT ship the comment-composer autocomplete picker — the array is still populated for any wire tokens authored via PeepSo's native UI or hand-typed by power users.
@@ -9115,6 +9119,12 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.142 — 2026-11-12 — additive — the post and comment author carries the trust score
+
+Ships with bcc-trust #663. Version number to be assigned at merge.
+
+- **`FeedAuthor` (§3.3) and `CommentAuthor` (§3.5):** new `trust_score` (`int`, 0–100), the same number the profile shows (one server display rule), so a post card can render e.g. "TRUSTED 72" from `reputation_tier_label` + `trust_score`. Batched per page. **Optional for one release**: render the tier alone when it is absent.
 
 ### v1.141 — 2026-11-12 — additive + behaviour change — cards and the profile Groups tab carry the group page's join verdict (F-244)
 
