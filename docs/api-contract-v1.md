@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.146 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.147 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2140,6 +2140,7 @@ Consumes a reset key issued by `/auth/forgot-password` and sets a new password. 
   - `reset_password($user, $password)` hashes the new password, clears `user_activation_key` (single-use), fires the `password_reset` action — other plugins listening invalidate sessions for this user.
   - `AccountSecurityMailer::passwordChanged($userId)` canary email (same one fired by the in-app password change in `/me/account`).
   - `AuditLogger::log('password_reset_completed', $userId, [], 'user', $userId)`.
+  - **Confirms a pending email sign-up (since v1.147, F-287):** the reset key reached `user_email` and came back, so an account created by email sign-up that is still unconfirmed (`_bcc_email_verified='0'`, a password, no wallet or OAuth link) is marked confirmed, its pending code is burned and `bcc_email_verified` fires. The next `/auth/login` no longer answers `bcc_email_not_verified`. ⚠ A wallet or OAuth account is **not** confirmed by a reset: its email may be one someone else typed.
 
 #### `POST /bcc/v1/auth/signup`
 
@@ -2156,7 +2157,8 @@ Creates an email/password account with a public handle. Mints no JWT — the acc
   { "ok": true, "email": "alice@example.com" }
   ```
   Deliberately carries **no JWT** — the frontend routes to `/verify-email?email=…`.
-- **Errors:** `bcc_invalid_request` 400 (missing/malformed email or password < 8) · `bcc_invalid_handle` 422 (fails §B6) · `bcc_handle_reserved` 422 · `bcc_conflict` 409 (handle taken or email already registered) · `bcc_rate_limited` 429 · `bcc_internal_error` 500 (`wp_insert_user` failure)
+- **Errors:** `bcc_invalid_request` 400 (missing/malformed email or password < 8) · `bcc_invalid_handle` 422 (fails §B6) · `bcc_handle_reserved` 422 · `bcc_conflict` 409 (handle taken or email already registered; since v1.147 the message adds that an unconfirmed sign-up frees up after 7 days) · `bcc_rate_limited` 429 · `bcc_internal_error` 500 (`wp_insert_user` failure)
+- **Unconfirmed sign-ups free up after 7 days (since v1.147, F-285):** an account created by email sign-up that was never confirmed (`_bcc_email_verified='0'`, a password, no wallet or OAuth link, registered more than 7 days ago) no longer holds its handle or email. A sign-up that wants either deletes it first (audited as `abandoned_signup_reclaimed`, by user id only). Such an account can never have signed in. Wallet, OAuth and confirmed accounts are never touched.
 - **Rate limit:** IP-bucketed, 5 / 60s (before any DB write)
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** writes a `subscriber` `wp_users` row (`wp_insert_user`, internal login `u_<handle>`), sets `bcc_handle` + `_bcc_email_verified='0'`, stores an HMAC-hashed 6-digit OTP (15-min transient) + single-use verify token (24-h transient), dispatches the verification email (`AuthMailer::sendVerificationEmail`, best-effort — a mail failure does NOT roll back the account), emits the `user_signup` audit log, fires `do_action('bcc_user_signup', …)`. Handler `AuthEndpoint::signup` (route `AuthEndpoint.php:229`). Standard envelope per §1.4.
@@ -9177,6 +9179,14 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.147 — 2026-11-12 — behaviour change — unconfirmed sign-ups free up after 7 days; a password reset confirms a pending email sign-up
+
+Ships with bcc-trust #675 (F-285, F-287). Version number assigned at merge.
+
+- **`POST /auth/signup`:** an email sign-up never confirmed within 7 days stops holding its handle and email; the next sign-up for either deletes it. The handle and email `409` messages now say so (codes unchanged).
+- **`POST /auth/reset-password`:** a successful reset confirms a still-pending **email** sign-up, so the following sign-in works. Wallet and OAuth accounts are unchanged.
+- **Clients:** none required. Show the 409 message as given.
 
 ### v1.146 — 2026-11-12 — behaviour change — watch state can be unknown; suggestions never offer someone already followed
 
