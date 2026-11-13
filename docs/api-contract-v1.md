@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.142 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.143 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -946,7 +946,7 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
   // Before v1.127 it was unfiltered and ignored the viewer entirely.
   // `primary_hall` above is derived from this list, which is why Halls
   // survive the toggle.
-  // v1.NEXT: each row carries the MEMBER's role in that group —
+  // v1.143: each row carries the MEMBER's role in that group —
   // `role` ∈ "owner"|"moderator"|"member" (manager reads as moderator)
   // and the server-rendered `role_label` (the §4.7.7 roster vocabulary,
   // filterable via `bcc_group_role_labels`). Shown ONLY where this viewer
@@ -9135,7 +9135,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-12 — additive — a member's role in each group on their profile
+### v1.143 — 2026-11-12 — additive — a member's role in each group on their profile
 
 Ships with bcc-trust #671.
 
