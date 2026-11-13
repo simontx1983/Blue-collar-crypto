@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.142 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.143 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -946,9 +946,24 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
   // Before v1.127 it was unfiltered and ignored the viewer entirely.
   // `primary_hall` above is derived from this list, which is why Halls
   // survive the toggle.
+  // v1.143: each row carries the MEMBER's role in that group —
+  // `role` ∈ "owner"|"moderator"|"member" (manager reads as moderator)
+  // and the server-rendered `role_label` (the §4.7.7 roster vocabulary,
+  // filterable via `bcc_group_role_labels`). Shown ONLY where this viewer
+  // could already see that group's roster — the group page's own rule
+  // (§4.7.7 / `members_visible`): on the member's own profile, for an OPEN
+  // group (Halls included when open), or for a group the viewer is an
+  // active member of. A closed or secret group — a closed Hall too — shows
+  // a non-member no role. Everywhere else both are null (render no badge) —
+  // a profile never reveals who moderates a closed or secret group. Also null when
+  // the membership could not be read (never a guessed role). Each row
+  // also carries `type` (hall | user | system | nft | validator) — the
+  // group kind, so a client can show Halls apart from other groups
+  // without guessing from a name or slug. Present on GET /users/:handle
+  // (the full profile) only; summary payloads omit role, role_label, type.
   "halls": [
-    { "id": 12, "slug": "cosmos-hall", "name": "Cosmos Hall", "is_primary": true },
-    { "id": 18, "slug": "osmosis-hall", "name": "Osmosis Hall", "is_primary": false }
+    { "id": 12, "slug": "cosmos-hall", "name": "Cosmos Hall", "is_primary": true, "role": "moderator", "role_label": "MODERATOR", "type": "hall" },
+    { "id": 18, "slug": "osmosis-hall", "name": "Osmosis Hall", "is_primary": false, "role": "member", "role_label": "MEMBER", "type": "hall" }
   ],
   // OWN-ACCOUNT ONLY. This array is populated exactly as shown when
   // `is_self` is true, and is `[]` for every other viewer (see §3.1
@@ -9119,6 +9134,13 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.143 — 2026-11-12 — additive — a member's role in each group on their profile
+
+Ships with bcc-trust #671.
+
+- **Additive (§3.1 `MemberProfile.halls`, full profile only):** `role` (`owner|moderator|member`), `role_label` and `type` (the group kind: `hall|user|system|nft|validator`) per row — the §4.7.7 roster vocabulary, now one shared helper. Shown only where the viewer could already see that group's roster (the member themself, an open group — Halls included only when open, or a group the viewer is an active member of; the same rule as the group page's `members_visible`); otherwise both `null`. `null` too when the membership could not be read.
+- **Clients:** render a badge from `role_label` when it is non-null; render nothing when it is null (never infer a role).
 
 ### v1.142 — 2026-11-12 — additive — the post and comment author carries the trust score
 
