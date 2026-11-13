@@ -9187,14 +9187,14 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ### v1.150 — 2026-11-12 — behaviour change (privacy) — rosters and "Top vouched by" omit attestors the viewer may not see
 
-Ships with bcc-trust #683 (F-356). Version number to be assigned at merge.
+Ships with bcc-trust #683 (F-356).
 
 - **`GET /entities/:target_kind/:target_id/attestations`:** an attestor whose profile the viewer may not see (profile privacy level, suspension) is omitted from `items`. Before, anonymous visitors got the handle, name, avatar and score of attestors with profiles private to them. `summary` and all scores are unchanged (display only); `hide_from_search` is not applied. No shape change.
 - **`GET /users/:handle` `top_vouchers`:** the same rule (candidates the viewer may not see are skipped; up to 3 visible ones are returned).
 
 ### v1.149 — 2026-11-12 — behaviour change — protected routes say whether a bearer token expired or is dead (F-288)
 
-Ships with bcc-trust #673. Version number assigned at merge.
+Ships with bcc-trust #673.
 
 - A 401 `bcc_unauthorized` on a route that requires sign-in (except `POST /auth/refresh`, whose refusal stays `bcc_unauthorized`) becomes **`bcc_token_expired`** (the presented token only expired — refresh and retry) or **`bcc_token_invalid`** (malformed, revoked, signed out, superseded, deleted account — sign out), per §1.4.3. No token presented: unchanged. Public routes: unchanged (anonymous view). **Clients:** the existing "refresh on 401, then classify" path keeps working; these codes let a client skip the refresh for `bcc_token_invalid`.
 
