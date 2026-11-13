@@ -9224,12 +9224,13 @@ Ships with bcc-trust's F-341 PR 1.
 - **`GET /users/:handle` — additive `sections` block:** `{about, verifications, halls, operator, blogs, reviews, disputes}` → bool. Read it to decide which tabs to render.
 - **`GET /users/:handle` — behaviour change, narrowing.** For a non-owner, a hidden section returns a **documented empty** — never an omitted key and never a 403. A missing key breaks client shape, and a refusal would itself disclose that something is being withheld:
   - `about` hidden → `bio: null`
-  - `verifications` hidden → every claim `false`, usernames `null`, `wallets_verified: 0`
+  - `verifications` hidden → every claim `false`, usernames `null`, `wallets_verified: 0`, and `profile_completeness: 0` on the profile payload's richer block. ⚠ Every key the server zeroes is listed here on purpose: the "fixed shape" promise is only worth anything if it is exhaustive, so a client never has to guess which keys survive a hidden section
   - `operator` hidden → `owned_pages_count: 0`, and `owned_pages_by_type` with **all four keys at `0`** (`validator`/`project`/`nft`/`dao`) — ⚠ **not** `{}`: the shape is fixed, so a client never has to special-case a second shape
   - `blogs` hidden → `counts.blog_posts_written: 0`
   - `halls` hidden → unchanged from v1.127
 - ⚠ **`verifications` and `operator` are narrowed on the MEMBER CARD too** (`member_dossier`), because the card carries the same resolved block. The same fact on two surfaces is narrowed in one place deliberately; narrowing only the profile would leave it readable on the card.
 - ⛔ **NOT YET A COMPLETE BOUNDARY.** PR 1 enforces the profile **payload**. The per-user **tab routes** are **PR 2**; per-Hall hiding (`hidden_hall_ids`) is **PR 3**. Until PR 2 ships, a hidden section is still reachable by calling its own route.
+  - ⚠ **Concretely, and this version will probably ship BEFORE PR 2:** `sections.blogs = false` hides the tab and zeroes `counts.blog_posts_written`, but **`GET /users/:handle/blog` is only gated from PR 2's version onwards** — until then it still returns the posts. Do **not** read this entry as a full hide. PR 2's own entry removes this caveat when the route gate lands.
 - **Clients:** read `sections` for tab rendering; expect documented empties rather than missing keys; and do **not** present `show_reviews_on_profile` / `show_disputes_on_profile` as separate from the §K2 privacy toggles — they are the same setting under a second name.
 
 ### v1.148 — 2026-11-12 — additive + fix — the handle cooldown is readable before submit, and its Retry-After is the real wait
