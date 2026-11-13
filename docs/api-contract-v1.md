@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.136 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.139 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2059,6 +2059,7 @@ Verifies a signed nonce, creates a new user (placeholder email if none supplied)
 - **Cache:** `Cache-Control: no-store`
 - **Side effects:** sets `wp_set_auth_cookie`, fires `bcc_wallet_verified` (seeds trust-engine + onchain-signals rows just like `verifyAndLink`), emits `user_signup` audit row, fires `bcc_user_signup` action. **Note:** does NOT emit the `bcc_first_wallet_link` celebration on the response — celebration delivery for wallet-signup is reserved for a future contract revision.
 - **Email state (changed in v1.88):** sets `_bcc_email_verified='0'` — a wallet signature proves control of the wallet, not of the inbox. A **caller-supplied** email gets the standard verification email (OTP + one-shot link, completed via `POST /auth/verify-email`) once the wallet link commits; a **placeholder** gets none and stays `'0'`. Previously this route set `'1'` with no inbox proof, which let a wallet signup typed with someone else's address receive that person's later Google sign-in (see `/auth/oauth-complete` → the anti-pre-registration gate). `'0'` does not affect the user's own sign-in: they sign in with the wallet.
+- **The email becomes the recovery email once verified (since v1.139, F-332):** a member who gives an `email` here confirms it with the 6-digit code from that email through **`POST /auth/verify-email`** (`{ "email", "code" }`, the same route as email sign-up; or the email's one-shot link). Until then the address is pending: `GET /wallets` → `recovery.has_recovery_email` stays `false`, and `POST /me/account/recovery-email` may replace it (a typo). Once verified, `has_recovery_email` is `true`. A wrong or expired code changes nothing (request a new one with `POST /auth/resend-verification`).
 - **Race protection:** if a concurrent signup wins the wallet-link race between the `existsForOtherUser` check and the actual link write, the inserted user is rolled back (`wp_delete_user`) and `bcc_wallet_already_linked` is returned. No orphan user is left behind.
 
 #### `POST /bcc/v1/auth/forgot-password`
@@ -2218,6 +2219,7 @@ Silent-refresh seam: exchanges a recently-expired (or near-expiry) Bearer JWT fo
 - **Rate limit:** IP-bucketed, 30 / 60s
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** decodes via `JwtToken::decodeForRefresh`, re-reads `bcc_handle` from authoritative storage (a handle change since the original mint is reflected; the JWT payload is not trusted), mints a fresh JWT, emits the `token_refreshed` audit log. No cookie set, no DB mutation beyond the audit row. Handler `AuthEndpoint::refresh` (route `AuthEndpoint.php:292`). Standard envelope per §1.4.
+- **The old token is retired (since v1.138, F-282):** once a refresh succeeds, the token it replaced keeps working for **120 seconds** (`REFRESH_OVERLAP_SECONDS`) — so the session's other tabs and in-flight requests can switch to the new one — and then fails everywhere (authenticated routes, `GET /auth/session`, another `/auth/refresh`) with the usual `bcc_unauthorized` 401. Refreshing the same old token again within those 120 s returns another fresh token but never extends the old one's cutoff. Before, the old token stayed valid until its own expiry plus the 24-h grace, so a copy taken before the refresh — or one a sign-out never reached — outlived it by days. **Clients:** switch to the returned token (the frontend already does); a request still carrying the old one after 120 s gets 401 and takes the normal refresh path with its newer token.
 
 #### `GET /bcc/v1/auth/session`
 
@@ -3041,7 +3043,11 @@ Claims a validator/creator/project page using a wallet signature (§B5, §N8).
 - **Errors:** the complete set this route can emit, each with its HTTP status. Corrected and completed in **v1.86** against the implementation; see the changelog for what was wrong and why it mattered.
   - `bcc_unauthorized` **401** — not signed in.
   - `bcc_invalid_request` **400** — missing or malformed `page_id` or `entity_id`, or an `entity_type` outside the accepted set.
-  - `bcc_forbidden` **403** — two distinct causes behind one code: the entity is **not bound to this page**, or the caller's connected wallet **does not match the entity's operator** (§B5 — operator address + consensus pubkey only; delegators excluded).
+  - `bcc_forbidden` **403** — four distinct causes behind one code, each with its own message and, **since v1.137, a machine-readable `error.data.reason`** a client MUST branch on instead of the message:
+    - `suspended` — the account is suspended (`Your account is suspended.`). **Final**: no wallet or retry will help.
+    - `entity_not_bound` — the entity is **not bound to this page** (`That entity is not attached to this page.`).
+    - `not_operator` — the caller's connected wallet **does not match the entity's operator** (§B5 — operator address + consensus pubkey only; delegators excluded). The one cause where connecting a different wallet can help.
+    - `holder_not_owner` *(new in v1.137)* — the wallet only **holds** the collection (`Holding an NFT doesn't make you this collection's creator.`). Only an **operator** or **creator** can claim a page; a holder result records nothing.
     ⚠ **This replaces `bcc_permission_denied`, which this route has never emitted.** Measured against the implementation: the endpoint produces zero `bcc_permission_denied`, and its 403 is `bcc_forbidden`. Same defect class as the `/members` `bcc_validation` line corrected in v1.80 — a documented code no producer emits is a code a client would wait forever to see.
   - `bcc_not_found` **404** — the page does not exist or is not a `peepso-page`; **or (new in v1.86) the claimed entity itself could not be found.**
   - `bcc_conflict` **409** — the entity is already claimed by another user.
@@ -6038,11 +6044,18 @@ Returns the current user's linked wallets.
     "recovery": {
       "has_recovery_email": false,
       "verified_wallet_count": 1,
-      "has_password": false
+      "has_password": false,
+      "available_at": "2026-11-14T09:30:00Z",
+      "available_reason": "wallet_age"
     }
   }
   ```
-- **`recovery`** (account-recovery posture for the settings UI): `has_recovery_email` is `true` when a real, non-placeholder email is set (a `@noreply.bcc.local` wallet-signup placeholder reads as `false`); `verified_wallet_count` is the number of the user's verified wallets (wallets usable for wallet login). Together they drive the "set up a recovery method" banner and mirror the `DELETE /wallets/{id}` self-lockout guard (`bcc_last_recovery_method`): the account is at lockout risk when `has_recovery_email` is `false` and `verified_wallet_count <= 1`.
+- **`recovery`** (account-recovery posture for the settings UI): `has_recovery_email` is `true` when a real, non-placeholder email is set **and not pending its verification code** *(since v1.139, F-332: an email typed at wallet sign-up counts only after `POST /auth/verify-email` confirms it; a legacy account with no verification flag still counts)* (a `@noreply.bcc.local` wallet-signup placeholder reads as `false`); `verified_wallet_count` is the number of the user's verified wallets (wallets usable for wallet login). Together they drive the "set up a recovery method" banner and mirror the `DELETE /wallets/{id}` self-lockout guard (`bcc_last_recovery_method`): the account is at lockout risk when `has_recovery_email` is `false` and `verified_wallet_count <= 1`.
+- **`recovery.available_at`** / **`recovery.available_reason`** *(since v1.139, F-332)*: when **this session** can attach the account's first recovery email through `POST /me/account/recovery-email` — the same rules that route enforces. `available_at` is ISO-8601 UTC or `null`; `available_reason` is:
+  - `"signup_wallet"` — the wallet the account was created with may do it now (within 48 hours of sign-up): `available_at` = now;
+  - `"wallet_age"` — the earliest a verified wallet becomes established (verified 48h+ ago, before this sign-in): `available_at` = that time, or now if it has passed;
+  - `null` with `available_at: null` — the account already has a recovery email, or no verified wallet can qualify in this session (none linked, or every one verified after this sign-in: signing in again would help).
+  The value depends on the bearer token presented (its sign-in time), so read it from the session that will make the request.
 - **`recovery.has_password`** *(since v1.130, F-253)*: does the member know a password? `true` (they signed up with one, or have set or reset one since), `false` (a wallet or OAuth signup that never set one, or an older wallet signup still on its placeholder email), or **`null`** (unknown: an account from before v1.130 with a real email). It picks the confirmation the email / password / delete forms ask for: `true` **or `null`** → the current-password field only (an account that may have a password can't confirm with a wallet; a `null` account that never knew one sets it through forgot-password); `false` → the wallet signature (with `verified_wallet_count == 0` — a Google/X account with no wallet — point the member at forgot-password, which sets a real password).
 - **Errors:** `bcc_rate_limited` 429.
 - **Rate limit:** 30/min/user.
@@ -9097,6 +9110,32 @@ Ships with bcc-trust #674 (F-340). Version number to be assigned at merge.
 
 - **`GET /users/:handle`:** new `vouched_by_watched_count` (`int | null`, signed-in viewers on someone else's profile; `0` hides the line, `null` = not applicable or unknown) and `top_vouchers` (≤ 3 `{ handle, display_name, avatar_url }`, signed-out viewers only; `[]` hides the line). Both count active `vouch` attestations only, and only ones the public roster would show (no suspended attestors; a name-hidden voucher counts and shows as `@handle`). See §4.4.
 
+
+### v1.139 — 2026-11-12 — additive + behaviour change — a wallet-signup email counts once verified; when a recovery email can be added (F-332)
+
+Ships with bcc-trust #658. Version number assigned at merge.
+
+- **Behaviour change:** `GET /wallets` → `recovery.has_recovery_email` is `false` while the email is pending its verification code (`_bcc_email_verified='0'`): an address typed at wallet sign-up counts only once `POST /auth/verify-email` confirms it. The same definition drives the `DELETE /wallets/{id}` last-recovery-method guard and `POST /me/account/recovery-email`'s first-email check (so a pending typo can be replaced there). Legacy accounts with no flag are unaffected.
+- **Additive:** `recovery.available_at` (ISO-8601 UTC or `null`) and `recovery.available_reason` (`"signup_wallet" | "wallet_age" | null`).
+- **Clients:** after a wallet sign-up that included an email, show the code step and call `POST /auth/verify-email`; use `available_at` / `available_reason` to say when a recovery email can be added.
+
+### v1.138 — 2026-11-12 — behaviour change — a refresh retires the token it replaced after 120 seconds (F-282)
+
+Ships with bcc-trust #662. Version number assigned at merge.
+
+- **`POST /auth/refresh`:** the presented token keeps working for 120 s after a successful refresh, then gets `bcc_unauthorized` 401 everywhere. Shape unchanged. **Clients:** use the returned token; no new handling.
+
+### v1.137 — 2026-11-12 — behaviour change (security) + additive — a collection holder can never claim its page; every claim 403 names its reason
+
+Scope: §4's `POST /bcc/v1/pages/:id/claim` errors only: one new refusal cause, and one new field (`error.data.reason`) on this route's 403s. No route, envelope or view-model changes.
+
+- **New cause of `bcc_forbidden` 403:** a wallet that only **holds** the collection is refused with `Holding an NFT doesn't make you this collection's creator.` Nothing is recorded: no claim row, no page mirror, no `bcc_page_claimed`, no change of page owner.
+- **Why:** collection claims had never worked (a wrong class name in the role lookup made every one "no match"). Fixing that alone would have let any holder of one token claim an unowned collection page, because this route mirrors a successful claim as the page's exclusive claim and an unowned page passes to its first claimant. Holding is not owning; holder status is served by the holder-group flows.
+- **Collection CREATOR claims start working with this release.** They never could before: every collection claim failed as "no match". A collection's **creator** can now claim its page (200, role `creator`), as §B5 always intended. Creator status is checked across the caller's wallets on the collection's chain (at most **3** per attempt, since each check is a live on-chain call), so a holder wallet does not shadow a creator wallet. ⚠ **EVM collections only:** Solana creator verification is not implemented (it always answers "not the creator"), so a Solana collection page cannot be claimed yet.
+- **Additive: `error.data.reason` on every 403 of this route** — `suspended` | `entity_not_bound` | `not_operator` | `holder_not_owner`. The four causes share `bcc_forbidden`, and clients were left to guess from the message; a suspended member was told to try a different wallet. Branch on `reason`: only `not_operator` is a wallet problem; `suspended` is final.
+- **Fix behind the field:** `ClaimService`'s own suspension refusal used to fall through to the wallet-mismatch 403. It now returns the `suspended` 403 like the endpoint's gate.
+- **Clients:** show the server's `message`; never suggest another wallet unless `reason` is `not_operator`.
+- ⚠ **Coordination:** ships with bcc-trust F-303 (`fix/f303-collection-claim-query-class`). **That PR merges first.** bcc-frontend #263 already treats `reason: "suspended"` as final.
 ### v1.136 — 2026-11-12 — behaviour change — suspended members sign in read-only; `can_claim`
 
 Ships with bcc-trust's F-305/F-301 change. User decision 2026-11-12.
