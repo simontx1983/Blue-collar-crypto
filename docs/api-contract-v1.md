@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.143 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.144 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -4524,7 +4524,9 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
     "bcc_claim_badge_removed":    true,
     "bcc_group_join_requested":   true,
     "bcc_group_join_approved":    true,
-    "bcc_group_invited":          true
+    "bcc_group_invited":          true,
+    "bcc_announcement_hidden":    true,
+    "bcc_announcement_restored":  true
   },
   "push": {
     "enabled": false,
@@ -4553,6 +4555,10 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
   - `bcc_group_join_approved` — to the requester; `actor` = the approver. *"You're now a member of {group}."*
   - `bcc_group_invited` — to the invitee; `actor` = the inviter. *"@{handle} invited you to join {group}."*
   - A denied request, a declined or revoked invitation and a cancelled request notify nobody.
+- **v1.144 (F-307):** two new bell keys, both default on, both **in-app only** (no push variant, excluded from the email digest). They tell an announcement's author that an administrator took the notice down after a report, or restored it (§4.32.16). Self-notifications: `actor` is the author; `external_id` is the announcement. `link` is `/`, because a taken-down notice is not publicly readable. Messages, verbatim, `{title}` being the notice's title:
+  - `bcc_announcement_hidden`: *"A moderator hid your announcement "{title}" because it breaks a site rule. It is no longer visible to others."*
+  - `bcc_announcement_restored`: *"Your announcement "{title}" was reviewed and restored."*
+  - **Empty title:** the quoted title and its leading space are dropped (*"A moderator hid your announcement because…"*, *"Your announcement was reviewed and restored."*). These are exactly `NotificationDispatcher::announcementModeratedMessage()`.
 - `email_digest` defaults `false` (opt-in).
 - `push.enabled` is the master toggle. Defaults `false` until the user explicitly enables it (a browser permission prompt fires on enable; no silent dispatch).
 - `push.events.*` defaults are all-on per V2 Phase 1 §P1.C3 — anti-noise carries the load via debounce + 5-min aggregation in `PushDispatcher`. The push event taxonomy is intentionally narrower than the bell ("bell shows everything; push is 'you really need to know'"). Adding a new push event requires extending `NotificationPrefs::PUSH_TYPES` server-side and the corresponding subscriber wiring.
@@ -7400,6 +7406,14 @@ arrived **without ever passing the ownership recheck**. The marker is written on
 authoritative ownership resolution succeeds. **All four read paths — list, detail, comments and
 feed hydration — enforce all three predicates.**
 
+**v1.144 (F-307) — predicate 4: not taken down by an administrator.** A notice carrying a
+non-empty `_bcc_announcement_moderation_hidden_at` fails the public predicate, so the list,
+the detail/permalink read, comments and the rotator all drop it, and it gains no new feed
+projection. Its existing feed activity is moderation-hidden the same way a reported post is.
+The detail read answers the same `404` as a notice that does not exist, so a takedown is not
+disclosed. Archival stays separate (§4.32.6): an archived notice is still public, a taken-down
+one is not. Only an administrator sets or clears the marker (§4.32.16); a report never does.
+
 #### 4.32.2 Authorization
 
 The sole authority is a `RESOLVED` verified-operator resolution for the page whose `user_id`
@@ -8844,6 +8858,32 @@ async Phase C subscribers (§K1), which is where the administrator-facing
 moderation queue reads it. Administrator resolution of a reported announcement is
 unchanged by this section and uses the existing moderation surfaces.
 
+##### Administrator takedown (v1.144, F-307)
+
+Filing a report still never changes a notice's visibility, and the auto-hide
+threshold still never applies to announcements. What changed is what an
+**administrator** can do with the report in the moderation queue:
+
+- **Hide** takes the notice down: it sets the takedown marker (§4.32.1 predicate 4)
+  and moderation-hides the notice's feed activity. Every pending report on the
+  notice closes as **upheld** — reports filed against the notice and reports filed
+  against its feed item alike, so the two report paths cannot reach different
+  outcomes.
+- **Restore** lifts the takedown and closes those reports as **not upheld**. A
+  Restore on a notice that is not taken down is refused; nothing changes.
+- **Dismiss** closes the one report and leaves the notice as it is.
+- Hide and Restore carry the queue's 30-second undo, like every queue action.
+- The author is told each way, with the bell types `bcc_announcement_hidden` and
+  `bcc_announcement_restored` (see `GET /me/notification-prefs` for the verbatim
+  copy). Reporters are not notified, the same as for posts today.
+
+Before v1.144 the queue force-dismissed every announcement report whatever action
+the administrator chose, and a report on the feed item hid only the feed copy.
+
+The operator's own list (`GET /bcc/v1/me/validators/:pageId/announcements`) is unchanged in this version: a
+taken-down notice still lists there with no indicator. A `moderation` field and
+the edit/pin refusals for a taken-down notice are a follow-up.
+
 ## 5. Encoded rules — quick reference
 
 ### 5.1 §N7 — gated actions always visible
@@ -9134,6 +9174,16 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.144 — 2026-11-12 — behaviour change — administrators can take a reported announcement down
+
+Ships with bcc-trust F-307 B1. ⚠ `v1.144` is a placeholder: the number is assigned at merge.
+
+- **Behaviour (§4.32.1, §4.32.16):** a new public-visibility predicate. A notice an administrator took down is not publicly readable: the list, the detail/permalink read (`404`, same as missing), comments and the rotator drop it, and its feed item is hidden. Archiving is unchanged; a taken-down notice is dropped from the archived list as well.
+- **Moderation queue:** Hide, Restore and Dismiss now act on announcement reports instead of every action being recorded as a dismiss. A report on the notice's feed item takes the same path.
+- **Additive:** bell types and preferences `bcc_announcement_hidden` and `bcc_announcement_restored` (default on, in-app only). See `GET /me/notification-prefs` for the verbatim copy.
+- **Unchanged:** reports never hide a notice by themselves, and the auto-hide threshold still excludes announcements.
+- **Clients:** render the new bell rows like any other. A permalink that now `404`s needs no special handling.
 
 ### v1.143 — 2026-11-12 — additive — a member's role in each group on their profile
 
