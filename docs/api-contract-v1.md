@@ -400,13 +400,14 @@ The single most important shared type. Encodes §N7 (always visible, disabled wi
 - When `allowed: false`, `unlock_hint` is a **plain-English explanation** the frontend renders verbatim as a tooltip/disabled-button helper.
 - `can_open_dispute` is the **owner vote-dispute** entry (DisputeCallout → `POST /disputes`) and mirrors the write gate exactly: page ownership only, no feature ladder (shipped 2026-06-11). It is the **sole** dispute gate — the `can_dispute` §J attestation-cast gate (`sign_dispute` ladder) was a dead scaffold (no such attestation kind existed) and was retired 2026-07-08. Non-owners get `reason_code: "not_page_owner"` with no hint — the §N7 visible-gate rule applies to gates a viewer can eventually unlock, which ownership of someone else's page is not.
   - **Member self-pages (member-disputes slice, 2026-06-30):** a member is the owner of their own self-page, so on their OWN member card/profile `can_open_dispute` is `allowed: true` when they have a contestable active downvote on their self-page, else `reason_code: "no_contestable_downvote"`. Non-owners and anonymous viewers get `reason_code: "not_applicable"` (members can't dispute votes on each other — only the subject can contest a downvote on themselves, mirroring the entity owner-contests-downvote model). Ownership resolves via the zero-DB self-page identity (`page_id = ID_BASE + user_id`).
-- `can_message` (v1.53) mirrors the DM write gates exactly — it is produced by the SAME messaging-policy evaluator the send path runs, so a rendered Message button and the `POST /me/conversations` it triggers can never disagree on a permanent rule. Only the transient rate limit is POST-only. On **validator page cards** it targets the page's resolved verified operator (or the queue, when the validator has never been claimed); on member and community cards it is `not_applicable`. Reason codes: `not_applicable` (hide) · `auth_required` (visible-disabled, sign-in copy) · `self_action_blocked` (hide — viewer is the operator) · `sender_restricted` (hide — suspended/banned sender) · `sender_chat_disabled` (visible-disabled, resolvable hint) · `messaging_unavailable` (hide) · `friends_only` (visible-disabled + hint) · **`unavailable` (hide — v1.92)**.
+- `can_message` (v1.53) mirrors the DM write gates exactly — it is produced by the SAME messaging-policy evaluator the send path runs, so a rendered Message button and the `POST /me/conversations` it triggers can never disagree on a permanent rule. Only the transient rate limit is POST-only. On **validator page cards** it targets the page's resolved verified operator (or the queue, when the validator has never been claimed); on community cards it is `not_applicable`. On **member cards** (since v1.135, F-246) a signed-in viewer gets the live gate to that member — the same evaluator, batched per page on list surfaces — and `self_action_blocked` on their own card; anonymous viewers' member cards are unchanged. Reason codes: `not_applicable` (hide) · `auth_required` (visible-disabled, sign-in copy) · `self_action_blocked` (hide — viewer is the operator) · `sender_restricted` (hide — suspended/banned sender) · `sender_chat_disabled` (visible-disabled, resolvable hint) · `messaging_unavailable` (hide) · `friends_only` (visible-disabled + hint) · **`unavailable` (hide — v1.92)**.
 
   - ⚠⚠ **`unavailable` (v1.92) means "the server could not determine the block state", not "you may not message".** It is emitted when the block table cannot be READ — a transient database failure — and it exists because the alternative is worse: the previous behaviour reported an unreadable block table as "not blocked", so the client rendered a live Message button and the `POST` then refused it. Clients MUST **omit** the affordance, never render it disabled: the condition is not something the viewer can resolve, so §N7's visible-disabled rule does not apply.
   - ⚠⚠ **It is ALWAYS paired with `unlock_hint: null`, and that pairing is load-bearing rather than cosmetic.** A client that hides on the hint rather than on the code — which is what the member-card pill did before the omit branch shipped — would render a DISABLED pill if a hint string ever accompanied this code. The server therefore guarantees the null, and a backend test asserts the pairing independently of the code.
   - ⚠ It is deliberately a **different** code from `messaging_unavailable`. That one is the §4.19 info-leak shield, hiding WHICH of mutual-block / DMs-off / no-such-user applies. `unavailable` states a fact about the REQUEST rather than about the pair, so it reveals nothing the shield protects — and on a failed read every candidate in a batch receives it uniformly, which is why a shared payload is safe here.
   - The matching write paths answer `bcc_unavailable` **503** (§4.19), so a client that retries gets a coherent answer from both sides.
   - **Info-leak shield:** a mutual block and a recipient with DMs turned off emit the **byte-identical** `{ allowed: false, unlock_hint: null, reason_code: "messaging_unavailable" }`. Clients must not attempt to distinguish them, and the server never does on the wire (this mirrors the §4.19 404 shield on the write path).
+- **`can_claim` (v1.136, F-301; page cards only):** may this viewer claim the page? `{ allowed: true }` for a signed-in member in good standing. Otherwise `reason_code` is `suspended` ("Your account is suspended, so you cannot claim pages."), `signin_required` ("Sign in to claim this page.") or `not_applicable` (no `claim_target`: already claimed, or nothing to claim; no hint, hide). Render the claim callout from this, not from `claim_target` alone. The claim itself (wallet proof, page binding) is still decided by `POST /pages/:id/claim`. Member and community cards do not carry the key.
 - **`can_vouch` · `can_stand_behind` · `can_report` on an UNCLAIMED page card (v1.102):** a validator, project or creator page nobody has claimed (no owner yet) emits `{ allowed: false, unlock_hint: null, reason_code: "unclaimed" }` for all three, for **every** viewer, anonymous included (not "Sign in to …": signing in would not unlock it). Clients **omit** the three slots (§N7 structural carve-out) and may show Message in their place; `can_message` and `can_watch` are unaffected. This mirrors the write path: `POST /me/attestations` already refuses such a target with `bcc_not_found` 404 "Target not found.", unchanged. On a claimed page, and on member cards, the three keep their existing shapes, with `reason_code: null`.
 - When `allowed: true`, `unlock_hint` is `null` (not omitted — explicit `null` so client typing is uniform).
 - When a gate is **structurally impossible** for this viewer (e.g., viewing your own card → `can_watch: false`, you can't follow yourself), `unlock_hint` is `null` and the frontend hides the action UI per §N7's "structurally impossible" carve-out (the always-visible rule applies to *gates a viewer could resolve*, not to nonsensical actions).
@@ -1639,7 +1640,7 @@ The wire format on disk is PeepSo's mention shortcode `@peepso_user_<id>(<name>)
 **Server-side enforcement (write-time):**
 
 - Mentions are extracted via the canonical regex `@peepso_user_([a-z]*\d+)(?:\(([^\)]+)\))?` ([peepso/classes/tags.php#L77](app/public/wp-content/plugins/peepso/classes/tags.php) — same regex PeepSo's notification dispatcher uses).
-- Each candidate user_id is validated against the `MentionPolicy` privacy filter (PeepSo's ban filter + `profile_acc != PRIVATE` + bidirectional `peepso_user_blocked` + `allow_hide_user_from_user_listing` + BCC's `bcc_privacy_discovery_optout`).
+- Each candidate user_id is validated against the `MentionPolicy` privacy filter (PeepSo's ban filter + `profile_acc != PRIVATE` + bidirectional `peepso_user_blocked` + `allow_hide_user_from_user_listing` + BCC's `hide_from_search` clause, which `discovery_optout` aliases since v1.133).
 - Failing the policy returns `bcc_invalid_mention_target` (with the offending `user_id` echoed in the error payload, but NOT the reason — privacy posture preserved). The post is rejected; nothing is written. Strict reject, not silent strip.
 - Cap: **10 mentions per post**. Over-cap returns `bcc_too_many_mentions` (echoes the cap as `max`).
 
@@ -2002,7 +2003,8 @@ Verifies a signed nonce, looks up the BCC user the wallet is linked to, mints + 
     "token": "<JWT>",
     "expires_in": 604800,
     "token_type": "Bearer",
-    "in_good_standing": true
+    "in_good_standing": true,
+    "suspended": false
   }
   ```
 - **Errors:**
@@ -2041,7 +2043,8 @@ Verifies a signed nonce, creates a new user (placeholder email if none supplied)
     "token": "<JWT>",
     "expires_in": 604800,
     "token_type": "Bearer",
-    "in_good_standing": true
+    "in_good_standing": true,
+    "suspended": false
   }
   ```
 - **Errors:**
@@ -2162,26 +2165,27 @@ Second factor: exchanges the `/auth/login` challenge token + emailed 6-digit cod
   ```
 - **Response 200:**
   ```json
-  { "user_id": 42, "handle": "alice", "token": "<JWT>", "expires_in": 604800, "token_type": "Bearer", "in_good_standing": true }
+  { "user_id": 42, "handle": "alice", "token": "<JWT>", "expires_in": 604800, "token_type": "Bearer", "in_good_standing": true, "suspended": false }
   ```
-  `expires_in` is the 7-day JWT TTL (`JwtToken::TTL_SECONDS`). `in_good_standing` per §A2.
+  `expires_in` is the 7-day JWT TTL (`JwtToken::TTL_SECONDS`). `in_good_standing` per §A2. `suspended` (v1.136): see **Suspended members sign in read-only** below.
 - **Errors:** `bcc_invalid_request` 422 (missing challenge_token or code) · `bcc_invalid_2fa_token` 401 (challenge expired/unknown, **superseded by a newer login**, or **burned after 5 wrong codes** — restart login) · `bcc_invalid_2fa_code` 401 (wrong/expired code — challenge preserved, retry in place, up to the attempt cap) · `bcc_invalid_state` 404/409 (account vanished / no handle) · `bcc_rate_limited` 429
 - **Attempt cap (since v1.97):** at most **5 wrong codes per (user, challenge)**. Wrong codes 1–4 → `bcc_invalid_2fa_code`; the 5th burns that challenge's code **and** the challenge → `401 bcc_invalid_2fa_token` "Too many incorrect codes. Please sign in again." The code is bound to its challenge, and only the user's **most recent** challenge is live — a new `/auth/login` supersedes any earlier one (so a second concurrent sign-in cancels the first's pending 2FA), and `/auth/2fa/resend` re-sends a code for the same challenge without resetting its count.
-- **Rate limit:** IP-bucketed, 10 / 60s (a second fence; the per-challenge attempt cap above is the primary one, the 10-min challenge TTL the outer bound)
+- **Attempt cap across resends (since v1.134, F-292):** the wrong-code count lives for the challenge's whole possible life (a 6 h sliding window, against a challenge that lives at most 35 min), so it is **5 per challenge however many resends** keep the challenge alive.
+- **Rate limit:** IP-bucketed, 10 / 60s (a second fence; the per-challenge attempt cap above is the primary one, the challenge lifetime — 10 min, extendable by resends to at most 35 min — the outer bound)
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** peeks `bcc_2fa_ct_<token>` (and that it is the user's current challenge), timing-safely consumes the challenge-bound `bcc_2fa_otp_<first 40 hex of sha256(token)>` (`hash_equals`), consumes the challenge token only after the OTP matches, sets the WP auth cookie, mints the JWT (`JwtToken::encode`), emits the `user_login` audit log (`via: 2fa`), fires `do_action('bcc_user_login', …)`. Handler `AuthEndpoint::twoFaVerify` (route `AuthEndpoint.php:546`). Standard envelope per §1.4.
 
 #### `POST /bcc/v1/auth/2fa/resend`
 
-Re-sends a fresh 2FA code for an in-progress login challenge. Always returns `ok: true` whether or not the challenge token is valid (anti-enumeration; mirrors `/auth/resend-verification`).
+Re-sends a fresh 2FA code for an in-progress login challenge.
 
 - **Auth:** Anonymous (no token)
 - **Body:** `{ "challenge_token": "<64-hex>" }`
-- **Response 200:** `{ "ok": true }` (identical for valid and invalid tokens)
-- **Errors:** `bcc_rate_limited` 429
+- **Response 200:** `{ "ok": true }` — a new code was mailed, and the challenge is kept alive for that code's lifetime (5 min from now), so the new code can always be used.
+- **Errors:** `bcc_rate_limited` 429 (checked first) · `bcc_invalid_2fa_token` 401 "This session has expired. Please sign in again." (since v1.134, F-292) — the challenge has ended: expired, unknown, **superseded by a newer login**, **burned after 5 wrong codes**, or **older than 30 minutes** (a challenge's absolute resend limit). Same code and copy as verify; restart login. Before v1.134 this answered `ok: true` and sent nothing. No anti-enumeration concern: the token is a 256-bit bearer secret, so a 401 reveals nothing guessable.
 - **Rate limit:** IP-bucketed, 3 / 60s (email-bomb fence)
 - **Cache:** `Cache-Control: no-store`
-- **Mapping:** peeks the challenge token without consuming it; when valid (and still the user's current challenge), overwrites that challenge's `bcc_2fa_otp_<first 40 hex of sha256(token)>` with a fresh HMAC-hashed code (the prior code immediately stops working; the challenge's wrong-code count is NOT reset) and re-dispatches `AuthMailer::send2faCode`. Handler `AuthEndpoint::twoFaResend` (route `AuthEndpoint.php:563`). Standard envelope per §1.4.
+- **Mapping:** peeks the challenge token without consuming it; when valid (and still the user's current challenge, and under 30 min old per its `bcc_2fa_iat_…` issue stamp), re-arms the challenge and the user's current-challenge pointer for `TWO_FA_OTP_TTL`, overwrites that challenge's `bcc_2fa_otp_<first 40 hex of sha256(token)>` with a fresh HMAC-hashed code (the prior code immediately stops working; the challenge's wrong-code count is NOT reset) and re-dispatches `AuthMailer::send2faCode`. Handler `AuthEndpoint::twoFaResend` (route `AuthEndpoint.php:563`). Standard envelope per §1.4.
 
 #### `POST /bcc/v1/auth/oauth-complete`
 
@@ -2193,7 +2197,7 @@ Completes an OAuth (Google/X) signup for a first-time user: exchanges the `provi
   { "provider_token": "<64-hex>", "handle": "alice", "display_name": "Alice", "email": "alice@example.com" }
   ```
   `provider_token`, `handle` required; `display_name` optional (falls back to the provider's display name, then the handle). `email` is **required iff the provider didn't supply one** (X/Twitter's OAuth2 user-context never returns an email; Google always does) and is ignored when it did.
-- **Response 201:** identical shape to `/auth/2fa/verify` (`{ user_id, handle, token, expires_in, token_type, in_good_standing }`) — the user is signed in immediately.
+- **Response 201:** identical shape to `/auth/2fa/verify` (`{ user_id, handle, token, expires_in, token_type, in_good_standing, suspended }`) — the user is signed in immediately.
 - **Errors:** `bcc_invalid_request` 400 (missing provider_token) · `bcc_invalid_oauth_token` 400 (provider_token expired (15 min) or consumed — restart the OAuth flow) · `bcc_invalid_handle` 422 / `bcc_handle_reserved` 422 (§B6) · `bcc_invalid_email` 422 (email missing/invalid when the provider supplied none) · `bcc_conflict` 409 (handle or email already taken) · `bcc_rate_limited` 429 · `bcc_internal_error` 500. Validation errors leave the provider_token intact so the user corrects and retries in place.
 - **Rate limit:** IP-bucketed, 5 / 60s
 - **Cache:** `Cache-Control: no-store`
@@ -2207,10 +2211,10 @@ Silent-refresh seam: exchanges a recently-expired (or near-expiry) Bearer JWT fo
 - **Body:** none (token from the `Authorization` header)
 - **Response 200:**
   ```json
-  { "token": "<fresh JWT>", "expires_in": 604800, "token_type": "Bearer" }
+  { "token": "<fresh JWT>", "expires_in": 604800, "token_type": "Bearer", "suspended": false }
   ```
-  Unlike `/auth/login`, omits `user_id` / `handle` / `in_good_standing`.
-- **Errors:** `bcc_unauthorized` 401 (missing/malformed Bearer, decode failed, grace window exceeded, or invalid `user_id` claim — collapsed to one code) · `bcc_forbidden` 403 (suspended) · `bcc_invalid_state` 409 (no handle) · `bcc_rate_limited` 429
+  Unlike `/auth/login`, omits `user_id` / `handle` / `in_good_standing`. `suspended` (v1.136) as on sign-in: a suspended member's refresh **succeeds** (read-only sign-in) and says so.
+- **Errors:** `bcc_unauthorized` 401 (missing/malformed Bearer, decode failed, grace window exceeded, or invalid `user_id` claim — collapsed to one code) · `bcc_forbidden` 403 with `error.data.reason_code: "account_suspended"` (v1.136: the token was revoked **because the account was suspended** — suspension revokes every earlier token; the client shows the suspension notice and sends the member to sign in again, read-only. Before v1.136 this 403 meant "suspended" and fired on every suspended refresh; a suspended member's revoked token got the plain 401.) · `bcc_invalid_state` 409 (no handle) · `bcc_rate_limited` 429
 - **Rate limit:** IP-bucketed, 30 / 60s
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** decodes via `JwtToken::decodeForRefresh`, re-reads `bcc_handle` from authoritative storage (a handle change since the original mint is reflected; the JWT payload is not trusted), mints a fresh JWT, emits the `token_refreshed` audit log. No cookie set, no DB mutation beyond the audit row. Handler `AuthEndpoint::refresh` (route `AuthEndpoint.php:292`). Standard envelope per §1.4.
@@ -2223,15 +2227,30 @@ Silent-refresh seam: exchanges a recently-expired (or near-expiry) Bearer JWT fo
 - **Body / query:** none.
 - **Response 200:**
   ```json
-  { "user_id": 42, "handle": "alice", "in_good_standing": true, "expires_at": 1767225600 }
+  { "user_id": 42, "handle": "alice", "in_good_standing": true, "suspended": false, "expires_at": 1767225600 }
   ```
+  - `suspended` (v1.136) — see **Suspended members sign in read-only** below.
   - `handle` — the user's **current** handle from authoritative storage (the token's own claim goes stale after a handle change).
   - `in_good_standing` — the same value `/auth/login` returns; it **fails open** (`true`) when the standing lookup errors, so it is display state, **never a security gate**.
   - `expires_at` — the token's own `exp` (unix seconds). `decode` accepts a token up to **60 s past** it (the standard skew), so a client may see a `200` with `expires_at` slightly in the past.
 - **Errors:** `bcc_unauthorized` 401 for a missing, malformed, invalid, expired, revoked or deleted-user token — **one code, one message, no reason** (the reason is written to the audit log only) · `bcc_invalid_state` 409 (the user has no handle) · `bcc_rate_limited` 429.
 - **Rate limit:** **per token**, 60 / 60 s — keyed on a hash of the presented token and checked **before** decode (calls arrive from the frontend server's single IP, so a per-IP bucket would be shared by every user).
 - **Cache:** `Cache-Control: no-store`, `Vary: Authorization`.
-- **Mapping:** reads the Bearer via `BearerAuth::readBearerToken` (the same header reader authentication uses), `JwtToken::decode`, `get_userdata`, `bcc_handle` meta, `AuthSupport::resolveInGoodStanding`. No writes beyond an `auth_session_rejected` audit-log line on a 401. Handler `SessionController::session`. Standard envelope per §1.4.
+- **Mapping:** reads the Bearer via `BearerAuth::readBearerToken` (the same header reader authentication uses), `JwtToken::decode`, `get_userdata`, `bcc_handle` meta, `AuthSupport::resolveInGoodStanding`, `AuthSupport::resolveSuspended`. No writes beyond an `auth_session_rejected` audit-log line on a 401. Handler `SessionController::session`. Standard envelope per §1.4.
+
+**Suspended members sign in read-only (v1.136, F-305).** A suspended member may sign in and browse; they cannot post, comment, vote, attest, claim or join (every write gate already answers `bcc_forbidden` 403 "Your account is suspended."). Every response that carries `in_good_standing` also carries **`suspended`** (bool), and so does `/auth/refresh`. The list: `/auth/wallet-login`, `/auth/wallet-signup`, `/auth/2fa/verify`, `/auth/oauth-complete`, `/auth/verify-email`, `POST /auth/login` when it mints a token directly (the 2FA-bypass path), the OAuth sign-in response of the internal `/auth/oauth` bridge, and `GET /auth/session`. `true` means a moderator suspended the account: show a persistent notice that the member cannot post, comment or vote. It is **display state**: `false` when the suspension could not be read, and never a security gate. A suspension revokes every token issued before it, so a signed-in member's next refresh answers `403` `account_suspended` (above). Show the notice and route to sign-in; the new session carries `suspended: true`.
+
+**One write gate.** Every non-GET request to `bcc/v1` or `bcc-trust/v1` from a **known-suspended** member (admin bypass off) is refused before the route runs, with `403` `bcc_forbidden` "Your account is suspended." and `error.data.reason_code: "account_suspended"`. Routes are matched **case-insensitively**, as WordPress dispatches them, and each sub-request of a `/batch/v1` call is gated on its own route. Routes' own suspension checks stay as a second line.
+- **Allowed while suspended:**
+  - these `/auth/` routes only: `login`, `logout`, `logout-everywhere`, `refresh`, `session`, `nonce`, `wallet-nonce`, `wallet-login`, `wallet-signup`, `signup`, `oauth`, `oauth-complete`, `2fa/verify`, `2fa/resend`, `forgot-password`, `reset-password`, `verify-email`, `resend-verification`. An `/auth/` route not on this list is gated;
+  - `POST /me/findings/:id/appeal`;
+  - `/me/notification-prefs` and `/me/privacy`;
+  - `DELETE /me/push-subscriptions/:id` (subscribing is refused);
+  - `/me/blocks` and `/me/blocks/:id`;
+  - the password change, `PATCH /me/account/password`, in every state.
+- **Account-identity writes** (`PATCH /me/account/email`, `POST /me/account/email/verify`, the recovery email and its verify step, `POST /auth/wallet-link`, `DELETE /me/account`): refused while suspended (`403` `account_suspended`). When the suspension state **cannot be read**, they answer `503` `bcc_unavailable` ("try again"), because an identity write denies on unknown.
+- **Every other write** proceeds to the route's own checks when the state cannot be read, so a database blip never fails the whole write API.
+- Anonymous requests and reads (GET/HEAD/OPTIONS) are never gated.
 
 #### `POST /bcc/v1/auth/logout`
 
@@ -2634,7 +2653,7 @@ Slim prefix-search endpoint backing the composer's `@`-mention autocomplete (§3
   - `bcc_invalid_request 400` — `q` missing, empty after trim, or > 32 chars.
   - `bcc_rate_limited 429` — per-viewer throttle (60 keystrokes / 60s rolling window).
 - **Cache:** `Cache-Control: private, max-age=10`; `Vary: Authorization, Cookie`. Short TTL deliberate — the typical autocomplete burst (3-6 keystrokes typed in succession) hits the cache for the steady-state prefix; a 10s window is long enough to absorb the burst, short enough that a recent join/ban/block updates within a session.
-- **Privacy / mapping:** routed through `PeepSoUserSearch` ([peepso/classes/usersearch.php](app/public/wp-content/plugins/peepso/classes/usersearch.php)) which applies the canonical filter set: ban filter, `profile_acc != PRIVATE`, bidirectional `peepso_user_blocked` (viewer→target AND target→viewer), `allow_hide_user_from_user_listing`, plus the `peepso_user_search_args` hook BCC's [PrivacySettings::filterPeepSoSearchArgs](app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Support/PrivacySettings.php) attaches for `bcc_privacy_discovery_optout`. **Do NOT route this through the dormant `bcc-search` `UserSearchRepository`** — that one runs raw `wp_users` LIKE and bypasses every filter above; it would leak hidden users into the dropdown.
+- **Privacy / mapping:** routed through `PeepSoUserSearch` ([peepso/classes/usersearch.php](app/public/wp-content/plugins/peepso/classes/usersearch.php)) which applies the canonical filter set: ban filter, `profile_acc != PRIVATE`, bidirectional `peepso_user_blocked` (viewer→target AND target→viewer), `allow_hide_user_from_user_listing`, plus the `peepso_user_search_args` hook BCC's [PrivacySettings::filterPeepSoSearchArgs](app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Support/PrivacySettings.php) attaches for `hide_from_search` (which `discovery_optout` aliases since v1.133). **Do NOT route this through the dormant `bcc-search` `UserSearchRepository`** — that one runs raw `wp_users` LIKE and bypasses every filter above; it would leak hidden users into the dropdown.
 - **Ranking:** prefix match on `user_login` + `display_name` + `bcc_handle` user-meta, ordered by handle ASC. V1d does NOT bias by follower edges (deferred — see §3.3.12 deferred). When two candidates share a prefix, alphabetical order wins; ties broken by `ID ASC`.
 - **Side effects:** none. Pure read; no notification, no logging beyond the rate-limit counter.
 - **Sister endpoints:** the composer's full-name → user_id resolution at submit time is **not** exposed as a separate endpoint — the picker emits the wire-format token `@peepso_user_<id>(name)` directly into the post body using `user_id` from this response, and the server's `MentionPolicy` re-validates on `POST /posts*` (§3.3.12 server-side enforcement). A user picked from the dropdown but who turns hidden between picker-select and submit gets rejected at write-time with `bcc_invalid_mention_target` — picker results are advisory, not authoritative.
@@ -4926,7 +4945,7 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
   - `post_visibility` → `peepso_profile_post_acc` user_meta. PUBLIC is intentionally absent (matches PeepSo's `access-profile-post` UI which strips it).
   - `hide_birthday_year` → `peepso_hide_birthday_year` user_meta, "1"/"0".
   - `hide_online` *(documented v1.64 — shipped earlier)* → `peepso_hide_online_status` user_meta, "1"/"0" — PeepSo's presence indicators treat "1" as "hide the green dot".
-  - `hide_from_search` *(documented v1.64 — shipped earlier)* → `peepso_is_hide_profile_from_user_listing` user_meta, "1"/"0" — "1" excludes the user from directory + member search (direct profile links still work).
+  - `hide_from_search` *(documented v1.64 — shipped earlier)* → `peepso_is_hide_profile_from_user_listing` user_meta, "1"/"0" — "1" excludes the user from directory + member search (direct profile links still work). **Since v1.133 (F-257) this is THE one hidden-from-search flag:** `/me/privacy`'s `discovery_optout` is an alias that reads and writes it, so the two always agree.
   - `default_post_audience` *(documented v1.64 — shipped earlier; `friends` added v1.121)* → `peepso_last_used_post_privacy` user_meta (int 10/20/30/40 ↔ public/members/friends/private) — defaults PeepSo's audience picker; PeepSo itself overwrites it on every post, so this is a default, not a lock. ⚠ The column is not a validated enum, so a value with no token at all is reported as `members`.
   - `show_groups_on_profile` *(v1.127 — F-270)* -> `bcc_show_groups_on_profile` user_meta, "1"/"0". Read/write bool. **⚠ ABSENT MEANS `true`.** The default preserves the pre-F-270 behaviour, so an account that has never touched the setting keeps listing its groups; only an explicit falsey value hides them. This is the only *permissive* default among the privacy prefs here.
     - ⚠ **It governs only the toggleable part of the policy.** Two rules apply regardless of it, and a client must not present it as "all of my group privacy": secret groups are never shown to non-members, and NFT-holder / delegator groups are shown only to **signed-in** viewers. See `GET /users/:slug/groups`.
@@ -5147,7 +5166,7 @@ Paginated list of the viewer's conversations, ordered by `mpart_last_activity DE
 - `peer` is the OTHER participant for 1-on-1 conversations and `null` for groups (where `is_group === true`); the frontend uses `peer` for the inbox-row title and falls back to a participant list when null.
 - `sender_blocked_by_viewer` (v1.87) — `true` when the viewer has blocked `last_message.author`. **Always present**, never absent, so a client reads `false` rather than `undefined`. When it is `true`, `preview` is **already** the fixed string `Message from someone you have blocked` — the real preview text is not in the payload at all. See **Blocked senders** below.
 - `unread_count` excludes messages whose author the viewer has blocked (v1.87).
-- **Errors:** `bcc_unauthorized 401`.
+- **Errors:** `bcc_unauthorized 401`, `bcc_unavailable 503` (since v1.135, F-300: the conversation list could not be read; retryable — render an error with retry, **not** the empty state. Before, a failed read answered an empty `items`).
 - **Cache:** `private, no-store`. DM state mutates per-viewer on every read.
 
 #### `POST /bcc/v1/me/conversations`
@@ -5210,7 +5229,8 @@ Paginated message history. `{id}` is either the conversation root msg id OR any 
       "id": 4031,
       "is_group": false,
       "participants": [...UserMini[]],
-      "peer": {...UserMini}
+      "peer": {...UserMini},
+      "can_reply": { "allowed": false, "unlock_hint": "Turn on direct messages in your settings to send messages.", "reason_code": "sender_chat_disabled" }
     },
     "items": [
       {
@@ -5225,11 +5245,12 @@ Paginated message history. `{id}` is either the conversation root msg id OR any 
     "pagination": { "page": 1, "per_page": 30, "total": null, "has_more": true }
   }
   ```
+- `conversation.can_reply` (v1.135, F-246, additive) — would `POST /me/conversations/{id}/messages` be accepted right now? `{allowed, unlock_hint, reason_code}`, produced by exactly the reply path's gates: the sender's permanent rules (suspension/ban → `sender_restricted`; own DMs off → `sender_chat_disabled` with a resolvable hint) and, for a 1-on-1, the messaging-policy evaluator against the other participant (`messaging_unavailable` for peer DMs off **or** a mutual block — indistinguishable, the §4.19 shield; `friends_only` + hint; `unavailable` when the block table cannot be read). Group threads are gated by the sender rules only. The transient rate limit is POST-only, as on `can_message`. A client that does not know the field treats it as allowed (today's behaviour).
 - `is_inline_notice` is `true` for system rows (`peepso-message-notic` post_type) — "Phillip joined the conversation," "Admin left." Frontend renders these with an austere centered treatment (no avatar, no bubble).
 - `sender_blocked_by_viewer` (v1.87) — `true` when the viewer has blocked that message's author. **Always present.**
 - ⚠ **When it is `true`, `body` is the fixed string `Message from someone you have blocked`, NOT the real text** (v1.87). `id`, `author`, `posted_at` and `is_inline_notice` are unaffected. The real text is reachable only through `GET …/messages/{message_id}/reveal` below, on an explicit per-message request — so a blocked sender's words never enter the viewer's browser unless the viewer asks for them. See **Blocked senders** below for why this changed within v1.87's own development.
-- **Side effect:** marks every unread message in the conversation as viewed for the viewer (`mrec_viewed = 1`). Equivalent to a `POST /me/conversations/{id}/read` riding on the same request — keeps the typical "open thread → mark read" flow to one round-trip.
-- **Errors:** `bcc_unauthorized 401`, `bcc_not_found 404`.
+- **Side effect:** marks every unread message in the conversation as viewed for the viewer (`mrec_viewed = 1`). Equivalent to a `POST /me/conversations/{id}/read` riding on the same request — keeps the typical "open thread → mark read" flow to one round-trip. **Not** on a `bcc_unavailable` response: a thread that could not be read is not marked read and the unread badge is not decremented (v1.135).
+- **Errors:** `bcc_unauthorized 401`, `bcc_not_found 404`, `bcc_unavailable 503` (since v1.135, F-300: the messages could not be read; retryable — render an error with retry, **not** "No messages yet". Before, a failed read answered an empty `items` and still marked the thread read).
 - **Cache:** `private, no-store`.
 
 #### `GET /bcc/v1/me/conversations/{id}/messages/{message_id}/reveal` (v1.87)
@@ -6299,7 +6320,7 @@ Read the signed-in viewer's privacy toggles (§K2 + §G1 discovery opt-out).
   ```json
   { "data": { "watching_hidden": false, "reviews_hidden": false, "disputes_hidden": false, "delegations_hidden": false, "follower_count_hidden": false, "real_name_hidden": false, "email_hidden": false, "discovery_optout": false } }
   ```
-  - `discovery_optout` (§G1) is owner-only and appears ONLY here (the other 7 also surface inside the User view-model).
+  - `discovery_optout` (§G1) is owner-only and appears ONLY here (the other 7 also surface inside the User view-model). **Since v1.133 (F-257) it is an alias of `/me/profile-prefs` `hide_from_search`:** both read and write the same flag (`peepso_is_hide_profile_from_user_listing`), so a change through either endpoint shows on the other. The field is kept for compatibility; new clients should use `hide_from_search`.
 - **Errors:** `bcc_unauthorized` (401)
 - **Mapping:** `MyPrivacyEndpoint::get` (route `MyPrivacyEndpoint.php:48`, READABLE) → `PrivacySettings::readAll`. FE `privacy-endpoints.ts:getMyPrivacy`.
 
@@ -9082,6 +9103,43 @@ Scope: §4's `POST /bcc/v1/pages/:id/claim` errors only: one new refusal cause, 
 - **Fix behind the field:** `ClaimService`'s own suspension refusal used to fall through to the wallet-mismatch 403. It now returns the `suspended` 403 like the endpoint's gate.
 - **Clients:** show the server's `message`; never suggest another wallet unless `reason` is `not_operator`.
 - ⚠ **Coordination:** ships with bcc-trust F-303 (`fix/f303-collection-claim-query-class`). **That PR merges first.** bcc-frontend #263 already treats `reason: "suspended"` as final.
+### v1.136 — 2026-11-12 — behaviour change — suspended members sign in read-only; `can_claim`
+
+Ships with bcc-trust's F-305/F-301 change. User decision 2026-11-12.
+
+- **New `suspended` (bool)** on every sign-in response (wallet-login, wallet-signup, 2fa/verify, oauth-complete, verify-email, `POST /auth/login` on its direct-token path, and the OAuth sign-in response), on `GET /auth/session` and on `/auth/refresh`. `true` means show the "your account is suspended" notice: the member can browse but cannot post, comment or vote. Display state only.
+- **`/auth/refresh` no longer refuses a suspension.** It returns 200 with `suspended: true`. The old 403 `bcc_forbidden` "Account is not in good standing." is gone.
+- **New: `/auth/refresh` 403 `bcc_forbidden` with `error.data.reason_code: "account_suspended"`.** Suspension revokes every earlier token, so a signed-in member's next refresh used to fail with the plain 401, which read as an unexplained sign-out. Now the client can show the notice and send them to sign in (read-only).
+- **One write gate:** any non-GET to `bcc/v1` or `bcc-trust/v1` from a known-suspended member → `403` `bcc_forbidden`, `reason_code` `account_suspended`. The allow-list is the sign-in/session `/auth/` routes (explicit list), appeal, notification/privacy prefs, push unsubscribe, blocks and the password change. Account-identity writes (email and recovery email changes, wallet link, account delete) are refused while suspended and answer `503` when the state can't be read; other writes on an unknown state are left to the route.
+- **Page cards: new `permissions.can_claim`** (`suspended` · `signin_required` · `not_applicable`). The claim callout should render from it. Before, it rendered on `claim_target` alone and offered a suspended member a claim the write always refused.
+- **Clients:** read `suspended` from the session and show the notice. Treat `account_suspended` on refresh as "show the notice, then sign in", not as a silent sign-out. Gate the claim CTA on `can_claim`. A write while suspended now always answers `403` `account_suspended`, so show the notice rather than a generic error.
+
+### v1.135 — 2026-11-12 — additive + behaviour change — DM `can_reply`, member-card `can_message`, and failed DM reads are errors
+
+Ships with bcc-trust #644 (F-246 backend + F-300) and bcc-core #113, both merged.
+
+- **`GET /me/conversations/{id}/messages` (additive):** `conversation.can_reply` `{allowed, unlock_hint, reason_code}` — the reply path's exact gates, so the composer can say "can't reply" (with the right copy) before the user writes instead of failing on send. Reason codes are the existing `can_message` set.
+- **Member cards (behaviour change):** `permissions.can_message` is now the signed-in viewer's live DM gate to that member (was always `not_applicable`), batched per page on list surfaces (`/members`, followers, watchers, watching). `self_action_blocked` on the viewer's own card. Anonymous viewers unchanged. Feeds the `/messages/new` recipient picker and its `?to_user` pin.
+- **`GET /me/conversations` and `GET /me/conversations/{id}/messages` (behaviour change):** a failed DM read is `bcc_unavailable` 503 instead of an empty list; the thread is not marked read in that case.
+- **Clients:** render `bcc_unavailable` on these two reads as a retryable load failure, never the empty state; read `can_reply` (absent = allowed) and the member-card `can_message` in the composer and the recipient picker.
+
+### v1.134 — 2026-11-12 — behaviour change — 2FA resend reports an ended challenge, and its code always works
+
+Ships with bcc-trust #646 (F-292). Draft number: renumbered in merge order.
+
+- **`POST /auth/2fa/resend`:** an ended challenge (expired, superseded, burned, or older than 30 min) now answers `bcc_invalid_2fa_token` 401, the same as verify, instead of `ok: true` with nothing sent. A successful resend keeps the challenge alive for the new code's 5 minutes, so a late resend no longer mails a code that fails with "session expired". A challenge lives at most 35 minutes.
+- **`POST /auth/2fa/verify`:** no shape change. The 5-wrong-codes cap now holds across any number of resends.
+- **Clients:** handle `bcc_invalid_2fa_token` on resend exactly as on verify (back to sign-in).
+
+### v1.133 — 2026-11-12 — behaviour change — one hidden-from-search flag: `discovery_optout` is an alias of `hide_from_search`
+
+Ships with bcc-trust #648 (F-257, option A).
+
+- **`GET`/`PATCH /me/privacy` `discovery_optout`:** now reads and writes the same flag as `/me/profile-prefs` `hide_from_search` (`peepso_is_hide_profile_from_user_listing`). The field stays for compatibility; the two can no longer disagree. No shape change.
+- **Migration:** a one-shot migration turns `hide_from_search` ON for every member whose `discovery_optout` was on, so nobody hidden before the change becomes visible. It never turns the flag off. Until it has finished, search also honours the old setting.
+- **Search** (member directory, `/search/users`, the @-mention picker): excludes on the one flag. Admins stay exempt, as before.
+- **Clients:** none required. A settings UI showing both toggles will now see them move together; show one.
+
 ### v1.132 — 2026-11-12 — additive + behaviour change — request to join closed groups, invitations to closed and secret ones; a failed leave is 503 (F-272, F-329)
 
 Ships with bcc-core #112 (merged), bcc-trust #640 (F-272) and bcc-trust #639 (F-329). Deploy core #112 first.
