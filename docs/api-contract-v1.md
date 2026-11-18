@@ -2203,7 +2203,7 @@ First factor of the password login. Validates credentials, then **always** initi
   ```
   No JWT here. The client routes to the 2FA code screen and completes `/auth/2fa/verify` with the `challenge_token` (10-min TTL) + the 6-digit code emailed to the account (5-min TTL).
 - **Errors:** `bcc_invalid_request` 422 (missing identifier or empty password) · `bcc_invalid_credentials` 401 (user-not-found OR wrong password — generic, anti-enumeration; identical for email- and handle-shaped identifiers) · `bcc_email_not_verified` 403 · `bcc_invalid_state` 409 (account has no handle) · `bcc_rate_limited` 429
-- **Rate limit:** *(since v1.152, F-290)* **20/min per network** (was 5; before the bcrypt compare). Guessing against one account is bounded by the per-identifier buckets (F-281: 20/15 min per typed identifier per network, 100/15 min per typed identifier, trusted networks exempt from the latter). *(since v1.NEXT, F-290)* **Only failed attempts count**, in all three buckets: a request a bucket refuses is not counted in it and gives back what the earlier buckets charged it, and a **correct password gives back every slot** the request charged, so signing in never uses up the budget (whatever follows — the unverified-email 403, the 2FA step — has its own limits). Wrong passwords, unknown identifiers and malformed requests count as before.
+- **Rate limit:** *(since v1.152, F-290)* **20/min per network** (was 5; before the bcrypt compare). Guessing against one account is bounded by the per-identifier buckets (F-281: 20/15 min per typed identifier per network, 100/15 min per typed identifier, trusted networks exempt from the latter). *(since v1.NEXT, F-290)* **A refused request is not counted**, in any of the three buckets, and gives back what the earlier buckets charged it, so retrying while refused never extends the wait. Every request the buckets let through still counts: wrong passwords, unknown identifiers, malformed requests **and correct passwords**. The 2FA challenge and emailed code that follow a correct password have no limit of their own, so a success is not given back.
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** reads `wp_users` by email or by login (`u_<handle>` via `AuthSupport::deriveLogin`) + `wp_check_password`, reads `bcc_handle` + `_bcc_email_verified`, registers the challenge token (`bcc_2fa_ct_<token>`, 10-min transient) as the user's one live challenge (`bcc_2fa_current_<userId>`, superseding — and dropping the code of — any earlier one; since v1.97) and stores an HMAC-hashed 2FA OTP bound to it (`bcc_2fa_otp_<first 40 hex of sha256(token)>`, 5-min transient), emails the code (`AuthMailer::send2faCode`), emits the `user_login_2fa_initiated` audit log. No auth cookie, no JWT. Handler `PasswordAuthController::login`. Standard envelope per §1.4.
 
@@ -9393,12 +9393,12 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-17 — behaviour change — anonymous auth limits count only failures (F-290)
+### v1.NEXT — 2026-11-17 — behaviour change — refused requests no longer count against the anonymous auth limits (F-290)
 
 Ships with bcc-core #124 and bcc-trust #704.
 
 - `POST /auth/login`, `/auth/forgot-password`, `/auth/resend-verification`, `/auth/verify-email` and `/auth/reset-password`: a request a limit refuses is no longer counted, so retrying while refused never extends the wait. Before, every refused retry used a slot, and a caller who kept retrying stayed blocked.
-- `POST /auth/login`: a correct password gives back every slot it charged, so a member who signs in never spends the budget, and a request a later bucket refuses gives back what the earlier ones charged. Wrong passwords count as before.
+- `POST /auth/login`: a request a later bucket refuses also gives back what the earlier buckets charged. Every request the buckets let through still counts, a correct password included.
 - `POST /auth/forgot-password` and `/auth/resend-verification`: a request a per-address cap refuses gives back its per-network slot. The per-address caps still count every request, refused or not (the mail-bomb guard).
 - Unchanged: the limits themselves (v1.152), the 2FA routes, sign-up, every other route's limits (they still count refused calls), and the `bcc_rate_limited` 429. A persistent flooder still gets at most the limit per window. **Clients:** none.
 - Doc fix: the 429 lines on forgot-password and reset-password said "IP throttle tripped". These limits are per network (since v1.152), and on forgot-password a per-address cap can refuse too.
