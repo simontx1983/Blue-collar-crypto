@@ -9541,7 +9541,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ### v1.NEXT — 2026-11-18 — behaviour change — a feed that could not be read answers 503, not an empty page (F-275)
 
-Ships with bcc-trust #TRUST and bcc-core #CORE (bcc-core first).
+Ships with bcc-trust #732 and bcc-core #138 (bcc-core first).
 
 - **Every feed route** (`GET /feed`, `/feed/hot`, `/feed/tag`, `/feed/:id`, `/groups/:id/feed`, `/pages/:id/feed`, `/users/:handle/activity`, `/feed/cold-start`): when the read that finds the posts did not run, the route now answers `bcc_unavailable` **503**, `private, no-store`, with no `data`. Before, it answered **200 with `items: []`** (a permalink: **404**), indistinguishable from an empty feed. See [Feed read failure](#feed-read-failure-vnext).
 - **`/feed/hot`:** the 503 is never publicly cacheable, and the shared first page is never written from a failed read.
