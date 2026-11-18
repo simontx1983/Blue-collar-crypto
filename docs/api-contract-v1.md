@@ -7165,7 +7165,7 @@ Public cold-start three-block bridge for the home-feed empty state — a civic m
   ```json
   { "halls": [ { "slug": "cosmos-hall", "name": "Cosmos Hall", "chain_slug": "cosmos", "member_count": 88 } ], "recent_operators": [ { "handle": "ramona", "display_name": "Ramona V.", "avatar_url": "https://…", "reputation_tier": "trusted", "reputation_tier_label": "Trusted", "rank_label": "Journeyman", "recent_action": "REVIEWED a card", "link": "/u/ramona" } ], "hot_posts": [ /* §3.3 FeedItem[] */ ] }
   ```
-  `recent_operators` are ordered by a stable daily shuffle (NOT ranked); `recent_action` uses a locked past-tense verb allowlist with a `Recently on the floor.` fallback. `reputation_tier` is always a real band. `hot_posts` are `FeedRankingService::getHotFeed` items verbatim.
+  `recent_operators` are ordered by a stable daily shuffle (NOT ranked); `recent_action` uses a locked past-tense verb allowlist with a `Recently on the floor.` fallback. `reputation_tier` is always a real band. `hot_posts` (v1.NEXT, F-276): for an **anonymous** viewer, the first items of the shared `/feed/hot` page verbatim. For a **signed-in** viewer, the same posts read and hydrated **for that viewer** (`FeedRankingService::getHotFeedForViewer`, the tag feed's path without a hashtag), so `viewer_reaction`, the Stoke state, the author's vouch state and `is_followed_by_viewer`, and `permissions.can_report` / `can_delete` are the viewer's own, not a stranger's. Visibility is the hot feed's, plus one widening, the same as on `GET /feed/tag`: the viewer's **own** restricted posts can appear (F-269); no other member's restricted post can.
 - **Cache:** `Cache-Control: private, no-store` (per-viewer per-day stable-randomization).
 - **Mapping:** `FeedColdStartEndpoint::handle` (route `FeedColdStartEndpoint.php:45`) → `FeedColdStartService::getColdStart`; operator hydration reuses the `MemberSummaryPrefetcher` bundle. FE `cold-start-endpoints.ts:getColdStart`.
 
@@ -9527,6 +9527,14 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-18 — behaviour change — signed-in cold-start hot posts are hydrated for the viewer (F-276)
+
+Ships with bcc-trust #742.
+
+- **Behaviour change (§4.28 `GET /feed/cold-start`):** for a signed-in viewer, `hot_posts` are read and hydrated for that viewer instead of being copied from the shared, anonymously hydrated `/feed/hot` page. Their `viewer_reaction`, Stoke state, author vouch state, `is_followed_by_viewer` and `permissions.can_report` / `can_delete` were always the anonymous values before. Shape unchanged.
+- **Visibility:** the hot feed's gates, plus the tag feed's one widening: the viewer's own restricted posts can appear (F-269).
+- **Unchanged:** anonymous cold start, and `GET /feed/hot` itself, which stays one shared anonymous page.
 
 ### v1.172 — 2026-11-17 — behaviour change (privacy) — an open group's roster omits members the viewer may not see
 
