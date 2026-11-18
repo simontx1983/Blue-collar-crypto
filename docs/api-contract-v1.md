@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.173 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.174 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2806,7 +2806,7 @@ Reviews this member has written (§V1.5 reviews-on-file tab), offset-paginated.
     - `can_report`: signed in, not the author, not restricted. Reasons: `sign_in_required` (`unlock_hint` "Sign in to report.") · `own_reply` · `sender_restricted`.
   - `permissions.can_reply` — `{allowed, unlock_hint, reason_code}` for the **viewer**: `allowed` only for the reviewed party when they have not replied to this review yet. Reason codes: `not_applicable` (not the reviewed party, the reviewer, or anonymous — hide) · `already_replied` (hide; their reply holds the slot, even when it is moderation-hidden) · `sender_restricted` (suspended/banned — hide) · `unavailable` (could not be determined — hide, retry later).
   - **Hand-over (user decision 2026-11-17):** the reply shown is the one whose author **currently** answers for the page. When the page changes hands (claim revoked, operator changed, page reassigned), the old author's reply stops showing and no longer holds the slot, so the current party gets `can_reply.allowed` and may write their own. The old author can still delete theirs, but not edit it, and still sees it as `viewer_stale_reply`.
-  - `viewer_stale_reply` (v1.NEXT) — `null`, or the **viewer's own** reply after a hand-over (user decision 2026-11-18). It is not the page's response, so it is not `reply`, and nobody else sees it.
+  - `viewer_stale_reply` (v1.174) — `null`, or the **viewer's own** reply after a hand-over (user decision 2026-11-18). It is not the page's response, so it is not `reply`, and nobody else sees it.
     - Same shape as `reply`. Its `permissions`: `can_edit` `{allowed: false, reason_code: "page_changed_hands"}` · `can_delete` allowed · `can_report` `own_reply`.
     - `null` while it is moderation-hidden (frozen; `DELETE` answers 404 for it).
     - It can sit beside `reply` when the new party has replied too. Delete it with `DELETE /reviews/{id}/reply`; it is then `null`.
@@ -7291,7 +7291,7 @@ Reviews-tab data plane for entity profiles AND member profiles (v1.48) — revie
     - `can_report`: signed in, not the author, not restricted. Reasons: `sign_in_required` (`unlock_hint` "Sign in to report.") · `own_reply` · `sender_restricted`.
   - `permissions.can_reply` — `{allowed, unlock_hint, reason_code}` for the **viewer**: `allowed` only for the reviewed party when they have not replied to this review yet. Reason codes: `not_applicable` (not the reviewed party, the reviewer, or anonymous — hide) · `already_replied` (hide; their reply holds the slot, even when it is moderation-hidden) · `sender_restricted` (suspended/banned — hide) · `unavailable` (could not be determined — hide, retry later).
   - **Hand-over (user decision 2026-11-17):** the reply shown is the one whose author **currently** answers for the page. When the page changes hands (claim revoked, operator changed, page reassigned), the old author's reply stops showing and no longer holds the slot, so the current party gets `can_reply.allowed` and may write their own. The old author can still delete theirs, but not edit it, and still sees it as `viewer_stale_reply`.
-  - `viewer_stale_reply` (v1.NEXT) — `null`, or the **viewer's own** reply after a hand-over (user decision 2026-11-18). It is not the page's response, so it is not `reply`, and nobody else sees it.
+  - `viewer_stale_reply` (v1.174) — `null`, or the **viewer's own** reply after a hand-over (user decision 2026-11-18). It is not the page's response, so it is not `reply`, and nobody else sees it.
     - Same shape as `reply`. Its `permissions`: `can_edit` `{allowed: false, reason_code: "page_changed_hands"}` · `can_delete` allowed · `can_report` `own_reply`.
     - `null` while it is moderation-hidden (frozen; `DELETE` answers 404 for it).
     - It can sit beside `reply` when the new party has replied too. Delete it with `DELETE /reviews/{id}/reply`; it is then `null`.
@@ -9538,7 +9538,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-18 — additive — a handed-over review reply stays visible to its author (F-345 follow-up)
+### v1.174 — 2026-11-18 — additive — a handed-over review reply stays visible to its author (F-345 follow-up)
 
 Ships with bcc-trust #723.
 
