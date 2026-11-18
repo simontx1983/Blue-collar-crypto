@@ -2202,10 +2202,25 @@ First factor of the password login. Validates credentials, then **always** initi
   { "status": "2fa_required", "method": "email", "challenge_token": "<64-hex>" }
   ```
   No JWT here. The client routes to the 2FA code screen and completes `/auth/2fa/verify` with the `challenge_token` (10-min TTL) + the 6-digit code emailed to the account (5-min TTL).
-- **Errors:** `bcc_invalid_request` 422 (missing identifier or empty password) · `bcc_invalid_credentials` 401 (user-not-found OR wrong password — generic, anti-enumeration; identical for email- and handle-shaped identifiers) · `bcc_email_not_verified` 403 · `bcc_invalid_state` 409 (account has no handle) · `bcc_rate_limited` 429
+- **Errors:** `bcc_invalid_request` 422 (missing identifier or empty password) · `bcc_invalid_credentials` 401 (user-not-found OR wrong password — generic, anti-enumeration; identical for email- and handle-shaped identifiers) · `bcc_email_not_verified` 403 · `bcc_invalid_state` 409 (account has no handle) · `bcc_rate_limited` 429 · `bcc_captcha_required` 429 *(since v1.NEXT; see **Captcha step-up**)*
+- **Captcha step-up (since v1.NEXT):** off until the server is configured with Cloudflare Turnstile keys; normal sign-ins never see it. It turns on:
+  - for one typed identifier, after **more than 10 wrong passwords in 15 min** from networks the account has not recently signed in from;
+  - for everyone, after **more than 50 failed sign-ins site-wide in 5 min**.
+
+  Either stays on for 15 min after the latest failure over its threshold. A network the account recently completed a sign-in from (the F-281 trusted networks) **never** sees it. An identifier with no account takes exactly the untrusted path, so the answer says nothing about whether an account exists.
+
+  While it is on, a request without a valid Turnstile token gets **`429 bcc_captcha_required`** "Please complete the verification to continue." with:
+  ```json
+  { "error": { "code": "bcc_captcha_required", "data": { "captcha": { "provider": "turnstile", "site_key": "<public site key>" } } } }
+  ```
+  The check runs **before** the password is looked at: the same answer whether the password is right or wrong. The refusal does not count against the login limits.
+
+  **Clients:** render a Turnstile widget with `error.data.captcha.site_key` and re-submit the same body plus **`captcha_token`** (the widget's response token, single-use, about 5 min). A rejected or expired token gets `bcc_captcha_required` again: reset the widget. The page must allow `https://challenges.cloudflare.com` in its CSP (`script-src`, `frame-src`).
+
+  If Turnstile itself is unreachable, the server **fails open** to the login limits above (logged and counted), so an outage never locks members out.
 - **Rate limit:** *(since v1.152, F-290)* **20/min per network** (was 5; before the bcrypt compare). Guessing against one account is bounded by the per-identifier buckets (F-281: 20/15 min per typed identifier per network, 100/15 min per typed identifier, trusted networks exempt from the latter).
 - **Cache:** `Cache-Control: no-store`
-- **Mapping:** reads `wp_users` by email or by login (`u_<handle>` via `AuthSupport::deriveLogin`) + `wp_check_password`, reads `bcc_handle` + `_bcc_email_verified`, registers the challenge token (`bcc_2fa_ct_<token>`, 10-min transient) as the user's one live challenge (`bcc_2fa_current_<userId>`, superseding — and dropping the code of — any earlier one; since v1.97) and stores an HMAC-hashed 2FA OTP bound to it (`bcc_2fa_otp_<first 40 hex of sha256(token)>`, 5-min transient), emails the code (`AuthMailer::send2faCode`), emits the `user_login_2fa_initiated` audit log. No auth cookie, no JWT. Handler `PasswordAuthController::login`. Standard envelope per §1.4.
+- **Mapping:** *(since v1.NEXT)* the captcha step-up's verify (`TurnstileVerifier`, Turnstile siteverify with the caller's IP) runs before the password check; reads `wp_users` by email or by login (`u_<handle>` via `AuthSupport::deriveLogin`) + `wp_check_password`, reads `bcc_handle` + `_bcc_email_verified`, registers the challenge token (`bcc_2fa_ct_<token>`, 10-min transient) as the user's one live challenge (`bcc_2fa_current_<userId>`, superseding — and dropping the code of — any earlier one; since v1.97) and stores an HMAC-hashed 2FA OTP bound to it (`bcc_2fa_otp_<first 40 hex of sha256(token)>`, 5-min transient), emails the code (`AuthMailer::send2faCode`), emits the `user_login_2fa_initiated` audit log. No auth cookie, no JWT. Handler `PasswordAuthController::login`. Standard envelope per §1.4.
 
 #### `POST /bcc/v1/auth/2fa/verify`
 
@@ -9393,6 +9408,17 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-17 — additive (behind config) — captcha step-up on `POST /auth/login`
+
+Ships with bcc-trust #715 (and bcc-core #128 for the two health events).
+
+- **`POST /auth/login`:** a Cloudflare Turnstile step-up, OFF until the server has Turnstile keys.
+  - **When it turns on:** for one identifier, after more than 10 wrong passwords in 15 min from networks the account hasn't recently signed in from. Site-wide, after more than 50 failed sign-ins in 5 min. Trusted networks are exempt, and normal sign-ins never see it.
+  - **While on:** a request without a valid token gets the new **`429 bcc_captcha_required`**, with `error.data.captcha = {provider, site_key}`. It is checked before the password and does not count against the login limits.
+  - **Turnstile outage:** fails open to the login limits.
+- **New optional body field `captcha_token`** on `POST /auth/login`. Ignored unless the step-up is on.
+- **Clients:** render Turnstile from `error.data.captcha.site_key` and re-submit with `captcha_token`. Allow `https://challenges.cloudflare.com` in the CSP. An old client shows its generic 429 copy until it does.
 
 ### v1.156 — 2026-11-17 — behaviour change — Join on holder and delegator groups is offered everywhere and verified on join (F-359)
 
