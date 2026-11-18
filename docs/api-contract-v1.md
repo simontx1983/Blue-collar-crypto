@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.147 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.151 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -157,6 +157,8 @@ Two distinct codes, two distinct UX paths:
 - `bcc_unauthorized` (401) — no bearer was provided. Route to `/login`.
 
 The canonical envelope's `message` is presentation; the *behavior fork* is on `code` alone.
+
+**When each is sent (since v1.149, F-288 — before, neither code was emitted and every case read `bcc_unauthorized`):** a route that requires sign-in and answers 401 `bcc_unauthorized` says `bcc_token_expired` when the request PRESENTED a bearer token whose only problem is its expiry, and `bcc_token_invalid` when the presented token is malformed, wrongly signed, revoked (sign out everywhere, a credential change, a suspension), signed out (`POST /auth/logout`), superseded by a refresh (after its 120 s overlap), or belongs to a deleted account. With no bearer token it stays `bcc_unauthorized`. Status and envelope shape are the same. **Public routes** (those that serve signed-out visitors) never fail on a bad bearer token: they serve the anonymous view, as before. Other 401 codes (e.g. `bcc_invalid_credentials`, `bcc_signature_invalid`) are unaffected. **Exception: `POST /auth/refresh` itself** keeps `bcc_unauthorized` for a token it can't refresh (e.g. past the 24-h grace) — a `bcc_token_expired` there would tell a client to refresh again, in a loop. A refused refresh means sign in again.
 
 #### 1.4.4 Rate-limit semantics
 
@@ -965,6 +967,28 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
     { "id": 12, "slug": "cosmos-hall", "name": "Cosmos Hall", "is_primary": true, "role": "moderator", "role_label": "MODERATOR", "type": "hall" },
     { "id": 18, "slug": "osmosis-hall", "name": "Osmosis Hall", "is_primary": false, "role": "member", "role_label": "MEMBER", "type": "hall" }
   ],
+  // ⚠ SECTION VISIBILITY (v1.151, F-341). Which profile sections this
+  // VIEWER may see, after the owner's "Show on profile" switches. The
+  // owner always sees every section as true, and admins keep the §F-02
+  // exemption.
+  //
+  // Read this to decide which TABS to render: without it a client cannot
+  // tell a HIDDEN section from an EMPTY one, and would show an empty
+  // Reviews tab on someone's profile instead of omitting the tab.
+  //
+  // ⛔ PR 1 of 3 enforces the PAYLOAD only. The per-user tab ROUTES
+  // (/users/:handle/blog, /photos, /albums …) are gated in PR 2, so until
+  // that ships a hidden section is still reachable by calling its route
+  // directly. Treat this as the DISPLAY contract, not yet a boundary.
+  "sections": {
+    "about": true,
+    "verifications": true,
+    "halls": true,
+    "operator": true,
+    "blogs": true,
+    "reviews": true,
+    "disputes": true
+  },
   // OWN-ACCOUNT ONLY. This array is populated exactly as shown when
   // `is_self` is true, and is `[]` for every other viewer (see §3.1
   // "Viewing someone else's profile"). Never render it on a surface a
@@ -2687,7 +2711,7 @@ Slim prefix-search endpoint backing the composer's `@`-mention autocomplete (§3
   - `bcc_rate_limited 429` — per-viewer throttle (60 keystrokes / 60s rolling window).
 - **Cache:** `Cache-Control: private, max-age=10`; `Vary: Authorization, Cookie`. Short TTL deliberate — the typical autocomplete burst (3-6 keystrokes typed in succession) hits the cache for the steady-state prefix; a 10s window is long enough to absorb the burst, short enough that a recent join/ban/block updates within a session.
 - **Privacy / mapping:** routed through `PeepSoUserSearch` ([peepso/classes/usersearch.php](app/public/wp-content/plugins/peepso/classes/usersearch.php)) which applies the canonical filter set: ban filter, `profile_acc != PRIVATE`, bidirectional `peepso_user_blocked` (viewer→target AND target→viewer), `allow_hide_user_from_user_listing`, plus the `peepso_user_search_args` hook BCC's [PrivacySettings::filterPeepSoSearchArgs](app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Support/PrivacySettings.php) attaches for `hide_from_search` (which `discovery_optout` aliases since v1.133). **Do NOT route this through the dormant `bcc-search` `UserSearchRepository`** — that one runs raw `wp_users` LIKE and bypasses every filter above; it would leak hidden users into the dropdown.
-- **Ranking:** prefix match on `user_login` + `display_name` + `bcc_handle` user-meta, ordered by handle ASC. V1d does NOT bias by follower edges (deferred — see §3.3.12 deferred). When two candidates share a prefix, alphabetical order wins; ties broken by `ID ASC`.
+- **Matching and order** *(corrected v1.148: the previous text predates #601)*: a member matches when the query is **contained in** their display name (not when they hide their real name, and not when the display name is their login) or their current `@handle`, through the shared `MemberSearchCandidates` matcher; **never** the login or email. Candidates then pass PeepSo's privacy filter set, which returns them in PeepSo's `username` sort order. V1d does NOT bias by follower edges (deferred — see §3.3.12 deferred).
 - **Side effects:** none. Pure read; no notification, no logging beyond the rate-limit counter.
 - **Sister endpoints:** the composer's full-name → user_id resolution at submit time is **not** exposed as a separate endpoint — the picker emits the wire-format token `@peepso_user_<id>(name)` directly into the post body using `user_id` from this response, and the server's `MentionPolicy` re-validates on `POST /posts*` (§3.3.12 server-side enforcement). A user picked from the dropdown but who turns hidden between picker-select and submit gets rejected at write-time with `bcc_invalid_mention_target` — picker results are advisory, not authoritative.
 
@@ -4986,9 +5010,16 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
     "hide_from_search":          false,
     "default_post_audience":     "public" | "members" | "friends" | "private",
     "show_groups_on_profile":    true,
+    "show_about_on_profile":         true,
+    "show_verifications_on_profile": true,
+    "show_operator_on_profile":      true,
+    "show_blogs_on_profile":         true,
+    "show_reviews_on_profile":       true,
+    "show_disputes_on_profile":      true,
     "mentor_opt_in":             false,
     "mentor_listed":             false,
-    "mentor_eligibility_reason": "below_veteran"
+    "mentor_eligibility_reason": "below_veteran",
+    "handle_next_change_at":     null
   }
   ```
 - **Storage:**
@@ -5002,9 +5033,16 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
   - `hide_from_search` *(documented v1.64 — shipped earlier)* → `peepso_is_hide_profile_from_user_listing` user_meta, "1"/"0" — "1" excludes the user from directory + member search (direct profile links still work). **Since v1.133 (F-257) this is THE one hidden-from-search flag:** `/me/privacy`'s `discovery_optout` is an alias that reads and writes it, so the two always agree.
   - `default_post_audience` *(documented v1.64 — shipped earlier; `friends` added v1.121)* → `peepso_last_used_post_privacy` user_meta (int 10/20/30/40 ↔ public/members/friends/private) — defaults PeepSo's audience picker; PeepSo itself overwrites it on every post, so this is a default, not a lock. ⚠ The column is not a validated enum, so a value with no token at all is reported as `members`.
   - `show_groups_on_profile` *(v1.127 — F-270)* -> `bcc_show_groups_on_profile` user_meta, "1"/"0". Read/write bool. **⚠ ABSENT MEANS `true`.** The default preserves the pre-F-270 behaviour, so an account that has never touched the setting keeps listing its groups; only an explicit falsey value hides them. This is the only *permissive* default among the privacy prefs here.
+  - `show_<section>_on_profile` *(v1.151 — F-341)* → the profile **SECTION** switches: `show_about_on_profile`, `show_verifications_on_profile`, `show_operator_on_profile`, `show_blogs_on_profile`, `show_reviews_on_profile`, `show_disputes_on_profile`. Read/write bools, **all ABSENT MEANS `true`**, so no existing profile changes until its owner opts out.
+    - ⚠ **THREE storage conventions behind one vocabulary.** Do not infer storage from the field name:
+      - `about` / `verifications` / `operator` / `blogs` → new `bcc_show_*_on_profile` user_meta, `"1"`/`"0"`;
+      - **HALLS has no `show_halls_on_profile` field.** Its switch is `show_groups_on_profile` above (v1.127, F-270) — a deliberate exception to the naming pattern, because renaming a live field breaks clients for no behavioural gain;
+      - `show_reviews_on_profile` / `show_disputes_on_profile` are **INVERTED VIEWS** of the §K2 `reviews_hidden` / `disputes_hidden` flags, which remain the **only** storage and are still writable through `PATCH /me/privacy`. `show_* = false` ⇔ `*_hidden = true`. One source of truth, so the two endpoints cannot disagree.
+    - ⚠ §K2's own **route** behaviour is **unchanged** by F-341: `/users/:handle/reviews` and `/disputes` answer exactly as before. F-341 only adds the wire vocabulary for those two.
     - ⚠ **It governs only the toggleable part of the policy.** Two rules apply regardless of it, and a client must not present it as "all of my group privacy": secret groups are never shown to non-members, and NFT-holder / delegator groups are shown only to **signed-in** viewers. See `GET /users/:slug/groups`.
   - `mentor_opt_in` *(v1.62 — Rank Phase 7, spec §21.4)* → `bcc_mentor_opt_in` user_meta, "1"/"0" (via `MentorListingService`). Read/write bool. Opting in requires **no** eligibility — a non-Veteran may pre-opt-in and lists automatically the day they qualify.
 - **Read-only mentor pair (v1.62, GET response only — never writable):** `mentor_listed` (bool) — whether the user is **actively listed** in the mentor directory *right now*; the listing composes **live** as opt-in AND `can('list_as_mentor')` (**Veteran** rank AND trust tier ≥ **Trusted** AND not suspended AND not in §14.2 Rank recovery). Nothing is materialized — when any condition fails the listing **pauses automatically on the next read** (no sweep, no flag to un-stick). `mentor_eligibility_reason` (string|null) — the resolver's stable deny slug ∈ `suspended|new_member|below_veteran|below_trusted|in_recovery` so the frontend can explain a paused listing; `null` while eligible (regardless of opt-in).
+- **Read-only `handle_next_change_at` (since v1.148, F-333, GET and the PATCH echo — never writable):** when the owner may next change their handle (`PATCH /me/handle`), as ISO-8601 UTC (`"2026-06-17T14:05:00Z"`), or `null` when they can change it now. The same instant the cooldown `429` reports in `error.data.next_change_at`.
 - **PATCH** is partial — missing keys are untouched.
   - **Every field is validated before anything is written** (F-97): an invalid value (`bcc_invalid_request` 422) or PeepSo missing when `profile_visibility` is sent (`bcc_peepso_unavailable` 503) writes **nothing**.
   - **A write that fails after validation (v1.108)** stops the request: `bcc_internal_error` **500**, message "Some of your preferences could not be saved. Please try again.", with `error.data.saved` (list of the request's field names that DID persist, in write order: `profile_visibility`, then the user-meta fields, then `mentor_opt_in`) and `error.data.failed` (the field that did not). Earlier writes are **not** rolled back. A client must not report the save as successful, and may re-send the whole request (every write is idempotent).
@@ -5626,6 +5664,7 @@ Read the attestation roster for an entity.
   Self-only views (e.g. an operator querying their own
   attestation surface) MAY include the weights — that's a future
   endpoint, not in V1 scope.
+- **Attestor visibility (v1.150, F-356):** an item is **omitted** when the viewer may not see its attestor's profile — the profile gate (`ProfileAccess::canViewProfile`: the attestor's profile privacy level for this viewer, and suspension; the attestor and admins always pass). So an anonymous visitor never gets the handle, name, avatar or score of an attestor whose profile is private to signed-out viewers. **Display only:** `summary` counts and every score still include every attestation. `hide_from_search` does **not** hide an attestor here (it hides a member from search and the directory). No shape change; a page may hold fewer items than `per_page`. The profile vouch line's `top_vouchers` (§4.4) applies the same rule.
 - **Cache:** `private, max-age=30`. Underlying read model is generation-counter invalidated by `POST` / `DELETE` against the same target.
 
 #### §J.5 `GET /bcc/v1/me/reliability`
@@ -6668,7 +6707,7 @@ Change the viewer's public handle (§B6). 7-day cooldown. Registered as `WP_REST
 - **Body (JSON):** `handle` (**required**) — lowercased + trimmed; §B6 rules (3–20 chars, `a-z`/digits/`-`, no leading/trailing/consecutive hyphens, not reserved).
 - **Response 200:** `{ "data": { "handle": "ramona-v", "next_change_at": "2026-06-17T14:05:00Z" } }` — `next_change_at` is now + 7 days, **null on a no-op rename** (submitting the existing handle short-circuits without arming the cooldown).
 - **Old handles are retired, not freed (since v1.128, F-280).** A rename records the outgoing handle as **retired** for this member before the new one is written. A retired handle keeps resolving to the member on every per-user route (`/u/{handle}`, `/users/{handle}/…`, cards, so old links and `@mentions` keep working; the response carries the current handle and the client redirects), never signs in, and is `bcc_conflict` 409 for every **other** member and for signup. Its **owner may reclaim it** (normal cooldown applies); it then stops being retired. Exception: a handle equal to the account's login (retired by the 2026 login-handle rotation) stays locked for its owner too. A handle some account's original signup login was derived from is also reported taken (signup could never mint it).
-- **Errors (checked in this order):** `bcc_unauthorized` 401 · `bcc_rate_limited` 429 (the shared per-account attempt bucket, §1.4.4 — since v1.115) · `bcc_forbidden` 403 (account suspended) · `bcc_rate_limited` 429 (within the 7-day cooldown; checked before the handle itself so a locked-out user can't probe availability; carries `Retry-After`) · `bcc_invalid_handle` 422 · `bcc_handle_reserved` 422 · `bcc_conflict` 409 (taken, or retired by another member) · `bcc_rate_limited` 429 (the change cap below — only when a real change is about to be written) · `bcc_internal_error` 500 (since v1.128: the old handle could not be recorded as retired; nothing was changed, retry)
+- **Errors (checked in this order):** `bcc_unauthorized` 401 · `bcc_rate_limited` 429 (the shared per-account attempt bucket, §1.4.4 — since v1.115) · `bcc_forbidden` 403 (account suspended) · `bcc_rate_limited` 429 (within the 7-day cooldown; checked before the handle itself so a locked-out user can't probe availability; carries `Retry-After` (the real remaining wait, since v1.148) and, since v1.148 (F-333), `error.data.next_change_at`, the same ISO-8601 UTC instant `GET /me/profile-prefs` reports as `handle_next_change_at`) · `bcc_invalid_handle` 422 · `bcc_handle_reserved` 422 · `bcc_conflict` 409 (taken, or retired by another member) · `bcc_rate_limited` 429 (the change cap below — only when a real change is about to be written) · `bcc_internal_error` 500 (since v1.128: the old handle could not be recorded as retired; nothing was changed, retry)
 - **Rate limit:** one successful change per 7 days (`HandleService::COOLDOWN_SECONDS = 604800`). Every attempt also counts against the shared per-account bucket (120 attempts / 60 s, §1.4.4). *(since v1.115)* A backstop of **10 changes per hour** per account is charged only when a change passes every check and is about to be written — attempts on taken, invalid or unchanged handles never count against it; the 7-day cooldown normally binds first.
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** `OnboardingEndpoint::updateHandle` (route `OnboardingEndpoint.php:102`, EDITABLE) → `HandleService`; on a real rename adds a `bcc_handle_retired` row for the old handle (v1.128), writes `bcc_handle` + `bcc_handle_last_changed`, removes the new handle's own retired row if it was one, audit-logs `handle_changed`, fires `do_action('bcc_handle_changed', …)`.
@@ -9217,7 +9256,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ### v1.NEXT — 2026-11-12 — additive — review replies (F-345)
 
-Ships with bcc-trust (F-345) and bcc-core #119 (merge and deploy core first).
+Ships with bcc-trust #686 (F-345) and bcc-core #119 (merged and in production).
 
 - **New routes:** `POST|PATCH|DELETE /reviews/{id}/reply`. The reviewed party's ONE public response to a review (1–1000 chars). The author edits and deletes it; the reviewer cannot respond back.
 - **Additive on both Reviews lists** (`GET /users/:handle/reviews`, `GET /entities/:target_kind/:target_id/reviews`): every row gains `reply` (null, or the response) and `permissions.can_reply`.
@@ -9226,9 +9265,49 @@ Ships with bcc-trust (F-345) and bcc-core #119 (merge and deploy core first).
 - **Not a feed item, and does not count** toward streaks or contribution score (user decision).
 - **Clients:** render `reply` under the review, show the composer only when `can_reply.allowed`, and offer Edit/Delete only on the viewer's own reply.
 
+### v1.151 — 2026-11-12 — additive + behaviour change — "Show on profile" section switches, server-enforced (F-341 PR 1 of 3)
+
+Ships with bcc-trust's F-341 PR 1.
+
+- **`GET`/`PATCH /me/profile-prefs` (additive):** six new rw bools — `show_about_on_profile`, `show_verifications_on_profile`, `show_operator_on_profile`, `show_blogs_on_profile`, `show_reviews_on_profile`, `show_disputes_on_profile`. ⚠ **All default ON** (absent = shown), so no existing profile changes until its owner opts out. See the endpoint's storage notes for the three conventions behind them — in particular that **Halls keeps the field name `show_groups_on_profile`** and that reviews/disputes are inverted views of the §K2 flags rather than new storage.
+- **`GET /users/:handle` — additive `sections` block:** `{about, verifications, halls, operator, blogs, reviews, disputes}` → bool. Read it to decide which tabs to render.
+- **`GET /users/:handle` — behaviour change, narrowing.** For a non-owner, a hidden section returns a **documented empty** — never an omitted key and never a 403. A missing key breaks client shape, and a refusal would itself disclose that something is being withheld:
+  - `about` hidden → `bio: null`
+  - `verifications` hidden → every claim `false`, usernames `null`, `wallets_verified: 0`, and `profile_completeness: 0` on the profile payload's richer block. ⚠ Every key the server zeroes is listed here on purpose: the "fixed shape" promise is only worth anything if it is exhaustive, so a client never has to guess which keys survive a hidden section
+  - `operator` hidden → `owned_pages_count: 0`, and `owned_pages_by_type` with **all four keys at `0`** (`validator`/`project`/`nft`/`dao`) — ⚠ **not** `{}`: the shape is fixed, so a client never has to special-case a second shape
+  - `blogs` hidden → `counts.blog_posts_written: 0`
+  - `halls` hidden → unchanged from v1.127
+- ⚠ **`verifications` and `operator` are narrowed on the MEMBER CARD too** (`member_dossier`), because the card carries the same resolved block. The same fact on two surfaces is narrowed in one place deliberately; narrowing only the profile would leave it readable on the card.
+- ⛔ **NOT YET A COMPLETE BOUNDARY.** PR 1 enforces the profile **payload**. The per-user **tab routes** are **PR 2**; per-Hall hiding (`hidden_hall_ids`) is **PR 3**. Until PR 2 ships, a hidden section is still reachable by calling its own route.
+  - ⚠ **Concretely, and this version will probably ship BEFORE PR 2:** `sections.blogs = false` hides the tab and zeroes `counts.blog_posts_written`, but **`GET /users/:handle/blog` is only gated from PR 2's version onwards** — until then it still returns the posts. Do **not** read this entry as a full hide. PR 2's own entry removes this caveat when the route gate lands.
+- **Clients:** read `sections` for tab rendering; expect documented empties rather than missing keys; and do **not** present `show_reviews_on_profile` / `show_disputes_on_profile` as separate from the §K2 privacy toggles — they are the same setting under a second name.
+
+### v1.150 — 2026-11-12 — behaviour change (privacy) — rosters and "Top vouched by" omit attestors the viewer may not see
+
+Ships with bcc-trust #683 (F-356).
+
+- **`GET /entities/:target_kind/:target_id/attestations`:** an attestor whose profile the viewer may not see (profile privacy level, suspension) is omitted from `items`. Before, anonymous visitors got the handle, name, avatar and score of attestors with profiles private to them. `summary` and all scores are unchanged (display only); `hide_from_search` is not applied. No shape change.
+- **`GET /users/:handle` `top_vouchers`:** the same rule (candidates the viewer may not see are skipped; up to 3 visible ones are returned).
+
+### v1.149 — 2026-11-12 — behaviour change — protected routes say whether a bearer token expired or is dead (F-288)
+
+Ships with bcc-trust #673.
+
+- A 401 `bcc_unauthorized` on a route that requires sign-in (except `POST /auth/refresh`, whose refusal stays `bcc_unauthorized`) becomes **`bcc_token_expired`** (the presented token only expired — refresh and retry) or **`bcc_token_invalid`** (malformed, revoked, signed out, superseded, deleted account — sign out), per §1.4.3. No token presented: unchanged. Public routes: unchanged (anonymous view). **Clients:** the existing "refresh on 401, then classify" path keeps working; these codes let a client skip the refresh for `bcc_token_invalid`.
+
+### v1.148 — 2026-11-12 — additive + fix — the handle cooldown is readable before submit, and its Retry-After is the real wait
+
+Ships with bcc-trust #653 (F-333, F-294) and #661 (F-328).
+
+- **Display names (F-328, bcc-trust #661):** a `display_name` shaped like a signup login (`u_` + a handle, any case) now shows the handle, like one equal to the member's own login; it no longer has to be the CURRENT login.
+- **`GET /users/mention-search`:** the Ranking line is corrected to what the endpoint has done since #601 (no contract change).
+- **`GET`/`PATCH /me/profile-prefs`:** new read-only **`handle_next_change_at`** (ISO-8601 UTC, or `null` when the owner can change their handle now).
+- **`PATCH /me/handle`:** the cooldown `429` now also carries **`error.data.next_change_at`** (same format, same instant). **Fix:** its `Retry-After` is now the real remaining wait. It used to be overwritten with `60` (the shared per-account write bucket's window) alongside a misleading `error.data.retry_after_seconds: 60`; neither is added to a 429 that sets its own `Retry-After` any more.
+- **Clients:** optional. The handle editor can show the date before a submit, and read it from the 429 body instead of the header.
+
 ### v1.147 — 2026-11-12 — behaviour change — unconfirmed sign-ups free up after 7 days; a password reset confirms a pending email sign-up
 
-Ships with bcc-trust #675 (F-285, F-287). Version number assigned at merge.
+Ships with bcc-trust #675 (F-285, F-287).
 
 - **`POST /auth/signup`:** an email sign-up never confirmed within 7 days stops holding its handle and email; the next sign-up for either deletes it. The handle and email `409` messages now say so (codes unchanged).
 - **`POST /auth/reset-password`:** a successful reset confirms a still-pending **email** sign-up, so the following sign-in works. Wallet and OAuth accounts are unchanged.
@@ -9236,20 +9315,20 @@ Ships with bcc-trust #675 (F-285, F-287). Version number assigned at merge.
 
 ### v1.146 — 2026-11-12 — behaviour change — watch state can be unknown; suggestions never offer someone already followed
 
-Ships with bcc-trust #659 (F-255 follow-up + F-335). Version number to be assigned at merge.
+Ships with bcc-trust #659 (F-255 follow-up + F-335).
 
 - **`viewer_is_watching` is three-state** on page and member cards (§3.2) and on `GET /users/:handle`: `true` / `false` / **`null` = unknown** (the watch-state read failed; `viewer_watch` is `null` too). Was: a failed read read as `false`, which drew a "Watch" button on something the member may already watch. **Clients:** render `null` as a neutral, non-actionable state.
 - **`GET /suggestions/users`:** the already-following exclusion is exact. It used the first 200 follows only, so a viewer following more than 200 members could be suggested one they already watch. No shape change.
 
 ### v1.145 — 2026-11-12 — additive — the profile's vouch line: "Vouched for by N people you watch" / "Top vouched by"
 
-Ships with bcc-trust #674 (F-340). Version number to be assigned at merge.
+Ships with bcc-trust #674 (F-340).
 
 - **`GET /users/:handle`:** new `vouched_by_watched_count` (`int | null`, signed-in viewers on someone else's profile; `0` hides the line, `null` = not applicable or unknown) and `top_vouchers` (≤ 3 `{ handle, display_name, avatar_url }`, signed-out viewers only; `[]` hides the line). Both count active `vouch` attestations only, and only ones the public roster would show (no suspended attestors; a name-hidden voucher counts and shows as `@handle`). See §4.4.
 
 ### v1.144 — 2026-11-12 — behaviour change — administrators can take a reported announcement down
 
-Ships with bcc-trust F-307 B1. ⚠ `v1.144` is a placeholder: the number is assigned at merge.
+Ships with bcc-trust F-307 B1.
 
 - **Behaviour (§4.32.1, §4.32.16):** a new public-visibility predicate. A notice an administrator took down is not publicly readable: the list, the detail/permalink read (`404`, same as missing), comments and the rotator drop it, and its feed item is hidden. Archiving is unchanged; a taken-down notice is dropped from the archived list as well.
 - **Moderation queue:** Hide, Restore and Dismiss now act on announcement reports instead of every action being recorded as a dismiss. A report on the notice's feed item takes the same path.
@@ -9266,7 +9345,7 @@ Ships with bcc-trust #671.
 
 ### v1.142 — 2026-11-12 — additive — the post and comment author carries the trust score
 
-Ships with bcc-trust #663. Version number to be assigned at merge.
+Ships with bcc-trust #663.
 
 - **`FeedAuthor` (§3.3) and `CommentAuthor` (§3.5):** new `trust_score` (`int`, 0–100), the same number the profile shows (one server display rule), so a post card can render e.g. "TRUSTED 72" from `reputation_tier_label` + `trust_score`. Batched per page. **Optional for one release**: render the tier alone when it is absent.
 
@@ -9288,7 +9367,7 @@ Scope: the notification view-model (`GET /me/notifications`) and the mention/com
 - ⚠ **Coordination:** ships with bcc-trust F-245 (`fix/f245-notification-post-links`); that PR merges first. The frontend half (rendering `target_available: false`) is public-cb's.
 ### v1.139 — 2026-11-12 — additive + behaviour change — a wallet-signup email counts once verified; when a recovery email can be added (F-332)
 
-Ships with bcc-trust #658. Version number assigned at merge.
+Ships with bcc-trust #658.
 
 - **Behaviour change:** `GET /wallets` → `recovery.has_recovery_email` is `false` while the email is pending its verification code (`_bcc_email_verified='0'`): an address typed at wallet sign-up counts only once `POST /auth/verify-email` confirms it. The same definition drives the `DELETE /wallets/{id}` last-recovery-method guard and `POST /me/account/recovery-email`'s first-email check (so a pending typo can be replaced there). Legacy accounts with no flag are unaffected.
 - **Additive:** `recovery.available_at` (ISO-8601 UTC or `null`) and `recovery.available_reason` (`"signup_wallet" | "wallet_age" | null`).
@@ -9296,7 +9375,7 @@ Ships with bcc-trust #658. Version number assigned at merge.
 
 ### v1.138 — 2026-11-12 — behaviour change — a refresh retires the token it replaced after 120 seconds (F-282)
 
-Ships with bcc-trust #662. Version number assigned at merge.
+Ships with bcc-trust #662.
 
 - **`POST /auth/refresh`:** the presented token keeps working for 120 s after a successful refresh, then gets `bcc_unauthorized` 401 everywhere. Shape unchanged. **Clients:** use the returned token; no new handling.
 
@@ -9333,7 +9412,7 @@ Ships with bcc-trust #644 (F-246 backend + F-300) and bcc-core #113, both merged
 
 ### v1.134 — 2026-11-12 — behaviour change — 2FA resend reports an ended challenge, and its code always works
 
-Ships with bcc-trust #646 (F-292). Draft number: renumbered in merge order.
+Ships with bcc-trust #646 (F-292).
 
 - **`POST /auth/2fa/resend`:** an ended challenge (expired, superseded, burned, or older than 30 min) now answers `bcc_invalid_2fa_token` 401, the same as verify, instead of `ok: true` with nothing sent. A successful resend keeps the challenge alive for the new code's 5 minutes, so a late resend no longer mails a code that fails with "session expired". A challenge lives at most 35 minutes.
 - **`POST /auth/2fa/verify`:** no shape change. The 5-wrong-codes cap now holds across any number of resends.
@@ -9394,7 +9473,7 @@ Ships with bcc-core's F-266 change (bcc-core #108, merged) and bcc-trust's F-267
 
 ### v1.128 — 2026-11-12 — behaviour change — sign-in and search use the current handle; renamed handles are retired
 
-Ships with bcc-trust #634 (F-280) and bcc-search #36 (F-302). Draft number: renumbered in merge order.
+Ships with bcc-trust #634 (F-280) and bcc-search #36 (F-302).
 
 - **`POST /auth/login`:** a handle-shaped `identifier` resolves the account's current handle, not the `u_<handle>` signup login. A renamed member signs in with their new handle; the old handle no longer signs in. A handle two accounts hold signs in nobody. Errors and their shapes are unchanged.
 - **`PATCH /me/handle`:** the outgoing handle is retired (it keeps resolving to the member, so old `/u/` links and `@mentions` work, and no other member can take it). The owner may reclaim it. New error `bcc_internal_error` 500 when the old handle cannot be recorded; nothing changes. A one-shot migration retires the original handle of members who renamed before this change.
