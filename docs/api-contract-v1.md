@@ -2116,7 +2116,7 @@ Verifies a signed nonce, creates a new user (placeholder email if none supplied)
 
 #### `POST /bcc/v1/auth/forgot-password`
 
-Requests a password-reset email. **Always returns `ok: true`** regardless of whether the email matches a registered account — this is the anti-enumeration contract; callers cannot use the response shape to discover which emails exist. *(Timing, corrected v1.NEXT, F-294: an unknown address now pays the same password-hash cost as a real key generation, but mail delivery can still make a known address answer more slowly; this is not a timing guarantee. `/auth/signup` reports "email already exists" by design, so email existence is not secret.)*
+Requests a password-reset email. **Always returns `ok: true`** regardless of whether the email matches a registered account — this is the anti-enumeration contract; callers cannot use the response shape to discover which emails exist. *(Timing, corrected v1.NEXT, F-294: an unknown address now pays the same key-hash cost as a real key generation (the hash `get_password_reset_key()` uses: `wp_fast_hash` on WordPress 6.8+, a password hash before), but the key write and mail delivery can still make a known address answer more slowly; this is not a timing guarantee. `/auth/signup` reports "email already exists" by design, so email existence is not secret.)*
 
 - **Auth:** Anonymous
 - **Body:**
@@ -9228,7 +9228,7 @@ Ships with bcc-trust #687 (F-294 items 4a/4b), #689 (F-294 item 8) and #695 (F-2
 
 - **`POST /auth/wallet-signup`:** an already-registered `email` is reported (`bcc_conflict` 409) after the signature verifies but **before** the challenge is consumed, so the user can retry with another email without signing again.
 - **`POST /auth/wallet-signup`:** a wallet-link failure answers `bcc_wallet_already_linked` 409 only when another account holds the wallet; otherwise the new **`bcc_unavailable` 503** (retry; nothing was created).
-- **`POST /auth/login`, `POST /auth/forgot-password`:** an unknown account or address now pays one password hash, like a known one; `/auth/forgot-password`'s note no longer promises timing parity (mail delivery can differ).
+- **`POST /auth/login`, `POST /auth/forgot-password`:** an unknown account now pays one password hash at sign-in, like a known one; an unknown address at forgot-password pays the same key-hash cost as a real key generation; `/auth/forgot-password`'s note no longer promises timing parity (the key write and mail delivery can differ).
 - **`POST /auth/verify-email`:** new `bcc_otp_exhausted` 400 "Too many attempts. Request a new code." once the attempt cap has burned the code (until a resend).
 - **`POST /auth/resend-verification`:** also accepts `identifier` (email or handle); same silent `ok`.
 - **Clients:** treat `bcc_unavailable` 503 on wallet sign-up as "try again" (FE row F-252); on `bcc_otp_exhausted` offer "send a new code"; an unverified handle sign-in can call resend with `identifier`.
