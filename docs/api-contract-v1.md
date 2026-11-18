@@ -9531,7 +9531,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ### v1.NEXT — 2026-11-18 — behaviour change (privacy) — `POST /me/blocks` no longer tells which user ids exist
 
-Ships with bcc-trust #BLOCKS.
+Ships with bcc-trust #736.
 
 - **`POST /me/blocks`:** every positive `user_id` now gets the same answer. The block is recorded (`state: "created"`, then `"existing"`) whether or not a member holds the id. The `bcc_not_found` 404 "User not found." is retired: it answered only for an id nobody held, which let any member list the ids that exist.
 - A block on an id nobody holds affects only the blocker. The 20-per-60 s per-viewer limit still comes first. Self and non-positive ids are still `bcc_invalid_request` 400.
