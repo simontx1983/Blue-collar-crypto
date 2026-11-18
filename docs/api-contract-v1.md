@@ -6829,7 +6829,17 @@ server-side only.
   window is held in the object cache and **fails open** — if the cache
   refuses or loses the claim the view is counted, because an uncounted view
   is indistinguishable from "nobody read it". Uniqueness is separately
-  per-reader per **UTC day**. ⚠ Clients should still fire the beacon once
+  per-reader per **UTC day**, and is DB-backed, so it holds regardless.
+  ⚠ **The window REQUIRES a persistent object cache** (Redis/Memcached).
+  Without one `wp_cache_*` is a per-request array that can never dedupe
+  across requests, so the window is skipped and every beacon counts a view
+  — the same fail-open direction, just less effective. There is
+  deliberately no `wp_options`/transient fallback: that is what bcc-core's
+  `Throttle` removed for write amplification on the most-contended WP
+  table, and a view beacon fires far more often than a rate-limit check.
+  ⚠ The beacon itself is unaffected — `Throttle::isReady()` is satisfied by
+  bcc-trust's rate limiter, not by the object cache — so a cache-less
+  install still records views, it just does not de-duplicate them. ⚠ Clients should still fire the beacon once
   per render and not try to de-duplicate themselves; the server owns it.
 - **Response 204:** no body.
 - **Errors:** none of this API's own. Request validation is WordPress's:
