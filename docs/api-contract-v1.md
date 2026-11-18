@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.154 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.155 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -4577,7 +4577,8 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
   - wallet reason (`wallet_link_gone`): *"We couldn't confirm you still control the wallet behind your {name} claim, so the verified badge was removed. Reconnect the wallet and claim again to restore it."*
   - validator gone (`validator_row_gone`): *"We can no longer find the validator behind your {name} claim, so the verified badge was removed. If it's still running, claim it again to restore the badge."*
   - holder reason (`no_longer_holder`): *"We couldn't confirm your linked wallets still hold {name}, so the holder badge was removed. Claim again once a linked wallet holds it."*
-  - **Empty name:** the wallet and validator-gone messages drop the name (*"…behind your claim…"*); the holder message uses *"this collection"*. These are exactly `NotificationDispatcher::claimBadgeRemovedMessage()`.
+  - creator reason (`no_longer_owner`, v1.155, F-14 PR C): *"A different wallet now owns the {name} contract, so the creator badge was removed. Claim again from the wallet that owns it."* Sent when the collection contract's `owner()` now names a different, non-zero address. A renounced (zero-address) or unreadable owner never revokes. A creator claim whose wallet link is gone gets the wallet message.
+  - **Empty name:** the wallet and validator-gone messages drop the name (*"…behind your claim…"*); the holder message uses *"this collection"*; the creator message uses *"this collection's contract"*. These are exactly `NotificationDispatcher::claimBadgeRemovedMessage()`.
   - **In-app only:** no push variant, excluded from the email digest. Sent only after a real revoke (the re-verify runs in a report-only mode until an operator enables enforcement), never for a wallet disconnect.
 - **v1.132 (F-272):** three new bell keys, all default on, **in-app only** (no push variant, excluded from the email digest). `external_id` is the group; `link` is the group's page (`/communities/{slug}`), or `/communities` if the group no longer resolves.
   - `bcc_group_join_requested` — to each owner and manager of a closed group (never to one blocked either way with the requester); `actor` = the requester. *"@{handle} asked to join {group}."*
@@ -9392,6 +9393,12 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.155 — 2026-11-17 — additive (copy) — the claim-badge bell gains a creator reason (F-14 PR C)
+
+Ships with bcc-trust #693.
+
+- **`bcc_claim_badge_removed`:** a new verbatim message for `no_longer_owner`, sent when the weekly re-verify revokes a collection-creator claim because the contract's `owner()` now names a different, non-zero address: *"A different wallet now owns the {name} contract, so the creator badge was removed. Claim again from the wallet that owns it."* With an empty name: *"this collection's contract"*. A renounced (zero-address) or unreadable owner is never a revoke. No new key, type or shape; the other three messages are unchanged.
 
 ### v1.154 — 2026-11-17 — behaviour change — confirming a recovery email signs out other sessions and returns a fresh token
 
