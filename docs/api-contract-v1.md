@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.153 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.154 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -5099,8 +5099,8 @@ Confirms the OTP from the request above and **promotes** the pending address to 
 Body `{ "code": "123456" }`.
 
 - **Auth:** required. **Rate limit:** 10/hour/user. (A 6-digit OTP under this cap + the 15-min TTL is not brute-forceable; a wrong code leaves the pending transient in place for retry.)
-- **Response 200:** `{ "ok": true, "email": "<new>", "token": "<jwt>", "expires_in": 604800, "token_type": "Bearer" }` *(token fields since v1.NEXT)*.
-- **Signs out other sessions (since v1.NEXT):** the account just gained the email it can be recovered through, so — exactly like `POST /me/account/email/verify` and the `POST /auth/verify-email` sign-in — every earlier bearer token is revoked and a **fresh token** is returned; bearer clients must swap to it. The fresh token continues the caller's session (its `auth_time` is kept, so the wallet-before-sign-in rule is unaffected). A wrong or expired code changes nothing and signs nobody out.
+- **Response 200:** `{ "ok": true, "email": "<new>", "token": "<jwt>", "expires_in": 604800, "token_type": "Bearer" }` *(token fields since v1.154)*.
+- **Signs out other sessions (since v1.154):** the account just gained the email it can be recovered through, so — exactly like `POST /me/account/email/verify` and the `POST /auth/verify-email` sign-in — every earlier bearer token is revoked and a **fresh token** is returned; bearer clients must swap to it. The fresh token continues the caller's session (its `auth_time` is kept, so the wallet-before-sign-in rule is unaffected). A wrong or expired code changes nothing and signs nobody out.
 - **Errors:** `bcc_unauthorized` 401; `bcc_invalid_request` 400 (no pending email) / 422 (missing or incorrect/expired code); `bcc_conflict` 409 (email taken in the race window, or *since v1.130* the account has had a real email set meanwhile); `bcc_internal_error` 500; `bcc_rate_limited` 429.
 - **Cache:** `Cache-Control: no-store`.
 - **Side effects:** `wp_update_user(user_email)` + `_bcc_email_verified='1'`; clears the pending transient; `recovery_email_confirmed` audit row; out-of-band notice via `AccountSecurityMailer::recoveryEmailConfirmed` (new address only, when replacing the placeholder) or `::emailChanged` (both addresses, when replacing a real email).
@@ -9393,9 +9393,9 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-17 — behaviour change — confirming a recovery email signs out other sessions and returns a fresh token
+### v1.154 — 2026-11-17 — behaviour change — confirming a recovery email signs out other sessions and returns a fresh token
 
-Ships with bcc-trust #691. Version number assigned at merge.
+Ships with bcc-trust #691.
 
 - `POST /me/account/recovery-email/verify` now revokes every earlier bearer token and returns `token` / `expires_in` / `token_type` (parity with the email-change confirm and the verify-email sign-in). **Clients:** store the returned token, as for `POST /me/account/email/verify`.
 
