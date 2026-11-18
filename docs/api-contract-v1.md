@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.152 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.153 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -6799,7 +6799,7 @@ Owner blog **partial update** (§D6 PR-B). Registered as `WP_REST_Server::EDITAB
 
 #### `POST /bcc/v1/posts/:id/view`
 
-*(New in v1.NEXT — F-324 post analytics, REACH.)* The view beacon. Fired by
+*(New in v1.153 — F-324 post analytics, REACH.)* The view beacon. Fired by
 the client when a post is actually **rendered** to a reader — not at feed
 delivery, which would count posts that scrolled past unseen and make "views"
 a function of page size. `:id` is a peepso `act_id` (the numeric part of a
@@ -6866,7 +6866,7 @@ server-side only.
 
 #### `GET /bcc/v1/me/posts/:id/analytics`
 
-*(New in v1.NEXT — F-324 post analytics.)* Analytics for a post **the viewer
+*(New in v1.153 — F-324 post analytics.)* Analytics for a post **the viewer
 authored**. `:id` is a peepso `act_id`.
 
 Three **independent** sections — `reach`, `engagement`, `trust` — each with
@@ -9392,7 +9392,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-17 — additive — post view beacon + owner-only post analytics (F-324)
+### v1.153 — 2026-11-17 — additive — post view beacon + owner-only post analytics (F-324)
 
 Ships with bcc-trust #688.
 
