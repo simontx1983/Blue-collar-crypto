@@ -5544,6 +5544,11 @@ Cast a new attestation. Idempotent on `(attestor_user_id, target_kind, target_id
 - **Response 200 (existing):** same shape with `status: "existing"`.
 - **Errors:**
   - `bcc_invalid_request` (400) — bad kind, target_kind, or target_id
+  - `bcc_not_found` (404) — "Target not found." The target does not exist, **or is not attestable by this attestor** (v1.NEXT):
+    - a `*_card` target must be a published `peepso-page` whose page type maps to exactly that `target_kind` (a page with no stored type counts as a project page, as its card renders it). A feed post, a group post or another kind of page is refused.
+    - a `user_profile` target must be a member whose profile the attestor may view (the profile-visibility rule, suspension included), with no block in either direction.
+    - Every refusal is this same 404, so the response never reveals which post ids exist or who is private or blocking.
+  - `bcc_unavailable` (503) — the block state between attestor and member could not be read (v1.NEXT). Retryable; a cast is never admitted on an unknown block state.
   - `bcc_attestation_self` (422) — attestor and target identity match
   - `bcc_attestation_ineligible` (403) — tier/standing gate failed; `error.unlock_hint` carries the plain-English path forward
   - `bcc_attestation_bandwidth_exhausted` (409) — only for `kind=stand_behind` when slots are full; body includes a `slot_holders[]` array so the FE can render the "drop one to add one" picker server-supplied
@@ -9393,6 +9398,17 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-17 — fix — `POST /me/attestations` validates its target (security)
+
+Ships with bcc-trust #713.
+
+- **What changed.** A cast used to check only that its target existed: any published post passed as a `*_card` target, and any user as a `user_profile` target. Now:
+  - a card target must be a `peepso-page` of exactly the requested kind;
+  - a member target must be one the attestor may view, with no block either way.
+- **Errors.** Every refusal answers the existing `bcc_not_found` 404 "Target not found.", now listed in §J.2. An unreadable block state answers a retryable `bcc_unavailable` 503.
+- **Response shapes.** Unchanged.
+- **Side effect on `POST /bcc-trust/v1/endorse`.** A legacy entity page with no stored page type now counts as a project page there too, matching its card. It used to get 400 "This page cannot be vouched for."
 
 ### v1.156 — 2026-11-17 — behaviour change — Join on holder and delegator groups is offered everywhere and verified on join (F-359)
 
