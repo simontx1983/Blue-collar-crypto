@@ -9397,7 +9397,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ### v1.NEXT — 2026-11-17 — behaviour change — Removing a push device reveals nothing about other members' devices; profile lists Vary on the credential
 
-Ships with bcc-trust #PR.
+Ships with bcc-trust #709.
 
 - **Behaviour change (§4.10, `DELETE /me/push-subscriptions/:id`):** another member's subscription id now answers the same `200 { ok: true }` as a missing id (was `403 bcc_forbidden`, which told any member whether that id exists), and their row is not touched. The ownership check is part of the DELETE itself, so the row is never read first. A failed delete now answers `503 bcc_unavailable` instead of a `200` that claimed the device was removed. `bcc_forbidden` is no longer a possible answer. Clients that treated any rejection as "not removed" keep working; a `200` now means "this account no longer holds that row".
 - **Header addition (§4.4, §4.7.2):** `GET /users/:slug/followers`, `/following`, `/albums`, `/albums/:album_id/photos` and `/groups` add `Vary: Authorization, Cookie` to their `private, max-age=30`. The lists are filtered for the viewer; without the Vary a browser could serve one member's copy to the next member who signs in on it, for up to 30 s. No body change.
