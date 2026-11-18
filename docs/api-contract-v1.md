@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.175 · 2026-11-18 · Phase 1 deliverable
+**Status:** Draft v1.174 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -7103,7 +7103,7 @@ Stoke — the forge-fire engagement toggle (v1.33 backfill). X-"like" model: one
 
 #### `POST /bcc/v1/feed/:id/repost` · `DELETE /bcc/v1/feed/:id/repost`
 
-Repost (v1.175, F-346) — **once per member per post**. Unlike `/stoke` this is not a counter: a repost is a **real post on the member's own wall**, so it carries the REPOSTER's own audience (their stored default post audience, §F-291) while the original keeps its own. The relationship lives in PeepSo's `act_repost_id`; there is no BCC table. **Cosmetic for trust** — never writes `bcc_trust_scores`.
+Repost (v1.NEXT, F-346) — **once per member per post**. Unlike `/stoke` this is not a counter: a repost is a **real post on the member's own wall**, so it carries the REPOSTER's own audience (their stored default post audience, §F-291) while the original keeps its own. The relationship lives in PeepSo's `act_repost_id`; there is no BCC table. **Cosmetic for trust** — never writes `bcc_trust_scores`.
 
 ⭐ **Everything on this route is keyed on the ROOT, not on the id the client submits.** PeepSo resolves the chain root before storing, so a repost row always holds the ROOT — never its immediate parent. Reposting a repost of X therefore reposts X. `:id` may be either, and both the once-only rule and the count are keyed on the resolved root. A client reposting a repost gets `root_feed_id` back pointing at the original, and should patch its cache against **that** id.
 
@@ -9562,7 +9562,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.175 — 2026-11-18 — additive — repost, once per member per post (F-346)
+### v1.NEXT — 2026-11-18 — additive — repost, once per member per post (F-346)
 
 Ships with bcc-trust #747. ⛔ Needs **bcc-core #137 in production first** (`resolveRepostRoot` and `createSelfStatus`'s root parameter land there).
 
