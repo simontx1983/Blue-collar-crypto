@@ -9535,7 +9535,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ### v1.NEXT — 2026-11-18 — behaviour change (privacy) — SECRET pages leave discovery and answer as missing to non-members
 
-Ships with bcc-trust #TRUST (needs bcc-core #131 deployed first). A PeepSo page with `peepso_page_privacy = 2` is "secret": non-members may not know it exists.
+Ships with bcc-trust #731 and bcc-search #38 (both need bcc-core #131 deployed first). A PeepSo page with `peepso_page_privacy = 2` is "secret": non-members may not know it exists.
 
 - **Never listed, for anyone** (admins and the page's members included): `GET /cards` (§4.9), `GET /onboarding/suggestions`, and the trending pages behind `GET /search?trending=1`.
   - A page counts as secret when **any** of its privacy rows is `2`. Trending's old filter let a page carrying rows `0` and `2` through, and listed a page with two rows twice.
