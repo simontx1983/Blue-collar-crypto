@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.NEXT · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.151 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -967,7 +967,7 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
     { "id": 12, "slug": "cosmos-hall", "name": "Cosmos Hall", "is_primary": true, "role": "moderator", "role_label": "MODERATOR", "type": "hall" },
     { "id": 18, "slug": "osmosis-hall", "name": "Osmosis Hall", "is_primary": false, "role": "member", "role_label": "MEMBER", "type": "hall" }
   ],
-  // ⚠ SECTION VISIBILITY (v1.NEXT, F-341). Which profile sections this
+  // ⚠ SECTION VISIBILITY (v1.151, F-341). Which profile sections this
   // VIEWER may see, after the owner's "Show on profile" switches. The
   // owner always sees every section as true, and admins keep the §F-02
   // exemption.
@@ -5026,7 +5026,7 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
   - `hide_from_search` *(documented v1.64 — shipped earlier)* → `peepso_is_hide_profile_from_user_listing` user_meta, "1"/"0" — "1" excludes the user from directory + member search (direct profile links still work). **Since v1.133 (F-257) this is THE one hidden-from-search flag:** `/me/privacy`'s `discovery_optout` is an alias that reads and writes it, so the two always agree.
   - `default_post_audience` *(documented v1.64 — shipped earlier; `friends` added v1.121)* → `peepso_last_used_post_privacy` user_meta (int 10/20/30/40 ↔ public/members/friends/private) — defaults PeepSo's audience picker; PeepSo itself overwrites it on every post, so this is a default, not a lock. ⚠ The column is not a validated enum, so a value with no token at all is reported as `members`.
   - `show_groups_on_profile` *(v1.127 — F-270)* -> `bcc_show_groups_on_profile` user_meta, "1"/"0". Read/write bool. **⚠ ABSENT MEANS `true`.** The default preserves the pre-F-270 behaviour, so an account that has never touched the setting keeps listing its groups; only an explicit falsey value hides them. This is the only *permissive* default among the privacy prefs here.
-  - `show_<section>_on_profile` *(v1.NEXT — F-341)* → the profile **SECTION** switches: `show_about_on_profile`, `show_verifications_on_profile`, `show_operator_on_profile`, `show_blogs_on_profile`, `show_reviews_on_profile`, `show_disputes_on_profile`. Read/write bools, **all ABSENT MEANS `true`**, so no existing profile changes until its owner opts out.
+  - `show_<section>_on_profile` *(v1.151 — F-341)* → the profile **SECTION** switches: `show_about_on_profile`, `show_verifications_on_profile`, `show_operator_on_profile`, `show_blogs_on_profile`, `show_reviews_on_profile`, `show_disputes_on_profile`. Read/write bools, **all ABSENT MEANS `true`**, so no existing profile changes until its owner opts out.
     - ⚠ **THREE storage conventions behind one vocabulary.** Do not infer storage from the field name:
       - `about` / `verifications` / `operator` / `blogs` → new `bcc_show_*_on_profile` user_meta, `"1"`/`"0"`;
       - **HALLS has no `show_halls_on_profile` field.** Its switch is `show_groups_on_profile` above (v1.127, F-270) — a deliberate exception to the naming pattern, because renaming a live field breaks clients for no behavioural gain;
@@ -9219,7 +9219,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-12 — additive + behaviour change — "Show on profile" section switches, server-enforced (F-341 PR 1 of 3)
+### v1.151 — 2026-11-12 — additive + behaviour change — "Show on profile" section switches, server-enforced (F-341 PR 1 of 3)
 
 Ships with bcc-trust's F-341 PR 1.
 
