@@ -6529,7 +6529,7 @@ Coalesced per-viewer badge payload. Replaces three previously-uncached polling e
 
 File a content report against a feed item or an **announcement** (§K1 Phase B). Idempotent per (reporter, target).
 
-- **Review replies (v1.NEXT, F-345):** a reply is reported as a `feed_item` with the number from its `reply.feed_id` (`feed_<n>` → `n`), although no feed shows it. It is reportable exactly while it renders: the reply is published and not hidden, AND its review is active and not hidden; otherwise 404. The moderation queue shows it as `post_kind: "review_reply"` (preview = the reply body, no `post_url`), and `GET /admin/reports?post_kind=review_reply` filters to it.
+- **Review replies (v1.NEXT, F-345):** a reply is reported as a `feed_item` with the number from its `reply.feed_id` (`feed_<n>` → `n`), although no feed shows it. It is reportable while the reply is published, not hidden, and its review active and not hidden; otherwise 404. That includes a reply that no longer renders after a hand-over (its author no longer answers for the page). The moderation queue shows it as `post_kind: "review_reply"` (preview = the reply body, no `post_url`), and `GET /admin/reports?post_kind=review_reply` filters to it.
 
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
 - **Body (JSON):** `target_kind` (**required**, ∈ `feed_item | announcement`) · `target_id` (**required**, int ≥ 1 — the `act_id` for `feed_item`, the **bare integer announcement id, prefix stripped** for `announcement`; see below) · `reason_code` (**required**, ∈ `spam|harassment|hate|violence|misinformation|other`) · `comment` (optional, ≤ 500 chars; **required when `reason_code = other`**)
