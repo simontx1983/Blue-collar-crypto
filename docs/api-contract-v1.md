@@ -6797,6 +6797,139 @@ Owner blog **partial update** (§D6 PR-B). Registered as `WP_REST_Server::EDITAB
 - **Cache:** `no-store`.
 - **Mapping:** `PostsEndpoint::updateBlog` (route `PostsEndpoint.php:298`, EDITABLE) → `PostsService::updateBlog`. FE `blog-endpoints.ts:updateBlog` (PATCH).
 
+#### `POST /bcc/v1/posts/:id/view`
+
+*(New in v1.NEXT — F-324 post analytics, REACH.)* The view beacon. Fired by
+the client when a post is actually **rendered** to a reader — not at feed
+delivery, which would count posts that scrolled past unseen and make "views"
+a function of page size. `:id` is a peepso `act_id` (the numeric part of a
+`feed_id`), not a `wp_posts.ID`.
+
+⚠ **Always answers 204**, whatever happened server-side — counted, ignored,
+unknown post, the reader's own post, or throttled. This is deliberate and
+load-bearing: a response that distinguished those cases would turn the beacon
+into an existence oracle for post ids and authorship. Outcomes are logged
+server-side only.
+
+- **Auth:** **none required.** Anonymous views count (product decision), so
+  there is no auth gate — only a throttle. A signed-in reader is identified
+  from the session; a signed-out one is bucketed by coarsened network.
+- **Body:**
+  - `source` (**required**) — one of `feed` | `hot` | `tag` | `profile` |
+    `group` | `direct`. ⛔ There is deliberately **no `cold-start` value**:
+    `FeedColdStartService` forbids per-block performance comparison, and a
+    cold-start source would let an author compare that surface against the
+    feed. Cold-start views are recorded as `feed`. An unrecognised value is
+    rejected by `validate_callback` (400) and never recorded.
+  - `kind` (optional, default `view`) — `view` | `profile_visit`. The
+    `profile_visit` kind attributes a click-through from the post to the
+    author's profile; it is capped at one per reader per post per UTC day.
+- **Response 204:** no body.
+- **Errors:** none observable beyond request validation. A bad or missing
+  `source` / `kind` fails `validate_callback` → `400`. Everything else —
+  including `bcc_rate_limited` conditions — returns **204** by design (see
+  above), so clients must not branch on the beacon's outcome.
+- **Rate limit:** 240 per 5 minutes per member (or per coarsened network when
+  signed out). Deliberately generous: one beacon fires per rendered post, so a
+  reader scrolling a long feed legitimately sends dozens a minute, and a tight
+  limit would silently drop real views.
+- **Cache:** `Cache-Control: private, no-store`
+- **Privacy:** no viewer identity is stored. De-duplication uses a keyed,
+  **per-day-salted** one-way code (HMAC over `'viewer:' || day || subject`)
+  held for at most 48 hours in a sidecar table and never exposed by any
+  endpoint. The day is part of the message, so the same reader is
+  uncorrelatable across days — which is also why uniqueness is a **daily**
+  figure and can never be a lifetime one. The 48-hour auto-delete **is** the
+  erasure story: the code is not reversible to a user id, so there is no
+  on-request delete path and nothing remains to delete.
+
+#### `GET /bcc/v1/me/posts/:id/analytics`
+
+*(New in v1.NEXT — F-324 post analytics.)* Analytics for a post **the viewer
+authored**. `:id` is a peepso `act_id`.
+
+Three **independent** sections — `reach`, `engagement`, `trust` — each with
+its own `available` flag. ⛔ There is no composite score and must never be
+one: the three are kept separate in data, API and UI by product requirement.
+A client must not sum or blend them.
+
+- **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
+  **Own post only**, enforced server-side against the post's author.
+  ⚠ A foreign post returns **`bcc_forbidden` 403**, *not* the 404 that
+  `POST /me/findings/:id/appeal` uses — a post's existence is already public,
+  so 403 leaks nothing here, and it matches the sibling owner-only read on
+  `GET /posts/:id`. An id with no post behind it is `bcc_not_found` 404.
+- **Response 200:**
+  ```json
+  {
+    "data": {
+      "act_id": 4821,
+      "reach": {
+        "available": true,
+        "views": 312,
+        "daily_unique_viewers": 184,
+        "profile_visits": 9,
+        "by_source": {
+          "feed": { "views": 240, "daily_unique_viewers": 150, "profile_visits": 7 },
+          "tag":  { "views": 72,  "daily_unique_viewers": 34,  "profile_visits": 2 }
+        }
+      },
+      "engagement": {
+        "available": true,
+        "unreadable": [],
+        "reactions": 23,
+        "comments": 7,
+        "reposts": 2,
+        "saves": 4,
+        "engagement_rate": 0.1957
+      },
+      "trust": { "available": false, "reason": "trust_is_profile_scoped" }
+    },
+    "_meta": {...}
+  }
+  ```
+- **`daily_unique_viewers` is a SUM OF DAILY UNIQUES, not lifetime uniques.**
+  A reader returning on two days counts twice. This follows from the per-day
+  salted de-duplication above and is intentional — label it as *daily* unique
+  viewers in UI, never as lifetime.
+- **`engagement_rate`** = `(reactions + comments + reposts + saves) /
+  daily_unique_viewers`.
+  - ⚠ A **conservative LOWER bound**: the denominator over-counts returning
+    readers, so the true rate is ≥ the value shown. Present it as "per daily
+    unique viewer".
+  - **`null`, never `0`**, when there are no measured viewers or when `reach`
+    is unavailable. A post with no viewers has an *undefined* rate; rendering
+    `0%` would read as "nobody engaged" when the truth is "nothing to divide
+    by". Clients must render `null` as "—", not as zero.
+- **Per-section availability:** each section may independently report
+  `available: false` — a failed read is reported as unknown, never as zeros.
+  `engagement.unreadable` lists any counts that could not be read; such a
+  count appears as `null` and is **excluded** from the rate's numerator
+  rather than counted as zero.
+- **`trust` is permanently `available: false`,** with
+  `reason: "trust_is_profile_scoped"`. Attestations target `user_profile` and
+  the card kinds — there is **no activity-post target** — and per-post
+  vouching previously existed and was deliberately migrated away. This is a
+  decision, not an unfinished section: the UI should say trust is earned on
+  your profile, not per post, and must not render profile-level trust here as
+  though the post caused it.
+- **Errors:**
+  - `bcc_unauthorized` 401 — no session
+  - `bcc_rate_limited` 429 — over 60 per 5 minutes per member
+  - `bcc_not_found` 404 — no post for `:id`
+  - `bcc_forbidden` 403 — the post exists but the viewer is not its author
+  - `bcc_invalid_request` 400 — non-numeric `:id`
+- **Rate limit:** 60 per 5 minutes per member.
+- **Cache:** `Cache-Control: private, no-store` — owner-private data must
+  never enter a shared cache.
+- **Retention / cascade:** reach counters are kept **indefinitely** (aggregate
+  counts only, no viewer data) and are purged **only on permanent deletion**
+  of the post, plus on account deletion. ⚠ Trashing a post **keeps** its
+  counters and restoring it leaves them intact — `deletePost` trashes rather
+  than deletes, and cascading there would let a reversible action
+  irreversibly destroy the numbers. The 48-hour de-duplication sidecar is
+  unaffected and expires on its own.
+
 #### `POST /bcc/v1/reactions`
 
 Set / replace the viewer's reaction on a feed item. Idempotent on same-kind set; swap on different-kind. Returns the §2.11 `ReactionState` block so the response patches the feed cache directly.
