@@ -2801,7 +2801,7 @@ Per-member activity wall — a single-author slice of the same activity stream t
   ```
   Each item is a full member `Card` (§3.2, `card_kind: "member"`) — same shape as `/members`. Rows for deleted users are silently skipped (so `items.length` may momentarily be < page size while `total` reflects the raw follow-edge count).
 - **Errors:** `bcc_not_found` (slug missing) · `bcc_permission_denied` 403 (`watching_hidden`) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer, **or the account is suspended** *(v1.112)*. ⚠ Two different 403s here: `watching_hidden` is the owner hiding **this list**, `profile_private` is the owner hiding **their whole profile**. The second is checked first, so a private profile never reveals whether its follow lists are also hidden.
-- **Cache:** `Cache-Control: private, max-age=30`
+- **Cache:** `Cache-Control: private, max-age=30` + `Vary: Authorization, Cookie` *(Vary since v1.NEXT — the list is filtered for the viewer, so a browser must not serve one member's copy to the next member who signs in on it)*
 - **Pagination envelope:** offset with `has_more` (§1.5) — `offset`/`limit`/`total`/`has_more`, NOT the `page`/`per_page`/`total_pages` shape.
 - **Mapping:** `UserFollowsService::listFollowers` → `PeepSoFollowerRepository::getCounts` + `getFollowers`; cards via `CardViewService::getMemberCardForList` over a `MemberSummaryPrefetcher::primeFor` batch. Handler `UserFollowsEndpoint::listFollowers` (route `UserFollowsEndpoint.php:49`).
 
@@ -2814,7 +2814,7 @@ Per-member activity wall — a single-author slice of the same activity stream t
 - **Query:** `offset` (default 0), `limit` (default 24, max 100)
 - **Response 200:** identical envelope to `/followers` — `{ items: Card[] (§3.2, member), pagination: { offset, limit, total, has_more } }`. `total` is the *following* count.
 - **Errors:** `bcc_not_found` (slug missing) · `bcc_permission_denied` 403 (`watching_hidden`) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer, **or the account is suspended** *(v1.112)*. ⚠ Two different 403s here: `watching_hidden` is the owner hiding **this list**, `profile_private` is the owner hiding **their whole profile**. The second is checked first, so a private profile never reveals whether its follow lists are also hidden.
-- **Cache:** `Cache-Control: private, max-age=30`
+- **Cache:** `Cache-Control: private, max-age=30` + `Vary: Authorization, Cookie` *(Vary since v1.NEXT — the list is filtered for the viewer, so a browser must not serve one member's copy to the next member who signs in on it)*
 - **Pagination envelope:** offset with `has_more` (§1.5)
 - **Mapping:** `UserFollowsService::listFollowing` → `PeepSoFollowerRepository::getCounts` + `getFollowing`; same card hydration as `/followers`. Handler `UserFollowsEndpoint::listFollowing` (route `UserFollowsEndpoint.php:60`).
 
@@ -2834,7 +2834,7 @@ The member's PeepSo photo albums (§3.1 Photos tab → Albums sub-tab), privacy-
   No pagination block. `privacy` ∈ `public|site_members|friends_only|only_me`; `privacy_label` server-rendered (§A2). `cover_url` is `""` when unresolvable. System-album titles remapped to BCC vocabulary ("Stream Photos" → "Floor Photos").
 - **Errors:** `bcc_not_found` (slug missing) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)*.
   - ⚠ **Two layers, and only the outer one 403s.** The PROFILE gate refuses the whole route when the owner's `profile_visibility` does not admit the viewer. Per-ALBUM visibility is unchanged: albums the viewer cannot see are still **silently filtered, never 403**. So "never 403" remains true of album-level access and is no longer true of the route as a whole.
-- **Cache:** `Cache-Control: private, max-age=30`
+- **Cache:** `Cache-Control: private, max-age=30` + `Vary: Authorization, Cookie` *(Vary since v1.NEXT — the list is filtered for the viewer, so a browser must not serve one member's copy to the next member who signs in on it)*
 - **Mapping:** `PeepSoAlbumRepository::getAlbumsByOwner` filtered through `PeepSoAlbumAccess::canView` (+ `PeepSoFriendGate`); cover via `PhotoRepository::resolvePhotoUrl`. Handler `UserAlbumsEndpoint::getList` (route `UserAlbumsEndpoint.php:54`).
 
 #### `GET /bcc/v1/users/:slug/albums/:album_id/photos`
@@ -2853,7 +2853,7 @@ Photos inside a single album (§3.1 Photos drill-down). Album access is re-check
   No pagination block. `photo_url` is `""` when unresolvable (S3 fallback). `source_post` is `{ id, url }` deep-linking the parent post, or `null`.
 - **Errors:** `bcc_not_found` — slug missing, `album_id` ≤ 0, album not owned by the user, OR album exists but viewer lacks access (all collapse to one 404 message to avoid leaking existence) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)*
   - ⚠ **The 404-collapse is deliberately NOT extended to the profile gate, and the distinction is the point.** ALBUM existence must not leak, so every album-level failure stays a 404. PROFILE existence is already public (the member directory and the slug resolver both expose it), so the profile gate answers 403 — consistent with `GET /users/:handle` — and tells the frontend to render "this profile is private" instead of "no such person". Different objects, different disclosure rules.
-- **Cache:** `Cache-Control: private, max-age=30`
+- **Cache:** `Cache-Control: private, max-age=30` + `Vary: Authorization, Cookie` *(Vary since v1.NEXT — the list is filtered for the viewer, so a browser must not serve one member's copy to the next member who signs in on it)*
 - **Mapping:** `PeepSoAlbumRepository::findOneByIdAndOwner` → `PeepSoAlbumAccess::canView` → `PhotoRepository::findByAlbumId`; per-photo URL via `PhotoRepository::resolvePhotoUrl`. Handler `UserAlbumPhotosEndpoint::getList` (route `UserAlbumPhotosEndpoint.php:52`).
 
 ### 4.5 Watching
@@ -3535,7 +3535,7 @@ Cross-kind list of all PeepSo groups a target user is an active member of: holde
     ]
   }
   ```
-- **Cache:** `private, max-age=30` (per-viewer privacy + permissions; short TTL is enough for tab navigation).
+- **Cache:** `private, max-age=30` + `Vary: Authorization, Cookie` *(Vary since v1.NEXT)* (per-viewer privacy + permissions; short TTL is enough for tab navigation; the Vary keeps a browser from serving one member's copy to the next member who signs in on it).
 - **Field shapes:**
   - `type` ∈ `nft` | `validator` | `hall` | `user` | `system`. The frontend uses this to pick the action URL and to dispatch the right mutation hook (holder / delegator / hall / plain). **`validator` added in v1.52** — treat unknown kinds gracefully.
   - `type_label` is the server-authoritative display string for the kind (defaults: `On-Chain Holders` / `Validator Delegators` / `Hall` / `System` / `Community`). Frontend renders verbatim per §A2 — no client-side enum→label mapping. Filterable via `bcc_group_type_label`. *(v1.52: the `user`-kind default and the unknown-kind fallback changed `Group` → `Community`; display-only, wire unchanged.)*
@@ -4667,17 +4667,18 @@ Register a fresh browser subscription. Body matches the standard browser `PushSu
 
 #### `DELETE /bcc/v1/me/push-subscriptions/:id`
 
-Revoke a single device. Auth: the subscription row's `user_id` must match the caller. Idempotent — deleting an already-gone subscription returns 200 OK (treats "already revoked" the same as "just revoked"). Master `push.enabled` is **not** flipped by this route — that's the prefs PATCH cascade's job.
+Revoke a single device. Only the caller's own row is ever deleted. Idempotent — deleting an already-gone subscription returns 200 OK (treats "already revoked" the same as "just revoked"). Master `push.enabled` is **not** flipped by this route — that's the prefs PATCH cascade's job.
 
 - **Auth:** Bearer (required)
 - **Path:** `id` is the subscription row's primary key from the POST response.
-- **Response 200:** `{ "ok": true }`
+- **Response 200:** `{ "ok": true }` — the same answer whether the id was the caller's (now deleted), is missing, or belongs to **another member** (untouched). *(since v1.NEXT; another member's id was a 403, which told any member whether that subscription id exists.)* A 200 therefore means "this account no longer holds that row", not "a row was deleted".
 - **Errors:**
   - `bcc_unauthorized` (401)
   - `bcc_invalid_request` (422) — id missing or non-numeric
-  - `bcc_forbidden` (403) — subscription belongs to a different user
+  - `bcc_unavailable` (503) — the delete failed; nothing is known to be removed, retry *(since v1.NEXT; was a 200)*. Answered the same whoever owns the id.
+  - ~~`bcc_forbidden` (403) — subscription belongs to a different user~~ — removed in v1.NEXT, see the 200.
 - **Cache:** `Cache-Control: no-store`
-- **Mapping:** `PushSubscriptionRepository::find` (auth check) → `delete` (no-op if already gone).
+- **Mapping:** `PushSubscriptionRepository::deleteForUser` — one `DELETE … WHERE id = :id AND user_id = :caller`; the row is never read first.
 
 #### Push subscriber catalogue
 
@@ -9393,6 +9394,13 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-17 — behaviour change — Removing a push device reveals nothing about other members' devices; profile lists Vary on the credential
+
+Ships with bcc-trust #PR.
+
+- **Behaviour change (§4.10, `DELETE /me/push-subscriptions/:id`):** another member's subscription id now answers the same `200 { ok: true }` as a missing id (was `403 bcc_forbidden`, which told any member whether that id exists), and their row is not touched. The ownership check is part of the DELETE itself, so the row is never read first. A failed delete now answers `503 bcc_unavailable` instead of a `200` that claimed the device was removed. `bcc_forbidden` is no longer a possible answer. Clients that treated any rejection as "not removed" keep working; a `200` now means "this account no longer holds that row".
+- **Header addition (§4.4, §4.7.2):** `GET /users/:slug/followers`, `/following`, `/albums`, `/albums/:album_id/photos` and `/groups` add `Vary: Authorization, Cookie` to their `private, max-age=30`. The lists are filtered for the viewer; without the Vary a browser could serve one member's copy to the next member who signs in on it, for up to 30 s. No body change.
 
 ### v1.156 — 2026-11-17 — behaviour change — Join on holder and delegator groups is offered everywhere and verified on join (F-359)
 
