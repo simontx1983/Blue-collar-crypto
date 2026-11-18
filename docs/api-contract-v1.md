@@ -9400,7 +9400,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ### v1.NEXT — 2026-11-17 — behaviour change — passwords known to have leaked are refused (F-294)
 
-Ships with bcc-trust #PR (`feat/password-breach-check`).
+Ships with bcc-trust #712. Version number assigned at merge.
 
 - **New error `bcc_password_breached` 422** (§1.4.6) at `POST /auth/signup`, `POST /auth/reset-password` and `PATCH /me/account/password`: *"This password has appeared in a data breach; please choose a different one."* Checked against Have I Been Pwned's Pwned Passwords range API; only a 5-character SHA-1 prefix leaves the server. **Fails open** on an outage (2-second timeout). Sign-up checks it after its cheap checks (no account is created); reset only once the key is valid, without consuming the key; the password change before either confirmation, so a signed wallet challenge survives. The 8-character minimum is unchanged.
 - **Clients:** show the message on the password field and let the member choose another; nothing else needs re-entering (a reset link and a signed wallet challenge stay usable). Frontend copy follows separately.
