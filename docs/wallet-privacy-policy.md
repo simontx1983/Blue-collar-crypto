@@ -34,6 +34,9 @@ Also forbidden on any non-self surface:
 - **any join that correlates a wallet to a member identity** — an address next to
   a handle, display name, avatar, or profile link is the most severe form of this
   violation, because it de-anonymises in both directions
+- **a member / non-member flag about a wallet that is public on-chain** (for
+  example "is this NFT's holder a BCC member?"). The wallet is already public, so
+  the flag alone tells anyone that this wallet belongs to a member — see #15
 
 ## What is permitted
 
@@ -145,6 +148,16 @@ migrates on the first request after the trust#118 deploy.
 > PeepSo-Gravatar config check** (`avatars_wordpress_only` / `peepso_use_gravatar`
 > + `avatars_gravatar_enable`): confirmed off on local and staging; verify before
 > the prod deploy so the oracle window never opens.
+
+### 15 — FIXED (contract v1.169) — NFT-piece `owner.is_linked` membership flag
+
+After #1, the anonymous piece route still carried `owner.is_linked`: `true` when the
+holding wallet was linked to a member, `false` otherwise. Holder wallets are public
+on-chain, so it answered "is this wallet a member's?" for any wallet holding an
+indexed piece. `is_linked` is now always `null`, for every viewer, and the holder's
+wallet is no longer looked up against wallet links on that route. Keeping it the
+same for everyone keeps the response viewer-invariant (#12), so the shared
+`Cache-Control` stays valid.
 
 ## Enforcement
 
