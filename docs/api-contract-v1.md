@@ -6824,6 +6824,13 @@ server-side only.
   - `kind` (optional, default `view`) — `view` | `profile_visit`. The
     `profile_visit` kind attributes a click-through from the post to the
     author's profile; it is capped at one per reader per post per UTC day.
+- **De-duplication:** a `view` is counted at most once per reader per post
+  per **30 minutes**, so a refresh or a re-render does not add one. The
+  window is held in the object cache and **fails open** — if the cache
+  refuses or loses the claim the view is counted, because an uncounted view
+  is indistinguishable from "nobody read it". Uniqueness is separately
+  per-reader per **UTC day**. ⚠ Clients should still fire the beacon once
+  per render and not try to de-duplicate themselves; the server owns it.
 - **Response 204:** no body.
 - **Errors:** none of this API's own. Request validation is WordPress's:
   a missing `source` returns `rest_missing_callback_param` **400**, and a
@@ -6897,6 +6904,18 @@ A client must not sum or blend them.
     "_meta": {...}
   }
   ```
+- ⚠ **These counts are INDICATIVE, not audited.** Two limits are inherent
+  rather than bugs, and the UI should not present the numbers as exact:
+  - **views** are de-duplicated per reader per post per **30 minutes**, so a
+    refresh does not add one — but a determined reader can still add a view
+    every half hour, bounded by the beacon throttle.
+  - **`daily_unique_viewers`** cannot be inflated by a *signed-in* reader
+    (the code is derived from the user id), but a **signed-out** one can
+    nudge it by varying IP or user-agent. That is irreducible for an
+    anonymous metric: the alternative is a durable per-reader identity,
+    which is exactly what the privacy design refuses to keep.
+  Treat them as a sense of reach, not a ledger. Nothing in trust, ranking,
+  eligibility or moderation reads them.
 - **`daily_unique_viewers` is a SUM OF DAILY UNIQUES, not lifetime uniques.**
   A reader returning on two days counts twice. This follows from the per-day
   salted de-duplication above and is intentional — label it as *daily* unique
@@ -9368,6 +9387,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 Ships with bcc-trust #688.
 
 - **`POST /posts/:id/view`** (new) — the reach beacon, fired when a post is actually rendered to a reader. Anonymous permitted (signed-out views count). Body: `source` (`feed` | `hot` | `tag` | `profile` | `group` | `direct`; there is deliberately no `cold-start` value) and optional `kind` (`view` | `profile_visit`). **Clients:** fire it once per rendered post, and **never branch on the response** — it always answers 204 whatever happened server-side, because a response that distinguished "counted" from "unknown post" from "your own post" would be an existence oracle for post ids and authorship.
+- ⚠ **The counts are indicative, not audited.** Views de-duplicate per reader per post per 30 minutes; signed-in `daily_unique_viewers` cannot be inflated, but a signed-out reader can nudge it by varying IP/user-agent — irreducible for an anonymous metric, since the alternative is the durable per-reader identity the privacy design refuses to keep. **Clients:** present them as a sense of reach, not a ledger. Nothing in trust, ranking, eligibility or moderation reads them.
 - **`GET /me/posts/:id/analytics`** (new) — owner-only, three **independent** sections (`reach`, `engagement`, `trust`) each with its own `available` flag, and no composite score. A non-owner gets the **same 404** as a missing post. **Clients:** render `engagement_rate` of `null` as "—" and never as `0%` (null means there is nothing to divide by, not that nobody engaged); label `daily_unique_viewers` as **daily** unique viewers, never as lifetime, because a reader returning on two days counts twice; treat `trust` as **permanently unavailable per post** (`reason: trust_is_profile_scoped`) and do not render profile-level trust in a post panel as though the post caused it; and treat any section's `available: false`, or a `null` count listed in `engagement.unreadable`, as unknown rather than zero.
 
 ### v1.152 — 2026-11-12 — behaviour change — anonymous auth limits are office-scale per network, tight per address (F-290)
