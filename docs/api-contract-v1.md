@@ -9396,7 +9396,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ### v1.NEXT — 2026-11-17 — behaviour change — `/cards` text search is capped and rate limited; `/me/validator-pages` sends its documented `no-store`
 
-Ships with bcc-trust #PR.
+Ships with bcc-trust #716.
 
 - **Behaviour change (§4.9 `GET /cards`):** `q` is capped at 100 characters (longer → `400`, from WordPress's arg validator and again in the handler). A request carrying `q` is rate limited to 10 per 5 s per account, or per anonymous /24 subnet (IPv6 /48) (`429 bcc_rate_limited`), the same numbers as `GET /search`. Each distinct `q` is a leading-wildcard LIKE the 30 s discovery cache cannot absorb, and the route is anonymous. Browsing without `q` is not limited. The directory's search box debounces at 300 ms, so ordinary typing stays well under the limit; a sustained burst (or paging quickly through a search's results) can reach it, and the client should treat the `429` as "slow down", not as an empty result.
 - **Code fix, no contract change (`GET /me/validator-pages`):** the route now sends the `Cache-Control: private, no-store` this contract already documented; it sent none.
