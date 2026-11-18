@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.156 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.158 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2114,7 +2114,7 @@ Verifies a signed nonce, creates a new user (placeholder email if none supplied)
 
 #### `POST /bcc/v1/auth/forgot-password`
 
-Requests a password-reset email. **Always returns `ok: true`** regardless of whether the email matches a registered account — this is the anti-enumeration contract; callers cannot use response shape or timing to discover which emails exist.
+Requests a password-reset email. **Only the most recent link works:** a new request replaces the earlier key (WordPress keeps one per account), and since v1.158 (F-294) the email says so. **Always returns `ok: true`** regardless of whether the email matches a registered account — this is the anti-enumeration contract; callers cannot use response shape or timing to discover which emails exist.
 
 - **Auth:** Anonymous
 - **Body:**
@@ -2127,8 +2127,8 @@ Requests a password-reset email. **Always returns `ok: true`** regardless of whe
   ```
 - **Errors:**
   - `bcc_invalid_request` 422 — missing/malformed email field.
-  - `bcc_rate_limited` 429 — IP throttle tripped.
-- **Rate limit:** *(since v1.152, F-290)* `FORGOT_PASSWORD_RATE_LIMIT` = **20/hour per network** (IPv4 /24, IPv6 /48 — office scale, so members behind one NAT don't share 3 resets an hour) **and** two per-address caps, checked before the route acts on the account: `FORGOT_PASSWORD_EMAIL_RATE_LIMIT` = **3/hour per (email address, network)** — a stranger elsewhere spends only their own share — and `FORGOT_PASSWORD_EMAIL_GLOBAL_RATE_LIMIT` = **10/hour per email address across all networks** (the anti-mail-bomb cap). Networks the account recently completed a sign-in from (the F-281 trusted networks) **skip the global cap**, so nobody can block the owner's own reset mail at home. Keys hash the normalized email; an address with no account has no trusted networks, so it takes exactly the path an untrusted network does — a 429 says nothing about whether an account exists. Was 3/hour per network.
+  - `bcc_rate_limited` 429 — a limit under **Rate limit** refused the request: the per-network limit or one of the per-address caps. The same answer whether or not the address has an account.
+- **Rate limit:** *(since v1.152, F-290)* `FORGOT_PASSWORD_RATE_LIMIT` = **20/hour per network** (IPv4 /24, IPv6 /48 — office scale, so members behind one NAT don't share 3 resets an hour) **and** two per-address caps, checked before the route acts on the account: `FORGOT_PASSWORD_EMAIL_RATE_LIMIT` = **3/hour per (email address, network)** — a stranger elsewhere spends only their own share — and `FORGOT_PASSWORD_EMAIL_GLOBAL_RATE_LIMIT` = **10/hour per email address across all networks** (the anti-mail-bomb cap). Networks the account recently completed a sign-in from (the F-281 trusted networks) **skip the global cap**, so nobody can block the owner's own reset mail at home. Keys hash the normalized email; an address with no account has no trusted networks, so it takes exactly the path an untrusted network does — a 429 says nothing about whether an account exists. Was 3/hour per network. *(since v1.157, F-290)* A refused request is not counted against the per-network limit, so retrying while refused never extends the wait, and a request a per-address cap refuses gives its per-network slot back. The per-address caps still count every request, refused or not (the mail-bomb guard).
 - **Cache:** `Cache-Control: no-store`
 - **Side effects (only when email matches a real user):**
   - `get_password_reset_key($user)` writes the WP-native reset key into `user_activation_key` (24h TTL via the `password_reset_expiration` filter — WP default).
@@ -2157,8 +2157,8 @@ Consumes a reset key issued by `/auth/forgot-password` and sets a new password. 
   - `bcc_invalid_request` 422 — missing field.
   - `bcc_weak_password` 422 — password shorter than `SIGNUP_MIN_PASSWORD_LENGTH` (8).
   - `bcc_invalid_reset_token` 400 — key is expired, single-use already consumed, or never existed. Generic for both "expired" and "wrong key" to avoid leaking which failed.
-  - `bcc_rate_limited` 429 — IP throttle tripped.
-- **Rate limit:** *(since v1.152, F-290)* `RESET_PASSWORD_RATE_LIMIT` = **30/hour per network** (was 10) — abuse insurance; reset keys are ~20 random characters and single-use.
+  - `bcc_rate_limited` 429 — the per-network limit under **Rate limit** refused the request.
+- **Rate limit:** *(since v1.152, F-290)* `RESET_PASSWORD_RATE_LIMIT` = **30/hour per network** (was 10) — abuse insurance; reset keys are ~20 random characters and single-use. *(since v1.157, F-290)* A refused request is not counted, so retrying while refused never extends the wait.
 - **Cache:** `Cache-Control: no-store`
 - **Side effects:**
   - `reset_password($user, $password)` hashes the new password, clears `user_activation_key` (single-use), fires the `password_reset` action — other plugins listening invalidate sessions for this user.
@@ -2182,6 +2182,7 @@ Creates an email/password account with a public handle. Mints no JWT — the acc
   ```
   Deliberately carries **no JWT** — the frontend routes to `/verify-email?email=…`.
 - **Errors:** `bcc_invalid_request` 400 (missing/malformed email or password < 8) · `bcc_invalid_handle` 422 (fails §B6) · `bcc_handle_reserved` 422 · `bcc_conflict` 409 (handle taken or email already registered; since v1.147 the message adds that an unconfirmed sign-up frees up after 7 days) · `bcc_rate_limited` 429 · `bcc_internal_error` 500 (`wp_insert_user` failure)
+- **An identical retry is the same sign-up (since v1.158, F-294):** a repeat of a sign-up (same `email`, `handle` and `password`) while that account is still unconfirmed and less than 10 minutes old answers the same `201`. No second account, no second email. Any difference, an older account or a confirmed one gets the usual `409`.
 - **Unconfirmed sign-ups free up after 7 days (since v1.147, F-285):** an account created by email sign-up that was never confirmed (`_bcc_email_verified='0'`, a password, no wallet or OAuth link, registered more than 7 days ago) no longer holds its handle or email. A sign-up that wants either deletes it first (audited as `abandoned_signup_reclaimed`, by user id only). Such an account can never have signed in. Wallet, OAuth and confirmed accounts are never touched.
 - **Rate limit:** IP-bucketed, 5 / 60s (before any DB write)
 - **Cache:** `Cache-Control: no-store`
@@ -2203,7 +2204,7 @@ First factor of the password login. Validates credentials, then **always** initi
   ```
   No JWT here. The client routes to the 2FA code screen and completes `/auth/2fa/verify` with the `challenge_token` (10-min TTL) + the 6-digit code emailed to the account (5-min TTL).
 - **Errors:** `bcc_invalid_request` 422 (missing identifier or empty password) · `bcc_invalid_credentials` 401 (user-not-found OR wrong password — generic, anti-enumeration; identical for email- and handle-shaped identifiers) · `bcc_email_not_verified` 403 · `bcc_invalid_state` 409 (account has no handle) · `bcc_rate_limited` 429
-- **Rate limit:** *(since v1.152, F-290)* **20/min per network** (was 5; before the bcrypt compare). Guessing against one account is bounded by the per-identifier buckets (F-281: 20/15 min per typed identifier per network, 100/15 min per typed identifier, trusted networks exempt from the latter).
+- **Rate limit:** *(since v1.152, F-290)* **20/min per network** (was 5; before the bcrypt compare). Guessing against one account is bounded by the per-identifier buckets (F-281: 20/15 min per typed identifier per network, 100/15 min per typed identifier, trusted networks exempt from the latter). *(since v1.157, F-290)* **A refused request is not counted**, in any of the three buckets, and gives back what the earlier buckets charged it, so retrying while refused never extends the wait. Every request the buckets let through still counts: wrong passwords, unknown identifiers, malformed requests **and correct passwords**. The 2FA challenge and emailed code that follow a correct password have no limit of their own, so a success is not given back.
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** reads `wp_users` by email or by login (`u_<handle>` via `AuthSupport::deriveLogin`) + `wp_check_password`, reads `bcc_handle` + `_bcc_email_verified`, registers the challenge token (`bcc_2fa_ct_<token>`, 10-min transient) as the user's one live challenge (`bcc_2fa_current_<userId>`, superseding — and dropping the code of — any earlier one; since v1.97) and stores an HMAC-hashed 2FA OTP bound to it (`bcc_2fa_otp_<first 40 hex of sha256(token)>`, 5-min transient), emails the code (`AuthMailer::send2faCode`), emits the `user_login_2fa_initiated` audit log. No auth cookie, no JWT. Handler `PasswordAuthController::login`. Standard envelope per §1.4.
 
@@ -2335,7 +2336,7 @@ Confirms email ownership and completes signup via either an OTP code or a one-sh
   OTP `code` = 6-digit email code (15-min TTL); `token` = self-identifying single-use link token (24-h TTL). The handler requires either `token` or both `email` and `code`.
 - **Response 200:** identical shape to `/auth/login` (`{ user_id, handle, token, expires_in, token_type, in_good_standing }`) so the frontend treats both uniformly, **plus `linked_wallet_count: int` (since v1.90)** — how many wallets are linked to the account whose email was just proven. When it is `> 0` the client asks "this account has a wallet linked — is it yours?", listing them with `GET /wallets` (using the fresh `token`) and removing one with `DELETE /wallets/{id}`. A count only: no wallet detail rides this auth response. If the wallet read fails the count is `0` and verification still succeeds (the prompt is advisory; wallets stay reviewable in Settings) — so **`0` can mean "read failed"**: a client must never take a destructive or irreversible action on `linked_wallet_count: 0`.
 - **Errors:** `bcc_invalid_request` 422 (neither token nor email+code) · `bcc_invalid_verify_token` 400 (token expired/used) · `bcc_invalid_otp` 400 (email unknown — generic; or code wrong/expired) · `bcc_already_verified` 409 (OTP path only) · `bcc_invalid_state` 409 (no handle) · `bcc_rate_limited` 429 · `bcc_internal_error` 500
-- **Rate limit:** *(since v1.152, F-290)* **30/hour per network** (was 10). Guessing is bounded by the per-code cap (5 wrong tries, then the code burns).
+- **Rate limit:** *(since v1.152, F-290)* **30/hour per network** (was 10). Guessing is bounded by the per-code cap (5 wrong tries, then the code burns). *(since v1.157, F-290)* A refused request is not counted, so retrying while refused never extends the wait.
 - **Attempt cap (since v1.105, F-48):** at most **5 wrong codes per (account, current code)**; the 5th burns that code. Because a correct code signs the caller in, the per-IP bucket alone did not bound guesses spread across addresses. The answer stays the generic `400 bcc_invalid_otp` "Invalid or expired code." (no new code, no enumeration signal); the user requests a new code via `/auth/resend-verification`, which starts a fresh count, or uses the emailed link — the **token path is not capped and not affected**.
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** token path consumes the `bcc_vt_<token>` transient (single-use); OTP path resolves by email, checks `_bcc_email_verified`, timing-safely (`hash_equals`) consumes the HMAC-hashed `bcc_otp_<userId>` transient. Both converge on `finalizeVerification` → sets `_bcc_email_verified='1'`, sets the auth cookie, **revokes every earlier bearer token for the account (JWT token-version bump, since v1.88)**, mints the JWT, emits `email_verified` audit, fires `do_action('bcc_email_verified', …)`. The revocation means a session held by whoever created the account before the address was proven does not survive the inbox owner's verification; the returned token is the caller's working session and must be stored. Handler `AuthEndpoint::verifyEmail` (route `AuthEndpoint.php:487`). Standard envelope per §1.4.
@@ -2348,7 +2349,7 @@ Re-sends a fresh verification OTP + link to an unverified account. Always return
 - **Body:** `{ "email": "alice@example.com" }`
 - **Response 200:** `{ "ok": true }` (identical whether or not the email matches an account)
 - **Errors:** `bcc_invalid_request` 422 (missing/malformed email) · `bcc_rate_limited` 429
-- **Rate limit:** *(since v1.152, F-290)* **20/hour per network** (was 3), **3/hour per (email address, network)**, and **10/hour per email address across networks**, which the account's recently signed-in networks skip — the same caps and the same existence-blind keying as `POST /auth/forgot-password`.
+- **Rate limit:** *(since v1.152, F-290)* **20/hour per network** (was 3), **3/hour per (email address, network)**, and **10/hour per email address across networks**, which the account's recently signed-in networks skip — the same caps and the same existence-blind keying as `POST /auth/forgot-password`. *(since v1.157, F-290)* Also the same counting: a refused request is not counted against the per-network limit, a request a per-address cap refuses gives its per-network slot back, and the per-address caps count every request.
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** resolves by email; only when `_bcc_email_verified` is `'0'` (pending) **or `''` (legacy, never verified — since v1.88)** and the address is not a wallet placeholder (`@noreply.bcc.local`), generates + stores a fresh HMAC-hashed OTP (overwriting the prior `bcc_otp_<userId>` transient) + verify token, then dispatches the email. Already-verified accounts and placeholders are silently skipped. A legacy account uses this to verify and so become eligible for OAuth link-by-email (`/auth/oauth-complete` → the anti-pre-registration gate). Handler `AuthEndpoint::resendVerification` (route `AuthEndpoint.php:521`). Standard envelope per §1.4.
 
@@ -5038,7 +5039,7 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
 - **Read-only mentor pair (v1.62, GET response only — never writable):** `mentor_listed` (bool) — whether the user is **actively listed** in the mentor directory *right now*; the listing composes **live** as opt-in AND `can('list_as_mentor')` (**Veteran** rank AND trust tier ≥ **Trusted** AND not suspended AND not in §14.2 Rank recovery). Nothing is materialized — when any condition fails the listing **pauses automatically on the next read** (no sweep, no flag to un-stick). `mentor_eligibility_reason` (string|null) — the resolver's stable deny slug ∈ `suspended|new_member|below_veteran|below_trusted|in_recovery` so the frontend can explain a paused listing; `null` while eligible (regardless of opt-in).
 - **Read-only `handle_next_change_at` (since v1.148, F-333, GET and the PATCH echo — never writable):** when the owner may next change their handle (`PATCH /me/handle`), as ISO-8601 UTC (`"2026-06-17T14:05:00Z"`), or `null` when they can change it now. The same instant the cooldown `429` reports in `error.data.next_change_at`.
 - **PATCH** is partial — missing keys are untouched.
-  - **Every field is validated before anything is written** (F-97): an invalid value (`bcc_invalid_request` 422) or PeepSo missing when `profile_visibility` is sent (`bcc_peepso_unavailable` 503) writes **nothing**.
+  - **Every field is validated before anything is written** (F-97): an invalid value (`bcc_invalid_request` 422; *since v1.158, F-294, that includes a boolean switch whose value is not a boolean, "`<field>` must be true or false.": it used to be read as `false` and switch the setting off with a 200. Accepted: `true`/`false`, `1`/`0`, `"yes"`/`"no"`, `"on"`/`"off"`, any case*) or PeepSo missing when `profile_visibility` is sent (`bcc_peepso_unavailable` 503) writes **nothing**.
   - **A write that fails after validation (v1.108)** stops the request: `bcc_internal_error` **500**, message "Some of your preferences could not be saved. Please try again.", with `error.data.saved` (list of the request's field names that DID persist, in write order: `profile_visibility`, then the user-meta fields, then `mentor_opt_in`) and `error.data.failed` (the field that did not). Earlier writes are **not** rolled back. A client must not report the save as successful, and may re-send the whole request (every write is idempotent).
 
 #### `PATCH /bcc/v1/me/account/email` (V2 Phase 2.5)
@@ -5067,7 +5068,7 @@ Body `{ "code": "123456" }`.
 
 #### `PATCH /bcc/v1/me/account/password` (V2 Phase 2.5)
 
-Change password. Body `{ "current_password": "...", "password": "..." }`. New password ≥ 10 chars (server-enforced). Server calls `wp_set_password` (which destroys all session tokens) and immediately re-issues the current session's auth cookie so the user is not kicked out mid-flow. It also bumps the per-user JWT token-version (revoking every outstanding bearer token, the bearer analogue of the session-token wipe) and mints a **fresh token** for the current session, returned below — bearer clients must swap to it. *(since v1.100)* It also deletes every Web Push subscription of the user — the caller's own included; the client re-registers push if it is enabled.
+Change password. Body `{ "current_password": "...", "password": "..." }`. New password ≥ **8** chars (server-enforced; *since v1.158, F-294: was 10, now the same minimum as sign-up and reset; existing passwords are unaffected*). Server calls `wp_set_password` (which destroys all session tokens) and immediately re-issues the current session's auth cookie so the user is not kicked out mid-flow. It also bumps the per-user JWT token-version (revoking every outstanding bearer token, the bearer analogue of the session-token wipe) and mints a **fresh token** for the current session, returned below — bearer clients must swap to it. *(since v1.100)* It also deletes every Web Push subscription of the user — the caller's own included; the client re-registers push if it is enabled.
 
 - **Response 200:** `{ "ok": true, "token": "<jwt>", "expires_in": 604800, "token_type": "Bearer" }`
 - **Confirming with a wallet instead — accounts with NO password only (since v1.130, F-253):** a member whose account has no password (`GET /wallets` → `recovery.has_password === false`: a wallet or OAuth signup that never set one) sends `wallet_address`, `chain_slug`, `signature` (and `extra` where the chain needs it — Cosmos `pub_key`, as for wallet linking) **instead of** `current_password`. Every other account — `has_password` `true` **or `null`** — must type its current password: wallet fields from such an account → `bcc_forbidden` 403 *"Your account has a password. Confirm with your current password."* (a stolen session can link its own wallet without a password, so a wallet can't stand in for one). The proving wallet must be the caller's own, **verified** and **established**: verified at least 48 hours ago (else `bcc_forbidden` 403, `data.usable_at` = when it can be used) **and** before the current sign-in began (else `bcc_forbidden` 403 *"This wallet was verified after you signed in. Sign out, sign back in, and try again."*). Unlinking and relinking a wallet restarts its clock. The signature must be over a `GET /auth/nonce` challenge issued for this wallet **and chain** with `purpose=confirm_password_change`. `current_password` wins when both are sent. Other wallet-path errors: `bcc_invalid_request` 400 (missing wallet field, unknown chain, wallet not linked or not verified, challenge missing / expired / issued for another purpose or another chain — request a new one), `bcc_signature_invalid` 401, `bcc_unauthorized` 401 (no valid bearer session to date the wallet against), `bcc_unavailable` 503 (server's bcc-core predates purpose-bound challenges; the password path still works). Neither credential → `bcc_invalid_request` 422, naming the one this account uses: *"Confirm with your current password."* or *"Confirm with a signature from one of your verified wallets."* Input errors (a missing or too-short `password`) and every account / wallet-age refusal are answered **before** the challenge is spent, so the member can fix them and resubmit the same signature. The audit row records `confirmed_by: "password" | "wallet"`. A wallet-only member **sets their first password** this way; from then on `GET /wallets` reports `recovery.has_password: true`.
@@ -6424,9 +6425,9 @@ Read the signed-in viewer's privacy toggles (§K2 + §G1 discovery opt-out).
 Partial-update privacy toggles. Registered as `WP_REST_Server::EDITABLE` (also POST/PUT). Only keys present in the body change.
 
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized 401`.
-- **Body (JSON):** a partial bag — every key optional, each a boolean (coerced via `FILTER_VALIDATE_BOOLEAN`). Accepted keys = `PrivacySettings::ALL_KEYS` (the 9 above). Unknown keys silently dropped.
+- **Body (JSON):** a partial bag — every key optional, each a boolean. Accepted keys = `PrivacySettings::ALL_KEYS` (the 9 above). Unknown keys silently dropped.
 - **Response 200:** the full post-write state — identical shape to `GET /me/privacy` (all 9 keys).
-- **Errors:** `bcc_unauthorized` (401) · `bcc_invalid_request` (422, no recognized keys)
+- **Errors:** `bcc_unauthorized` (401) · `bcc_invalid_request` (422, no recognized keys) · **`rest_invalid_param` (400)** for a key whose value is not a boolean *(documented v1.158, F-294; long-standing behaviour)*. The route declares each key `type: boolean`, so **WordPress's** REST validation refuses it before the handler runs; the envelope (§1.4) reshapes it into the usual `{ error: { code: "rest_invalid_param", message, status: 400, data: { params, … } } }`. Clients should treat it like a 422.
 - **Mapping:** `MyPrivacyEndpoint::patch` (route `MyPrivacyEndpoint.php:61`, EDITABLE) → `PrivacySettings::writePartial` then `readAll`. FE `privacy-endpoints.ts:updateMyPrivacy`.
 
 #### `GET /bcc/v1/me/blocks`
@@ -6651,9 +6652,9 @@ Read the viewer's DM-gating preferences (PeepSo-backed). Relates to §4.19. Self
 Partial update of the viewer's DM-gating preferences. Registered as `WP_REST_Server::EDITABLE` (also POST/PUT). Omitted keys untouched.
 
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
-- **Body (JSON, every field optional):** `chat_enabled` (bool) · `chat_friends_only` (bool) — coerced via `FILTER_VALIDATE_BOOLEAN`, stored as `"1"`/`"0"`.
+- **Body (JSON, every field optional):** `chat_enabled` (bool) · `chat_friends_only` (bool), stored as `"1"`/`"0"`. *(Since v1.158, F-294: a value that is not a boolean is a 422, and both fields are validated before either is written; it used to be read as `false`.)*
 - **Response 200:** same shape as the GET (full re-read after write).
-- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 422 (no recognized field)
+- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 422 (no recognized field, or "`<field>` must be true or false.")
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** `MyMessagesPrefsEndpoint::patch` (route `MyMessagesPrefsEndpoint.php:76`, EDITABLE) → `update_user_meta` on the two PeepSo keys, then re-read.
 
@@ -9416,6 +9417,27 @@ Ships with bcc-trust #700. Version number assigned at merge.
 - **Additive:** owner list rows and detail carry `moderation: { hidden, hidden_at }` (§4.32.3). On a public detail read it is always `{ hidden: false, hidden_at: null }`.
 - **Additive:** capability reason `announcement_moderation_hidden` denies `can_edit` and `can_pin` on a taken-down notice (no unlock hint); `can_archive` is unchanged.
 - **Behaviour change:** `PATCH /validators/:pageId/announcements/:id` and the pin route answer `409 bcc_announcement_moderation_hidden` for a taken-down notice, before any write. Unpin stays allowed. Both were accepted before.
+
+### v1.158 — 2026-11-17 — behaviour change — account settings (F-294): one password minimum, strict booleans, sign-up retry
+
+Ships with bcc-trust #703 (F-294 items 5, 6) and #705 (F-294 items 7a, 11).
+
+- **`PATCH /me/account/password`:** the new-password minimum is **8**, like sign-up and reset (was 10).
+- **`PATCH /me/profile-prefs`, `PATCH /me/messages-prefs`:** a switch whose value is not a boolean is a `422`, and nothing is written (it used to switch the setting off).
+- **`POST /auth/signup`:** an identical retry within 10 minutes of a still-unconfirmed sign-up answers the same `201`.
+- **`POST /auth/forgot-password`:** the email now says only the most recent link works.
+- **`PATCH /me/privacy`:** `rest_invalid_param` 400 for a non-boolean value is now documented (no behaviour change).
+- **Clients:** drop any 10-character password check (friend's FE PR waits for this to be live); show the 422 message for a bad switch.
+
+### v1.157 — 2026-11-17 — behaviour change — refused requests no longer count against the anonymous auth limits (F-290)
+
+Ships with bcc-core #124 and bcc-trust #704.
+
+- `POST /auth/login`, `/auth/forgot-password`, `/auth/resend-verification`, `/auth/verify-email` and `/auth/reset-password`: a request a limit refuses is no longer counted, so retrying while refused never extends the wait. Before, every refused retry used a slot, and a caller who kept retrying stayed blocked.
+- `POST /auth/login`: a request a later bucket refuses also gives back what the earlier buckets charged. Every request the buckets let through still counts, a correct password included.
+- `POST /auth/forgot-password` and `/auth/resend-verification`: a request a per-address cap refuses gives back its per-network slot. The per-address caps still count every request, refused or not (the mail-bomb guard).
+- Unchanged: the limits themselves (v1.152), the 2FA routes, sign-up, every other route's limits (they still count refused calls), and the `bcc_rate_limited` 429. A persistent flooder still gets at most the limit per window. **Clients:** none.
+- Doc fix: the 429 lines on forgot-password and reset-password said "IP throttle tripped". These limits are per network (since v1.152), and on forgot-password a per-address cap can refuse too.
 
 ### v1.156 — 2026-11-17 — behaviour change — Join on holder and delegator groups is offered everywhere and verified on join (F-359)
 
