@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.158 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.159 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -7535,7 +7535,7 @@ line that appears on every list, rotator and feed card. Resolved in favour of
 §4.32.8.
 
 - **Success:** `200` with `{ id, state, capabilities }`
-- **Errors:** `403 bcc_forbidden` + `reason_code: not_claimer` · `404 bcc_not_found` (feature off, or no such announcement) · `400 bcc_invalid_request` (nothing to change — **`comments_enabled` alone counts as a change**; blank `summary`, with `reason_code: summary_required`; oversized field; non-future `publish_at`) · `409 bcc_conflict` (the row is archived, or `publish_at` was sent for a row that is not `scheduled`) · `409 bcc_announcement_moderation_hidden` (*since v1.NEXT, F-307 B2:* an administrator took the notice down; checked after the archived refusal, before any write) · `503 bcc_unavailable`
+- **Errors:** `403 bcc_forbidden` + `reason_code: not_claimer` · `404 bcc_not_found` (feature off, or no such announcement) · `400 bcc_invalid_request` (nothing to change — **`comments_enabled` alone counts as a change**; blank `summary`, with `reason_code: summary_required`; oversized field; non-future `publish_at`) · `409 bcc_conflict` (the row is archived, or `publish_at` was sent for a row that is not `scheduled`) · `409 bcc_announcement_moderation_hidden` (*since v1.159, F-307 B2:* an administrator took the notice down; checked after the archived refusal, before any write) · `503 bcc_unavailable`
 
 #### `POST /bcc/v1/validators/:pageId/announcements/:id/publish`
 
@@ -7598,7 +7598,7 @@ Auth **operator**. Pins or unpins. §4.32.12 allows **at most one** pinned row p
 | `pinned` | boolean | yes | `true` pins, `false` unpins |
 
 - **Success:** `200` with `state` of `pinned` or `unpinned`
-- **Errors:** `403 bcc_forbidden` + `reason_code: not_claimer` · `404 bcc_not_found` (feature off, or no such announcement) · `409 bcc_conflict` (archived row; unpublished row; **or another pin change is already in progress for this page**) · `409 bcc_announcement_moderation_hidden` (*since v1.NEXT, F-307 B2:* pinning a notice an administrator took down; checked after the archived refusal. **Unpin stays allowed**, as on an archived row) · `503 bcc_unavailable` (the current pin could not be read, so the pin was not applied)
+- **Errors:** `403 bcc_forbidden` + `reason_code: not_claimer` · `404 bcc_not_found` (feature off, or no such announcement) · `409 bcc_conflict` (archived row; unpublished row; **or another pin change is already in progress for this page**) · `409 bcc_announcement_moderation_hidden` (*since v1.159, F-307 B2:* pinning a notice an administrator took down; checked after the archived refusal. **Unpin stays allowed**, as on an archived row) · `503 bcc_unavailable` (the current pin could not be read, so the pin was not applied)
 
 ⚠⚠ **The critical section is serialised by a page-scoped advisory lock, and it
 had to be.** Without one, six concurrent pin requests on a single page left
@@ -7699,7 +7699,7 @@ operator gets operator rights through the normal path, never through an override
   formatted client-side.** This is a deliberate divergence from `posted_at_label` (§3.3) —
   recorded here so it reads as intentional, not as drift.
 - `updated_at` is surfaced on detail **only when it differs materially from `published_at`**.
-- `moderation` *(since v1.NEXT, F-307 B2)* — `{ "hidden": bool, "hidden_at": string | null }`,
+- `moderation` *(since v1.159, F-307 B2)* — `{ "hidden": bool, "hidden_at": string | null }`,
   on **owner list rows** (`GET /me/validators/:pageId/announcements`) and on **detail** only;
   public list and rotator rows never carry it. `hidden: true` means an administrator took the
   notice down (§4.32.16). `hidden_at` is ISO-8601 UTC, or `null` when the marker carries no
@@ -8174,8 +8174,8 @@ Adds to §1.4.6 (same semantics):
 | `announcement_already_published` | — | Capability reason | ⭐ **NEW in v1.81.** The `can_publish` denial on a row that is already live. ⚠ The matching ROUTE refusal is `409 bcc_conflict` with the message *"Already published."* and **no** `reason_code`, which is pre-existing behaviour this revision does not change. |
 | `own_content` | — | Capability reason | ⭐ **NEW in v1.82.** The `can_report` denial on a notice the viewer wrote. ⚠ The matching ROUTE refusal is `400 bcc_invalid_request` with the message *"You can't report your own post."* and **no** `reason_code` — pre-existing behaviour for `feed_item`, and this revision does not change it. |
 | `announcement_unavailable` | — | Capability reason | Not new, listed here because it is now reachable on a second gate: it is the `can_report` denial on a row that is not publicly readable, as well as the `can_comment` denial it already was. |
-| `bcc_announcement_moderation_hidden` | 409 | Client error | ⭐ **NEW in v1.NEXT (F-307 B2).** Edit or pin of a notice an administrator took down (§4.32.16). **Non-retryable** by the operator: only an administrator's Restore lifts it. No `reason_code` block, like the archived refusal. Only the operator can reach it; anyone else is refused earlier (`403` / `404`). |
-| `announcement_moderation_hidden` | — | Capability reason | ⭐ **NEW in v1.NEXT (F-307 B2).** The `can_edit` and `can_pin` denial on a taken-down notice, with `unlock_hint: null` (the operator has no path to undo it). It sits after `announcement_archived` and before `announcement_not_published`. `can_archive` is **not** closed by a takedown. |
+| `bcc_announcement_moderation_hidden` | 409 | Client error | ⭐ **NEW in v1.159 (F-307 B2).** Edit or pin of a notice an administrator took down (§4.32.16). **Non-retryable** by the operator: only an administrator's Restore lifts it. No `reason_code` block, like the archived refusal. Only the operator can reach it; anyone else is refused earlier (`403` / `404`). |
+| `announcement_moderation_hidden` | — | Capability reason | ⭐ **NEW in v1.159 (F-307 B2).** The `can_edit` and `can_pin` denial on a taken-down notice, with `unlock_hint: null` (the operator has no path to undo it). It sits after `announcement_archived` and before `announcement_not_published`. `can_archive` is **not** closed by a takedown. |
 
 ⚠⚠ **`publish_at_not_future` AND `backdating_not_allowed` HAVE NO PRODUCER.**
 Measured against the write routes: both failure modes answer
@@ -9111,12 +9111,12 @@ threshold still never applies to announcements. What changed is what an
 Before v1.144 the queue force-dismissed every announcement report whatever action
 the administrator chose, and a report on the feed item hid only the feed copy.
 
-**The operator's side (v1.NEXT, F-307 B2).** A taken-down notice still lists on the
+**The operator's side (v1.159, F-307 B2).** A taken-down notice still lists on the
 operator's own list (`GET /bcc/v1/me/validators/:pageId/announcements`) and still opens on
 detail for them, now carrying `moderation: { hidden: true, hidden_at }` (§4.32.3). Its
 `can_edit` and `can_pin` are denied with `announcement_moderation_hidden`, and the routes
 enforce it: `PATCH` and pin answer `409 bcc_announcement_moderation_hidden` before any write.
-Unpin and archive stay allowed. Before v1.NEXT the notice listed with no indicator and both
+Unpin and archive stay allowed. Before v1.159 the notice listed with no indicator and both
 writes were accepted.
 
 ## 5. Encoded rules — quick reference
@@ -9410,9 +9410,9 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-17 — additive + behaviour change — the operator sees an administrator takedown; edit and pin are refused (F-307 B2)
+### v1.159 — 2026-11-17 — additive + behaviour change — the operator sees an administrator takedown; edit and pin are refused (F-307 B2)
 
-Ships with bcc-trust #700. Version number assigned at merge.
+Ships with bcc-trust #700.
 
 - **Additive:** owner list rows and detail carry `moderation: { hidden, hidden_at }` (§4.32.3). On a public detail read it is always `{ hidden: false, hidden_at: null }`.
 - **Additive:** capability reason `announcement_moderation_hidden` denies `can_edit` and `can_pin` on a taken-down notice (no unlock hint); `can_archive` is unchanged.
