@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.168 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.169 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1896,7 +1896,7 @@ Per-piece detail view-model used by §4.17. One row per uniquely-identified NFT,
     { "trait_type": "Tool",       "value": "MIG Welder", "rarity_pct": 4.2  }
   ],
   "owner": {
-    "is_linked": true
+    "is_linked": null
   },
   "owners_count":      1,
   "owners":            [],
@@ -1926,7 +1926,7 @@ Per-piece detail view-model used by §4.17. One row per uniquely-identified NFT,
 - `attributes[]` is the standard NFT trait array (OpenSea convention). `rarity_pct` is OPTIONAL — present only when the indexer has computed the trait's frequency across the collection. Empty array `[]` when the piece has no metadata; never `null`.
 - `owner` is the single dominant holder, reduced to **one field: `is_linked`**.
   - `null` when no on-chain holder is known (cold-cache, freshly minted, indexer behind).
-  - `owner.is_linked` is `true` when *some* BCC member holds the piece. It names nobody and cannot be resolved back to a member.
+  - `owner.is_linked` is **deprecated and always `null` (v1.169)**, for every viewer, the holder included. It used to be `true` when the holding wallet belonged to a BCC member, and holder wallets are public on-chain, so it told anyone whether a given wallet is a member's: a wallet→member signal. The key is kept so the shape is stable, and because it is the same for everyone the response stays viewer-invariant and shared-cacheable (§4.17). **Clients must not render it**; an older server may still send a boolean.
   - **Removed in v1.51 (BREAKING):** `wallet_address`, `address_short`, `balance`, and the `user` block. This route is anonymous, so all four were world-readable. The `user` block was the severe one — it resolved the holder's BCC identity from a **private wallet link**, publishing a member↔holding join the member never consented to, and iterating token IDs turned it into a wallet→member table. Verifying a wallet is not consent to broadcast what it holds; holdings are disclosed only through the explicit opt-in NFT showcase. See [docs/wallet-privacy-policy.md](wallet-privacy-policy.md).
 - `owners_count` is the total distinct holder count. Always `1` for ERC-721 / CW-721 with a known holder; `0` when no holder is known. For ERC-1155 it is the count of wallets with `balance > 0`.
 - `owners[]` is **always empty (`[]`)**, for every token standard. **Changed in v1.51 (BREAKING).** It previously fanned out the top-10 ERC-1155 holders as `{wallet_address, address_short, balance}` — every field a wallet identifier or a holding bound to one, on an anonymous route. The aggregate holder count survives as `owners_count`, which identifies nobody. The field is retained as an empty array so the shape stays stable for clients. A future paginated holder list is not planned; it would need to solve the same disclosure problem.
@@ -9523,6 +9523,12 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.169 — 2026-11-17 — behaviour change (privacy) — NFT piece `owner.is_linked` is always `null`
+
+Ships with bcc-trust #710 and bcc-frontend #312.
+
+- **`GET /nft-pieces/{chain}/{contract}/{token_id}`:** `owner.is_linked` is now `null` for every viewer (deprecated; the key and the `owner` object/`null` rule are unchanged). Holder wallets are public on-chain, so a member / non-member flag on the holder was a wallet→member signal on an anonymous route. The server no longer resolves the holder's wallet to a member at all. The response stays viewer-invariant, so the shared `Cache-Control` is unchanged. **Clients:** stop rendering the field (bcc-frontend does so in a change that is safe against either server).
 
 ### v1.168 — 2026-11-17 — behaviour change — a member's received vouches and reviews, watching them, and suggestions answer to the member's profile privacy
 
