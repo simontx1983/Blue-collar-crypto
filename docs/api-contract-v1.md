@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.167 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.168 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2585,6 +2585,7 @@ Personalized "who to follow" recommender. **Relevance/affinity-based, NOT popula
   - *(v1.61, additive)* `mutual_follows` rows may carry `suggestion_reason.avatars` — up to 3 `{ "handle": string, "avatar_url": string }` sampled mutual connections (`getSecondDegreeCandidatesWithSamples`) so the row can render avatar chips beside the count. Absent for other codes and on older backends; consumers treat missing as empty.
 - **Scoring (affinity only):** `W_RECIP·followsViewer + W_MUTUAL·min(mutualFollows, MUTUAL_CAP) + W_HALL·sharedHalls + W_VALIDATOR·sharedValidatorBacking + W_NFT·sharedHolderCommunities`. Weights are server constants (tunable). **No popularity/trust term participates in ranking.**
 - **Exclusions (security-sensitive):** self; already-following (**exact, whatever the size of the viewer's follow graph**, v1.146: checked over the final candidates, so a viewer following more than 200 members is never suggested one of them); caution/risky reputation tier; active suspensions; mutual blocks (either direction); and any candidate who hid their watching graph (`watching_hidden`).
+- **Visibility (v1.168):** suggestions are discovery, so they apply the member directory's rule (PeepSo's privacy-aware user search; admins see everyone, as on the profile gate): a member is never suggested, nor shown in a `mutual_follows` reason's `avatars`, unless that rule admits the viewer. The rule covers profile visibility, banned or unvalidated accounts, blocks in either direction, and `hide_from_search`. It is applied before the cut, on the scored candidates and on the cold-start top-up, so a hidden member never takes a slot. A response may hold fewer than `limit` items. No shape change.
 - **Cold-start fallback:** when fewer than `limit` candidates survive scoring + exclusions (the dominant empty-graph case), the response tops up from the same civic recent-operators source the cold-start feed uses (recency + stable daily shuffle, NOT ranked), with `suggestion_reason: null`.
 - **Errors:** `bcc_unauthorized` (anonymous)
 - **Rate limit:** 60/min/user
@@ -2966,6 +2967,7 @@ Returns the viewer's watchlist (§C2 — UI projection of PeepSo follows + `bcc_
   - `card_id` — always the followee **user_id** for `peepso` rows (stable React key anchored to the follow relationship, never a post id). Identifier rule: member kinds route by `card_handle`; validator/project/creator route by `card_slug`.
   - `is_legacy` — no `bcc_watch_meta` sidecar row (follow pre-dates the watch pipeline or came via PeepSo native UI); `watched_at` is `null`. Legacy items MUST NOT be surfaced as recent watches.
   - `card` *(v1.76, additive)* — present **iff** the request carried `include=cards`; absent otherwise (the default response is byte-identical to pre-v1.76). Full §3.2 Card view-model built with the **watcher as viewer**, or `null` when the target is unhydratable (deleted user/page, page-type mismatch, unrecognized kind).
+    - *(v1.168)* `card` is also `null` for a **member** the viewer may not open (their `profile_visibility` does not admit the viewer, or the account is suspended); that card is never built. The row keeps its place and its `follow_id`, so it can still be unwatched. `hide_from_search` does not apply to the viewer's own list.
     - **Hydration never drops, filters, or reorders rows from a returned page.** An unhydratable target stays in place with `card: null` — clients must render or account for it, not assume the row vanished.
     - `total` is identical with and without `include=cards` (it is computed independently of hydration).
     - `items` length and `total_pages` are **not** guaranteed identical across the two modes: requesting `page_size` above the hydrated cap returns a smaller page (clamped to 24), which necessarily changes both. That is the clamp, not row dropping. Compare the two modes at the same *effective* `page_size` (≤ 24) if you need a like-for-like diff.
@@ -3051,6 +3053,7 @@ Starts watching a card (= creates a PeepSo follow + `bcc_watch_meta` row).
   - `bcc_invalid_request` — bad card kind/id
   - `bcc_permission_denied` — viewing your own member card and trying to watch yourself
   - `bcc_forbidden` (403) — the viewer's account is suspended, **or** a block exists between the viewer and the card's owner, in either direction. The block case's message is the generic "You can't watch this account."; it does not say who blocked whom.
+  - `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.168)* — `target_kind: member` only: the member's `profile_visibility` does not admit this viewer, or the account is suspended. Checked before anything is written. Page kinds watch a page, not a person, and are not gated.
   - `bcc_rate_limited` — soft limit (per §L3)
 - **Rate limit:** 120/hour/user (soft), 600/day/user (hard)
 - **Cache:** `Cache-Control: no-store`
@@ -5730,7 +5733,9 @@ Read the attestation roster for an entity.
   attestation surface) MAY include the weights — that's a future
   endpoint, not in V1 scope.
 - **Attestor visibility (v1.150, F-356):** an item is **omitted** when the viewer may not see its attestor's profile — the profile gate (`ProfileAccess::canViewProfile`: the attestor's profile privacy level for this viewer, and suspension; the attestor and admins always pass). So an anonymous visitor never gets the handle, name, avatar or score of an attestor whose profile is private to signed-out viewers. **Display only:** `summary` counts and every score still include every attestation. `hide_from_search` does **not** hide an attestor here (it hides a member from search and the directory). No shape change; a page may hold fewer items than `per_page`. The profile vouch line's `top_vouchers` (§4.4) applies the same rule.
-- **Cache:** `private, max-age=30`. Underlying read model is generation-counter invalidated by `POST` / `DELETE` against the same target.
+- **Member target privacy (v1.168):** for `target_kind=user_profile` (where `target_id` is the user id) the roster is a read about that member, so it answers to the member's profile like every `/users/:handle/*` route. If their `profile_visibility` does not admit this viewer, or the account is suspended, the route answers `bcc_forbidden` **403** with `error.data.reason: "profile_private"` and no roster. The member and admins always pass. Card kinds are pages and are not gated. The attestor rule above still applies to each row.
+- **Errors:** `bcc_invalid_request` 400 (bad `target_kind`, `target_id`, `kind` or `sort`) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` (v1.168, `user_profile` only; see above)
+- **Cache:** `private, max-age=30`. Underlying read model is generation-counter invalidated by `POST` / `DELETE` against the same target. Invalid and `profile_private` (v1.168) → `private, no-store`.
 
 #### §J.5 `GET /bcc/v1/me/reliability`
 
@@ -7261,7 +7266,7 @@ Single Hall detail (auth-optional). Same item shape as the `/halls` directory ro
 Reviews-tab data plane for entity profiles AND member profiles (v1.48) — reviews filed **against** this target (by `votes.page_id`). Page-paginated. Auth-optional (public trust signal).
 
 - **Auth:** Anonymous OR Bearer (identical row set).
-- **Path:** `target_kind` ∈ `validator_card|project_card|creator_card|user_profile` · `target_id` (int > 0). For entity kinds, `target_id` is the page's `wp_post.ID`. For `user_profile` (v1.48), `target_id` is the **raw user id**, translated server-side to the member's self-page (`MemberSelfPageService::selfPageId`) — the same bridge the write path (`POST /posts kind=review target_kind=user_profile`) uses. Received member reviews are **public** and deliberately NOT governed by the subject's `reviews_hidden` privacy flag (that flag governs only the written list on `/users/:handle/reviews`) — locked 2026-07-22.
+- **Path:** `target_kind` ∈ `validator_card|project_card|creator_card|user_profile` · `target_id` (int > 0). For entity kinds, `target_id` is the page's `wp_post.ID`. For `user_profile` (v1.48), `target_id` is the **raw user id**, translated server-side to the member's self-page (`MemberSelfPageService::selfPageId`) — the same bridge the write path (`POST /posts kind=review target_kind=user_profile`) uses. Received member reviews are **public** and deliberately NOT governed by the subject's `reviews_hidden` privacy flag (that flag governs only the written list on `/users/:handle/reviews`) — locked 2026-07-22. ⚠ *(v1.168)* "Public" means `reviews_hidden` does not apply; the member's **profile** gate does. If their `profile_visibility` does not admit this viewer, or the account is suspended, the route answers `bcc_forbidden` **403** with `error.data.reason: "profile_private"`, asked about the raw user id before the self-page translation. Card kinds are not gated.
 - **Query:** `page` (default 1) · `per_page` (default 20, max 50)
 - **Response 200:**
   ```json
@@ -7278,8 +7283,8 @@ Reviews-tab data plane for entity profiles AND member profiles (v1.48) — revie
   - **Hand-over (user decision 2026-11-17):** the reply shown is the one whose author **currently** answers for the page. When the page changes hands (claim revoked, operator changed, page reassigned), the old author's reply stops showing and no longer holds the slot, so the current party gets `can_reply.allowed` and may write their own. The old author can still delete theirs, but not edit it.
   - "Reviewed party": the member, for a review of their own profile; the **verified operator**, for a validator page (none when the claim is ambiguous or absent); otherwise the **page owner** — so an unclaimed placeholder page has nobody. Write routes: `POST|PATCH|DELETE /reviews/{id}/reply` below.
   - ⚠ `can_reply` is viewer-scoped, which is why authed responses stay `private` here; anonymous viewers always get `not_applicable`, so the anon `public` cache stays correct.
-- **Errors:** `bcc_invalid_request` 400 (bad `target_kind` or `target_id ≤ 0`)
-- **Cache:** anon → `public, max-age=30`; authed → `private, max-age=30` + `Vary`; invalid → `private, no-store`.
+- **Errors:** `bcc_invalid_request` 400 (bad `target_kind` or `target_id ≤ 0`) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` (v1.168, `user_profile` only; see Path)
+- **Cache:** anon → `public, max-age=30`; authed → `private, max-age=30` + `Vary`; invalid and `profile_private` (v1.168) → `private, no-store`.
 - **Mapping:** `CardReviewsEndpoint::list` (route `CardReviewsEndpoint.php:65`) → `CardReviewsService::getReviews`. FE `card-tabs-endpoints.ts:getCardReviews`.
 
 #### `POST /bcc/v1/reviews/{id}/reply`
@@ -9518,6 +9523,16 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.168 — 2026-11-17 — behaviour change — a member's received vouches and reviews, watching them, and suggestions answer to the member's profile privacy
+
+Ships with bcc-trust #720.
+
+- **`GET /entities/user_profile/:id/attestations` and `GET /entities/user_profile/:id/reviews`:** a member the viewer may not open (their `profile_visibility` does not admit the viewer, or the account is suspended) now answers `bcc_forbidden` **403** with `error.data.reason: "profile_private"`, as every `/users/:handle/*` route does. Both were public whatever the member's privacy. Card kinds (`validator_card`, `project_card`, `creator_card`) are unchanged.
+- **`POST /me/watching/watch` with `target_kind: member`:** the same 403, before anything is written. It used to watch any member and answer with their handle and tier.
+- **`GET /me/watching?include=cards`:** such a member's row keeps its place with `card: null`. The row itself (and its `follow_id`) is unchanged.
+- **`GET /suggestions/users`:** a member is never suggested, nor shown in a `mutual_follows` reason's `avatars`, unless the member directory's rule admits the viewer: profile visibility, banned or unvalidated accounts, blocks in either direction, and `hide_from_search`. The cold-start top-up applies it too. A response may hold fewer than `limit` items.
+- **Clients:** on a member's Vouches and Reviews tabs, render a `profile_private` 403 as "hidden", not as a load failure. A Watch action that gets it should say the profile is private. No shape change.
 
 ### v1.167 — 2026-11-17 — behaviour change — `/cards` text search is capped and rate limited; `/me/validator-pages` sends its documented `no-store`
 
