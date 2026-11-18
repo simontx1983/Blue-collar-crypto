@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.174 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.175 · 2026-11-18 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -7101,6 +7101,30 @@ Stoke — the forge-fire engagement toggle (v1.33 backfill). X-"like" model: one
 - **Cache:** `no-store`.
 - **Mapping:** `StokeEndpoint::addStoke` / `removeStoke` → `StokeRepository`. FE `stoke-endpoints.ts`.
 
+#### `POST /bcc/v1/feed/:id/repost` · `DELETE /bcc/v1/feed/:id/repost`
+
+Repost (v1.175, F-346) — **once per member per post**. Unlike `/stoke` this is not a counter: a repost is a **real post on the member's own wall**, so it carries the REPOSTER's own audience (their stored default post audience, §F-291) while the original keeps its own. The relationship lives in PeepSo's `act_repost_id`; there is no BCC table. **Cosmetic for trust** — never writes `bcc_trust_scores`.
+
+⭐ **Everything on this route is keyed on the ROOT, not on the id the client submits.** PeepSo resolves the chain root before storing, so a repost row always holds the ROOT — never its immediate parent. Reposting a repost of X therefore reposts X. `:id` may be either, and both the once-only rule and the count are keyed on the resolved root. A client reposting a repost gets `root_feed_id` back pointing at the original, and should patch its cache against **that** id.
+
+⚠ **Two gates run, not one.** `:id` is gated, and then the resolved root is gated again — both through `FeedItemGate` + `GroupInteractionGate` + `NoReactionsGate`. Reposting someone else's repost would otherwise republish content from a group the caller cannot read: the submitted post sits on its author's own wall and passes every check, while the content it carries belongs to the root's audience. The second pass is skipped when `:id` IS the root.
+
+- **Auth:** required (in-handler). Anonymous → `bcc_unauthorized 401`.
+- **Path:** `id` (int — raw activity id, same as `GET /feed/:id`). May be the original or any repost of it.
+- **Rate limit:** 15/min/user (key `repost`, shared across add/remove). Tighter than `/stoke`'s 60 because each call CREATES A POST — the abuse shape is wall flooding, not tap-spam on one card.
+- **Response 200 (both verbs):**
+  - `root_feed_id` (string) — `feed_<root act_id>`, the post the count belongs to
+  - `repost_count` (**int | null**) — distinct MEMBERS who have reposted the root. ⚠ `null` means *could not be read*, never zero — clients show no number rather than a wrong one, and a successful write can still answer `null` (the write and the count are two reads).
+  - `viewer_has_reposted` (bool)
+- **Errors:** `bcc_unauthorized` 401 · `bcc_rate_limited` 429 (throttle, **or** lock contention — retry) · `bcc_forbidden` 403 (suspended; §M parity, no admin bypass) · `bcc_invalid_request` 400 (non-positive id) · `bcc_not_found` 404 (unknown id, not a feed item, root unresolvable, or — DELETE only — the caller has no repost of this root) · `bcc_conflict` **409** (POST only: already reposted) · `bcc_unavailable` **503** (the once-only check could not be read — fail-closed, nothing was written; retry) · `bcc_internal_error` 500
+- **Side effects:** POST creates a status post on the caller's wall with an empty body and `act_repost_id` = root. DELETE trashes the caller's own repost(s) of that root and fires `bcc_post_deleted` per removed post (so the warmed hot-feed page is evicted and the Rank ledger reverses), exactly as owner-delete does.
+- **⚠ DELETE is NOT idempotent, and that is deliberate.** It is also NOT audience-gated: a root can stop being readable after the fact, and a gate there would strand the member with a post on their own wall they are not allowed to remove — the action only ever touches rows they own. With no audience gate, an idempotent 200 would answer "does act N exist" and hand back its repost count for ANY id, so **no repost of yours → 404**, and no count is read. This is the one place the route diverges from `/stoke`.
+- **Not notified.** A repost raises no notification for the original's author in v1.
+- **Cache:** `no-store`.
+- **Mapping:** `RepostEndpoint::addRepost` / `removeRepost` → `PeepSoActivityRepository::resolveRepostRoot` + `PostEngagementRepository::viewerReposts`/`repostCount` + `PeepSoStatusWriter::createSelfStatus`. Serialised per `(member, root)` on the `bcc_repost_<member>_<root>` advisory lock, because no database constraint can express once-per-member: `act_repost_id` is 0 on every ordinary post, so `UNIQUE (act_owner_id, act_repost_id)` would cap each member at one ordinary post ever.
+
+⚠ **Reposts are not RENDERED yet.** These write routes ship first; the feed-side `repost_of` block, the batched `viewer_has_reposted`, and the rule that HIDES a repost whose root the viewer cannot see are a following change. Until then no feed surface marks an item as a repost, and clients should not expose a repost affordance.
+
 #### `POST /bcc/v1/comments/:id/stoke` · `DELETE /bcc/v1/comments/:id/stoke`
 
 Stoke on a **comment** (v1.38). A comment is itself a `peepso_activities` row, so its act_id keys `wp_bcc_trust_stokes` exactly like a post's — same `StokeRepository`, no schema change. Dedicated endpoint (not a reuse of `/feed/:id/stoke`) because the group gate MUST resolve membership off the comment's **parent post**: the comment's own wp_post carries no `peepso_group_id`, so gating on the comment's act_id would silently pass every gated thread. Plain X-"like" toggle — **no `heat_stage`** (a comment is not a velocity rail). **Cosmetic for trust** — never writes `bcc_trust_scores`.
@@ -9537,6 +9561,18 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.175 — 2026-11-18 — additive — repost, once per member per post (F-346)
+
+Ships with bcc-trust #TBD. ⛔ Needs **bcc-core #137 in production first** (`resolveRepostRoot` and `createSelfStatus`'s root parameter land there).
+
+- **New:** `POST`/`DELETE /feed/:id/repost`. A repost is a real post on the caller's own wall carrying their own audience, not a counter row; the link lives in PeepSo's `act_repost_id`.
+- **Keyed on the ROOT.** `:id` may be the original or any repost of it; the once-only rule, the lock and the count all resolve to the chain root, and the response says which (`root_feed_id`).
+- **Both the submitted id AND the root are gated** — otherwise reposting someone's repost republishes content from a group the caller cannot read.
+- `repost_count` is **`int | null`** — `null` is "could not read", never zero.
+- **409** on a second repost, **503** when the once-only check cannot be read (nothing written), **429** on lock contention.
+- **DELETE is not idempotent and not audience-gated:** no repost of yours → 404. Rationale in §4 — it keeps the member from being stranded with an unremovable post while closing the existence/engagement oracle an idempotent success would open.
+- **Unchanged:** every read surface. Nothing marks a feed item as a repost yet, so clients should not show a repost affordance until the read side lands.
 
 ### v1.174 — 2026-11-18 — additive — a handed-over review reply stays visible to its author (F-345 follow-up)
 
