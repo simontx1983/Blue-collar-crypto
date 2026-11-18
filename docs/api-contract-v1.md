@@ -2382,7 +2382,7 @@ Confirms email ownership and completes signup via either an OTP code or a one-sh
   ```
   OTP `code` = 6-digit email code (15-min TTL); `token` = self-identifying single-use link token (24-h TTL). The handler requires either `token` or both `email` and `code`.
 - **Response 200:** identical shape to `/auth/login` (`{ user_id, handle, token, expires_in, token_type, in_good_standing }`) so the frontend treats both uniformly, **plus `linked_wallet_count: int` (since v1.90)** — how many wallets are linked to the account whose email was just proven. When it is `> 0` the client asks "this account has a wallet linked — is it yours?", listing them with `GET /wallets` (using the fresh `token`) and removing one with `DELETE /wallets/{id}`. A count only: no wallet detail rides this auth response. If the wallet read fails the count is `0` and verification still succeeds (the prompt is advisory; wallets stay reviewable in Settings) — so **`0` can mean "read failed"**: a client must never take a destructive or irreversible action on `linked_wallet_count: 0`.
-- **Errors:** `bcc_invalid_request` 422 (neither token nor email+code) · `bcc_invalid_verify_token` 400 (token expired/used) · `bcc_invalid_otp` 400 (email unknown — generic; or code wrong/expired) · `bcc_already_verified` 409 (OTP path only) · `bcc_invalid_state` 409 (no handle) · `bcc_rate_limited` 429 · `bcc_internal_error` 500
+- **Errors:** `bcc_invalid_request` 422 (neither token nor email+code) · `bcc_invalid_verify_token` 400 (token expired/used, or *since v1.NEXT (H1)* mailed before the account's email was changed outside BCC: see `PATCH /me/account/email` → **An email changed outside BCC**) · `bcc_invalid_otp` 400 (email unknown — generic; or code wrong/expired) · `bcc_already_verified` 409 (OTP path only) · `bcc_invalid_state` 409 (no handle) · `bcc_rate_limited` 429 · `bcc_internal_error` 500
 - **Rate limit:** *(since v1.152, F-290)* **30/hour per network** (was 10). Guessing is bounded by the per-code cap (5 wrong tries, then the code burns). *(since v1.157, F-290)* A refused request is not counted, so retrying while refused never extends the wait.
 - **Attempt cap (since v1.105, F-48):** at most **5 wrong codes per (account, current code)**; the 5th burns that code. Because a correct code signs the caller in, the per-IP bucket alone did not bound guesses spread across addresses. The answer stays the generic `400 bcc_invalid_otp` "Invalid or expired code." (no new code, no enumeration signal); the user requests a new code via `/auth/resend-verification`, which starts a fresh count, or uses the emailed link — the **token path is not capped and not affected**.
 - **Cache:** `Cache-Control: no-store`
@@ -5123,6 +5123,12 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
 **Request** a change of the user's WordPress email. Body `{ "current_password": "...", "email": "..." }`. Server re-verifies the current password via `wp_check_password` on every call — there is no session-elevation flag.
 
 **Verify-before-promote (behaviour change in v1.88).** This call does **not** change the email. It holds the new address **pending** and mails a 6-digit OTP to the **new** address; `user_email` and `_bcc_email_verified` are unchanged until `POST /me/account/email/verify` confirms the code. Until then the account keeps its current address and its verification state, and nothing that matches by email (OAuth link-by-email, password login by email, password reset) can see the pending one. Previously the change applied at once and kept the old address's verified flag — so a password holder could re-point a verified account at an address they don't own, and that address's owner's later Google sign-in linked into their account.
+
+**An email changed outside BCC (behaviour change in v1.NEXT, H1).** A `user_email` change that does not come through this route, the recovery-email route or the wallet sign-up's verified address (WordPress core REST `/wp/v2/users`, wp-admin profile or user edit, another plugin) is an address nobody proved. It now sets `_bcc_email_verified='0'`, burns the account's pending verification code and voids every verification link mailed before the change. Before, the old address's `'1'` stayed, so the same pre-hijack worked through those paths.
+- The account then behaves like an unconfirmed one: `/auth/login` answers `bcc_email_not_verified` 403, and OAuth link-by-email refuses it (the sign-in falls through to `handle_required`). That holds until the member verifies the new address with `POST /auth/resend-verification`, then `POST /auth/verify-email`.
+- A code or link mailed before the change answers `bcc_invalid_otp` / `bcc_invalid_verify_token` 400.
+- Audited as `email_verification_revoked` (user id only, no address).
+- ⚠ This includes a change WordPress itself confirmed by email (wp-admin profile.php's own confirmation link). The member verifies once more through BCC.
 
 - **Response 200:** `{ "ok": true, "pending": true, "email_masked": "v*****@gmail.com", "expires_in": 900 }`. Same address as the current one (case-insensitive) → `{ "ok": true, "pending": false }`, nothing mailed.
 - **Errors:** `bcc_invalid_request` (422 — bad email or wrong current password; message disambiguates), `bcc_conflict` (409 — email already taken by another user), `bcc_unauthorized` 401, `bcc_rate_limited` 429 (5/min/user, before the password check).
@@ -9537,6 +9543,16 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-18 — behaviour change (security) — an email changed outside BCC is no longer verified (H1)
+
+Ships with bcc-trust #748.
+
+- **Behaviour change:** a `user_email` change made outside BCC's verified flows (core REST `/wp/v2/users`, wp-admin, another plugin) sets `_bcc_email_verified='0'`. It also burns the pending verification code and voids every verification link mailed before the change. See `PATCH /me/account/email` → **An email changed outside BCC**.
+  - Until the member verifies the new address, `/auth/login` answers `bcc_email_not_verified` 403 and OAuth link-by-email refuses the account.
+  - `POST /auth/verify-email` answers `bcc_invalid_verify_token` / `bcc_invalid_otp` 400 for a link or code mailed before the change.
+- **Unchanged:** `PATCH /me/account/email` + its verify, the recovery-email routes and the wallet sign-up's address (each proves the new inbox, and stays `'1'`). Re-saving the same address, and every other profile edit.
+- **Clients:** nothing new to handle. A member caught by this sees the existing "verify your email" sign-in answer.
 
 ### v1.174 — 2026-11-18 — additive — a handed-over review reply stays visible to its author (F-345 follow-up)
 
