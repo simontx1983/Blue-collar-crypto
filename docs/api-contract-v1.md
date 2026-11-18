@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.156 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.160 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2114,7 +2114,7 @@ Verifies a signed nonce, creates a new user (placeholder email if none supplied)
 
 #### `POST /bcc/v1/auth/forgot-password`
 
-Requests a password-reset email. **Always returns `ok: true`** regardless of whether the email matches a registered account — this is the anti-enumeration contract; callers cannot use response shape or timing to discover which emails exist.
+Requests a password-reset email. **Only the most recent link works:** a new request replaces the earlier key (WordPress keeps one per account), and since v1.158 (F-294) the email says so. **Always returns `ok: true`** regardless of whether the email matches a registered account — this is the anti-enumeration contract; callers cannot use response shape or timing to discover which emails exist.
 
 - **Auth:** Anonymous
 - **Body:**
@@ -2127,8 +2127,8 @@ Requests a password-reset email. **Always returns `ok: true`** regardless of whe
   ```
 - **Errors:**
   - `bcc_invalid_request` 422 — missing/malformed email field.
-  - `bcc_rate_limited` 429 — IP throttle tripped.
-- **Rate limit:** *(since v1.152, F-290)* `FORGOT_PASSWORD_RATE_LIMIT` = **20/hour per network** (IPv4 /24, IPv6 /48 — office scale, so members behind one NAT don't share 3 resets an hour) **and** two per-address caps, checked before the route acts on the account: `FORGOT_PASSWORD_EMAIL_RATE_LIMIT` = **3/hour per (email address, network)** — a stranger elsewhere spends only their own share — and `FORGOT_PASSWORD_EMAIL_GLOBAL_RATE_LIMIT` = **10/hour per email address across all networks** (the anti-mail-bomb cap). Networks the account recently completed a sign-in from (the F-281 trusted networks) **skip the global cap**, so nobody can block the owner's own reset mail at home. Keys hash the normalized email; an address with no account has no trusted networks, so it takes exactly the path an untrusted network does — a 429 says nothing about whether an account exists. Was 3/hour per network.
+  - `bcc_rate_limited` 429 — a limit under **Rate limit** refused the request: the per-network limit or one of the per-address caps. The same answer whether or not the address has an account.
+- **Rate limit:** *(since v1.152, F-290)* `FORGOT_PASSWORD_RATE_LIMIT` = **20/hour per network** (IPv4 /24, IPv6 /48 — office scale, so members behind one NAT don't share 3 resets an hour) **and** two per-address caps, checked before the route acts on the account: `FORGOT_PASSWORD_EMAIL_RATE_LIMIT` = **3/hour per (email address, network)** — a stranger elsewhere spends only their own share — and `FORGOT_PASSWORD_EMAIL_GLOBAL_RATE_LIMIT` = **10/hour per email address across all networks** (the anti-mail-bomb cap). Networks the account recently completed a sign-in from (the F-281 trusted networks) **skip the global cap**, so nobody can block the owner's own reset mail at home. Keys hash the normalized email; an address with no account has no trusted networks, so it takes exactly the path an untrusted network does — a 429 says nothing about whether an account exists. Was 3/hour per network. *(since v1.157, F-290)* A refused request is not counted against the per-network limit, so retrying while refused never extends the wait, and a request a per-address cap refuses gives its per-network slot back. The per-address caps still count every request, refused or not (the mail-bomb guard).
 - **Cache:** `Cache-Control: no-store`
 - **Side effects (only when email matches a real user):**
   - `get_password_reset_key($user)` writes the WP-native reset key into `user_activation_key` (24h TTL via the `password_reset_expiration` filter — WP default).
@@ -2157,8 +2157,8 @@ Consumes a reset key issued by `/auth/forgot-password` and sets a new password. 
   - `bcc_invalid_request` 422 — missing field.
   - `bcc_weak_password` 422 — password shorter than `SIGNUP_MIN_PASSWORD_LENGTH` (8).
   - `bcc_invalid_reset_token` 400 — key is expired, single-use already consumed, or never existed. Generic for both "expired" and "wrong key" to avoid leaking which failed.
-  - `bcc_rate_limited` 429 — IP throttle tripped.
-- **Rate limit:** *(since v1.152, F-290)* `RESET_PASSWORD_RATE_LIMIT` = **30/hour per network** (was 10) — abuse insurance; reset keys are ~20 random characters and single-use.
+  - `bcc_rate_limited` 429 — the per-network limit under **Rate limit** refused the request.
+- **Rate limit:** *(since v1.152, F-290)* `RESET_PASSWORD_RATE_LIMIT` = **30/hour per network** (was 10) — abuse insurance; reset keys are ~20 random characters and single-use. *(since v1.157, F-290)* A refused request is not counted, so retrying while refused never extends the wait.
 - **Cache:** `Cache-Control: no-store`
 - **Side effects:**
   - `reset_password($user, $password)` hashes the new password, clears `user_activation_key` (single-use), fires the `password_reset` action — other plugins listening invalidate sessions for this user.
@@ -2182,6 +2182,7 @@ Creates an email/password account with a public handle. Mints no JWT — the acc
   ```
   Deliberately carries **no JWT** — the frontend routes to `/verify-email?email=…`.
 - **Errors:** `bcc_invalid_request` 400 (missing/malformed email or password < 8) · `bcc_invalid_handle` 422 (fails §B6) · `bcc_handle_reserved` 422 · `bcc_conflict` 409 (handle taken or email already registered; since v1.147 the message adds that an unconfirmed sign-up frees up after 7 days) · `bcc_rate_limited` 429 · `bcc_internal_error` 500 (`wp_insert_user` failure)
+- **An identical retry is the same sign-up (since v1.158, F-294):** a repeat of a sign-up (same `email`, `handle` and `password`) while that account is still unconfirmed and less than 10 minutes old answers the same `201`. No second account, no second email. Any difference, an older account or a confirmed one gets the usual `409`.
 - **Unconfirmed sign-ups free up after 7 days (since v1.147, F-285):** an account created by email sign-up that was never confirmed (`_bcc_email_verified='0'`, a password, no wallet or OAuth link, registered more than 7 days ago) no longer holds its handle or email. A sign-up that wants either deletes it first (audited as `abandoned_signup_reclaimed`, by user id only). Such an account can never have signed in. Wallet, OAuth and confirmed accounts are never touched.
 - **Rate limit:** IP-bucketed, 5 / 60s (before any DB write)
 - **Cache:** `Cache-Control: no-store`
@@ -2218,7 +2219,7 @@ First factor of the password login. Validates credentials, then **always** initi
   **Clients:** render a Turnstile widget with `error.data.captcha.site_key` and re-submit the same body plus **`captcha_token`** (the widget's response token, single-use, about 5 min). A rejected or expired token gets `bcc_captcha_required` again: reset the widget. The page must allow `https://challenges.cloudflare.com` in its CSP (`script-src`, `frame-src`).
 
   If Turnstile itself is unreachable, the server **fails open** to the login limits above (logged and counted), so an outage never locks members out.
-- **Rate limit:** *(since v1.152, F-290)* **20/min per network** (was 5; before the bcrypt compare). Guessing against one account is bounded by the per-identifier buckets (F-281: 20/15 min per typed identifier per network, 100/15 min per typed identifier, trusted networks exempt from the latter).
+- **Rate limit:** *(since v1.152, F-290)* **20/min per network** (was 5; before the bcrypt compare). Guessing against one account is bounded by the per-identifier buckets (F-281: 20/15 min per typed identifier per network, 100/15 min per typed identifier, trusted networks exempt from the latter). *(since v1.157, F-290)* **A refused request is not counted**, in any of the three buckets, and gives back what the earlier buckets charged it, so retrying while refused never extends the wait. Every request the buckets let through still counts: wrong passwords, unknown identifiers, malformed requests **and correct passwords**. The 2FA challenge and emailed code that follow a correct password have no limit of their own, so a success is not given back.
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** *(since v1.NEXT)* the captcha step-up's verify (`TurnstileVerifier`, Turnstile siteverify with the caller's IP) runs before the password check; reads `wp_users` by email or by login (`u_<handle>` via `AuthSupport::deriveLogin`) + `wp_check_password`, reads `bcc_handle` + `_bcc_email_verified`, registers the challenge token (`bcc_2fa_ct_<token>`, 10-min transient) as the user's one live challenge (`bcc_2fa_current_<userId>`, superseding — and dropping the code of — any earlier one; since v1.97) and stores an HMAC-hashed 2FA OTP bound to it (`bcc_2fa_otp_<first 40 hex of sha256(token)>`, 5-min transient), emails the code (`AuthMailer::send2faCode`), emits the `user_login_2fa_initiated` audit log. No auth cookie, no JWT. Handler `PasswordAuthController::login`. Standard envelope per §1.4.
 
@@ -2350,7 +2351,7 @@ Confirms email ownership and completes signup via either an OTP code or a one-sh
   OTP `code` = 6-digit email code (15-min TTL); `token` = self-identifying single-use link token (24-h TTL). The handler requires either `token` or both `email` and `code`.
 - **Response 200:** identical shape to `/auth/login` (`{ user_id, handle, token, expires_in, token_type, in_good_standing }`) so the frontend treats both uniformly, **plus `linked_wallet_count: int` (since v1.90)** — how many wallets are linked to the account whose email was just proven. When it is `> 0` the client asks "this account has a wallet linked — is it yours?", listing them with `GET /wallets` (using the fresh `token`) and removing one with `DELETE /wallets/{id}`. A count only: no wallet detail rides this auth response. If the wallet read fails the count is `0` and verification still succeeds (the prompt is advisory; wallets stay reviewable in Settings) — so **`0` can mean "read failed"**: a client must never take a destructive or irreversible action on `linked_wallet_count: 0`.
 - **Errors:** `bcc_invalid_request` 422 (neither token nor email+code) · `bcc_invalid_verify_token` 400 (token expired/used) · `bcc_invalid_otp` 400 (email unknown — generic; or code wrong/expired) · `bcc_already_verified` 409 (OTP path only) · `bcc_invalid_state` 409 (no handle) · `bcc_rate_limited` 429 · `bcc_internal_error` 500
-- **Rate limit:** *(since v1.152, F-290)* **30/hour per network** (was 10). Guessing is bounded by the per-code cap (5 wrong tries, then the code burns).
+- **Rate limit:** *(since v1.152, F-290)* **30/hour per network** (was 10). Guessing is bounded by the per-code cap (5 wrong tries, then the code burns). *(since v1.157, F-290)* A refused request is not counted, so retrying while refused never extends the wait.
 - **Attempt cap (since v1.105, F-48):** at most **5 wrong codes per (account, current code)**; the 5th burns that code. Because a correct code signs the caller in, the per-IP bucket alone did not bound guesses spread across addresses. The answer stays the generic `400 bcc_invalid_otp` "Invalid or expired code." (no new code, no enumeration signal); the user requests a new code via `/auth/resend-verification`, which starts a fresh count, or uses the emailed link — the **token path is not capped and not affected**.
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** token path consumes the `bcc_vt_<token>` transient (single-use); OTP path resolves by email, checks `_bcc_email_verified`, timing-safely (`hash_equals`) consumes the HMAC-hashed `bcc_otp_<userId>` transient. Both converge on `finalizeVerification` → sets `_bcc_email_verified='1'`, sets the auth cookie, **revokes every earlier bearer token for the account (JWT token-version bump, since v1.88)**, mints the JWT, emits `email_verified` audit, fires `do_action('bcc_email_verified', …)`. The revocation means a session held by whoever created the account before the address was proven does not survive the inbox owner's verification; the returned token is the caller's working session and must be stored. Handler `AuthEndpoint::verifyEmail` (route `AuthEndpoint.php:487`). Standard envelope per §1.4.
@@ -2363,7 +2364,7 @@ Re-sends a fresh verification OTP + link to an unverified account. Always return
 - **Body:** `{ "email": "alice@example.com" }`
 - **Response 200:** `{ "ok": true }` (identical whether or not the email matches an account)
 - **Errors:** `bcc_invalid_request` 422 (missing/malformed email) · `bcc_rate_limited` 429
-- **Rate limit:** *(since v1.152, F-290)* **20/hour per network** (was 3), **3/hour per (email address, network)**, and **10/hour per email address across networks**, which the account's recently signed-in networks skip — the same caps and the same existence-blind keying as `POST /auth/forgot-password`.
+- **Rate limit:** *(since v1.152, F-290)* **20/hour per network** (was 3), **3/hour per (email address, network)**, and **10/hour per email address across networks**, which the account's recently signed-in networks skip — the same caps and the same existence-blind keying as `POST /auth/forgot-password`. *(since v1.157, F-290)* Also the same counting: a refused request is not counted against the per-network limit, a request a per-address cap refuses gives its per-network slot back, and the per-address caps count every request.
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** resolves by email; only when `_bcc_email_verified` is `'0'` (pending) **or `''` (legacy, never verified — since v1.88)** and the address is not a wallet placeholder (`@noreply.bcc.local`), generates + stores a fresh HMAC-hashed OTP (overwriting the prior `bcc_otp_<userId>` transient) + verify token, then dispatches the email. Already-verified accounts and placeholders are silently skipped. A legacy account uses this to verify and so become eligible for OAuth link-by-email (`/auth/oauth-complete` → the anti-pre-registration gate). Handler `AuthEndpoint::resendVerification` (route `AuthEndpoint.php:521`). Standard envelope per §1.4.
 
@@ -2754,12 +2755,22 @@ Reviews this member has written (§V1.5 reviews-on-file tab), offset-paginated.
 - **Response 200:**
   ```json
   {
-    "items": [ { "id": 481, "grade": "A", "subject": "Acme Validator", "subject_handle": "acme-validator", "text": "Reliable signing.", "scope_label": "PAGE", "posted_at_label": "3d ago" } ],
+    "items": [ { "id": 481, "grade": "A", "subject": "Acme Validator", "subject_handle": "acme-validator", "text": "Reliable signing.", "scope_label": "PAGE", "posted_at_label": "3d ago", "reply": null, "permissions": { "can_reply": { "allowed": false, "unlock_hint": null, "reason_code": "not_applicable" } } } ],
     "pagination": { "page": 1, "per_page": 20, "total": 12, "total_pages": 1 },
     "hidden": false
   }
   ```
   `grade` ∈ `A|B|C` (from `vote_type` 1/0/-1). When the target hides reviews and the viewer isn't the owner: `items: []`, totals `0`, `hidden: true`.
+
+  **Replies (v1.159, F-345).** Every row also carries:
+  - `reply` — `null`, or the page's ONE public response: `{ "id": int, "body": string, "author": MemberSummary (§3.1, the same shape as the row's `author`), "posted_at": ISO-8601, "edited_at": ISO-8601|null, "feed_id": "feed_<act_id>", "permissions": {…} }`. `null` when there is none, when the reply is moderation-hidden, and when its author no longer answers for the page (hand-over, below). A reply renders only under a visible review (a hidden review is not in this list at all). `feed_id` is the report target: send its number to `POST /me/reports` as `feed_item`. It is **not a post** anywhere else: comments, reactions, stoke, helpful marks, `DELETE /feed/{id}`, the view beacon and owner analytics answer `bcc_not_found` 404 for it.
+  - `reply.permissions` — what the **viewer** may do with this reply, so clients never derive it. Each is `{allowed, unlock_hint, reason_code}`:
+    - `can_edit`: the author, in good standing. Reasons: `not_author` · `sender_restricted`.
+    - `can_delete`: the author. Reason: `not_author`. Not gated on suspension.
+    - `can_report`: signed in, not the author, not restricted. Reasons: `sign_in_required` (`unlock_hint` "Sign in to report.") · `own_reply` · `sender_restricted`.
+  - `permissions.can_reply` — `{allowed, unlock_hint, reason_code}` for the **viewer**: `allowed` only for the reviewed party when they have not replied to this review yet. Reason codes: `not_applicable` (not the reviewed party, the reviewer, or anonymous — hide) · `already_replied` (hide; their reply holds the slot, even when it is moderation-hidden) · `sender_restricted` (suspended/banned — hide) · `unavailable` (could not be determined — hide, retry later).
+  - **Hand-over (user decision 2026-11-17):** the reply shown is the one whose author **currently** answers for the page. When the page changes hands (claim revoked, operator changed, page reassigned), the old author's reply stops showing and no longer holds the slot, so the current party gets `can_reply.allowed` and may write their own. The old author can still delete theirs, but not edit it.
+  - "Reviewed party": the member, for a review of their own profile; the **verified operator**, for a validator page (none when the claim is ambiguous or absent); otherwise the **page owner** — so an unclaimed placeholder page has nobody. Write routes: `POST|PATCH|DELETE /reviews/{id}/reply` below.
 
   `scope_label` ∈ `PAGE|MEMBER` (v1.48). Member-target rows (reviews this user wrote **about another member**): `subject` = the member's display name, `subject_handle` = their `bcc_handle` (`""` when unset — the frontend suppresses the `ON @…` link; `user_login` is never projected), `scope_label` = `MEMBER`.
 - **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer, **or the account is suspended** *(v1.112)*
@@ -4569,6 +4580,7 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
     "bcc_group_join_requested":   true,
     "bcc_group_join_approved":    true,
     "bcc_group_invited":          true,
+    "bcc_review_reply":           true,
     "bcc_announcement_hidden":    true,
     "bcc_announcement_restored":  true
   },
@@ -4595,6 +4607,7 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
   - creator reason (`no_longer_owner`, v1.155, F-14 PR C): *"A different wallet now owns the {name} contract, so the creator badge was removed. Claim again from the wallet that owns it."* Sent when the collection contract's `owner()` now names a different, non-zero address. A renounced (zero-address) or unreadable owner never revokes. A creator claim whose wallet link is gone gets the wallet message.
   - **Empty name:** the wallet and validator-gone messages drop the name (*"…behind your claim…"*); the holder message uses *"this collection"*; the creator message uses *"this collection's contract"*. These are exactly `NotificationDispatcher::claimBadgeRemovedMessage()`.
   - **In-app only:** no push variant, excluded from the email digest. Sent only after a real revoke (the re-verify runs in a report-only mode until an operator enables enforcement), never for a wallet disconnect.
+- **v1.159 (F-345):** new bell key `bcc_review_reply` (default on, **in-app only**: no push variant, excluded from the email digest). To the reviewer when the reviewed party replies; `actor` = the replier; `external_id` = the reviewed page. `link` is the page (or `/u/{replier}` for a review of a member's profile). Message: *"@{replier} replied to your review of {page}."*, or *"@{replier} replied to your review."* when there is no page name (member profiles).
 - **v1.132 (F-272):** three new bell keys, all default on, **in-app only** (no push variant, excluded from the email digest). `external_id` is the group; `link` is the group's page (`/communities/{slug}`), or `/communities` if the group no longer resolves.
   - `bcc_group_join_requested` — to each owner and manager of a closed group (never to one blocked either way with the requester); `actor` = the requester. *"@{handle} asked to join {group}."*
   - `bcc_group_join_approved` — to the requester; `actor` = the approver. *"You're now a member of {group}."*
@@ -5053,7 +5066,7 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
 - **Read-only mentor pair (v1.62, GET response only — never writable):** `mentor_listed` (bool) — whether the user is **actively listed** in the mentor directory *right now*; the listing composes **live** as opt-in AND `can('list_as_mentor')` (**Veteran** rank AND trust tier ≥ **Trusted** AND not suspended AND not in §14.2 Rank recovery). Nothing is materialized — when any condition fails the listing **pauses automatically on the next read** (no sweep, no flag to un-stick). `mentor_eligibility_reason` (string|null) — the resolver's stable deny slug ∈ `suspended|new_member|below_veteran|below_trusted|in_recovery` so the frontend can explain a paused listing; `null` while eligible (regardless of opt-in).
 - **Read-only `handle_next_change_at` (since v1.148, F-333, GET and the PATCH echo — never writable):** when the owner may next change their handle (`PATCH /me/handle`), as ISO-8601 UTC (`"2026-06-17T14:05:00Z"`), or `null` when they can change it now. The same instant the cooldown `429` reports in `error.data.next_change_at`.
 - **PATCH** is partial — missing keys are untouched.
-  - **Every field is validated before anything is written** (F-97): an invalid value (`bcc_invalid_request` 422) or PeepSo missing when `profile_visibility` is sent (`bcc_peepso_unavailable` 503) writes **nothing**.
+  - **Every field is validated before anything is written** (F-97): an invalid value (`bcc_invalid_request` 422; *since v1.158, F-294, that includes a boolean switch whose value is not a boolean, "`<field>` must be true or false.": it used to be read as `false` and switch the setting off with a 200. Accepted: `true`/`false`, `1`/`0`, `"yes"`/`"no"`, `"on"`/`"off"`, any case*) or PeepSo missing when `profile_visibility` is sent (`bcc_peepso_unavailable` 503) writes **nothing**.
   - **A write that fails after validation (v1.108)** stops the request: `bcc_internal_error` **500**, message "Some of your preferences could not be saved. Please try again.", with `error.data.saved` (list of the request's field names that DID persist, in write order: `profile_visibility`, then the user-meta fields, then `mentor_opt_in`) and `error.data.failed` (the field that did not). Earlier writes are **not** rolled back. A client must not report the save as successful, and may re-send the whole request (every write is idempotent).
 
 #### `PATCH /bcc/v1/me/account/email` (V2 Phase 2.5)
@@ -5082,7 +5095,7 @@ Body `{ "code": "123456" }`.
 
 #### `PATCH /bcc/v1/me/account/password` (V2 Phase 2.5)
 
-Change password. Body `{ "current_password": "...", "password": "..." }`. New password ≥ 10 chars (server-enforced). Server calls `wp_set_password` (which destroys all session tokens) and immediately re-issues the current session's auth cookie so the user is not kicked out mid-flow. It also bumps the per-user JWT token-version (revoking every outstanding bearer token, the bearer analogue of the session-token wipe) and mints a **fresh token** for the current session, returned below — bearer clients must swap to it. *(since v1.100)* It also deletes every Web Push subscription of the user — the caller's own included; the client re-registers push if it is enabled.
+Change password. Body `{ "current_password": "...", "password": "..." }`. New password ≥ **8** chars (server-enforced; *since v1.158, F-294: was 10, now the same minimum as sign-up and reset; existing passwords are unaffected*). Server calls `wp_set_password` (which destroys all session tokens) and immediately re-issues the current session's auth cookie so the user is not kicked out mid-flow. It also bumps the per-user JWT token-version (revoking every outstanding bearer token, the bearer analogue of the session-token wipe) and mints a **fresh token** for the current session, returned below — bearer clients must swap to it. *(since v1.100)* It also deletes every Web Push subscription of the user — the caller's own included; the client re-registers push if it is enabled.
 
 - **Response 200:** `{ "ok": true, "token": "<jwt>", "expires_in": 604800, "token_type": "Bearer" }`
 - **Confirming with a wallet instead — accounts with NO password only (since v1.130, F-253):** a member whose account has no password (`GET /wallets` → `recovery.has_password === false`: a wallet or OAuth signup that never set one) sends `wallet_address`, `chain_slug`, `signature` (and `extra` where the chain needs it — Cosmos `pub_key`, as for wallet linking) **instead of** `current_password`. Every other account — `has_password` `true` **or `null`** — must type its current password: wallet fields from such an account → `bcc_forbidden` 403 *"Your account has a password. Confirm with your current password."* (a stolen session can link its own wallet without a password, so a wallet can't stand in for one). The proving wallet must be the caller's own, **verified** and **established**: verified at least 48 hours ago (else `bcc_forbidden` 403, `data.usable_at` = when it can be used) **and** before the current sign-in began (else `bcc_forbidden` 403 *"This wallet was verified after you signed in. Sign out, sign back in, and try again."*). Unlinking and relinking a wallet restarts its clock. The signature must be over a `GET /auth/nonce` challenge issued for this wallet **and chain** with `purpose=confirm_password_change`. `current_password` wins when both are sent. Other wallet-path errors: `bcc_invalid_request` 400 (missing wallet field, unknown chain, wallet not linked or not verified, challenge missing / expired / issued for another purpose or another chain — request a new one), `bcc_signature_invalid` 401, `bcc_unauthorized` 401 (no valid bearer session to date the wallet against), `bcc_unavailable` 503 (server's bcc-core predates purpose-bound challenges; the password path still works). Neither credential → `bcc_invalid_request` 422, naming the one this account uses: *"Confirm with your current password."* or *"Confirm with a signature from one of your verified wallets."* Input errors (a missing or too-short `password`) and every account / wallet-age refusal are answered **before** the challenge is spent, so the member can fix them and resubmit the same signature. The audit row records `confirmed_by: "password" | "wallet"`. A wallet-only member **sets their first password** this way; from then on `GET /wallets` reports `recovery.has_password: true`.
@@ -6439,9 +6452,9 @@ Read the signed-in viewer's privacy toggles (§K2 + §G1 discovery opt-out).
 Partial-update privacy toggles. Registered as `WP_REST_Server::EDITABLE` (also POST/PUT). Only keys present in the body change.
 
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized 401`.
-- **Body (JSON):** a partial bag — every key optional, each a boolean (coerced via `FILTER_VALIDATE_BOOLEAN`). Accepted keys = `PrivacySettings::ALL_KEYS` (the 9 above). Unknown keys silently dropped.
+- **Body (JSON):** a partial bag — every key optional, each a boolean. Accepted keys = `PrivacySettings::ALL_KEYS` (the 9 above). Unknown keys silently dropped.
 - **Response 200:** the full post-write state — identical shape to `GET /me/privacy` (all 9 keys).
-- **Errors:** `bcc_unauthorized` (401) · `bcc_invalid_request` (422, no recognized keys)
+- **Errors:** `bcc_unauthorized` (401) · `bcc_invalid_request` (422, no recognized keys) · **`rest_invalid_param` (400)** for a key whose value is not a boolean *(documented v1.158, F-294; long-standing behaviour)*. The route declares each key `type: boolean`, so **WordPress's** REST validation refuses it before the handler runs; the envelope (§1.4) reshapes it into the usual `{ error: { code: "rest_invalid_param", message, status: 400, data: { params, … } } }`. Clients should treat it like a 422.
 - **Mapping:** `MyPrivacyEndpoint::patch` (route `MyPrivacyEndpoint.php:61`, EDITABLE) → `PrivacySettings::writePartial` then `readAll`. FE `privacy-endpoints.ts:updateMyPrivacy`.
 
 #### `GET /bcc/v1/me/blocks`
@@ -6531,6 +6544,8 @@ Coalesced per-viewer badge payload. Replaces three previously-uncached polling e
 #### `POST /bcc/v1/me/reports`
 
 File a content report against a feed item or an **announcement** (§K1 Phase B). Idempotent per (reporter, target).
+
+- **Review replies (v1.159, F-345):** a reply is reported as a `feed_item` with the number from its `reply.feed_id` (`feed_<n>` → `n`), although no feed shows it. It is reportable while the reply is published, not hidden, and its review active and not hidden; otherwise 404. That includes a reply that no longer renders after a hand-over (its author no longer answers for the page). The moderation queue shows it as `post_kind: "review_reply"` (preview = the reply body, no `post_url`), and `GET /admin/reports?post_kind=review_reply` filters to it.
 
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
 - **Body (JSON):** `target_kind` (**required**, ∈ `feed_item | announcement`) · `target_id` (**required**, int ≥ 1 — the `act_id` for `feed_item`, the **bare integer announcement id, prefix stripped** for `announcement`; see below) · `reason_code` (**required**, ∈ `spam|harassment|hate|violence|misinformation|other`) · `comment` (optional, ≤ 500 chars; **required when `reason_code = other`**)
@@ -6666,9 +6681,9 @@ Read the viewer's DM-gating preferences (PeepSo-backed). Relates to §4.19. Self
 Partial update of the viewer's DM-gating preferences. Registered as `WP_REST_Server::EDITABLE` (also POST/PUT). Omitted keys untouched.
 
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
-- **Body (JSON, every field optional):** `chat_enabled` (bool) · `chat_friends_only` (bool) — coerced via `FILTER_VALIDATE_BOOLEAN`, stored as `"1"`/`"0"`.
+- **Body (JSON, every field optional):** `chat_enabled` (bool) · `chat_friends_only` (bool), stored as `"1"`/`"0"`. *(Since v1.158, F-294: a value that is not a boolean is a 422, and both fields are validated before either is written; it used to be read as `false`.)*
 - **Response 200:** same shape as the GET (full re-read after write).
-- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 422 (no recognized field)
+- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 422 (no recognized field, or "`<field>` must be true or false.")
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** `MyMessagesPrefsEndpoint::patch` (route `MyMessagesPrefsEndpoint.php:76`, EDITABLE) → `update_user_meta` on the two PeepSo keys, then re-read.
 
@@ -7208,12 +7223,50 @@ Reviews-tab data plane for entity profiles AND member profiles (v1.48) — revie
 - **Query:** `page` (default 1) · `per_page` (default 20, max 50)
 - **Response 200:**
   ```json
-  { "items": [ { "id": 88, "grade": "A", "text": "Reliable validator.", "posted_at_label": "3 days ago", "author": { "...": "MemberSummary (§3.1)" } } ], "pagination": { "page": 1, "per_page": 20, "total": 12, "total_pages": 1 } }
+  { "items": [ { "id": 88, "grade": "A", "text": "Reliable validator.", "posted_at_label": "3 days ago", "author": { "...": "MemberSummary (§3.1)" }, "reply": null, "permissions": { "can_reply": { "allowed": true, "unlock_hint": null, "reason_code": null } } } ], "pagination": { "page": 1, "per_page": 20, "total": 12, "total_pages": 1 } }
   ```
   `grade` ∈ `A|B|C`. `author` is the full §3.1 `MemberSummary` (hydrated like `/members`; authorless rows skipped). An unknown `target_id` returns `total: 0` (no 404).
+  **Replies (v1.159, F-345).** Every row also carries:
+  - `reply` — `null`, or the page's ONE public response: `{ "id": int, "body": string, "author": MemberSummary (§3.1, the same shape as the row's `author`), "posted_at": ISO-8601, "edited_at": ISO-8601|null, "feed_id": "feed_<act_id>", "permissions": {…} }`. `null` when there is none, when the reply is moderation-hidden, and when its author no longer answers for the page (hand-over, below). A reply renders only under a visible review (a hidden review is not in this list at all). `feed_id` is the report target: send its number to `POST /me/reports` as `feed_item`. It is **not a post** anywhere else: comments, reactions, stoke, helpful marks, `DELETE /feed/{id}`, the view beacon and owner analytics answer `bcc_not_found` 404 for it.
+  - `reply.permissions` — what the **viewer** may do with this reply, so clients never derive it. Each is `{allowed, unlock_hint, reason_code}`:
+    - `can_edit`: the author, in good standing. Reasons: `not_author` · `sender_restricted`.
+    - `can_delete`: the author. Reason: `not_author`. Not gated on suspension.
+    - `can_report`: signed in, not the author, not restricted. Reasons: `sign_in_required` (`unlock_hint` "Sign in to report.") · `own_reply` · `sender_restricted`.
+  - `permissions.can_reply` — `{allowed, unlock_hint, reason_code}` for the **viewer**: `allowed` only for the reviewed party when they have not replied to this review yet. Reason codes: `not_applicable` (not the reviewed party, the reviewer, or anonymous — hide) · `already_replied` (hide; their reply holds the slot, even when it is moderation-hidden) · `sender_restricted` (suspended/banned — hide) · `unavailable` (could not be determined — hide, retry later).
+  - **Hand-over (user decision 2026-11-17):** the reply shown is the one whose author **currently** answers for the page. When the page changes hands (claim revoked, operator changed, page reassigned), the old author's reply stops showing and no longer holds the slot, so the current party gets `can_reply.allowed` and may write their own. The old author can still delete theirs, but not edit it.
+  - "Reviewed party": the member, for a review of their own profile; the **verified operator**, for a validator page (none when the claim is ambiguous or absent); otherwise the **page owner** — so an unclaimed placeholder page has nobody. Write routes: `POST|PATCH|DELETE /reviews/{id}/reply` below.
+  - ⚠ `can_reply` is viewer-scoped, which is why authed responses stay `private` here; anonymous viewers always get `not_applicable`, so the anon `public` cache stays correct.
 - **Errors:** `bcc_invalid_request` 400 (bad `target_kind` or `target_id ≤ 0`)
 - **Cache:** anon → `public, max-age=30`; authed → `private, max-age=30` + `Vary`; invalid → `private, no-store`.
 - **Mapping:** `CardReviewsEndpoint::list` (route `CardReviewsEndpoint.php:65`) → `CardReviewsService::getReviews`. FE `card-tabs-endpoints.ts:getCardReviews`.
+
+#### `POST /bcc/v1/reviews/{id}/reply`
+
+The reviewed party's ONE public response to a review (v1.159, F-345). `{id}` is the review's `id` as the Reviews lists return it.
+
+- **Auth:** Bearer **required**.
+- **Body (JSON):** `{ "body": string }` — trimmed, tags stripped, 1–1000 characters.
+- **Who:** the **reviewed party only** (see `permissions.can_reply` on the review rows): the member for a review of their own profile, the verified operator for a validator page, otherwise the page owner. Never the reviewer, never a third party. One reply per review per party: the party's own reply holds the slot, even when it is moderation-hidden (hand-over rule on the Reviews lists).
+- **Response 201:** `{ "reply": { "id", "body", "author": MemberSummary, "posted_at", "edited_at": null, "feed_id": "feed_<act_id>", "permissions": { "can_edit", "can_delete", "can_report" } } }`
+- **Side effects:** the reviewer gets the `bcc_review_reply` bell (in-app only). A reply is never a feed item and does **not** count toward streaks or contribution score.
+- **Errors:** `bcc_unauthorized` 401 · `bcc_forbidden` 403 (not the reviewed party, or the account is suspended/banned) · `bcc_not_found` 404 (the review does not exist, was removed, or is moderation-hidden — which of these is not disclosed) · `bcc_conflict` 409 (you have already replied to this review) · `bcc_invalid_request` 422 (empty, or over 1000 characters) · `bcc_rate_limited` 429 (10 per 5 min, shared with edits) · `bcc_unavailable` 503 (retryable; also when another reply to the same review is being written at that moment)
+  - Route-schema validation runs first: a missing or non-string `body`, or an `{id}` below 1, is refused by WordPress with **400** `rest_missing_callback_param` / `rest_invalid_param`, not 422.
+- **Cache:** `no-store`.
+- **Mapping:** `ReviewRepliesEndpoint::create` → `ReviewReplyService::create` → `ActivityStreamWriter::publishReviewReply` (a backing `peepso-post` + ONE activity, module 206 `review_reply`, off the feed allowlist). Fires `do_action('bcc_review_reply_published', $replierId, $reviewerId, $pageId, $voteId, $actId)`.
+
+#### `PATCH /bcc/v1/reviews/{id}/reply`
+
+Edit the reply (v1.159, F-345). **Author only, and only while the author still answers for the page.** Same body rules as `POST`. Response 200 `{ "reply": … }` with `edited_at` set.
+
+Errors: 404 when the viewer has no reply on this review, when it is moderation-hidden, or when the review is gone or hidden · 403 when the author no longer answers for the page (hand-over), or the account is suspended/banned · no 409. The other errors are as for `POST`.
+
+#### `DELETE /bcc/v1/reviews/{id}/reply`
+
+Delete the reply (v1.159, F-345). **Author only** — the reviewer cannot remove a reply (they can report it; moderators hide it through the existing act-level hide). Removes the reply completely; the reviewed party may then reply again.
+- A **moderation-hidden** reply cannot be deleted. It answers 404, exactly like no reply: it keeps its slot, and the hidden act an open report points at.
+- A reply whose author no longer answers for the page (hand-over) can still be deleted by its author.
+
+Response 200 `{ "deleted": true }`. Errors: 401 · 404 (you have no reply on this review, or it is moderation-hidden) · 503.
 
 #### `GET /bcc/v1/entities/:target_kind/:target_id/watchers`
 
@@ -7549,7 +7602,7 @@ line that appears on every list, rotator and feed card. Resolved in favour of
 §4.32.8.
 
 - **Success:** `200` with `{ id, state, capabilities }`
-- **Errors:** `403 bcc_forbidden` + `reason_code: not_claimer` · `404 bcc_not_found` (feature off, or no such announcement) · `400 bcc_invalid_request` (nothing to change — **`comments_enabled` alone counts as a change**; blank `summary`, with `reason_code: summary_required`; oversized field; non-future `publish_at`) · `409 bcc_conflict` (the row is archived, or `publish_at` was sent for a row that is not `scheduled`) · `503 bcc_unavailable`
+- **Errors:** `403 bcc_forbidden` + `reason_code: not_claimer` · `404 bcc_not_found` (feature off, or no such announcement) · `400 bcc_invalid_request` (nothing to change — **`comments_enabled` alone counts as a change**; blank `summary`, with `reason_code: summary_required`; oversized field; non-future `publish_at`) · `409 bcc_conflict` (the row is archived, or `publish_at` was sent for a row that is not `scheduled`) · `409 bcc_announcement_moderation_hidden` (*since v1.160, F-307 B2:* an administrator took the notice down; checked after the archived refusal, before any write) · `503 bcc_unavailable`
 
 #### `POST /bcc/v1/validators/:pageId/announcements/:id/publish`
 
@@ -7612,7 +7665,7 @@ Auth **operator**. Pins or unpins. §4.32.12 allows **at most one** pinned row p
 | `pinned` | boolean | yes | `true` pins, `false` unpins |
 
 - **Success:** `200` with `state` of `pinned` or `unpinned`
-- **Errors:** `403 bcc_forbidden` + `reason_code: not_claimer` · `404 bcc_not_found` (feature off, or no such announcement) · `409 bcc_conflict` (archived row; unpublished row; **or another pin change is already in progress for this page**) · `503 bcc_unavailable` (the current pin could not be read, so the pin was not applied)
+- **Errors:** `403 bcc_forbidden` + `reason_code: not_claimer` · `404 bcc_not_found` (feature off, or no such announcement) · `409 bcc_conflict` (archived row; unpublished row; **or another pin change is already in progress for this page**) · `409 bcc_announcement_moderation_hidden` (*since v1.160, F-307 B2:* pinning a notice an administrator took down; checked after the archived refusal. **Unpin stays allowed**, as on an archived row) · `503 bcc_unavailable` (the current pin could not be read, so the pin was not applied)
 
 ⚠⚠ **The critical section is serialised by a page-scoped advisory lock, and it
 had to be.** Without one, six concurrent pin requests on a single page left
@@ -7713,6 +7766,15 @@ operator gets operator rights through the normal path, never through an override
   formatted client-side.** This is a deliberate divergence from `posted_at_label` (§3.3) —
   recorded here so it reads as intentional, not as drift.
 - `updated_at` is surfaced on detail **only when it differs materially from `published_at`**.
+- `moderation` *(since v1.160, F-307 B2)* — `{ "hidden": bool, "hidden_at": string | null }`,
+  on **owner list rows** (`GET /me/validators/:pageId/announcements`) and on **detail** only;
+  public list and rotator rows never carry it. `hidden: true` means an administrator took the
+  notice down (§4.32.16). `hidden_at` is ISO-8601 UTC, or `null` when the marker carries no
+  parseable date (still `hidden: true`: presence decides, exactly as the public predicate does).
+  Only the notice's own operator can ever receive `hidden: true`: every public read refuses a
+  taken-down notice and the detail route answers `404` to anyone else, so on a public detail
+  read the block is always `{ "hidden": false, "hidden_at": null }`. Who took it down and which
+  report it resolved are not exposed.
 
 #### 4.32.4 Endpoints
 
@@ -7722,9 +7784,9 @@ the handoff note below).**
 | Route | Method | Auth | Notes |
 |---|---|---|---|
 | `/bcc/v1/validators/:pageId/announcements` | POST | operator | `{title, summary, body, status, publish_at?, comments_enabled?}` |
-| `/bcc/v1/validators/:pageId/announcements/:id` | PATCH | operator | optional fields; no backdating; `409` if archived |
+| `/bcc/v1/validators/:pageId/announcements/:id` | PATCH | operator | optional fields; no backdating; `409` if archived or taken down |
 | `/bcc/v1/validators/:pageId/announcements/:id/archive` | POST | operator | **one-way**; unpins; withdraws the feed activity |
-| `/bcc/v1/validators/:pageId/announcements/:id/pin` | POST / DELETE | operator | one pinned per validator; `409` if archived |
+| `/bcc/v1/validators/:pageId/announcements/:id/pin` | POST / DELETE | operator | one pinned per validator; `409` if archived; pin (not unpin) `409` if taken down |
 | `/bcc/v1/announcements/:id/comments` | GET | optional | flat, **oldest-first** cursor; tombstones in position |
 | `/bcc/v1/announcements/:id/comments` | POST | member | good standing; `403` if disabled or archived |
 | `/bcc/v1/announcements/:id/comments/:commentId` | DELETE | author **or** operator | soft removal → tombstone |
@@ -8179,6 +8241,8 @@ Adds to §1.4.6 (same semantics):
 | `announcement_already_published` | — | Capability reason | ⭐ **NEW in v1.81.** The `can_publish` denial on a row that is already live. ⚠ The matching ROUTE refusal is `409 bcc_conflict` with the message *"Already published."* and **no** `reason_code`, which is pre-existing behaviour this revision does not change. |
 | `own_content` | — | Capability reason | ⭐ **NEW in v1.82.** The `can_report` denial on a notice the viewer wrote. ⚠ The matching ROUTE refusal is `400 bcc_invalid_request` with the message *"You can't report your own post."* and **no** `reason_code` — pre-existing behaviour for `feed_item`, and this revision does not change it. |
 | `announcement_unavailable` | — | Capability reason | Not new, listed here because it is now reachable on a second gate: it is the `can_report` denial on a row that is not publicly readable, as well as the `can_comment` denial it already was. |
+| `bcc_announcement_moderation_hidden` | 409 | Client error | ⭐ **NEW in v1.160 (F-307 B2).** Edit or pin of a notice an administrator took down (§4.32.16). **Non-retryable** by the operator: only an administrator's Restore lifts it. No `reason_code` block, like the archived refusal. Only the operator can reach it; anyone else is refused earlier (`403` / `404`). |
+| `announcement_moderation_hidden` | — | Capability reason | ⭐ **NEW in v1.160 (F-307 B2).** The `can_edit` and `can_pin` denial on a taken-down notice, with `unlock_hint: null` (the operator has no path to undo it). It sits after `announcement_archived` and before `announcement_not_published`. `can_archive` is **not** closed by a takedown. |
 
 ⚠⚠ **`publish_at_not_future` AND `backdating_not_allowed` HAVE NO PRODUCER.**
 Measured against the write routes: both failure modes answer
@@ -9114,9 +9178,13 @@ threshold still never applies to announcements. What changed is what an
 Before v1.144 the queue force-dismissed every announcement report whatever action
 the administrator chose, and a report on the feed item hid only the feed copy.
 
-The operator's own list (`GET /bcc/v1/me/validators/:pageId/announcements`) is unchanged in this version: a
-taken-down notice still lists there with no indicator. A `moderation` field and
-the edit/pin refusals for a taken-down notice are a follow-up.
+**The operator's side (v1.160, F-307 B2).** A taken-down notice still lists on the
+operator's own list (`GET /bcc/v1/me/validators/:pageId/announcements`) and still opens on
+detail for them, now carrying `moderation: { hidden: true, hidden_at }` (§4.32.3). Its
+`can_edit` and `can_pin` are denied with `announcement_moderation_hidden`, and the routes
+enforce it: `PATCH` and pin answer `409 bcc_announcement_moderation_hidden` before any write.
+Unpin and archive stay allowed. Before v1.160 the notice listed with no indicator and both
+writes were accepted.
 
 ## 5. Encoded rules — quick reference
 
@@ -9419,6 +9487,54 @@ Ships with bcc-trust #715 (and bcc-core #128 for the two health events).
   - **Turnstile outage:** fails open to the login limits.
 - **New optional body field `captcha_token`** on `POST /auth/login`. Ignored unless the step-up is on.
 - **Clients:** render Turnstile from `error.data.captcha.site_key` and re-submit with `captcha_token`. Allow `https://challenges.cloudflare.com` in the CSP. An old client shows its generic 429 copy until it does.
+
+### v1.160 — 2026-11-17 — additive + behaviour change — the operator sees an administrator takedown; edit and pin are refused (F-307 B2)
+
+Ships with bcc-trust #700.
+
+- **Additive:** owner list rows and detail carry `moderation: { hidden, hidden_at }` (§4.32.3). On a public detail read it is always `{ hidden: false, hidden_at: null }`.
+- **Additive:** capability reason `announcement_moderation_hidden` denies `can_edit` and `can_pin` on a taken-down notice (no unlock hint); `can_archive` is unchanged.
+- **Behaviour change:** `PATCH /validators/:pageId/announcements/:id` and the pin route answer `409 bcc_announcement_moderation_hidden` for a taken-down notice, before any write. Unpin stays allowed. Both were accepted before.
+
+### v1.159 — 2026-11-12 — additive — review replies (F-345)
+
+Ships with bcc-trust #686 (F-345) and bcc-core #119 (merged and in production).
+
+- **New routes:** `POST|PATCH|DELETE /reviews/{id}/reply`. The reviewed party's ONE public response to a review (1–1000 chars). The author edits and deletes it; the reviewer cannot respond back.
+  - A moderation-hidden reply is frozen: no edit, no delete.
+  - **Hand-over:** when the page changes hands, the old reply stops showing and the current party may write their own. The old author may delete theirs, not edit it.
+- **Additive on both Reviews lists** (`GET /users/:handle/reviews`, `GET /entities/:target_kind/:target_id/reviews`): every row gains `reply` (null, or the response, with `reply.permissions` `{can_edit, can_delete, can_report}`) and `permissions.can_reply`.
+- **A reply's `feed_id` is not a post** on the generic routes. Comments (list/create), reactions (set/remove), stoke, helpful marks, `DELETE /feed/{id}`, the view beacon and owner analytics answer `bcc_not_found` 404 for it. Only reports and moderation hides act on it.
+- **New bell `bcc_review_reply`** (default on, in-app only) to the reviewer.
+- **Moderation:** a reply is reportable as a `feed_item` (its `reply.feed_id`) and hideable by the existing act-level hide. The admin queue shows `post_kind: "review_reply"`, a new filter value.
+- **Not a feed item, and does not count** toward streaks or contribution score (user decision).
+- **Clients:**
+  - Render `reply` under the review.
+  - Show the composer only when `can_reply.allowed`.
+  - Offer Edit / Delete / Report from `reply.permissions` alone.
+  - Disable submit while a create is in flight.
+  - Offer no comment or reaction controls on a reply.
+
+### v1.158 — 2026-11-17 — behaviour change — account settings (F-294): one password minimum, strict booleans, sign-up retry
+
+Ships with bcc-trust #703 (F-294 items 5, 6) and #705 (F-294 items 7a, 11).
+
+- **`PATCH /me/account/password`:** the new-password minimum is **8**, like sign-up and reset (was 10).
+- **`PATCH /me/profile-prefs`, `PATCH /me/messages-prefs`:** a switch whose value is not a boolean is a `422`, and nothing is written (it used to switch the setting off).
+- **`POST /auth/signup`:** an identical retry within 10 minutes of a still-unconfirmed sign-up answers the same `201`.
+- **`POST /auth/forgot-password`:** the email now says only the most recent link works.
+- **`PATCH /me/privacy`:** `rest_invalid_param` 400 for a non-boolean value is now documented (no behaviour change).
+- **Clients:** drop any 10-character password check (friend's FE PR waits for this to be live); show the 422 message for a bad switch.
+
+### v1.157 — 2026-11-17 — behaviour change — refused requests no longer count against the anonymous auth limits (F-290)
+
+Ships with bcc-core #124 and bcc-trust #704.
+
+- `POST /auth/login`, `/auth/forgot-password`, `/auth/resend-verification`, `/auth/verify-email` and `/auth/reset-password`: a request a limit refuses is no longer counted, so retrying while refused never extends the wait. Before, every refused retry used a slot, and a caller who kept retrying stayed blocked.
+- `POST /auth/login`: a request a later bucket refuses also gives back what the earlier buckets charged. Every request the buckets let through still counts, a correct password included.
+- `POST /auth/forgot-password` and `/auth/resend-verification`: a request a per-address cap refuses gives back its per-network slot. The per-address caps still count every request, refused or not (the mail-bomb guard).
+- Unchanged: the limits themselves (v1.152), the 2FA routes, sign-up, every other route's limits (they still count refused calls), and the `bcc_rate_limited` 429. A persistent flooder still gets at most the limit per window. **Clients:** none.
+- Doc fix: the 429 lines on forgot-password and reset-password said "IP throttle tripped". These limits are per network (since v1.152), and on forgot-password a per-address cap can refuse too.
 
 ### v1.156 — 2026-11-17 — behaviour change — Join on holder and delegator groups is offered everywhere and verified on join (F-359)
 
