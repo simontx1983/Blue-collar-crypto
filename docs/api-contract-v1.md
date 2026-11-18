@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.158 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.159 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2747,7 +2747,7 @@ Reviews this member has written (§V1.5 reviews-on-file tab), offset-paginated.
   ```
   `grade` ∈ `A|B|C` (from `vote_type` 1/0/-1). When the target hides reviews and the viewer isn't the owner: `items: []`, totals `0`, `hidden: true`.
 
-  **Replies (v1.NEXT, F-345).** Every row also carries:
+  **Replies (v1.159, F-345).** Every row also carries:
   - `reply` — `null`, or the page's ONE public response: `{ "id": int, "body": string, "author": MemberSummary (§3.1, the same shape as the row's `author`), "posted_at": ISO-8601, "edited_at": ISO-8601|null, "feed_id": "feed_<act_id>", "permissions": {…} }`. `null` when there is none, when the reply is moderation-hidden, and when its author no longer answers for the page (hand-over, below). A reply renders only under a visible review (a hidden review is not in this list at all). `feed_id` is the report target: send its number to `POST /me/reports` as `feed_item`. It is **not a post** anywhere else: comments, reactions, stoke, helpful marks, `DELETE /feed/{id}`, the view beacon and owner analytics answer `bcc_not_found` 404 for it.
   - `reply.permissions` — what the **viewer** may do with this reply, so clients never derive it. Each is `{allowed, unlock_hint, reason_code}`:
     - `can_edit`: the author, in good standing. Reasons: `not_author` · `sender_restricted`.
@@ -4592,7 +4592,7 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
   - creator reason (`no_longer_owner`, v1.155, F-14 PR C): *"A different wallet now owns the {name} contract, so the creator badge was removed. Claim again from the wallet that owns it."* Sent when the collection contract's `owner()` now names a different, non-zero address. A renounced (zero-address) or unreadable owner never revokes. A creator claim whose wallet link is gone gets the wallet message.
   - **Empty name:** the wallet and validator-gone messages drop the name (*"…behind your claim…"*); the holder message uses *"this collection"*; the creator message uses *"this collection's contract"*. These are exactly `NotificationDispatcher::claimBadgeRemovedMessage()`.
   - **In-app only:** no push variant, excluded from the email digest. Sent only after a real revoke (the re-verify runs in a report-only mode until an operator enables enforcement), never for a wallet disconnect.
-- **v1.NEXT (F-345):** new bell key `bcc_review_reply` (default on, **in-app only**: no push variant, excluded from the email digest). To the reviewer when the reviewed party replies; `actor` = the replier; `external_id` = the reviewed page. `link` is the page (or `/u/{replier}` for a review of a member's profile). Message: *"@{replier} replied to your review of {page}."*, or *"@{replier} replied to your review."* when there is no page name (member profiles).
+- **v1.159 (F-345):** new bell key `bcc_review_reply` (default on, **in-app only**: no push variant, excluded from the email digest). To the reviewer when the reviewed party replies; `actor` = the replier; `external_id` = the reviewed page. `link` is the page (or `/u/{replier}` for a review of a member's profile). Message: *"@{replier} replied to your review of {page}."*, or *"@{replier} replied to your review."* when there is no page name (member profiles).
 - **v1.132 (F-272):** three new bell keys, all default on, **in-app only** (no push variant, excluded from the email digest). `external_id` is the group; `link` is the group's page (`/communities/{slug}`), or `/communities` if the group no longer resolves.
   - `bcc_group_join_requested` — to each owner and manager of a closed group (never to one blocked either way with the requester); `actor` = the requester. *"@{handle} asked to join {group}."*
   - `bcc_group_join_approved` — to the requester; `actor` = the approver. *"You're now a member of {group}."*
@@ -6530,7 +6530,7 @@ Coalesced per-viewer badge payload. Replaces three previously-uncached polling e
 
 File a content report against a feed item or an **announcement** (§K1 Phase B). Idempotent per (reporter, target).
 
-- **Review replies (v1.NEXT, F-345):** a reply is reported as a `feed_item` with the number from its `reply.feed_id` (`feed_<n>` → `n`), although no feed shows it. It is reportable while the reply is published, not hidden, and its review active and not hidden; otherwise 404. That includes a reply that no longer renders after a hand-over (its author no longer answers for the page). The moderation queue shows it as `post_kind: "review_reply"` (preview = the reply body, no `post_url`), and `GET /admin/reports?post_kind=review_reply` filters to it.
+- **Review replies (v1.159, F-345):** a reply is reported as a `feed_item` with the number from its `reply.feed_id` (`feed_<n>` → `n`), although no feed shows it. It is reportable while the reply is published, not hidden, and its review active and not hidden; otherwise 404. That includes a reply that no longer renders after a hand-over (its author no longer answers for the page). The moderation queue shows it as `post_kind: "review_reply"` (preview = the reply body, no `post_url`), and `GET /admin/reports?post_kind=review_reply` filters to it.
 
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
 - **Body (JSON):** `target_kind` (**required**, ∈ `feed_item | announcement`) · `target_id` (**required**, int ≥ 1 — the `act_id` for `feed_item`, the **bare integer announcement id, prefix stripped** for `announcement`; see below) · `reason_code` (**required**, ∈ `spam|harassment|hate|violence|misinformation|other`) · `comment` (optional, ≤ 500 chars; **required when `reason_code = other`**)
@@ -7211,7 +7211,7 @@ Reviews-tab data plane for entity profiles AND member profiles (v1.48) — revie
   { "items": [ { "id": 88, "grade": "A", "text": "Reliable validator.", "posted_at_label": "3 days ago", "author": { "...": "MemberSummary (§3.1)" }, "reply": null, "permissions": { "can_reply": { "allowed": true, "unlock_hint": null, "reason_code": null } } } ], "pagination": { "page": 1, "per_page": 20, "total": 12, "total_pages": 1 } }
   ```
   `grade` ∈ `A|B|C`. `author` is the full §3.1 `MemberSummary` (hydrated like `/members`; authorless rows skipped). An unknown `target_id` returns `total: 0` (no 404).
-  **Replies (v1.NEXT, F-345).** Every row also carries:
+  **Replies (v1.159, F-345).** Every row also carries:
   - `reply` — `null`, or the page's ONE public response: `{ "id": int, "body": string, "author": MemberSummary (§3.1, the same shape as the row's `author`), "posted_at": ISO-8601, "edited_at": ISO-8601|null, "feed_id": "feed_<act_id>", "permissions": {…} }`. `null` when there is none, when the reply is moderation-hidden, and when its author no longer answers for the page (hand-over, below). A reply renders only under a visible review (a hidden review is not in this list at all). `feed_id` is the report target: send its number to `POST /me/reports` as `feed_item`. It is **not a post** anywhere else: comments, reactions, stoke, helpful marks, `DELETE /feed/{id}`, the view beacon and owner analytics answer `bcc_not_found` 404 for it.
   - `reply.permissions` — what the **viewer** may do with this reply, so clients never derive it. Each is `{allowed, unlock_hint, reason_code}`:
     - `can_edit`: the author, in good standing. Reasons: `not_author` · `sender_restricted`.
@@ -7227,7 +7227,7 @@ Reviews-tab data plane for entity profiles AND member profiles (v1.48) — revie
 
 #### `POST /bcc/v1/reviews/{id}/reply`
 
-The reviewed party's ONE public response to a review (v1.NEXT, F-345). `{id}` is the review's `id` as the Reviews lists return it.
+The reviewed party's ONE public response to a review (v1.159, F-345). `{id}` is the review's `id` as the Reviews lists return it.
 
 - **Auth:** Bearer **required**.
 - **Body (JSON):** `{ "body": string }` — trimmed, tags stripped, 1–1000 characters.
@@ -7241,13 +7241,13 @@ The reviewed party's ONE public response to a review (v1.NEXT, F-345). `{id}` is
 
 #### `PATCH /bcc/v1/reviews/{id}/reply`
 
-Edit the reply (v1.NEXT, F-345). **Author only, and only while the author still answers for the page.** Same body rules as `POST`. Response 200 `{ "reply": … }` with `edited_at` set.
+Edit the reply (v1.159, F-345). **Author only, and only while the author still answers for the page.** Same body rules as `POST`. Response 200 `{ "reply": … }` with `edited_at` set.
 
 Errors: 404 when the viewer has no reply on this review, when it is moderation-hidden, or when the review is gone or hidden · 403 when the author no longer answers for the page (hand-over), or the account is suspended/banned · no 409. The other errors are as for `POST`.
 
 #### `DELETE /bcc/v1/reviews/{id}/reply`
 
-Delete the reply (v1.NEXT, F-345). **Author only** — the reviewer cannot remove a reply (they can report it; moderators hide it through the existing act-level hide). Removes the reply completely; the reviewed party may then reply again.
+Delete the reply (v1.159, F-345). **Author only** — the reviewer cannot remove a reply (they can report it; moderators hide it through the existing act-level hide). Removes the reply completely; the reviewed party may then reply again.
 - A **moderation-hidden** reply cannot be deleted. It answers 404, exactly like no reply: it keeps its slot, and the hidden act an open report points at.
 - A reply whose author no longer answers for the page (hand-over) can still be deleted by its author.
 
@@ -9447,7 +9447,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-12 — additive — review replies (F-345)
+### v1.159 — 2026-11-12 — additive — review replies (F-345)
 
 Ships with bcc-trust #686 (F-345) and bcc-core #119 (merged and in production).
 
