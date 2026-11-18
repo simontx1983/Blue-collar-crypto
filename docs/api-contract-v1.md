@@ -2433,7 +2433,7 @@ Authenticated personalized feed (§F1, §N6).
   - `cursor` (optional)
   - `limit` (optional, default 20, max 50)
 - **Response 200:** `CursorEnvelope<FeedItem>` per §1.5 / §3.3
-- **Errors:** `bcc_unauthorized`, `bcc_invalid_request` (bad scope)
+- **Errors:** `bcc_unauthorized`, `bcc_invalid_request` (bad scope), `bcc_unavailable` **503** *(v1.NEXT)* when the feed could not be read: see [Feed read failure](#feed-read-failure-vnext) below
 - **Rate limit:** 60/min/user
 - **Cache:** `Cache-Control: private, max-age=15`; React Query `staleTime: 15s`
 - **Mapping:**
@@ -2453,7 +2453,7 @@ Anonymous-friendly trending feed (§F2 zero-follow fallback).
 - **Auth:** Anonymous OR Bearer
 - **Query:** `cursor`, `limit` as above
 - **Response 200:** `CursorEnvelope<FeedItem>` (same shape as `/feed`)
-- **Errors:** `bcc_invalid_request`
+- **Errors:** `bcc_invalid_request`, `bcc_unavailable` **503** *(v1.NEXT)* when the feed could not be read, answered `private, no-store` and never under the public cache header below: see [Feed read failure](#feed-read-failure-vnext) below
 - **Rate limit:** 60/min/IP (anon), 60/min/user (authed)
 - **Cache (v1.109 — NOW VARIES BY VIEWER):**
   - Anonymous: `Cache-Control: public, max-age=60, stale-while-revalidate=120`
@@ -2493,7 +2493,7 @@ Anonymous-friendly hashtag feed — the hot feed narrowed to a single tag.
   - `cursor` (optional)
   - `limit` (optional, default 20, min 1, max 50)
 - **Response 200:** `CursorEnvelope<FeedItem>` — **identical shape to `/feed` and `/feed/hot`**: `data = { items: FeedItem[], pagination: { next_cursor: string|null, has_more: bool } }`
-- **Errors:** `bcc_invalid_request` (missing/empty `tag`)
+- **Errors:** `bcc_invalid_request` (missing/empty `tag`), `bcc_unavailable` **503** *(v1.NEXT)* when the feed could not be read: see [Feed read failure](#feed-read-failure-vnext) below
 - **Rate limit:** 60/min/IP (anon), 60/min/user (authed)
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - **Mapping:** Same `FeedRankingService` single brain (§F3) as `/feed/hot` — identical visibility gates (caution/risky shadow-limit, moderation hide, non-open group exclusion at the anonymous posture, and the global `public_all` visibility gate). The candidate set is then narrowed to posts that carry `#<tag>` as a **whole word**, by PeepSo's own predicate (`PeepSo::hashtags_query_where`: content wrapped in spaces, tab/CR/LF/NBSP read as spaces, `LIKE '% #<tag> %'`, case-insensitive). It is the same predicate the public trending recount uses (`GET /hashtags/trending`), so the feed lists exactly the posts a tag's trending count counts. `#eth` does not match `#ethereum` or `#eth2`, and a tag followed directly by punctuation (`#eth.`) matches in neither (since v1.126; previously a bare substring `LIKE '%#<tag>%'`). The narrowing predicate can only remove posts from the gated set — the tag feed never surfaces a post `/feed/hot` would not.
@@ -2508,10 +2508,20 @@ Single-activity permalink read (v1.33 backfill — shipped with the post-detail 
 - **Auth:** Anonymous OR Bearer
 - **Path:** `id` (int act_id **or** 8-letter shortcode — see above)
 - **Response 200:** a single §3.3 `FeedItem` (bare object in the §1.4 envelope — NOT a `CursorEnvelope`), same hydration pipeline as `/feed`
-- **Errors:** `bcc_not_found` 404 — covers both "no such activity" and "not visible to this viewer" (§O4.1 caution/risky author exclusion, §K1 mutual-block invisibility, §K1-C moderation hide, and — v1.94 — a `review` whose vote is no longer active (§3.3.2) all collapse to 404; no existence oracle)
+- **Errors:** `bcc_not_found` 404 — covers both "no such activity" and "not visible to this viewer" (§O4.1 caution/risky author exclusion, §K1 mutual-block invisibility, §K1-C moderation hide, and — v1.94 — a `review` whose vote is no longer active (§3.3.2) all collapse to 404; no existence oracle) · `bcc_unavailable` **503** *(v1.NEXT)* when the post could not be read. This is NOT a 404: the post may well exist, so a client must offer a retry, not "post not found". see [Feed read failure](#feed-read-failure-vnext) below
 - **Rate limit:** none route-specific
 - **Cache:** `Cache-Control: private, max-age=15` · `Vary: Authorization, Cookie`
 - **Mapping:** `FeedEndpoint::feedItem` → `FeedRankingService::getActivityById` (same §F3 single brain + `FeedHydrationPipeline` as the list surfaces). FE post-detail page / quick-view modal.
+
+#### Feed read failure (v1.NEXT)
+
+<a id="feed-read-failure-vnext"></a>Applies to every route that reads a feed: `GET /feed`, `/feed/hot`, `/feed/tag`, `/feed/:id` (numeric and shortcode), `/groups/:id/feed`, `/pages/:id/feed`, `/users/:handle/activity` and `/feed/cold-start`.
+
+- **When:** the database read that finds the page's posts did not run (a dropped connection, a failed query). Before v1.NEXT that answered **200 with `items: []`** (or **404** on a permalink), which a client could not tell from "nobody has posted".
+- **Response:** `bcc_unavailable` **503**, the standard error envelope, with **no `data`** (not even an empty page). Message: *"The feed is temporarily unavailable. Please try again."*, or *"This post is temporarily unavailable. Please try again."* on `/feed/:id`.
+- **Cache:** always `Cache-Control: private, no-store`, including on `/feed/hot`, whose success is publicly cacheable. Server-side, the shared `/feed/hot` first page is never written from a failed read, so an outage is not served to other readers after the database recovers.
+- **Retry:** safe and idempotent; nothing was written. **Clients:** render an error with a retry action, never the empty state ("No posts yet") or "post not found".
+- **Not covered:** the per-item details filled in after the posts are found (author badges, reactions, comment counts) keep their own fallbacks and degrade an item rather than fail the page. The profile Blog tab (`/users/:handle/blog`) is unchanged.
 
 #### Server-side group-privacy + visibility filter (applies to `/feed`, `/feed/hot`, and `/feed/tag`)
 
@@ -2843,7 +2853,7 @@ Per-member activity wall — a single-author slice of the same activity stream t
 - **Path:** `handle`
 - **Query:** `cursor` (optional, same family as `/feed`) · `limit` (optional, default 20, min 1, max 50 — **refused above 50**, not clamped)
 - **Response 200:** `CursorEnvelope<FeedItem>` — identical shape to `/feed`/`/feed/hot`/`/feed/tag`: `data = { items: FeedItem[] (§3.3), pagination: { next_cursor, has_more } }`, fully hydrated (bodies, viewer reactions, author badges/ranks, social proof, permissions, group context, comment counts).
-- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer, **or the account is suspended** *(v1.112)*
+- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer, **or the account is suspended** *(v1.112)* · `bcc_unavailable` **503** *(v1.NEXT)* when the activity could not be read: see [Feed read failure](#feed-read-failure-vnext)
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - ⚠⚠ **THE BLOGS AND REVIEWS SECTION SWITCHES FILTER THIS TAB AS OF v1.163.** When the member has switched **Blogs** off, blog-module items are absent from this response; when they have switched **Reviews** off, the reviews they WROTE are absent. The owner and §F-02-exempt admins are unaffected, and a member who never touched a switch is unaffected (absent means shown).
   This tab is the **default** one a visitor lands on, so before this it returned every module the member had written and the Blogs switch was cosmetic on the surface most likely to be read.
@@ -3121,7 +3131,7 @@ columns→`*_at_watch`) via a data-preserving migration. Canonical celebration c
 - **Response 200:** the same `{ items: FeedItem[], pagination: { next_cursor, has_more } }` as `GET /groups/:id/feed`.
 - **Scope:** only posts carrying the page marker. Filtered by the marker alone, **never by current operator**: a post stays on the page, with its label, after its author loses operator status.
 - **Exclusions:** same as the author wall: the §O4.1 reputation shadow list (a caution or risky author's posts read as empty here too), §K1 mutual blocks, and moderation-hidden rows.
-- **Errors:** `bcc_not_found` 404 unless `id` is a published validator page.
+- **Errors:** `bcc_not_found` 404 unless `id` is a published validator page · `bcc_unavailable` **503** *(v1.NEXT)* when the feed could not be read: see [Feed read failure](#feed-read-failure-vnext).
 - **Cache:** `private, no-store`, `Vary: Authorization, Cookie` (per-viewer exclusions).
 - **Mapping:** `PagesEndpoint::feed` → `FeedRankingService::getActivityForPage` → `ActivityFeedService::getActivityForPage`.
 
@@ -7166,6 +7176,7 @@ Public cold-start three-block bridge for the home-feed empty state — a civic m
   { "halls": [ { "slug": "cosmos-hall", "name": "Cosmos Hall", "chain_slug": "cosmos", "member_count": 88 } ], "recent_operators": [ { "handle": "ramona", "display_name": "Ramona V.", "avatar_url": "https://…", "reputation_tier": "trusted", "reputation_tier_label": "Trusted", "rank_label": "Journeyman", "recent_action": "REVIEWED a card", "link": "/u/ramona" } ], "hot_posts": [ /* §3.3 FeedItem[] */ ] }
   ```
   `recent_operators` are ordered by a stable daily shuffle (NOT ranked); `recent_action` uses a locked past-tense verb allowlist with a `Recently on the floor.` fallback. `reputation_tier` is always a real band. `hot_posts` are `FeedRankingService::getHotFeed` items verbatim.
+- **Errors:** `bcc_unavailable` **503** *(v1.NEXT)* when the hot-posts block could not be read: the whole panel answers 503 rather than a panel with a silently empty `hot_posts`. See [Feed read failure](#feed-read-failure-vnext).
 - **Cache:** `Cache-Control: private, no-store` (per-viewer per-day stable-randomization).
 - **Mapping:** `FeedColdStartEndpoint::handle` (route `FeedColdStartEndpoint.php:45`) → `FeedColdStartService::getColdStart`; operator hydration reuses the `MemberSummaryPrefetcher` bundle. FE `cold-start-endpoints.ts:getColdStart`.
 
@@ -7197,7 +7208,7 @@ Group-scoped, cursor-paginated activity stream. Membership-gated in the handler;
 - **Path:** `id` (int, required — group id, not slug).
 - **Query:** `cursor` (optional, opaque per §1.5) · `limit` (optional, default 20, min 1, max 50) · `hall_feed` (optional, default `main`) ∈ `main|ranked` *(v1.62 — Rank Phase 7, spec §21.3)* — Hall feed-channel selector: `ranked` returns **only** ranked-channel posts (`_bcc_ranked_feed = '1'` INNER JOIN); `main`/absent returns the ordinary feed with ranked posts **excluded** (anti-join) so the channels never double-serve. **Reading the ranked channel is open to everyone** (member/non-member/anon alike — posting is what's gated, on the write side); anything except the literal `ranked` clamps to `main`. On a non-Hall group `ranked` is simply empty (no posts carry the marker outside Halls) — no error.
 - **Response 200:** `CursorEnvelope<FeedItem>` — identical shape to `/feed`: `data = { items: FeedItem[] (§3.3), pagination: { next_cursor, has_more } }`.
-- **Errors:** `bcc_invalid_request` 400 (invalid/zero id) · `bcc_not_found` 404 (group missing OR secret + non-member). No 403 in v1.24 (non-members get the teaser rather than a refusal).
+- **Errors:** `bcc_invalid_request` 400 (invalid/zero id) · `bcc_not_found` 404 (group missing OR secret + non-member). No 403 in v1.24 (non-members get the teaser rather than a refusal). · `bcc_unavailable` **503** *(v1.NEXT)* when the feed could not be read: see [Feed read failure](#feed-read-failure-vnext).
 - **Cache:** `private, no-store`; `Vary: Authorization, Cookie`.
 - **Mapping:** `GroupsDetailEndpoint::feed` (route `GroupsDetailEndpoint.php:69`) → `GroupsService::gateGroupFeed` → `FeedRankingService::getGroupFeed($viewerId, $groupId, $cursor, $limit, $publicOnly, $hallFeed)` (channel filter applied in bcc-core `PeepSoActivityRepository` on the group-scoped path only). FE `useGroupFeed`.
 
@@ -9527,6 +9538,14 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-18 — behaviour change — a feed that could not be read answers 503, not an empty page (F-275)
+
+Ships with bcc-trust #TRUST and bcc-core #CORE (bcc-core first).
+
+- **Every feed route** (`GET /feed`, `/feed/hot`, `/feed/tag`, `/feed/:id`, `/groups/:id/feed`, `/pages/:id/feed`, `/users/:handle/activity`, `/feed/cold-start`): when the read that finds the posts did not run, the route now answers `bcc_unavailable` **503**, `private, no-store`, with no `data`. Before, it answered **200 with `items: []`** (a permalink: **404**), indistinguishable from an empty feed. See [Feed read failure](#feed-read-failure-vnext).
+- **`/feed/hot`:** the 503 is never publicly cacheable, and the shared first page is never written from a failed read.
+- **Clients:** treat a feed 503 as retryable: show an error with a retry action, not the empty state or "post not found". Successful responses are unchanged.
 
 ### v1.172 — 2026-11-17 — behaviour change (privacy) — an open group's roster omits members the viewer may not see
 
