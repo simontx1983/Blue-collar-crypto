@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.152 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.155 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -4577,7 +4577,8 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
   - wallet reason (`wallet_link_gone`): *"We couldn't confirm you still control the wallet behind your {name} claim, so the verified badge was removed. Reconnect the wallet and claim again to restore it."*
   - validator gone (`validator_row_gone`): *"We can no longer find the validator behind your {name} claim, so the verified badge was removed. If it's still running, claim it again to restore the badge."*
   - holder reason (`no_longer_holder`): *"We couldn't confirm your linked wallets still hold {name}, so the holder badge was removed. Claim again once a linked wallet holds it."*
-  - **Empty name:** the wallet and validator-gone messages drop the name (*"…behind your claim…"*); the holder message uses *"this collection"*. These are exactly `NotificationDispatcher::claimBadgeRemovedMessage()`.
+  - creator reason (`no_longer_owner`, v1.155, F-14 PR C): *"A different wallet now owns the {name} contract, so the creator badge was removed. Claim again from the wallet that owns it."* Sent when the collection contract's `owner()` now names a different, non-zero address. A renounced (zero-address) or unreadable owner never revokes. A creator claim whose wallet link is gone gets the wallet message.
+  - **Empty name:** the wallet and validator-gone messages drop the name (*"…behind your claim…"*); the holder message uses *"this collection"*; the creator message uses *"this collection's contract"*. These are exactly `NotificationDispatcher::claimBadgeRemovedMessage()`.
   - **In-app only:** no push variant, excluded from the email digest. Sent only after a real revoke (the re-verify runs in a report-only mode until an operator enables enforcement), never for a wallet disconnect.
 - **v1.132 (F-272):** three new bell keys, all default on, **in-app only** (no push variant, excluded from the email digest). `external_id` is the group; `link` is the group's page (`/communities/{slug}`), or `/communities` if the group no longer resolves.
   - `bcc_group_join_requested` — to each owner and manager of a closed group (never to one blocked either way with the requester); `actor` = the requester. *"@{handle} asked to join {group}."*
@@ -5099,7 +5100,8 @@ Confirms the OTP from the request above and **promotes** the pending address to 
 Body `{ "code": "123456" }`.
 
 - **Auth:** required. **Rate limit:** 10/hour/user. (A 6-digit OTP under this cap + the 15-min TTL is not brute-forceable; a wrong code leaves the pending transient in place for retry.)
-- **Response 200:** `{ "ok": true, "email": "<new>" }`
+- **Response 200:** `{ "ok": true, "email": "<new>", "token": "<jwt>", "expires_in": 604800, "token_type": "Bearer" }` *(token fields since v1.154)*.
+- **Signs out other sessions (since v1.154):** the account just gained the email it can be recovered through, so — exactly like `POST /me/account/email/verify` and the `POST /auth/verify-email` sign-in — every earlier bearer token is revoked and a **fresh token** is returned; bearer clients must swap to it. The fresh token continues the caller's session (its `auth_time` is kept, so the wallet-before-sign-in rule is unaffected). A wrong or expired code changes nothing and signs nobody out.
 - **Errors:** `bcc_unauthorized` 401; `bcc_invalid_request` 400 (no pending email) / 422 (missing or incorrect/expired code); `bcc_conflict` 409 (email taken in the race window, or *since v1.130* the account has had a real email set meanwhile); `bcc_internal_error` 500; `bcc_rate_limited` 429.
 - **Cache:** `Cache-Control: no-store`.
 - **Side effects:** `wp_update_user(user_email)` + `_bcc_email_verified='1'`; clears the pending transient; `recovery_email_confirmed` audit row; out-of-band notice via `AccountSecurityMailer::recoveryEmailConfirmed` (new address only, when replacing the placeholder) or `::emailChanged` (both addresses, when replacing a real email).
@@ -6796,6 +6798,179 @@ Owner blog **partial update** (§D6 PR-B). Registered as `WP_REST_Server::EDITAB
 - **Errors:** `bcc_unauthorized` 401 · `bcc_forbidden` 403 (a publish-time group gate only — see above) · `bcc_not_found` 404 (missing / not a blog / **not the author — v1.99, was `bcc_forbidden` 403**) · `bcc_invalid_request` 400 (any field validation failure; echoes `{max}`/`{category}`/`{chain_id}`) · `bcc_unavailable` 503
 - **Cache:** `no-store`.
 - **Mapping:** `PostsEndpoint::updateBlog` (route `PostsEndpoint.php:298`, EDITABLE) → `PostsService::updateBlog`. FE `blog-endpoints.ts:updateBlog` (PATCH).
+
+#### `POST /bcc/v1/posts/:id/view`
+
+*(New in v1.153 — F-324 post analytics, REACH.)* The view beacon. Fired by
+the client when a post is actually **rendered** to a reader — not at feed
+delivery, which would count posts that scrolled past unseen and make "views"
+a function of page size. `:id` is a peepso `act_id` (the numeric part of a
+`feed_id`), not a `wp_posts.ID`.
+
+⚠ **Always answers 204**, whatever happened server-side — counted, ignored,
+unknown post, the reader's own post, or throttled. This is deliberate and
+load-bearing: a response that distinguished those cases would turn the beacon
+into an existence oracle for post ids and authorship. Outcomes are logged
+server-side only.
+
+- **Auth:** **none required.** Anonymous views count (product decision), so
+  there is no auth gate — only a throttle. A signed-in reader is identified
+  from the session; a signed-out one is bucketed by coarsened network.
+- **Body:**
+  - `source` (**required**) — one of `feed` | `hot` | `tag` | `profile` |
+    `group` | `direct`. ⛔ There is deliberately **no `cold-start` value**:
+    `FeedColdStartService` forbids per-block performance comparison, and a
+    cold-start source would let an author compare that surface against the
+    feed. Cold-start views are recorded as `feed`. An unrecognised value is
+    rejected by `validate_callback` (400) and never recorded.
+  - `kind` (optional, default `view`) — `view` | `profile_visit`. The
+    `profile_visit` kind attributes a click-through from the post to the
+    author's profile; it is capped at one per reader per post per UTC day.
+- **De-duplication:** a `view` is counted at most once per reader per post
+  per **30 minutes**, so a refresh or a re-render does not add one. The
+  window is held in the object cache and **fails open** — if the cache
+  refuses or loses the claim the view is counted, because an uncounted view
+  is indistinguishable from "nobody read it". Uniqueness is separately
+  per-reader per **UTC day**, and is DB-backed, so it holds regardless.
+  ⚠ **The window REQUIRES a persistent object cache** (Redis/Memcached).
+  Without one `wp_cache_*` is a per-request array that can never dedupe
+  across requests, so the window is skipped and every beacon counts a view
+  — the same fail-open direction, just less effective. There is
+  deliberately no `wp_options`/transient fallback: that is what bcc-core's
+  `Throttle` removed for write amplification on the most-contended WP
+  table, and a view beacon fires far more often than a rate-limit check.
+  ⚠ The beacon itself is unaffected — `Throttle::isReady()` is satisfied by
+  bcc-trust's rate limiter, not by the object cache — so a cache-less
+  install still records views, it just does not de-duplicate them. ⚠ Clients should still fire the beacon once
+  per render and not try to de-duplicate themselves; the server owns it.
+- **Response 204:** no body.
+- **Errors:** none of this API's own. Request validation is WordPress's:
+  a missing `source` returns `rest_missing_callback_param` **400**, and a
+  `source` or `kind` outside its allowed set returns `rest_invalid_param`
+  **400** — WP core codes, not `bcc_*` ones. A non-numeric `:id` never
+  reaches the handler at all: the route is `(?P<id>\d+)`, so WordPress
+  answers `rest_no_route` **404**. Everything else — including
+  `bcc_rate_limited` conditions — returns **204** by design (see above), so
+  clients must not branch on the beacon's outcome.
+- **Rate limit:** 240 per 5 minutes per member (or per coarsened network when
+  signed out). Deliberately generous: one beacon fires per rendered post, so a
+  reader scrolling a long feed legitimately sends dozens a minute, and a tight
+  limit would silently drop real views.
+- **Cache:** `Cache-Control: private, no-store`
+- **Privacy:** no viewer identity is stored. De-duplication uses a keyed,
+  **per-day-salted** one-way code (HMAC over `'viewer:' || day || subject`)
+  held for at most 48 hours in a sidecar table and never exposed by any
+  endpoint. The day is part of the message, so the same reader is
+  uncorrelatable across days — which is also why uniqueness is a **daily**
+  figure and can never be a lifetime one. The 48-hour auto-delete **is** the
+  erasure story: the code is not reversible to a user id, so there is no
+  on-request delete path and nothing remains to delete.
+
+#### `GET /bcc/v1/me/posts/:id/analytics`
+
+*(New in v1.153 — F-324 post analytics.)* Analytics for a post **the viewer
+authored**. `:id` is a peepso `act_id`.
+
+Three **independent** sections — `reach`, `engagement`, `trust` — each with
+its own `available` flag. ⛔ There is no composite score and must never be
+one: the three are kept separate in data, API and UI by product requirement.
+A client must not sum or blend them.
+
+- **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
+  **Own post only**, enforced server-side against the post's author.
+  ⚠ **A foreign post, a post that does not exist, and a malformed id all
+  return the SAME `bcc_not_found` 404** — byte-identical, matching the
+  no-leak posture of `POST /me/findings/:id/appeal` (§22.3). This route
+  therefore cannot be used to discover that a post exists which the viewer is
+  not allowed to see: secret-group posts, §F-02-private posts and
+  moderation-hidden posts are exactly the cases where a post's existence is
+  NOT public, so a 403/404 split would have leaked it. There is nothing a
+  client can do with "it exists but isn't yours" on an analytics read, so the
+  distinction has no value to weigh against the leak.
+- **Response 200:**
+  ```json
+  {
+    "data": {
+      "act_id": 4821,
+      "reach": {
+        "available": true,
+        "views": 312,
+        "daily_unique_viewers": 184,
+        "profile_visits": 9,
+        "by_source": {
+          "feed": { "views": 240, "daily_unique_viewers": 150, "profile_visits": 7 },
+          "tag":  { "views": 72,  "daily_unique_viewers": 34,  "profile_visits": 2 }
+        }
+      },
+      "engagement": {
+        "available": true,
+        "unreadable": [],
+        "reactions": 23,
+        "comments": 7,
+        "reposts": 2,
+        "saves": 4,
+        "engagement_rate": 0.1957
+      },
+      "trust": { "available": false, "reason": "trust_is_profile_scoped" }
+    },
+    "_meta": {...}
+  }
+  ```
+- ⚠ **These counts are INDICATIVE, not audited.** Two limits are inherent
+  rather than bugs, and the UI should not present the numbers as exact:
+  - **views** are de-duplicated per reader per post per **30 minutes**, so a
+    refresh does not add one — but a determined reader can still add a view
+    every half hour, bounded by the beacon throttle.
+  - **`daily_unique_viewers`** cannot be inflated by a *signed-in* reader
+    (the code is derived from the user id), but a **signed-out** one can
+    nudge it by varying IP or user-agent. That is irreducible for an
+    anonymous metric: the alternative is a durable per-reader identity,
+    which is exactly what the privacy design refuses to keep.
+  Treat them as a sense of reach, not a ledger. Nothing in trust, ranking,
+  eligibility or moderation reads them.
+- **`daily_unique_viewers` is a SUM OF DAILY UNIQUES, not lifetime uniques.**
+  A reader returning on two days counts twice. This follows from the per-day
+  salted de-duplication above and is intentional — label it as *daily* unique
+  viewers in UI, never as lifetime.
+- **`engagement_rate`** = `(reactions + comments + reposts + saves) /
+  daily_unique_viewers`.
+  - ⚠ A **conservative LOWER bound**: the denominator over-counts returning
+    readers, so the true rate is ≥ the value shown. Present it as "per daily
+    unique viewer".
+  - **`null`, never `0`**, when there are no measured viewers or when `reach`
+    is unavailable. A post with no viewers has an *undefined* rate; rendering
+    `0%` would read as "nobody engaged" when the truth is "nothing to divide
+    by". Clients must render `null` as "—", not as zero.
+- **Per-section availability:** each section may independently report
+  `available: false` — a failed read is reported as unknown, never as zeros.
+  `engagement.unreadable` lists any counts that could not be read; such a
+  count appears as `null` and is **excluded** from the rate's numerator
+  rather than counted as zero.
+- **`trust` is permanently `available: false`,** with
+  `reason: "trust_is_profile_scoped"`. Attestations target `user_profile` and
+  the card kinds — there is **no activity-post target** — and per-post
+  vouching previously existed and was deliberately migrated away. This is a
+  decision, not an unfinished section: the UI should say trust is earned on
+  your profile, not per post, and must not render profile-level trust here as
+  though the post caused it.
+- **Errors:**
+  - `bcc_unauthorized` 401 — no session
+  - `bcc_rate_limited` 429 — over 60 per 5 minutes per member
+  - `bcc_not_found` 404 — **the only** not-found answer: no post for `:id`,
+    a post the viewer did not author, or a malformed id. These are
+    deliberately indistinguishable; see **Auth** above.
+  - ⛔ There is no `bcc_forbidden` 403 on this route. A non-numeric `:id`
+    does not reach the handler (`rest_no_route` 404 from WP core).
+- **Rate limit:** 60 per 5 minutes per member.
+- **Cache:** `Cache-Control: private, no-store` — owner-private data must
+  never enter a shared cache.
+- **Retention / cascade:** reach counters are kept **indefinitely** (aggregate
+  counts only, no viewer data) and are purged **only on permanent deletion**
+  of the post, plus on account deletion. ⚠ Trashing a post **keeps** its
+  counters and restoring it leaves them intact — `deletePost` trashes rather
+  than deletes, and cascading there would let a reversible action
+  irreversibly destroy the numbers. The 48-hour de-duplication sidecar is
+  unaffected and expires on its own.
 
 #### `POST /bcc/v1/reactions`
 
@@ -9226,6 +9401,26 @@ Ships with bcc-trust #701.
 - **Behaviour change (§4.7.5):** the group page's `can_join` on a **delegator** (`validator`) group is `{allowed: true, reason_code: "verify_on_join"}` (was `not_eligible` for everyone, delegators included); `unlock_hint` still names the delegation the join checks. On a **holder** (`nft`) group it is `verify_on_join` too (was `not_eligible`: the page never checked the wallet, so every eligible holder was told they could not join); `not_eligible` remains only for a group with no usable gate config. `verify_on_join` joins the §4.7.5 vocabulary.
 - **Behaviour change (§3.2.4, §4.7.2, §4.7.4):** discovery cards and the profile Groups tab answer `verify_on_join` for delegator groups as well, so the page and every list read one verdict. `verify_on_join` is no longer list-only; `unavailable` still is.
 - **Clients:** render Join from `can_join.allowed` alone; the `not_eligible` → Join special case for delegator groups can go once this is in production. The join itself goes to the type's door (`/me/holder-groups`, `/me/validator-groups`), whose refusal (`not_eligible`) is unchanged.
+
+### v1.155 — 2026-11-17 — additive (copy) — the claim-badge bell gains a creator reason (F-14 PR C)
+
+Ships with bcc-trust #693.
+
+- **`bcc_claim_badge_removed`:** a new verbatim message for `no_longer_owner`, sent when the weekly re-verify revokes a collection-creator claim because the contract's `owner()` now names a different, non-zero address: *"A different wallet now owns the {name} contract, so the creator badge was removed. Claim again from the wallet that owns it."* With an empty name: *"this collection's contract"*. A renounced (zero-address) or unreadable owner is never a revoke. No new key, type or shape; the other three messages are unchanged.
+
+### v1.154 — 2026-11-17 — behaviour change — confirming a recovery email signs out other sessions and returns a fresh token
+
+Ships with bcc-trust #691.
+
+- `POST /me/account/recovery-email/verify` now revokes every earlier bearer token and returns `token` / `expires_in` / `token_type` (parity with the email-change confirm and the verify-email sign-in). **Clients:** store the returned token, as for `POST /me/account/email/verify`.
+
+### v1.153 — 2026-11-17 — additive — post view beacon + owner-only post analytics (F-324)
+
+Ships with bcc-trust #688.
+
+- **`POST /posts/:id/view`** (new) — the reach beacon, fired when a post is actually rendered to a reader. Anonymous permitted (signed-out views count). Body: `source` (`feed` | `hot` | `tag` | `profile` | `group` | `direct`; there is deliberately no `cold-start` value) and optional `kind` (`view` | `profile_visit`). **Clients:** fire it once per rendered post, and **never branch on the response** — it always answers 204 whatever happened server-side, because a response that distinguished "counted" from "unknown post" from "your own post" would be an existence oracle for post ids and authorship.
+- ⚠ **The counts are indicative, not audited.** Views de-duplicate per reader per post per 30 minutes; signed-in `daily_unique_viewers` cannot be inflated, but a signed-out reader can nudge it by varying IP/user-agent — irreducible for an anonymous metric, since the alternative is the durable per-reader identity the privacy design refuses to keep. **Clients:** present them as a sense of reach, not a ledger. Nothing in trust, ranking, eligibility or moderation reads them.
+- **`GET /me/posts/:id/analytics`** (new) — owner-only, three **independent** sections (`reach`, `engagement`, `trust`) each with its own `available` flag, and no composite score. A non-owner gets the **same 404** as a missing post. **Clients:** render `engagement_rate` of `null` as "—" and never as `0%` (null means there is nothing to divide by, not that nobody engaged); label `daily_unique_viewers` as **daily** unique viewers, never as lifetime, because a reader returning on two days counts twice; treat `trust` as **permanently unavailable per post** (`reason: trust_is_profile_scoped`) and do not render profile-level trust in a post panel as though the post caused it; and treat any section's `available: false`, or a `null` count listed in `engagement.unreadable`, as unknown rather than zero.
 
 ### v1.152 — 2026-11-12 — behaviour change — anonymous auth limits are office-scale per network, tight per address (F-290)
 
