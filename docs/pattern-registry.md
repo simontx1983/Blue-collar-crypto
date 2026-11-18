@@ -133,6 +133,19 @@ should point at exactly one source-of-truth class or method per concept.
   consumed by `CardViewService::getPageCardForList`. Any endpoint hydrating
   N page cards MUST route through this, never loop `getCard` bare.
   ([app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Support/PageCardPrefetcher.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Support/PageCardPrefetcher.php))
+- **SECRET pages (`peepso_page_privacy = 2`)** → bcc-core
+  `BCC\Core\Repositories\PeepSoPagePrivacy`. Any list or search of
+  `peepso-page` posts puts `PeepSoPagePrivacy::notSecretSql('p.ID')` in its
+  WHERE (NOT EXISTS: any secret row hides the page, never a duplicate row;
+  hidden from everyone). Any read of ONE page by id asks
+  `BCC\Trust\Core\Support\PageAccess::viewerMaySee($post, $viewerId)` /
+  `viewerMaySeeId($pageId, $viewerId)` (author, site admin, then
+  `PeepSoPagePrivacy::isVisibleTo`: members and invitees) and, on false,
+  answers exactly as for a page that does not exist. Never hand-roll a
+  `LEFT JOIN … peepso_page_privacy … <> 2`: that form lets a two-row page
+  through.
+  ([bcc-core/src/Repositories/PeepSoPagePrivacy.php](../app/public/wp-content/plugins/bcc-core/src/Repositories/PeepSoPagePrivacy.php),
+  [bcc-trust/app/Domain/Core/Support/PageAccess.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Support/PageAccess.php))
 
 ## Feed
 
