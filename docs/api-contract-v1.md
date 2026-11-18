@@ -976,10 +976,21 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
   // tell a HIDDEN section from an EMPTY one, and would show an empty
   // Reviews tab on someone's profile instead of omitting the tab.
   //
-  // ⛔ PR 1 of 3 enforces the PAYLOAD only. The per-user tab ROUTES
-  // (/users/:handle/blog, /photos, /albums …) are gated in PR 2, so until
-  // that ships a hidden section is still reachable by calling its route
-  // directly. Treat this as the DISPLAY contract, not yet a boundary.
+  // ⛔ STILL NOT A COMPLETE BOUNDARY, but narrower than it was.
+  // PR 1 enforced the PAYLOAD only. As of v1.NEXT the Blogs section also
+  // gates its own route: GET /users/:handle/blog returns a documented
+  // EMPTY to a viewer who may not see it.
+  //
+  // ⚠ CORRECTION to PR 1's wording here, which listed "/photos, /albums …"
+  // alongside the blog route. Those are NOT F-341 sections and were never
+  // going to be gated by this switch set. The audit of all ELEVEN per-user
+  // sub-routes found exactly ONE needing new gating (blog): groups was
+  // already gated by F-270, reviews/disputes by the §K2 *_hidden flags,
+  // and followers/following by watching_hidden.
+  //
+  // What remains open is PR 3: per-HALL hiding inside a shown Halls
+  // section. So read this block as the DISPLAY contract; for `blogs` it is
+  // now also the boundary.
   "sections": {
     "about": true,
     "verifications": true,
@@ -2722,12 +2733,15 @@ The member's long-form blog posts (§D6 blog tab), newest-first, cursor-paginate
 - **Auth:** Anonymous OR Bearer. ⚠⚠ **VIEWER-DEPENDENT AS OF v1.96.** This read used to discard the viewer ("V1 blog rows are public"), which stopped being safe the moment a blog could be published into a group — a secret-group blog would have surfaced on its author's public profile. The rule is now the group's own: **a viewer sees a group blog exactly when they may see the group**, and `members_only` stays members-only **even in an OPEN group**, matching what `GET /groups/:id/feed` already does for a non-member. A blog in no group is unaffected. Reactions/permissions still hydrate as defaults.
   **Consequence for clients:** the same handle legitimately returns DIFFERENT items to different viewers, so this response must not be cached across sessions or shared between users (see the `Cache-Control` line — `private` is load-bearing now, not decorative). The author always sees their own blogs, including after they LEAVE the group.
   ⚠ **A TRASHED OR UNPUBLISHED GROUP still counts as non-open.** The deny list the gate is built on deliberately ignores the group row's `post_status`: trashing a secret group does not make its content public, so a blog in a closed/secret group stays hidden from non-members even after the group itself is trashed or reverted to draft. A client must not treat "the group is gone" as "the post is now public". (Measured on production at the time of writing: 33 non-open groups, all published, none trashed — so this closes a reachable path rather than an observed one.)
+- ⚠⚠ **THE BLOGS SECTION SWITCH GATES THIS ROUTE AS OF v1.NEXT (F-341 PR 2).** When the owner has turned their Blogs section off, a viewer who is not the owner and not an exempt admin receives a **documented EMPTY** — `items: []`, `has_more: false`, `next_cursor: null` — and **never a 403**. A refusal would itself disclose that the member has blog posts they have chosen not to show, and the empty response is shape-identical to "this member has not written any", so no client needs a second branch.
+  The posts are **never queried**: the gate short-circuits before the repository read. A hidden tab therefore costs no query, and cannot leak later through a filter applied after the fact.
+  ⚠ **Do not confuse this with the `profile_private` 403 below.** That one is §F-02 profile-level privacy refusing the whole profile to this viewer. The section switch is narrower: the profile stays readable and only this tab's contents do not.
 - **Path:** `handle`
 - **Query:** `cursor` (optional, opaque base64url `{t,id}`, same family as `/feed`) · `limit` (optional, default 20, min 1, max 50 — **refused above 50**, not clamped)
 - **Response 200:** `CursorEnvelope<FeedItem>` — same shape as `/feed`: `data = { items: FeedItem[] (§3.3), pagination: { next_cursor: string|null, has_more: bool } }`, scoped to `act_user_id = handle AND act_module_id = 'blog'`. The blog body carries the full `full_text` (the Floor variant omits it): `{ excerpt, full_text, wp_post_id, title, category (string|null), tags (string[]), chain_tags ([{id, slug, name, color, icon_url}]), disclosure ({tickers, note}|null), cover_image_url (string|null), cover_image_id (int|null), sources (string[]) }`.
 - **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer, **or the account is suspended** *(v1.112)*
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
-- **Mapping:** `BlogService::getUserBlog` → `PeepSoActivityRepository::getActivities` (over-fetch-by-1 `has_more`, moderation-hidden excluded per §K1-C); body via `BlogService::hydrateForPostId(..., includeFullText: true)`. Handler `UsersEndpoint::blog` (route `UsersEndpoint.php:172`).
+- **Mapping:** `BlogService::getUserBlog` → `PeepSoActivityRepository::getActivities` (over-fetch-by-1 `has_more`, moderation-hidden excluded per §K1-C); body via `BlogService::hydrateForPostId(..., includeFullText: true)`. Handler `UsersEndpoint::blog` (route `UsersEndpoint.php:191`); the section gate itself lives in `BlogService::getUserBlog` via `ProfileSectionVisibility::hides`, NOT in the route — a route gate would be bypassed by any second caller.
 
 #### `GET /bcc/v1/users/:handle/reviews`
 
@@ -9219,6 +9233,17 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
+### v1.NEXT — 2026-11-17 — behaviour change (privacy) — the Blogs section switch gates the blog ROUTE, not just the count (F-341 PR 2 of 3)
+
+Ships with bcc-trust's F-341 PR 2.
+
+- **`GET /users/:handle/blog` — behaviour change, narrowing.** With the owner's Blogs section switched off, a non-owner now receives a **documented empty** (`items: []`, `has_more: false`, `next_cursor: null`) instead of the posts. **Never a 403** — a refusal would itself disclose that the member has posts they have chosen not to show, and the empty page is shape-identical to "has written none", so no client needs a second branch. The owner and exempt admins are unaffected, and an owner who has never touched the switch is unaffected too (absent means shown).
+- ✅ **This retracts v1.151's caveat.** v1.151 stated the route was "only gated from PR 2's version onwards" — this is that version. Section `blogs` is now enforced on BOTH the profile payload and its own route.
+- ⚠ **Correction to v1.151's note in the `sections` block**, which listed `/photos` and `/albums` as also being gated here. They are not F-341 sections. The audit of all eleven per-user sub-routes found exactly one needing new gating: `blog`. `groups` was already gated by F-270; `reviews`/`disputes` by the §K2 `*_hidden` flags; `followers`/`following` by `watching_hidden`; `activity`, `albums`, `photos`, `endorsements` and `shift-log` fall outside F-341 entirely. About / Verifications / Operator have no per-handle route — the operator endpoints are all `/me/…` — so v1.151 already covered them completely.
+- **No new or changed ROUTE**, so there is no contract-parity entry to add; the endpoint's §4 entry carries the gate at its point of use.
+- ⛔ **Still open — PR 3:** per-Hall hiding inside a shown Halls section.
+- **Clients:** none required. A client already reading `sections.blogs` to decide whether to render the tab will not call this route when it is false; one that calls it anyway now gets an empty page instead of posts.
+
 ### v1.152 — 2026-11-12 — behaviour change — anonymous auth limits are office-scale per network, tight per address (F-290)
 
 Ships with bcc-trust #676.
@@ -9239,7 +9264,7 @@ Ships with bcc-trust's F-341 PR 1.
   - `halls` hidden → unchanged from v1.127
 - ⚠ **`verifications` and `operator` are narrowed on the MEMBER CARD too** (`member_dossier`), because the card carries the same resolved block. The same fact on two surfaces is narrowed in one place deliberately; narrowing only the profile would leave it readable on the card.
 - ⛔ **NOT YET A COMPLETE BOUNDARY.** PR 1 enforces the profile **payload**. The per-user **tab routes** are **PR 2**; per-Hall hiding (`hidden_hall_ids`) is **PR 3**. Until PR 2 ships, a hidden section is still reachable by calling its own route.
-  - ⚠ **Concretely, and this version will probably ship BEFORE PR 2:** `sections.blogs = false` hides the tab and zeroes `counts.blog_posts_written`, but **`GET /users/:handle/blog` is only gated from PR 2's version onwards** — until then it still returns the posts. Do **not** read this entry as a full hide. PR 2's own entry removes this caveat when the route gate lands.
+  - ⚠ **Concretely, and this version will probably ship BEFORE PR 2:** `sections.blogs = false` hides the tab and zeroes `counts.blog_posts_written`, but **`GET /users/:handle/blog` is only gated from PR 2's version onwards** — until then it still returns the posts. Do **not** read this entry as a full hide. PR 2's own entry removes this caveat when the route gate lands. **✅ RETRACTED by v1.NEXT (F-341 PR 2): the route IS now gated.** The caveat is kept rather than deleted because v1.151 shipped with it true — a reader pinned to v1.151 needs to know it applied then.
 - **Clients:** read `sections` for tab rendering; expect documented empties rather than missing keys; and do **not** present `show_reviews_on_profile` / `show_disputes_on_profile` as separate from the §K2 privacy toggles — they are the same setting under a second name.
 
 ### v1.150 — 2026-11-12 — behaviour change (privacy) — rosters and "Top vouched by" omit attestors the viewer may not see
