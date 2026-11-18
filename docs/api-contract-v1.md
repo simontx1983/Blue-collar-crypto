@@ -9564,7 +9564,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ### v1.175 — 2026-11-18 — additive — repost, once per member per post (F-346)
 
-Ships with bcc-trust #TBD. ⛔ Needs **bcc-core #137 in production first** (`resolveRepostRoot` and `createSelfStatus`'s root parameter land there).
+Ships with bcc-trust #747. ⛔ Needs **bcc-core #137 in production first** (`resolveRepostRoot` and `createSelfStatus`'s root parameter land there).
 
 - **New:** `POST`/`DELETE /feed/:id/repost`. A repost is a real post on the caller's own wall carrying their own audience, not a counter row; the link lives in PeepSo's `act_repost_id`.
 - **Keyed on the ROOT.** `:id` may be the original or any repost of it; the once-only rule, the lock and the count all resolve to the chain root, and the response says which (`root_feed_id`).
