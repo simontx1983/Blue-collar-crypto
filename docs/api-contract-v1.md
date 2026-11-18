@@ -996,9 +996,16 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
   // ⚠ CORRECTION to PR 1's wording here, which listed "/photos, /albums …"
   // as also being gated. Those are NOT F-341 sections and were never going
   // to be gated by this switch set. The audit of all ELEVEN per-user
-  // sub-routes found exactly ONE needing new gating (blog): groups was
-  // already gated by F-270, reviews/disputes by the §K2 *_hidden flags,
-  // and followers/following by watching_hidden.
+  // sub-routes found TWO needing new gating: `blog`, and the Activity
+  // tab's blog/review items. groups was already gated by F-270,
+  // reviews/disputes by the §K2 *_hidden flags, and followers/following
+  // by watching_hidden.
+  //
+  // ⚠⚠ /activity is NOT outside this switch set, though it reads as
+  // though it should be: it returned every module its author wrote, so
+  // Blogs-off hid the Blogs tab while leaving the same posts one tab to
+  // the left — on the tab a visitor lands on FIRST. Check the DEFAULT
+  // surface before calling a visibility switch enforced.
   //
   // ⛔ STILL OPEN — PR 3: per-HALL hiding inside a shown Halls section.
   "sections": {
@@ -9425,11 +9432,15 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ### v1.NEXT — 2026-11-17 — behaviour change (privacy) — the Blogs and Reviews section switches reach the blog ROUTE and the Activity TAB (F-341)
 
 Ships with bcc-trust **#692** (the blog route) and the F-341 Activity-tab
-follow-up (bcc-core + bcc-trust).
+follow-up: bcc-core **#127** + bcc-trust **#718**.
+
+⛔ **core #127 deploys before trust #718.** Trust passes the new module
+allowlist as a NAMED argument, so against an older bcc-core every Activity-tab
+request is an unknown-named-argument fatal — not a degradation.
 
 - **`GET /users/:handle/blog` — behaviour change, narrowing.** With the owner's Blogs section switched off, a non-owner now receives a **documented empty** (`items: []`, `has_more: false`, `next_cursor: null`) instead of the posts. **Never a 403** — a refusal would itself disclose that the member has posts they have chosen not to show, and the empty page is shape-identical to "has written none", so no client needs a second branch. The owner and exempt admins are unaffected, and an owner who has never touched the switch is unaffected too (absent means shown).
 - ✅ **This retracts v1.151's caveat.** v1.151 stated the route was "only gated from PR 2's version onwards" — this is that version. Section `blogs` is now enforced on BOTH the profile payload and its own route.
-- ⚠ **Correction to v1.151's note in the `sections` block**, which listed `/photos` and `/albums` as also being gated here. They are not F-341 sections. The audit of all eleven per-user sub-routes found exactly one needing new gating: `blog`. `groups` was already gated by F-270; `reviews`/`disputes` by the §K2 `*_hidden` flags; `followers`/`following` by `watching_hidden`; `activity`, `albums`, `photos`, `endorsements` and `shift-log` fall outside F-341 entirely. About / Verifications / Operator have no per-handle route — the operator endpoints are all `/me/…` — so v1.151 already covered them completely.
+- ⚠ **Correction to v1.151's note in the `sections` block**, which listed `/photos` and `/albums` as also being gated here. They are not F-341 sections. The audit of all eleven per-user sub-routes found **two** needing new gating: `blog`, and the Activity tab's blog/review items. `groups` was already gated by F-270; `reviews`/`disputes` by the §K2 `*_hidden` flags; `followers`/`following` by `watching_hidden`; `albums`, `photos`, `endorsements` and `shift-log` fall outside F-341 entirely. ⚠ `activity` does NOT: it returned every module its author wrote, so Blogs-off hid the Blogs tab while leaving the same posts on the tab a visitor lands on first. About / Verifications / Operator have no per-handle route — the operator endpoints are all `/me/…` — so v1.151 already covered them completely.
 - **No new or changed ROUTE**, so there is no contract-parity entry to add; the endpoint's §4 entry carries the gate at its point of use.
 - **`GET /users/:handle/activity` — behaviour change, narrowing.** With **Blogs** switched off, that member's blog-module items leave their Activity tab; with **Reviews** switched off, the reviews they WROTE leave it. Owner and exempt admins unaffected; an untouched switch is unaffected. This tab is the **default** one a visitor lands on, so without it the Blogs switch stayed cosmetic exactly where it was most likely to be read.
   - ⚠ Filtered as **candidates**, not out of a fetched page: `pagination` stays honest, pages are not short, and no client paging change is needed.
