@@ -6825,10 +6825,14 @@ server-side only.
     `profile_visit` kind attributes a click-through from the post to the
     author's profile; it is capped at one per reader per post per UTC day.
 - **Response 204:** no body.
-- **Errors:** none observable beyond request validation. A bad or missing
-  `source` / `kind` fails `validate_callback` → `400`. Everything else —
-  including `bcc_rate_limited` conditions — returns **204** by design (see
-  above), so clients must not branch on the beacon's outcome.
+- **Errors:** none of this API's own. Request validation is WordPress's:
+  a missing `source` returns `rest_missing_callback_param` **400**, and a
+  `source` or `kind` outside its allowed set returns `rest_invalid_param`
+  **400** — WP core codes, not `bcc_*` ones. A non-numeric `:id` never
+  reaches the handler at all: the route is `(?P<id>\d+)`, so WordPress
+  answers `rest_no_route` **404**. Everything else — including
+  `bcc_rate_limited` conditions — returns **204** by design (see above), so
+  clients must not branch on the beacon's outcome.
 - **Rate limit:** 240 per 5 minutes per member (or per coarsened network when
   signed out). Deliberately generous: one beacon fires per rendered post, so a
   reader scrolling a long feed legitimately sends dozens a minute, and a tight
@@ -6855,10 +6859,15 @@ A client must not sum or blend them.
 
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
   **Own post only**, enforced server-side against the post's author.
-  ⚠ A foreign post returns **`bcc_forbidden` 403**, *not* the 404 that
-  `POST /me/findings/:id/appeal` uses — a post's existence is already public,
-  so 403 leaks nothing here, and it matches the sibling owner-only read on
-  `GET /posts/:id`. An id with no post behind it is `bcc_not_found` 404.
+  ⚠ **A foreign post, a post that does not exist, and a malformed id all
+  return the SAME `bcc_not_found` 404** — byte-identical, matching the
+  no-leak posture of `POST /me/findings/:id/appeal` (§22.3). This route
+  therefore cannot be used to discover that a post exists which the viewer is
+  not allowed to see: secret-group posts, §F-02-private posts and
+  moderation-hidden posts are exactly the cases where a post's existence is
+  NOT public, so a 403/404 split would have leaked it. There is nothing a
+  client can do with "it exists but isn't yours" on an analytics read, so the
+  distinction has no value to weigh against the leak.
 - **Response 200:**
   ```json
   {
@@ -6916,9 +6925,11 @@ A client must not sum or blend them.
 - **Errors:**
   - `bcc_unauthorized` 401 — no session
   - `bcc_rate_limited` 429 — over 60 per 5 minutes per member
-  - `bcc_not_found` 404 — no post for `:id`
-  - `bcc_forbidden` 403 — the post exists but the viewer is not its author
-  - `bcc_invalid_request` 400 — non-numeric `:id`
+  - `bcc_not_found` 404 — **the only** not-found answer: no post for `:id`,
+    a post the viewer did not author, or a malformed id. These are
+    deliberately indistinguishable; see **Auth** above.
+  - ⛔ There is no `bcc_forbidden` 403 on this route. A non-numeric `:id`
+    does not reach the handler (`rest_no_route` 404 from WP core).
 - **Rate limit:** 60 per 5 minutes per member.
 - **Cache:** `Cache-Control: private, no-store` — owner-private data must
   never enter a shared cache.
@@ -9351,6 +9362,13 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-17 — additive — post view beacon + owner-only post analytics (F-324)
+
+Ships with bcc-trust #688.
+
+- **`POST /posts/:id/view`** (new) — the reach beacon, fired when a post is actually rendered to a reader. Anonymous permitted (signed-out views count). Body: `source` (`feed` | `hot` | `tag` | `profile` | `group` | `direct`; there is deliberately no `cold-start` value) and optional `kind` (`view` | `profile_visit`). **Clients:** fire it once per rendered post, and **never branch on the response** — it always answers 204 whatever happened server-side, because a response that distinguished "counted" from "unknown post" from "your own post" would be an existence oracle for post ids and authorship.
+- **`GET /me/posts/:id/analytics`** (new) — owner-only, three **independent** sections (`reach`, `engagement`, `trust`) each with its own `available` flag, and no composite score. A non-owner gets the **same 404** as a missing post. **Clients:** render `engagement_rate` of `null` as "—" and never as `0%` (null means there is nothing to divide by, not that nobody engaged); label `daily_unique_viewers` as **daily** unique viewers, never as lifetime, because a reader returning on two days counts twice; treat `trust` as **permanently unavailable per post** (`reason: trust_is_profile_scoped`) and do not render profile-level trust in a post panel as though the post caused it; and treat any section's `available: false`, or a `null` count listed in `engagement.unreadable`, as unknown rather than zero.
 
 ### v1.152 — 2026-11-12 — behaviour change — anonymous auth limits are office-scale per network, tight per address (F-290)
 
