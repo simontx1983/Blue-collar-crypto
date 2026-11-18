@@ -149,7 +149,7 @@ migrates on the first request after the trust#118 deploy.
 > + `avatars_gravatar_enable`): confirmed off on local and staging; verify before
 > the prod deploy so the oracle window never opens.
 
-### 15 — FIXED (contract v1.NEXT) — NFT-piece `owner.is_linked` membership flag
+### 15 — FIXED (contract v1.169) — NFT-piece `owner.is_linked` membership flag
 
 After #1, the anonymous piece route still carried `owner.is_linked`: `true` when the
 holding wallet was linked to a member, `false` otherwise. Holder wallets are public
