@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.164 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.165 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -5608,11 +5608,11 @@ Cast a new attestation. Idempotent on `(attestor_user_id, target_kind, target_id
 - **Response 200 (existing):** same shape with `status: "existing"`.
 - **Errors:**
   - `bcc_invalid_request` (400) — bad kind, target_kind, or target_id
-  - `bcc_not_found` (404) — "Target not found." The target does not exist, **or is not attestable by this attestor** (v1.NEXT):
+  - `bcc_not_found` (404) — "Target not found." The target does not exist, **or is not attestable by this attestor** (v1.165):
     - a `*_card` target must be a published `peepso-page` whose page type maps to exactly that `target_kind` (a page with no stored type counts as a project page, as its card renders it). A feed post, a group post or another kind of page is refused.
     - a `user_profile` target must be a member whose profile the attestor may view (the profile-visibility rule, suspension included), with no block in either direction.
     - Every refusal is this same 404, so the response never reveals which post ids exist or who is private or blocking.
-  - `bcc_unavailable` (503) — the block state between attestor and member could not be read (v1.NEXT). Retryable; a cast is never admitted on an unknown block state.
+  - `bcc_unavailable` (503) — the block state between attestor and member could not be read (v1.165). Retryable; a cast is never admitted on an unknown block state.
   - `bcc_attestation_self` (422) — attestor and target identity match
   - `bcc_attestation_ineligible` (403) — tier/standing gate failed; `error.unlock_hint` carries the plain-English path forward
   - `bcc_attestation_bandwidth_exhausted` (409) — only for `kind=stand_behind` when slots are full; body includes a `slot_holders[]` array so the FE can render the "drop one to add one" picker server-supplied
@@ -9518,7 +9518,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-17 — fix — `POST /me/attestations` validates its target (security)
+### v1.165 — 2026-11-17 — fix — `POST /me/attestations` validates its target (security)
 
 Ships with bcc-trust #713.
 
