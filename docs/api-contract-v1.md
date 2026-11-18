@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.166 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.167 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -4235,7 +4235,7 @@ Paginated list of Cards filtered + sorted server-side. Backs `/directory`.
   - `kind` ∈ {`validator`, `project`, `creator`} — optional; omitted = all kinds (member excluded — members aren't browsed here)
   - `tier` ∈ {`elite`, `trusted`, `neutral`, `caution`, `risky`} — optional; reputation-tier slugs accepted verbatim (v1.57 retired the rarity vocabulary and its translation; doc corrected v1.70 — `risky` is selectable).
   - `sort` ∈ {`trust`, `newest`, `endorsements`, `followers`, `self_stake`} — optional; default `trust`. `self_stake` (bonded self-stake, DESC) is **validator-only** — see the validator-axis note below.
-  - `q` (search string) — optional; passed verbatim to the underlying `PageDiscoveryService`
+  - `q` (search string) — optional; passed verbatim to the underlying `PageDiscoveryService`. **At most 100 characters** *(since v1.167)*: longer is a `400` before the handler runs (`rest_invalid_param`, from WordPress's validator), and the handler re-checks (`bcc_invalid_request`). **A request carrying `q` is rate limited** *(since v1.167)*: 10 per 5 s per account, or per /24 subnet (IPv6 /48) when anonymous, the same numbers as `GET /search`. Over the limit → `429 bcc_rate_limited`. Requests without `q` are not limited.
   - `good_standing_only` (`1`|`true`|`on`|`yes` → true; anything else → false) — optional; default false. When true, restricts results to operators in good standing per §E1 (`reputation_tier ∈ {neutral, trusted, elite}`). Composes with `tier` via AND server-side, so `tier=common&good_standing_only=1` is a vacuously empty intersection rather than an error.
   - `chain` (chain slug, e.g. `cosmos`) — optional; **validator-only**. Unknown slugs → `bcc_invalid_request` 400 (rejected at the boundary so a typo never silently returns empty).
   - `status` ∈ {`active`, `jailed`, `inactive`} — optional; **validator-only** on-chain status. `unknown` is intentionally not selectable.
@@ -4255,7 +4255,7 @@ Paginated list of Cards filtered + sorted server-side. Backs `/directory`.
     }
   }
   ```
-- **Errors:** `bcc_invalid_request` (bad `kind`, `tier`, `sort`, `chain`, `status`, negative `min_self_stake`, or `page > 20`)
+- **Errors:** `bcc_invalid_request` (bad `kind`, `tier`, `sort`, `chain`, `status`, negative `min_self_stake`, `page > 20`, or `q` over 100 characters) · `rest_invalid_param` 400 (`q` over 100 characters, rejected by WordPress before the handler) · `bcc_rate_limited` 429 (`q` requests over 10 per 5 s; *since v1.167*)
 - **Cache:** `Cache-Control: private, max-age=15`. Underlying `PageDiscoveryService` query is server-cached for 30s with a stampede lock; the short client TTL is courtesy for back-button nav.
 - **Mapping:**
   - Filter SQL ← `PageDiscoveryService::query()`. (`/bcc/v1/discover` was retired 2026-05-15 along with the legacy bcc-page-slider Gutenberg block it served; `PageDiscoveryService` is now used solely by this endpoint.)
@@ -9518,6 +9518,13 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.167 — 2026-11-17 — behaviour change — `/cards` text search is capped and rate limited; `/me/validator-pages` sends its documented `no-store`
+
+Ships with bcc-trust #716.
+
+- **Behaviour change (§4.9 `GET /cards`):** `q` is capped at 100 characters (longer → `400`, from WordPress's arg validator and again in the handler). A request carrying `q` is rate limited to 10 per 5 s per account, or per anonymous /24 subnet (IPv6 /48) (`429 bcc_rate_limited`), the same numbers as `GET /search`. Each distinct `q` is a leading-wildcard LIKE the 30 s discovery cache cannot absorb, and the route is anonymous. Browsing without `q` is not limited. The directory's search box debounces at 300 ms, so ordinary typing stays well under the limit; a sustained burst (or paging quickly through a search's results) can reach it, and the client should treat the `429` as "slow down", not as an empty result.
+- **Code fix, no contract change (`GET /me/validator-pages`):** the route now sends the `Cache-Control: private, no-store` this contract already documented; it sent none.
 
 ### v1.166 — 2026-11-17 — behaviour change — Removing a push device reveals nothing about other members' devices; profile lists Vary on the credential
 
