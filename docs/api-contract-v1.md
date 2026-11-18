@@ -158,6 +158,8 @@ Two distinct codes, two distinct UX paths:
 
 The canonical envelope's `message` is presentation; the *behavior fork* is on `code` alone.
 
+**When each is sent (since v1.149, F-288 — before, neither code was emitted and every case read `bcc_unauthorized`):** a route that requires sign-in and answers 401 `bcc_unauthorized` says `bcc_token_expired` when the request PRESENTED a bearer token whose only problem is its expiry, and `bcc_token_invalid` when the presented token is malformed, wrongly signed, revoked (sign out everywhere, a credential change, a suspension), signed out (`POST /auth/logout`), superseded by a refresh (after its 120 s overlap), or belongs to a deleted account. With no bearer token it stays `bcc_unauthorized`. Status and envelope shape are the same. **Public routes** (those that serve signed-out visitors) never fail on a bad bearer token: they serve the anonymous view, as before. Other 401 codes (e.g. `bcc_invalid_credentials`, `bcc_signature_invalid`) are unaffected. **Exception: `POST /auth/refresh` itself** keeps `bcc_unauthorized` for a token it can't refresh (e.g. past the 24-h grace) — a `bcc_token_expired` there would tell a client to refresh again, in a loop. A refused refresh means sign in again.
+
 #### 1.4.4 Rate-limit semantics
 
 `bcc_rate_limited` (429) is retryable with backoff. The server MAY include `data.retry_after_seconds` (positive integer). When present, clients SHOULD wait at least that long before retrying. When absent, clients SHOULD apply at least 1.5× exponential backoff starting from 2 seconds.
@@ -5655,6 +5657,7 @@ Read the attestation roster for an entity.
   Self-only views (e.g. an operator querying their own
   attestation surface) MAY include the weights — that's a future
   endpoint, not in V1 scope.
+- **Attestor visibility (v1.150, F-356):** an item is **omitted** when the viewer may not see its attestor's profile — the profile gate (`ProfileAccess::canViewProfile`: the attestor's profile privacy level for this viewer, and suspension; the attestor and admins always pass). So an anonymous visitor never gets the handle, name, avatar or score of an attestor whose profile is private to signed-out viewers. **Display only:** `summary` counts and every score still include every attestation. `hide_from_search` does **not** hide an attestor here (it hides a member from search and the directory). No shape change; a page may hold fewer items than `per_page`. The profile vouch line's `top_vouchers` (§4.4) applies the same rule.
 - **Cache:** `private, max-age=30`. Underlying read model is generation-counter invalidated by `POST` / `DELETE` against the same target.
 
 #### §J.5 `GET /bcc/v1/me/reliability`
@@ -9233,9 +9236,22 @@ Ships with bcc-trust's F-341 PR 1.
   - ⚠ **Concretely, and this version will probably ship BEFORE PR 2:** `sections.blogs = false` hides the tab and zeroes `counts.blog_posts_written`, but **`GET /users/:handle/blog` is only gated from PR 2's version onwards** — until then it still returns the posts. Do **not** read this entry as a full hide. PR 2's own entry removes this caveat when the route gate lands.
 - **Clients:** read `sections` for tab rendering; expect documented empties rather than missing keys; and do **not** present `show_reviews_on_profile` / `show_disputes_on_profile` as separate from the §K2 privacy toggles — they are the same setting under a second name.
 
+### v1.150 — 2026-11-12 — behaviour change (privacy) — rosters and "Top vouched by" omit attestors the viewer may not see
+
+Ships with bcc-trust #683 (F-356).
+
+- **`GET /entities/:target_kind/:target_id/attestations`:** an attestor whose profile the viewer may not see (profile privacy level, suspension) is omitted from `items`. Before, anonymous visitors got the handle, name, avatar and score of attestors with profiles private to them. `summary` and all scores are unchanged (display only); `hide_from_search` is not applied. No shape change.
+- **`GET /users/:handle` `top_vouchers`:** the same rule (candidates the viewer may not see are skipped; up to 3 visible ones are returned).
+
+### v1.149 — 2026-11-12 — behaviour change — protected routes say whether a bearer token expired or is dead (F-288)
+
+Ships with bcc-trust #673.
+
+- A 401 `bcc_unauthorized` on a route that requires sign-in (except `POST /auth/refresh`, whose refusal stays `bcc_unauthorized`) becomes **`bcc_token_expired`** (the presented token only expired — refresh and retry) or **`bcc_token_invalid`** (malformed, revoked, signed out, superseded, deleted account — sign out), per §1.4.3. No token presented: unchanged. Public routes: unchanged (anonymous view). **Clients:** the existing "refresh on 401, then classify" path keeps working; these codes let a client skip the refresh for `bcc_token_invalid`.
+
 ### v1.148 — 2026-11-12 — additive + fix — the handle cooldown is readable before submit, and its Retry-After is the real wait
 
-Ships with bcc-trust #653 (F-333, F-294) and #661 (F-328). Version number assigned at merge.
+Ships with bcc-trust #653 (F-333, F-294) and #661 (F-328).
 
 - **Display names (F-328, bcc-trust #661):** a `display_name` shaped like a signup login (`u_` + a handle, any case) now shows the handle, like one equal to the member's own login; it no longer has to be the CURRENT login.
 - **`GET /users/mention-search`:** the Ranking line is corrected to what the endpoint has done since #601 (no contract change).
@@ -9245,7 +9261,7 @@ Ships with bcc-trust #653 (F-333, F-294) and #661 (F-328). Version number assign
 
 ### v1.147 — 2026-11-12 — behaviour change — unconfirmed sign-ups free up after 7 days; a password reset confirms a pending email sign-up
 
-Ships with bcc-trust #675 (F-285, F-287). Version number assigned at merge.
+Ships with bcc-trust #675 (F-285, F-287).
 
 - **`POST /auth/signup`:** an email sign-up never confirmed within 7 days stops holding its handle and email; the next sign-up for either deletes it. The handle and email `409` messages now say so (codes unchanged).
 - **`POST /auth/reset-password`:** a successful reset confirms a still-pending **email** sign-up, so the following sign-in works. Wallet and OAuth accounts are unchanged.
@@ -9253,20 +9269,20 @@ Ships with bcc-trust #675 (F-285, F-287). Version number assigned at merge.
 
 ### v1.146 — 2026-11-12 — behaviour change — watch state can be unknown; suggestions never offer someone already followed
 
-Ships with bcc-trust #659 (F-255 follow-up + F-335). Version number to be assigned at merge.
+Ships with bcc-trust #659 (F-255 follow-up + F-335).
 
 - **`viewer_is_watching` is three-state** on page and member cards (§3.2) and on `GET /users/:handle`: `true` / `false` / **`null` = unknown** (the watch-state read failed; `viewer_watch` is `null` too). Was: a failed read read as `false`, which drew a "Watch" button on something the member may already watch. **Clients:** render `null` as a neutral, non-actionable state.
 - **`GET /suggestions/users`:** the already-following exclusion is exact. It used the first 200 follows only, so a viewer following more than 200 members could be suggested one they already watch. No shape change.
 
 ### v1.145 — 2026-11-12 — additive — the profile's vouch line: "Vouched for by N people you watch" / "Top vouched by"
 
-Ships with bcc-trust #674 (F-340). Version number to be assigned at merge.
+Ships with bcc-trust #674 (F-340).
 
 - **`GET /users/:handle`:** new `vouched_by_watched_count` (`int | null`, signed-in viewers on someone else's profile; `0` hides the line, `null` = not applicable or unknown) and `top_vouchers` (≤ 3 `{ handle, display_name, avatar_url }`, signed-out viewers only; `[]` hides the line). Both count active `vouch` attestations only, and only ones the public roster would show (no suspended attestors; a name-hidden voucher counts and shows as `@handle`). See §4.4.
 
 ### v1.144 — 2026-11-12 — behaviour change — administrators can take a reported announcement down
 
-Ships with bcc-trust F-307 B1. ⚠ `v1.144` is a placeholder: the number is assigned at merge.
+Ships with bcc-trust F-307 B1.
 
 - **Behaviour (§4.32.1, §4.32.16):** a new public-visibility predicate. A notice an administrator took down is not publicly readable: the list, the detail/permalink read (`404`, same as missing), comments and the rotator drop it, and its feed item is hidden. Archiving is unchanged; a taken-down notice is dropped from the archived list as well.
 - **Moderation queue:** Hide, Restore and Dismiss now act on announcement reports instead of every action being recorded as a dismiss. A report on the notice's feed item takes the same path.
@@ -9283,7 +9299,7 @@ Ships with bcc-trust #671.
 
 ### v1.142 — 2026-11-12 — additive — the post and comment author carries the trust score
 
-Ships with bcc-trust #663. Version number to be assigned at merge.
+Ships with bcc-trust #663.
 
 - **`FeedAuthor` (§3.3) and `CommentAuthor` (§3.5):** new `trust_score` (`int`, 0–100), the same number the profile shows (one server display rule), so a post card can render e.g. "TRUSTED 72" from `reputation_tier_label` + `trust_score`. Batched per page. **Optional for one release**: render the tier alone when it is absent.
 
@@ -9305,7 +9321,7 @@ Scope: the notification view-model (`GET /me/notifications`) and the mention/com
 - ⚠ **Coordination:** ships with bcc-trust F-245 (`fix/f245-notification-post-links`); that PR merges first. The frontend half (rendering `target_available: false`) is public-cb's.
 ### v1.139 — 2026-11-12 — additive + behaviour change — a wallet-signup email counts once verified; when a recovery email can be added (F-332)
 
-Ships with bcc-trust #658. Version number assigned at merge.
+Ships with bcc-trust #658.
 
 - **Behaviour change:** `GET /wallets` → `recovery.has_recovery_email` is `false` while the email is pending its verification code (`_bcc_email_verified='0'`): an address typed at wallet sign-up counts only once `POST /auth/verify-email` confirms it. The same definition drives the `DELETE /wallets/{id}` last-recovery-method guard and `POST /me/account/recovery-email`'s first-email check (so a pending typo can be replaced there). Legacy accounts with no flag are unaffected.
 - **Additive:** `recovery.available_at` (ISO-8601 UTC or `null`) and `recovery.available_reason` (`"signup_wallet" | "wallet_age" | null`).
@@ -9313,7 +9329,7 @@ Ships with bcc-trust #658. Version number assigned at merge.
 
 ### v1.138 — 2026-11-12 — behaviour change — a refresh retires the token it replaced after 120 seconds (F-282)
 
-Ships with bcc-trust #662. Version number assigned at merge.
+Ships with bcc-trust #662.
 
 - **`POST /auth/refresh`:** the presented token keeps working for 120 s after a successful refresh, then gets `bcc_unauthorized` 401 everywhere. Shape unchanged. **Clients:** use the returned token; no new handling.
 
@@ -9350,7 +9366,7 @@ Ships with bcc-trust #644 (F-246 backend + F-300) and bcc-core #113, both merged
 
 ### v1.134 — 2026-11-12 — behaviour change — 2FA resend reports an ended challenge, and its code always works
 
-Ships with bcc-trust #646 (F-292). Draft number: renumbered in merge order.
+Ships with bcc-trust #646 (F-292).
 
 - **`POST /auth/2fa/resend`:** an ended challenge (expired, superseded, burned, or older than 30 min) now answers `bcc_invalid_2fa_token` 401, the same as verify, instead of `ok: true` with nothing sent. A successful resend keeps the challenge alive for the new code's 5 minutes, so a late resend no longer mails a code that fails with "session expired". A challenge lives at most 35 minutes.
 - **`POST /auth/2fa/verify`:** no shape change. The 5-wrong-codes cap now holds across any number of resends.
@@ -9411,7 +9427,7 @@ Ships with bcc-core's F-266 change (bcc-core #108, merged) and bcc-trust's F-267
 
 ### v1.128 — 2026-11-12 — behaviour change — sign-in and search use the current handle; renamed handles are retired
 
-Ships with bcc-trust #634 (F-280) and bcc-search #36 (F-302). Draft number: renumbered in merge order.
+Ships with bcc-trust #634 (F-280) and bcc-search #36 (F-302).
 
 - **`POST /auth/login`:** a handle-shaped `identifier` resolves the account's current handle, not the `u_<handle>` signup login. A renamed member signs in with their new handle; the old handle no longer signs in. A handle two accounts hold signs in nobody. Errors and their shapes are unchanged.
 - **`PATCH /me/handle`:** the outgoing handle is retired (it keeps resolving to the member, so old `/u/` links and `@mentions` work, and no other member can take it). The owner may reclaim it. New error `bcc_internal_error` 500 when the old handle cannot be recorded; nothing changes. A one-shot migration retires the original handle of members who renamed before this change.
