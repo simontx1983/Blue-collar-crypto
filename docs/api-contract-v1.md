@@ -7980,10 +7980,18 @@ Auth **optional**. The public list — published public data only.
 | `limit` | int | 20 | 1–50 (§4.32.4). **Out of range is a `400`, not a clamp.** |
 | `cursor` | string | — | opaque; tagged `ann_active` or `ann_archived` per `state` |
 
-- **Cache:** `Cache-Control: no-store`, and **no `Vary`** — see "Freshness" below.
+- **Cache:** `Cache-Control: no-store` · `Vary: Authorization, Cookie` *(since v1.NEXT, for
+  SECRET pages; still no TTL)* — see "Freshness" below.
 
-⚠⚠ **Identical for every viewer, including the resolved operator** (§4.32.11). No
-`capabilities`, no `status`, no `body`, and no draft/scheduled/`blocked` row.
+⚠⚠ **Identical for every viewer, including the resolved operator** (§4.32.11), with one
+exception: a SECRET page. No `capabilities`, no `status`, no `body`, and no
+draft/scheduled/`blocked` row.
+
+- **SECRET pages** *(since v1.NEXT)*: a page with `peepso_page_privacy = 2` that the viewer
+  may not see (its author, site admins, and its members and invitees may; see `GET /cards/:type/:id`) answers exactly what a page that does not exist answers: the
+  **empty page**, `items: []` with inert `pagination`. A missing page has no announcements; it
+  is not a `404`. The read still runs first, so a read failure is the same `503` for a hidden
+  page as for a missing one.
 
 ⚠ A cursor minted for one `state` is **refused** by the other: the two order by different
 columns (`published_at` vs `archived_at`), so a shared cursor would skip or repeat rows with
@@ -8001,9 +8009,11 @@ so a caller cannot page it. `pagination` is present and **inert**
 (`{next_cursor: null, has_more: false}`), because reusing the list envelope avoids a second
 response shape for the same rows (§4.32.14).
 
-- **Cache:** `Cache-Control: no-store`, no `Vary` — as the list above.
+- **Cache:** `Cache-Control: no-store` · `Vary: Authorization, Cookie` *(since v1.NEXT)* —
+  as the list above.
 
-Same public-data rules as the list.
+Same public-data rules as the list, the SECRET-page rule included *(since v1.NEXT)*: a hidden
+page's rotator is the empty one a missing page gets.
 
 #### `GET /bcc/v1/validators/:pageId/announcements/:id`
 
@@ -8024,6 +8034,11 @@ credential could hand one viewer the permissions resolved for another.
 
 ⚠ An archived announcement **still resolves here**: §4.32.6 keeps its permalink. Archival is
 a public record, not a deletion.
+
+- **SECRET pages** *(since v1.NEXT)*: an announcement on a page with
+  `peepso_page_privacy = 2` that the viewer may not see (its author, site admins, and its members and invitees may; see `GET /cards/:type/:id`) is the same
+  `404 bcc_not_found` as a missing announcement. The reads run first, so a read failure is
+  the same `503`.
 
 #### `GET /bcc/v1/me/validators/:pageId/announcements`
 
@@ -8090,8 +8105,9 @@ nothing to say why.
 ##### Freshness — why no announcement read carries a TTL
 
 §4.32.11 says the public list is *"safely cacheable and its cache key needs no viewer
-component."* That is a statement about **cache keys**, and it holds: the public list and the
-rotator send no `Vary`, because nothing in them varies by viewer. It is **not** a freshness
+component."* That is a statement about **cache keys**. It held until v1.NEXT; since then the
+public list and the rotator send `Vary: Authorization, Cookie`, because a SECRET page's list
+is empty for a viewer the page does not admit and full for a member. It is **not** a freshness
 guarantee, and §1.6's endpoint-kind table has no announcements row — so these four routes
 deliberately ship `no-store` rather than inherit a `max-age` from a neighbouring endpoint.
 
@@ -8170,7 +8186,8 @@ Auth **optional**. The canonical chronological discussion for one announcement.
 - **Success:** `200` with `{ items, pagination, can_comment }`.
 - **Cache:** `Cache-Control: private, no-store` · `Vary: Authorization, Cookie`
 - **Errors:** `404 bcc_not_found` (feature off, **or the announcement is not publicly
-  readable**) · `503 bcc_unavailable`
+  readable**, or *(since v1.NEXT)* it is on a SECRET page the viewer may not see:
+  its author, site admins, and its members and invitees may; see `GET /cards/:type/:id`) · `503 bcc_unavailable`
 
 ⚠⚠ **A thread on a non-public announcement is `404`, and that is true even for the
 operator.** §4.32.4's read-side rule hides the row's EXISTENCE, which is a different
@@ -8197,7 +8214,8 @@ Auth **member in good standing** (§4.32.7).
 
 - **Success:** `201` with the created comment in the §4.32.14 shape.
 - **Errors:** `403 bcc_forbidden` + `reason_code` · `404 bcc_not_found` (feature off, or the
-  announcement is not publicly readable) · `400 bcc_invalid_request` (absent, blank,
+  announcement is not publicly readable, or *(since v1.NEXT)* it is on a SECRET page the
+  viewer may not see) · `400 bcc_invalid_request` (absent, blank,
   oversized or non-UTF-8 body) · `400` + `reason_code: replies_not_supported` ·
   `503 bcc_unavailable`
 
@@ -8234,7 +8252,8 @@ in position as a tombstone.
 
 - **Success:** `200` with the tombstone shape — four keys, nothing else.
 - **Errors:** `403 bcc_forbidden` + `reason_code: not_comment_author` · `404 bcc_not_found`
-  (feature off, no such comment, or the announcement is not publicly readable) ·
+  (feature off, no such comment, or the announcement is not publicly readable, or *(since
+  v1.NEXT)* it is on a SECRET page the viewer may not see) ·
   `409 bcc_conflict` (already removed) · `503 bcc_unavailable`
 
 ⚠⚠ **`not_comment_author` IS THE PUBLIC REASON FOR EVERY REMOVAL DENIAL**, whoever asks.
@@ -8557,9 +8576,10 @@ compensate.
 
 Three things follow, and each is a property worth having rather than a restriction:
 
-1. **The public list is viewer-independent.** Two readers of the same page and cursor get
-   byte-identical responses, so it is safely cacheable and its cache key needs no viewer
-   component. ⚠ A consumer that scopes its list cache per viewer **on the grounds that the list
+1. **The public list is viewer-independent**, except on a SECRET page *(since v1.NEXT)*, where a
+   viewer the page does not admit gets the empty page (see `GET /validators/:pageId/announcements`).
+   Otherwise two readers of the same page and cursor get byte-identical responses. The response
+   now sends `Vary: Authorization, Cookie`, so a cache must key it per credential. ⚠ A consumer that scopes its list cache per viewer **on the grounds that the list
    is viewer-dependent** no longer has that reason. Scoping stays harmless — and is still
    correct for detail and comments — but the justification for the list changes.
 2. **Private state cannot leak through the public collection**, because the collection carries no
@@ -9614,6 +9634,16 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-18 — behaviour change (privacy) — a SECRET page's announcements and their threads answer as missing to non-members
+
+Ships with bcc-trust #768 (needs bcc-core #131 deployed first, as v1.178 did). The v1.178 rule now covers announcements: a SECRET page (`peepso_page_privacy = 2`) is seen by its author, site admins, and its members and invitees, and everyone else gets what a page that does not exist gets.
+
+- **`GET /validators/:pageId/announcements`** and **`/rotator`:** the empty page, as for a missing page (which has no announcements; it is not a `404`). Both now send `Vary: Authorization, Cookie`; still `no-store`, still no TTL.
+- **`GET /validators/:pageId/announcements/:id`:** the same `404 bcc_not_found` as a missing announcement.
+- **`GET`/`POST /announcements/:id/comments`** and **`DELETE /announcements/:id/comments/:commentId`:** the same `404 bcc_not_found` as an announcement that is not publicly readable.
+- The reads still run first, so a read failure is the same `503` for a hidden page as for a missing one.
+- **Unchanged:** the owner list and every write route (operator-only), and the feed projection of announcements (§4.32.8), which a follow-up covers. No shape change, no new route or error code.
 
 ### v1.188 — 2026-11-18 — behaviour change — a feed that could not be read answers 503, not an empty page (F-275)
 
