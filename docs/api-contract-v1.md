@@ -6724,7 +6724,7 @@ File a content report against a feed item or an **announcement** (§K1 Phase B).
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
 - **Body (JSON):** `target_kind` (**required**, ∈ `feed_item | announcement`) · `target_id` (**required**, int ≥ 1 — the `act_id` for `feed_item`, the **bare integer announcement id, prefix stripped** for `announcement`; see below) · `reason_code` (**required**, ∈ `spam|harassment|hate|violence|misinformation|other`) · `comment` (optional, ≤ 500 chars; **required when `reason_code = other`**)
 - **Response 200:** `{ "data": { "ok": true, "report_id": 5512, "status": "created" } }` — `status` ∈ `created | existing` (UNIQUE `(reporter, target_kind, target_id)` blocks a second row; `existing` returns `report_id: 0`).
-- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (bad kind/id/reason, comment > 500, missing comment for `other`, or self-report) · **`bcc_not_found` 404** (`announcement`: the notice is not publicly readable, or *(since v1.201)* it is on a SECRET page the reporter may not see · `feed_item` *(v1.93)*: the reporter cannot see the post; see below) · `bcc_rate_limited` 429 (FLAG limits, 5 / 5 min / reporter) · `bcc_unavailable` 503
+- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (bad kind/id/reason, comment > 500, missing comment for `other`, or self-report) · **`bcc_not_found` 404** (`announcement`: the notice is not publicly readable, or *(since v1.201)* it is on a SECRET page the reporter may not see · `feed_item` *(v1.93)*: the reporter cannot see the post, or *(since v1.NEXT)* `target_id` is a COMMENT's act id, which is never a feed item; see below) · `bcc_rate_limited` 429 (FLAG limits, 5 / 5 min / reporter) · `bcc_unavailable` 503
 - **Mapping:** `MyReportsEndpoint::create` (route `MyReportsEndpoint.php:38`) → `ContentReportService::fileReport`; fires `do_action('bcc_content_reported', …)` for async Phase C subscribers.
 
 ⚠⚠ **FOR `announcement`, THE CLIENT SENDS THE NOTICE'S OWN ID AND NOTHING
@@ -9677,6 +9677,13 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-19 — fix (privacy) — a comment's act id is not a reportable feed item
+
+Ships with bcc-trust #789. Works on any bcc-core; no deploy order.
+
+- **`POST /me/reports`** with `target_kind: "feed_item"`: a `target_id` that is a COMMENT's act id is `404 bcc_not_found` "Not found.", the same as an id that does not exist, and nothing is filed. Before, a comment's activity row passed as a public post (same module as a status, no group on its own post), so a comment under a secret- or closed-group post, a followers-only post or a page wall was reportable by anyone, which confirmed it exists and let non-members feed the auto-hide counter.
+- **Unchanged:** reporting a post, a review reply (v1.159) and an announcement; every shape. No new route or error code.
 
 ### v1.203 — 2026-11-19 — behaviour change — one mention bell per mentioner per member per 5 minutes (F-415)
 
