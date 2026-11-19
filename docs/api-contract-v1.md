@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.198 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.199 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -4385,9 +4385,12 @@ Top-N search suggestions for the §G1 nav-bar autocomplete. Smaller per-item sha
         "is_claim_verified": false,
         "href": "/u/simontx"
       }
-    ]
+    ],
+    "incomplete": false
   }
   ```
+- **`incomplete` (v1.199, F-421):** `boolean`, always present. `true` when a vertical this request searched could not be read: bcc-search answered **503** (degraded) or **429** (the shared `search` throttle bucket is spent). `items` then holds only what the other verticals found, possibly nothing. `false` otherwise, including for a `q` under 2 characters, which searches nothing. The status stays **200** either way: autocomplete never blocks mid-type. **Clients:** an empty `items` with `incomplete: true` means "suggestions are unavailable right now", not "no matches"; the next keystroke retries.
+  - ⚠ **Not covered:** a database failure inside member matching. bcc-search delegates the match to bcc-trust, which gets nothing back from WordPress's user query on a DB error, so `/search/users` answers 200 with no results and `incomplete` stays `false`. A follow-up covers it.
 - **Result cap + All-scope allocation (v1.70):** the response never exceeds **12 items** (mirrors the upstream `/bcc/v1/search` cap; previously undocumented). With no `kind`, three verticals merge deterministically: floors first — 1 page, then 1 community, then 1 member, each only when that vertical returned results and capacity remains — then communities top up to **3**, members top up to **3**, and pages absorb ALL remaining capacity (unused community/member quota flows back to pages). Display grouping is pages → communities → members; within each vertical the upstream ranking order is preserved. The count may be **fewer** than 12 (vertical shortfall, dropped rows). With `kind`, the single vertical is queried and capped at 12. A degraded/rate-limited vertical is silently absent from the merge — autocomplete never surfaces a partial-failure error.
 - **Per-kind field semantics (v1.70):**
   - Page kinds (`validator`/`project`/`creator`): unchanged — real tier/label/score, `is_verified` (owner email), `is_claim_verified` per the verified-wins slice below.
@@ -4396,13 +4399,13 @@ Top-N search suggestions for the §G1 nav-bar autocomplete. Smaller per-item sha
   - **`is_verified` presence:** present only on page-kind rows. It is **omitted** from `member` rows because `/search/users` does not provide the authoritative email-verification signal (`bcc_trust_user_info.is_verified`) and no bounded batch reader currently exists for it — omission means **unavailable, not false**; members do have a real email-verification value. It is omitted from `community` rows because no owner-email verification meaning exists for a community on this surface.
   - `trust_score` is `int | null` on ALL rows (nullable since the field's introduction — a page row whose enrichment is missing ships `null`; previously undocumented).
 - **`is_verified` vs `is_claim_verified` (verified-wins slice, 2026-06-30):** `is_verified` = the owner's **email** verification (weak; not an authenticity signal). `is_claim_verified` = the page has a **verified on-chain operator/creator claim** (`onchain_claims.status='verified' AND claim_role IN ('operator','creator')`) — i.e. the real entity proved key control. The FE renders the "✓ Verified Operator" badge from `is_claim_verified`, NOT `is_verified`. Claim-verified pages also receive a dominant ranking bonus (`bcc_rank_claim_verified_bonus`), and bcc-search demotes any unverified same-name look-alike strictly below the verified canonical page.
-- **Errors:** `bcc_invalid_request` (bad `kind`)
-- **Cache:** `Cache-Control: private, max-age=15`. Underlying bcc-search caches results for 60s.
+- **Errors:** `bcc_invalid_request` (bad `kind`). A vertical that could not be read is never an error here: see `incomplete`.
+- **Cache:** `Cache-Control: private, max-age=15`; **`private, no-store` when `incomplete` is `true`** *(v1.199)*, so a browser cannot replay a degraded answer for the same query after the vertical recovers. Underlying bcc-search caches results for 60s (never its errors).
 - **Mapping:**
   - Internally calls `GET /bcc/v1/search` (pages) and — in All scope, v1.70 — additionally `GET /bcc/v1/search/groups` + `GET /bcc/v1/search/users`, all via `rest_do_request`; matching, enrichment, per-vertical caches, and rate limiting live in bcc-search
   - Server maps the flat result shapes into `SearchSuggestion`: reputation_tier passes through verbatim for pages (v1.57 — no rarity translation), category_slug → card_kind per `PageTypeMap`, route prefix per kind (`/v/`, `/p/`, `/c/`); community/member rows (v1.70) normalize from the groups/users verticals, `href` taken from the vertical's relative URL after internal-path validation
   - Dropped silently: rows with unrecognized `category_slug` (e.g., `dao` — not a card kind in V1), rows missing required identity fields, and community/member rows whose URL fails internal-path validation (defense against absolute/off-app hrefs). *(Doc corrected v1.70: the old "rows whose tier maps to risky are dropped" claim described pre-v1.57 behaviour — risky pages and members appear with their honest tier chip.)*
-  - Falls back to empty list when bcc-search is degraded (503) — autocomplete must never block the user mid-type with an error toast
+  - A vertical bcc-search could not answer (503 degraded, or 429) is absent from the merge, and the response says so with `incomplete: true` *(v1.199; before, it dropped out silently)*. A page-kind `kind` whose vertical failed answers an empty list. Autocomplete must never block the user mid-type with an error toast.
 
 #### `GET /bcc/v1/search` (multi-vertical: projects + trending)
 
@@ -6191,6 +6194,7 @@ Anonymous-readable per §J trust-graph doctrine: attestation data is public-by-d
   - `bcc_not_found 404` — handle does not resolve to a known user.
   - `bcc_rate_limited 429` — 30/60/IP shared throttle bucket (`users_endorsements`).
   - `bcc_forbidden 403` *(v1.91)* — `error.data.reason: "profile_private"`; the owner's `profile_visibility` does not admit this viewer, **or the account is suspended** *(v1.112)*.
+  - `bcc_unavailable 503` *(v1.199, F-421)* — the vouches could not be read. *"Vouches are temporarily unavailable. Please try again."*, `private, no-store` (never the cache header below), no `data`. Before, that answered 200 with `items: []`, which the tab showed as "Hasn't vouched for any pages yet". Retryable: show an error with a retry action, not the empty state.
 - **Rate limit:** 30/60/IP (shared across all `/users/:handle/endorsements` callers — per-handle granularity isn't worth the bucket sprawl).
 - **Cache:** `private, max-age=15` with `Vary: Authorization, Cookie` *(changed in v1.91 — was `public, max-age=15` with `Vary: Authorization`)*. React Query `staleTime: 15_000`.
   - ⚠ The short shared cache it used to keep is no longer available: since v1.91 this route can answer 403 for one viewer and 200 for another, and a shared cache holding the 200 would replay it to refused viewers. `Vary: Authorization` alone does not help — the owner/admin/friend distinctions turn on the session.
@@ -7564,7 +7568,7 @@ The endorsements the caller authored, hydrated to the shared §J.6 row shape (th
   { "items": [ { "id": 142, "page_id": 4521, "page_title": "…", "page_url": "https://…", "avatar_url": "https://…", "trust_score": 67, "tier": "trusted", "weight": 1.25, "context": "general", "reason": "…|null", "created_at": "…" } ], "total": 1 }
   ```
   Identical row shape to §4.22 (`EndorsementService::hydrateEndorsementItems`). `trust_score` `null` when the page has no read-model row; `tier` `unavailable` likewise. `total` = count of items returned (capped by `limit`), NOT a paginated grand total.
-- **Errors:** bare `{ "message": "Too many requests." }` **429** (non-standard); anonymous/suspended → WP `rest_forbidden` 401/403.
+- **Errors:** `bcc_rate_limited` **429** (the standard error envelope; *doc corrected v1.199*: this line said a bare `{ "message": … }`, which the 2026-08-06 sweep retired, see the envelope note in §4.30) · `bcc_unavailable` **503** *(v1.199, F-421)* when the vouches could not be read: *"Vouches are temporarily unavailable. Please try again."*, `private, no-store`, no `items`. Before, that answered `items: []`, `total: 0` · anonymous/suspended → WP `rest_forbidden` 401/403.
 - **Rate limit:** 30 / 60s, bucket `endorsements_mine`.
 - **Cache:** not set by the handler (treat as `no-store`).
 - **Mapping:** `UserEndorsementsEndpoint::getMine` (route `UserEndorsementsEndpoint.php:35`) → `EndorsementService::getUserEndorsements`. FE shares the §4.22 `UserEndorsementsResponse` type.
@@ -7579,7 +7583,7 @@ Aggregate stats over the caller's authored endorsements. Powers the endorsements
   { "user_id": 412, "total_endorsements_given": 27, "unique_pages_endorsed": 5, "recent_endorsements": [ /* up to 5 raw EndorsementWithPage rows — opaque */ ], "endorsement_weight_avg": 1.18, "last_endorsement": "2026-05-15 14:23:47" }
   ```
   `unique_pages_endorsed` counts distinct pages within the 10 most-recent only (not lifetime distinct). `recent_endorsements` are raw repository rows (NOT the hydrated §J.6 shape — treat as opaque). `endorsement_weight_avg` floors to `1.0` when no positive average. `last_endorsement` `null` when none.
-- **Errors:** bare `{ "message": "Too many requests." }` **429**; anonymous/suspended → WP forbidden.
+- **Errors:** `bcc_rate_limited` **429** (the standard error envelope; *doc corrected v1.199*, as for `/endorsements/mine`) · `bcc_unavailable` **503** *(v1.199, F-421)* when the vouches could not be read: same message and `private, no-store`, no stats. Before, that answered zeroed stats (`total_endorsements_given: 0`) · anonymous/suspended → WP forbidden.
 - **Rate limit:** 30 / 60s, bucket `endorsements_mine_stats`.
 - **Cache:** not set by the handler (treat as `no-store`).
 - **Mapping:** `UserEndorsementsEndpoint::getMineStats` (route `UserEndorsementsEndpoint.php:51`) → `EndorsementService::getUserEndorsementStats`.
@@ -9659,6 +9663,16 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.199 — 2026-11-19 — behaviour change — a failed given-vouches read answers 503; `/cards/search` says when a vertical could not be read (F-421)
+
+Ships with bcc-trust #774. No bcc-core change.
+
+- **`GET /users/:handle/endorsements`, `GET /endorsements/mine`, `GET /endorsements/mine/stats`:** when the read of the vouches a member has given did not run, each answers `bcc_unavailable` **503**, *"Vouches are temporarily unavailable. Please try again."*, `private, no-store`, with no `data`. Before, a failed read answered 200 with `items: []` (on the profile tab: "Hasn't vouched for any pages yet") or zeroed stats.
+- **`GET /cards/search`:** an additive `incomplete: boolean`, always present. It is `true` when a vertical the request searched could not be read (bcc-search 503, or 429 from the shared `search` bucket), and that answer is `private, no-store`. The status stays 200. Before, a failed vertical dropped out silently, so "suggestions unavailable" and "no matches" were the same response.
+- **Not covered:** a database failure inside member matching (see the `/cards/search` entry); a follow-up covers it.
+- **Doc fix:** the `/endorsements/mine` and `/endorsements/mine/stats` Errors lines described the 429 as a bare `{ "message": … }`. It has been the standard `bcc_rate_limited` error since the 2026-08-06 sweep.
+- **Clients:** treat these 503s as retryable: show an error with a retry action, never the empty state. Read `incomplete: true` with empty `items` as "suggestions unavailable", not "no matches". Successful responses are otherwise unchanged.
 
 ### v1.198 — 2026-11-18 — behaviour change — an address several wallet sign-ups hold pending is checked against each (F-294 follow-up)
 
