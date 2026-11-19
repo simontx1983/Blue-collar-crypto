@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.193 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.194 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2471,7 +2471,7 @@ Authenticated personalized feed (§F1, §N6).
   - **Scope-to-filter mapping:**
     - `for_you` → ranked stream, F1 priority chain applied
     - `following` → strict-time-ordered, posts attributed to entities/users in the viewer's `peepso_user_followers` set, signal kinds excluded
-    - `signals` → signal post-kinds only, ranked by recency + severity
+    - `signals` → signal post-kinds only, ranked by recency + severity. *(v1.194, F-392)* Nothing writes a signal post yet, so this is an empty page (`items: []`, `has_more: false`). It used to serve unrelated legacy rows.
   - Shadow-limited authors (§K1, §O4.1) excluded from all scopes for this viewer
 
 #### `GET /bcc/v1/feed/hot`
@@ -9647,6 +9647,14 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.194 — 2026-11-18 — fix — the profile Blogs tab shows blogs; the Signals feed no longer serves unrelated rows (F-392)
+
+Ships with bcc-trust **#770** and bcc-core **#144**. Merge #770 first.
+
+- **`GET /users/:handle/blog`:** returns the member's blog posts. It asked the database for blogs by their module *name*, which the database read as module 0. So it never matched a blog, which is stored as module 204, and could only match old rows of other kinds. On a site with none of those, the tab was always empty.
+- **`GET /feed?scope=signals`:** returns an empty page until signal posts exist; nothing writes them yet. It read the same name-as-0 way, so it could serve old rows the main feed deliberately hides.
+- **No new fields, codes or shapes.** Clients need no change. The frontend may hide the Signals tab while it is empty; that is a product choice, not part of this contract.
 
 ### v1.193 — 2026-11-18 — fix — more rate-limit 429s carry the time-left Retry-After; the review limits answer 429, not 403 (F-391)
 
