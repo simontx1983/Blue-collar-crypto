@@ -9575,7 +9575,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ### v1.182 — 2026-11-17 — behaviour change — an oauth-complete retry is the same sign-up; a wallet sign-up's email is held pending until verified (F-294)
 
-Ships with bcc-trust #711 (oauth-complete) and #717 (wallet sign-up email). Version number assigned at merge; lands after v1.175 (#295).
+Ships with bcc-trust #711 (oauth-complete) and #717 (wallet sign-up email).
 
 - **`POST /auth/oauth-complete`:** submits with one `provider_token` are serialised. After a successful create, ONE retry of the same request (same `handle`, within 2 minutes, no "sign out everywhere" since) signs in as that account (fresh token, same 201 shape) instead of answering "handle taken" / "session expired". Any other retry is the spent-token `bcc_invalid_oauth_token` 400. New **`bcc_unavailable` 503** when another submit for the token is still in flight (nothing was created by this submit; retry the same request).
 - **`POST /auth/wallet-signup`:** a supplied `email` is held **pending** (the account keeps the placeholder) until it is verified, so it no longer blocks the address's real owner. A pending address is not "taken" for any sign-up. Existing accounts with an unverified supplied email are moved into this state once.
