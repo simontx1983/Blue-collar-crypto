@@ -276,6 +276,8 @@ It is dangerous because **nothing about it looks broken**:
 - WordPress boots, PeepSo works, wp-admin is normal.
 - `/wp-json/` simply omits every `bcc/*` namespace, and bcc routes return
   **`404`, not `500`** — indistinguishable from a routing or permalink problem.
+  (The index answers at all only because bcc-trust is inert: on a healthy
+  stack `RestRouteAllowlist` refuses it to a signed-out caller with `401`.)
 
 **It also damages persistent state.** With `bcc-core` inert its `cron_schedules`
 filter never registers, so every custom BCC interval (`bcc_one_minute`,
@@ -297,11 +299,14 @@ After **any** Local PHP version change, re-check `conf/php/php.ini.hbs` and then
 confirm the stack is really up:
 
 ```bash
-curl -s http://blue-collar-crypto-custom.local/wp-json/ | grep -o 'bcc[^"]*'
+curl -s -o /dev/null -w '%{http_code}\n' http://blue-collar-crypto-custom.local/wp-json/bcc/v1/ranks
 ```
 
-Empty output means the plugins are loaded-but-inert, not missing. If it is empty,
-also check `wp cron event list` for BCC hooks before assuming the fix is complete.
+`200` means the stack is up. `404` means the plugins are loaded-but-inert, not
+missing. If it is `404`, also check `wp cron event list` for BCC hooks before
+assuming the fix is complete. Don't grep the REST index (`/wp-json/`) for `bcc`:
+on a healthy stack it is `401` to a signed-out caller, so it comes back empty
+either way.
 
 > **Do not trust Local's registry for the current version.** `AppData/Roaming/Local/
 > sites.json` can be read mid-write and report a version that is neither the old nor

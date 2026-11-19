@@ -5,12 +5,17 @@ Three hosts. They are not interchangeable.
 | Host | Serves | Runs on |
 |---|---|---|
 | `bluecollarcrypto.io` (apex) | Public site | **Vercel** — not Hostinger |
-| `cms.bluecollarcrypto.io` | WordPress core, `wp-admin`, REST (`bcc/v1`, `bcc-trust/v1`, `peepso/v1`, `wp/v2`) | Hostinger |
+| `cms.bluecollarcrypto.io` | WordPress core, `wp-admin`, REST (`bcc/v1`, `bcc-trust/v1`; `peepso/v1`, `wp/v2` and the rest for admins only) | Hostinger |
 | `stage.bluecollarcrypto.io` | Staging WordPress (core + frontend) | Hostinger |
 
 Verified against the live hosts: the apex returns **403** on `/wp-json/` and
-**200** on pages; `cms.` returns **200** on `/wp-json/`. If you ever see the
-apex answer a REST call, something is misrouted.
+**200** on pages; `cms.` returns **200** on `/wp-json/bcc/v1/ranks`. If you
+ever see the apex answer a REST call, something is misrouted.
+
+To check `cms.`, probe a BCC route such as `/wp-json/bcc/v1/ranks`, never the
+REST index. Only BCC's namespaces answer a caller who is not an admin, so
+`/wp-json/` itself is **401** to a signed-out caller (bcc-trust
+`RestRouteAllowlist`).
 
 ## Production is deliberately asymmetric
 
