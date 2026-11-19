@@ -5691,6 +5691,20 @@ this is the underlying endpoint.
 - **Errors:** `bcc_not_found` (404), `bcc_forbidden` (403),
   `bcc_attestation_revoked` (409 — cannot reaffirm a revoked
   attestation), `bcc_rate_limited` (429).
+  - *v1.NEXT (bcc-trust #750):* a reaffirm renews the vouch, so it owes the cast's rules
+    (§J.2), in the cast's order and with the cast's answers. All of them
+    are checked before anything is renewed:
+    - `bcc_attestation_ineligible` (403) — the attestor may not attest at
+      all: suspended (an unknown suspension state included, and with no
+      admin exemption) or a New Member. It carries the cast's
+      `unlock_hint`.
+    - `bcc_not_found` (404) — the target is gone or no longer attestable
+      by this attestor (since bcc-trust #713; a secret page they may not
+      see, since #731). The same 404 a cast answers.
+    - `bcc_attestation_self` (422) — the attestor now owns the target, e.g.
+      a page they vouched for before they came to own it.
+    - `bcc_unavailable` (503) — whether attestor and target block each
+      other could not be read; retry. Since #713.
 - **Audit:** `action=attestation_reaffirmed` (new action type per
   the Destructive Mutation Hardening recipe).
 - **Side effects:** decay-curve reset to age=0; Layer 2
@@ -9568,6 +9582,14 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-18 — behaviour change (narrowing) — a reaffirm owes the cast's attestor and self rules
+
+Ships with bcc-trust **#750**.
+
+- **`POST /me/attestations/:id/reaffirm` (§J.2.1):** a reaffirm renews a vouch (decay reset, owner belled), so it now runs the cast's checks in the cast's order, all before anything is renewed. It can answer `bcc_attestation_ineligible` (403: a suspended attestor, an unknown suspension state included and with no admin exemption, or a New Member) and `bcc_attestation_self` (422: the attestor now owns the target). Before, a suspended member, a New Member, or a member who came to own the page they once vouched for could keep renewing.
+- **Documented, not new:** the same entry now also lists the reaffirm's `bcc_not_found` (404) for a gone or no-longer-attestable target, and `bcc_unavailable` (503) for an unreadable block state. Both have answered since bcc-trust #713; the list did not say so.
+- **No new error code, no new route, no shape change.** Every code is one the cast (§J.2) already answers. No frontend code calls reaffirm today.
 
 ### v1.181 — 2026-11-18 — additive + behaviour change (privacy) — a member can hide individual Halls inside a shown Halls section (F-341 PR 3)
 
