@@ -1733,7 +1733,7 @@ The wire format on disk is PeepSo's mention shortcode `@peepso_user_<id>(<name>)
 - Failing the policy returns `bcc_invalid_mention_target` (with the offending `user_id` echoed in the error payload, but NOT the reason — privacy posture preserved). The post is rejected; nothing is written. Strict reject, not silent strip.
 - Cap: **10 mentions per post**. Over-cap returns `bcc_too_many_mentions` (echoes the cap as `max`).
 
-**Notification semantics — V1d ships a single mention notification type.** BCC's `NotificationDispatcher` sends one `bcc_mention` bell and push per surviving (post-policy) mention in a status/photo/gif body or a comment (§4.10, @-mention dispatch). *(Since v1.196, F-423)* PeepSo's own `Tags::after_save_post` / `after_save_comment` dispatcher (its "mentioned you" email and PeepSo-module notification) does **not** run on BCC writes: it was gated on the author's profile privacy, not the post's audience. The post-V1 layered grammar (status vs dispute vs review distinct mention semantics) is **deferred** — when `kind_grammar` (§reactions) generalizes to mentions, this section grows a `kind_grammar` discriminator on `Mention`. V1d clients ride forward on additive fields.
+**Notification semantics — V1d ships a single mention notification type.** BCC's `NotificationDispatcher` sends one `bcc_mention` bell and push per surviving (post-policy) mention in a status/photo/gif body or a comment, only to members who can open the post (§4.10, @-mention dispatch → [Audience](#mention-audience)). *(Since v1.196, F-423)* PeepSo's own `Tags::after_save_post` / `after_save_comment` dispatcher (its "mentioned you" email and PeepSo-module notification) does **not** run on BCC writes: it was gated on the author's profile privacy, not the post's audience. The post-V1 layered grammar (status vs dispute vs review distinct mention semantics) is **deferred** — when `kind_grammar` (§reactions) generalizes to mentions, this section grows a `kind_grammar` discriminator on `Mention`. V1d clients ride forward on additive fields.
 
 **V1d scope:**
 
@@ -4620,7 +4620,7 @@ Notifications are dispatched by `NotificationDispatcher` (sync subscribers, try/
 | `bcc_card_watched` (legacy `bcc_card_watched`) | the followee user | viewer === followee (impossible from the watchlist UI, defensive) |
 | `bcc_rank_awarded` | the recipient (self-notification) | rank label not in catalog |
 | `user_register` (WordPress core) | the new user (self-notification, type `bcc_welcome`) | `bcc_welcomed` user_meta already set (idempotency guard — once welcomed, never re-welcome) |
-| `bcc_post_created` | every user @-tagged in the post body (after `MentionPolicy::filterMentionable`) | author === mentionee (self-mention skip); banned / blocked / private mentionees stripped at validation time; the mentionee cannot open the post (v1.NEXT, [audience](#mention-audience-vnext)) |
+| `bcc_post_created` | every user @-tagged in the post body (after `MentionPolicy::filterMentionable`) | author === mentionee (self-mention skip); banned / blocked / private mentionees stripped at validation time; the mentionee cannot open the post (v1.NEXT, [audience](#mention-audience)) |
 | `bcc_comment_created` | every user @-tagged in the comment body | same skip rules as post mention, with the audience check on the **parent post**; `act_id` passed is the **parent post's** act_id so the bell deep-links to the post on the floor |
 | `bcc_post_created` (async via `bcc_primary_hall_post_fanout`) | every user whose `bcc_primary_hall_group_id` user_meta matches the post's `peepso_group_id` | author === recipient (self-skip); same (recipient, group) already notified within the last 5 min (transient gate); post's group is NOT a Hall (no `_bcc_group_kind = 'hall'` meta); recipient cap of 1000 reached |
 | `bcc_comment_created` (priority 31; sibling of mention dispatch) | the parent post's author | commenter === post author (self-skip); same (recipient, post) already notified within the last 5 min (transient gate); parent activity row or post no longer resolvable |
@@ -4635,10 +4635,11 @@ Three behaviours are intentional and load-bearing — do not relitigate without 
 
 The `MentionPolicy::filterMentionable` gate is applied a SECOND time at dispatch (write-time validation already filtered) as defense in depth: a future write path that bypasses validation still cannot dispatch to banned / blocked / private mentionees.
 
-<a id="mention-audience-vnext"></a>**Audience (v1.NEXT).** A mention notifies only members who can open the post; others are dropped silently.
+<a id="mention-audience"></a>**Audience (v1.NEXT).** A mention notifies only members who can open the post; others are dropped silently.
 - **The gate is the permalink's.** For each mentionee `MentionPolicy` allows, the dispatcher asks the gate `GET /feed/{id}` uses whether that member could open the post the bell links to: the post itself, or for a comment its parent post.
 - **A refused mentionee gets no bell and no push.** Examples: a secret or closed group post they aren't in, a followers-only or only-me post, an author they're blocked with. Nothing tells the author, and the post or comment is still written.
 - **Fails closed:** when the check can't be read, that mentionee gets no bell.
+- **A shadow-limited author's mentions notify nobody.** Posts by a §O4.1 caution- or risky-tier author are withheld from every viewer but the author, so no mentionee can open them.
 - This covers `bcc_mention`'s bell and push. Rows stored before the change are untouched, and `target_available` is unchanged (it still doesn't fold in per-viewer visibility).
 
 ##### Primary-Hall post dispatch — policy locks (V2 retention slice, 2026-05-11)
@@ -9674,7 +9675,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 Ships with bcc-trust #767.
 
-- **`bcc_mention` (bell and push):** sent only to a mentionee who can open the post the bell links to (for a comment, its parent post), by the same gate as `GET /feed/{id}`. Others are dropped silently: no bell, no push, and the author is not told. Before, any member `MentionPolicy` allowed was notified, so a bell could reveal a secret or closed group post, or a followers-only or only-me post, that its recipient couldn't open. See [Audience](#mention-audience-vnext).
+- **`bcc_mention` (bell and push):** sent only to a mentionee who can open the post the bell links to (for a comment, its parent post), by the same gate as `GET /feed/{id}`. Others are dropped silently: no bell, no push, and the author is not told. Before, any member `MentionPolicy` allowed was notified, so a bell could reveal a secret or closed group post, or a followers-only or only-me post, that its recipient couldn't open. See [Audience](#mention-audience).
 - **No request or response changes:** the post or comment is still written, `MentionPolicy` and its errors are unchanged, and bells already stored are untouched.
 
 ### v1.199 — 2026-11-19 — behaviour change — a failed given-vouches read answers 503; `/cards/search` says when a vertical could not be read (F-421)
