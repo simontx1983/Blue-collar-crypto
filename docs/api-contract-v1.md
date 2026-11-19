@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.195 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.196 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1733,7 +1733,7 @@ The wire format on disk is PeepSo's mention shortcode `@peepso_user_<id>(<name>)
 - Failing the policy returns `bcc_invalid_mention_target` (with the offending `user_id` echoed in the error payload, but NOT the reason — privacy posture preserved). The post is rejected; nothing is written. Strict reject, not silent strip.
 - Cap: **10 mentions per post**. Over-cap returns `bcc_too_many_mentions` (echoes the cap as `max`).
 
-**Notification semantics — V1d ships a single mention notification type.** BCC's `NotificationDispatcher` sends one `bcc_mention` bell and push per surviving (post-policy) mention in a status/photo/gif body or a comment (§4.10, @-mention dispatch). *(Since v1.NEXT, F-423)* PeepSo's own `Tags::after_save_post` / `after_save_comment` dispatcher (its "mentioned you" email and PeepSo-module notification) does **not** run on BCC writes: it was gated on the author's profile privacy, not the post's audience. The post-V1 layered grammar (status vs dispute vs review distinct mention semantics) is **deferred** — when `kind_grammar` (§reactions) generalizes to mentions, this section grows a `kind_grammar` discriminator on `Mention`. V1d clients ride forward on additive fields.
+**Notification semantics — V1d ships a single mention notification type.** BCC's `NotificationDispatcher` sends one `bcc_mention` bell and push per surviving (post-policy) mention in a status/photo/gif body or a comment (§4.10, @-mention dispatch). *(Since v1.196, F-423)* PeepSo's own `Tags::after_save_post` / `after_save_comment` dispatcher (its "mentioned you" email and PeepSo-module notification) does **not** run on BCC writes: it was gated on the author's profile privacy, not the post's audience. The post-V1 layered grammar (status vs dispute vs review distinct mention semantics) is **deferred** — when `kind_grammar` (§reactions) generalizes to mentions, this section grows a `kind_grammar` discriminator on `Mention`. V1d clients ride forward on additive fields.
 
 **V1d scope:**
 
@@ -4940,7 +4940,7 @@ Create a comment on the parent post.
   - `bcc_not_found 404` — feed_id resolves to no activity, **or (v1.99) the caller fails the gate on a post they cannot see at all**. Same body ("Post not found.") either way.
   - `bcc_unavailable 503` — PeepSo `add_comment` returned a falsey result for any other reason.
 - **Side effects:**
-  - PeepSo notifications fire to the parent post author + post followers. Mentions are notified by BCC's dispatcher (§4.10), not PeepSo's `Tags::after_save_comment` *(since v1.NEXT, F-423)*.
+  - PeepSo notifications fire to the parent post author + post followers. Mentions are notified by BCC's dispatcher (§4.10), not PeepSo's `Tags::after_save_comment` *(since v1.196, F-423)*.
   - `bcc_comment_created` event emitted on the §A3 bus (subscribers: NotificationDispatcher, future analytics).
 - **Cache:** `no-store`.
 
@@ -5004,7 +5004,7 @@ Create a photo post on the viewer's own wall. Single photo per post; optional ca
   - `bcc_unavailable 503` — PeepSo deactivated, tmp dir un-creatable, persist failure.
 - **Side effects:**
   - `bcc_post_created` event emitted on the §A3 bus (subscribers: rank progression, future analytics) — uniform with status / blog paths.
-  - PeepSo itself sends no notification for an own-wall post. Mentions are notified by BCC's dispatcher (§4.10), not PeepSo's `Tags::after_save_post` *(since v1.NEXT, F-423)*.
+  - PeepSo itself sends no notification for an own-wall post. Mentions are notified by BCC's dispatcher (§4.10), not PeepSo's `Tags::after_save_post` *(since v1.196, F-423)*.
 - **Cache:** `no-store`.
 
 **V1 deferred:**
@@ -5051,7 +5051,7 @@ Create a GIF post on the viewer's own wall. Single GIF per post; optional captio
   - `bcc_unavailable 503` — PeepSo deactivated, persist failure.
 - **Side effects:**
   - `bcc_post_created` event emitted on the §A3 bus (uniform with status / photo paths).
-  - PeepSo itself sends no notification for an own-wall post. Mentions are notified by BCC's dispatcher (§4.10), not PeepSo's `Tags::after_save_post` *(since v1.NEXT, F-423)*.
+  - PeepSo itself sends no notification for an own-wall post. Mentions are notified by BCC's dispatcher (§4.10), not PeepSo's `Tags::after_save_post` *(since v1.196, F-423)*.
 - **Cache:** `no-store`.
 
 **V1 deferred:** GIF in comments, multi-GIF posts, GIF stickers in chat, custom emoji / sticker providers (Tenor etc).
@@ -9657,7 +9657,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-19 — behaviour change (privacy) — PeepSo's own @mention email no longer runs on BCC writes (F-423)
+### v1.196 — 2026-11-19 — behaviour change (privacy) — PeepSo's own @mention email no longer runs on BCC writes (F-423)
 
 Ships with bcc-core #147.
 
