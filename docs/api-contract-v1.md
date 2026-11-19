@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.172 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.178 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -90,6 +90,7 @@ Anonymous endpoints **must still respect privacy** (per K2): if a user's watchli
 - `X-BCC-Cache: HIT|MISS|STALE` — see §1.6
 - `Cache-Control: ...` per endpoint
 - `X-RateLimit-Limit: <n>` / `X-RateLimit-Remaining: <n>` / `X-RateLimit-Reset: <unix>` — on rate-limited endpoints
+- `Retry-After: <seconds>` — on a `bcc_rate_limited` 429. *(since v1.176, F-289)* On a 429 from a rate limit, it is the seconds until a retry can succeed: the time left on the limit that refused, not that limit's window. `X-RateLimit-Reset` is now plus that wait, and `error.data.retry_after_seconds` (§1.4.4) is the same number.
 
 ### 1.4 Errors
 
@@ -163,6 +164,12 @@ The canonical envelope's `message` is presentation; the *behavior fork* is on `c
 #### 1.4.4 Rate-limit semantics
 
 `bcc_rate_limited` (429) is retryable with backoff. The server MAY include `data.retry_after_seconds` (positive integer). When present, clients SHOULD wait at least that long before retrying. When absent, clients SHOULD apply at least 1.5× exponential backoff starting from 2 seconds.
+
+*(since v1.176, F-289)* On a 429 from a rate limit, `data.retry_after_seconds` and the `Retry-After` header carry the same number: the time **left** on the limit that refused the request, at least 1.
+- **It is not the limit's window.** The limits are sliding windows, so the wait can be shorter than the window or longer, up to two windows. A retry before it is over is refused again, and on most limits that retry is counted, which makes the wait longer.
+- **It assumes nothing else uses the limit meanwhile.** Another request from the same account or network can still use it up.
+- **Endpoints with their own wait.** A 429 that knows its exact wait sets it itself and is never overwritten, for example the `PATCH /me/handle` cooldown (v1.148).
+- **A 429 that no rate limit caused** carries no injected `Retry-After`, `X-RateLimit-*` or `retry_after_seconds`. For example, `bcc_captcha_required` on `POST /auth/login`: re-submit with a token straight away.
 
 Rate-limit buckets are per-user (when authenticated) AND per-IP. Both must allow the request through; the more conservative rejection wins. The server never returns 429 from cached read paths (cached responses bypass throttling).
 
@@ -2092,7 +2099,7 @@ Verifies a signed nonce, looks up the BCC user the wallet is linked to, mints + 
   - `bcc_wallet_not_linked` 404 — no BCC account is bound to this wallet. Frontend should route the user to `/signup` (or the wallet-signup flow) with the wallet pre-attached. **Distinct, recoverable code** — never auto-promotes.
   - `bcc_invalid_state` 409 — account is missing a handle (created outside BCC signup); routes through handle-claim surface.
   - `bcc_rate_limited` 429.
-- **Rate limit (changed in v1.97; keyed per address since v1.106):** **per wallet** — `WALLET_LOGIN_RATE_LIMIT` (5) / min per lower-cased address (the chain is only known once a signature verifies) — plus a route-wide ceiling of 300 / min; **no longer per IP** (this route is called server-side by the frontend, so every request shares one IP and a per-IP bucket let anyone lock out all wallet logins). The check runs **after** a live challenge for the address is found (a bare junk request for an address with none does not count) and **before** the CPU-bound verify step. Case-variant base58/SS58 addresses share a bucket (fail-closed). *(since v1.162)* Both buckets count **verified sign-ins only**: a signature that verifies against none of the address's challenges gives both slots back, and a refused request is not counted. Before, junk signatures spent them, so anyone could spend one wallet's 5 / min, or the whole route's 300 / min and lock every wallet out.
+- **Rate limit (changed in v1.97; keyed per address since v1.106):** **per wallet** — `WALLET_LOGIN_RATE_LIMIT` (5) / min per lower-cased address (the chain is only known once a signature verifies) — plus a route-wide ceiling of 300 / min; **no longer per IP** (this route is called server-side by the frontend, so every request shares one IP and a per-IP bucket let anyone lock out all wallet logins). The check runs **after** a live challenge for the address is found (a bare junk request for an address with none does not count) and **before** the CPU-bound verify step. Case-variant base58/SS58 addresses share a bucket (fail-closed). *(since v1.162)* Both buckets count **verified sign-ins only**: a signature that verifies against none of the address's challenges gives both slots back, and a refused request is not counted. Before, junk signatures spent them, so anyone could spend one wallet's 5 / min, or the whole route's 300 / min and lock every wallet out. *(since v1.177)* They count **completed sign-ins only**. A signature that verifies but does not sign anyone in also gives both slots back: `404 bcc_wallet_not_linked`, `409 bcc_invalid_state` (no handle), and `400` when the challenge was already consumed (a replay, or a concurrent duplicate that won). So valid signatures from throwaway wallets can't fill the 300 / min ceiling either.
 - **Bad-signature cap (since v1.162):** at most **5 signature checks per live challenge** (`WALLET_LOGIN_CHALLENGE_MAX_FAILURES`), counted **before** the verify step so concurrent requests cannot race past it. The **5th bad signature deletes that challenge**, and a check beyond the cap deletes it without verifying; the answer is then `400` (no live challenge). Up to 4 bad signatures followed by the right one still sign in. A new challenge starts a fresh count. This is what bounds the CPU-bound verifies now: 5 per issued challenge, and challenges come from the per-network-limited `/auth/wallet-nonce`. ⚠ A stranger can still spoil one wallet's current challenge with 5 junk signatures, as they could spend its 5 / min before; the owner's next attempt gets a fresh challenge. **Clients:** none — the frontend already requests a new nonce for every sign-in attempt.
 - **Verify before consume (since v1.106, F-25):** the signature is checked against the address's live challenges (at most one per chain, each against its own stored message), and **only the challenge it verifies against is consumed** — atomically, so a replay or a concurrent duplicate gets `400`. A wrong signature consumes nothing, so a stranger can no longer burn the challenge the wallet owner is about to sign — until the 5th (see **Bad-signature cap**), which deletes it so that a fresh one can be issued.
 - **Cache:** `Cache-Control: no-store`
@@ -2132,19 +2139,21 @@ Verifies a signed nonce, creates a new user (placeholder email if none supplied)
   - `bcc_invalid_handle` 400 / `bcc_handle_reserved` 409 / `bcc_conflict` 409 — handle validation per §B6.
   - `bcc_signature_invalid` 401 — signature verification failed.
   - `bcc_wallet_already_linked` 409 — wallet is already bound to an account. Frontend should route to `/login`.
+  - `bcc_conflict` 409 — the supplied email already has an account. *(Since v1.175, F-294: checked **before** the challenge is consumed, so the same signature can be retried with another email; it used to spend the signature first.)*
+  - `bcc_unavailable` 503 *(since v1.175, F-294)* — the wallet link could not be written for a reason other than another account holding it. Nothing was created; retry the sign-up (a new nonce is needed). It used to answer `bcc_wallet_already_linked`, which sent the user to a wallet sign-in that then failed.
   - `bcc_rate_limited` 429.
   - `bcc_internal_error` 500 — `wp_insert_user` failed.
 - **Rate limit:** IP-bucketed (`WALLET_SIGNUP_RATE_LIMIT`/min/IP).
-- **Verify before consume (since v1.106, F-25):** as `/auth/wallet-login` — the signature picks the live challenge it was made for (which also fixes the chain), nothing is consumed until the handle, address and wallet-collision checks pass, and a wrong signature consumes nothing.
+- **Verify before consume (since v1.106, F-25):** as `/auth/wallet-login` — the signature picks the live challenge it was made for (which also fixes the chain), nothing is consumed until the handle, address, wallet-collision and (since v1.175) email-taken checks pass, and a wrong signature consumes nothing.
 - **Cache:** `Cache-Control: no-store`
 - **Side effects:** sets `wp_set_auth_cookie`, fires `bcc_wallet_verified` (seeds trust-engine + onchain-signals rows just like `verifyAndLink`), emits `user_signup` audit row, fires `bcc_user_signup` action. **Note:** does NOT emit the `bcc_first_wallet_link` celebration on the response — celebration delivery for wallet-signup is reserved for a future contract revision.
 - **Email state (changed in v1.88):** sets `_bcc_email_verified='0'` — a wallet signature proves control of the wallet, not of the inbox. A **caller-supplied** email gets the standard verification email (OTP + one-shot link, completed via `POST /auth/verify-email`) once the wallet link commits; a **placeholder** gets none and stays `'0'`. Previously this route set `'1'` with no inbox proof, which let a wallet signup typed with someone else's address receive that person's later Google sign-in (see `/auth/oauth-complete` → the anti-pre-registration gate). `'0'` does not affect the user's own sign-in: they sign in with the wallet.
 - **The email becomes the recovery email once verified (since v1.139, F-332):** a member who gives an `email` here confirms it with the 6-digit code from that email through **`POST /auth/verify-email`** (`{ "email", "code" }`, the same route as email sign-up; or the email's one-shot link). Until then the address is pending: `GET /wallets` → `recovery.has_recovery_email` stays `false`, and `POST /me/account/recovery-email` may replace it (a typo). Once verified, `has_recovery_email` is `true`. A wrong or expired code changes nothing (request a new one with `POST /auth/resend-verification`).
-- **Race protection:** if a concurrent signup wins the wallet-link race between the `existsForOtherUser` check and the actual link write, the inserted user is rolled back (`wp_delete_user`) and `bcc_wallet_already_linked` is returned. No orphan user is left behind.
+- **Race protection:** if a concurrent signup wins the wallet-link race between the `existsForOtherUser` check and the actual link write, the inserted user is rolled back (`wp_delete_user`) and `bcc_wallet_already_linked` is returned. No orphan user is left behind. *(Since v1.175: only when another account now holds the wallet; any other link failure rolls back the same way and answers `bcc_unavailable` 503.)*
 
 #### `POST /bcc/v1/auth/forgot-password`
 
-Requests a password-reset email. **Only the most recent link works:** a new request replaces the earlier key (WordPress keeps one per account), and since v1.158 (F-294) the email says so. **Always returns `ok: true`** regardless of whether the email matches a registered account — this is the anti-enumeration contract; callers cannot use response shape or timing to discover which emails exist.
+Requests a password-reset email. **Only the most recent link works:** a new request replaces the earlier key (WordPress keeps one per account), and since v1.158 (F-294) the email says so. **Always returns `ok: true`** regardless of whether the email matches a registered account — this is the anti-enumeration contract; callers cannot use the response shape to discover which emails exist. *(Timing, corrected v1.175, F-294: an unknown address now pays the same key-hash cost as a real key generation (the hash `get_password_reset_key()` uses: `wp_fast_hash` on WordPress 6.8+, a password hash before), but the key write and mail delivery can still make a known address answer more slowly; this is not a timing guarantee. `/auth/signup` reports "email already exists" by design, so email existence is not secret.)*
 
 - **Auth:** Anonymous
 - **Body:**
@@ -2249,6 +2258,12 @@ First factor of the password login. Validates credentials, then **always** initi
   The check runs **before** the password is looked at: the same answer whether the password is right or wrong. The refusal does not count against the login limits.
 
   **Clients:** render a Turnstile widget with `error.data.captcha.site_key` and re-submit the same body plus **`captcha_token`** (the widget's response token, single-use, about 5 min). A rejected or expired token gets `bcc_captcha_required` again: reset the widget. The page must allow `https://challenges.cloudflare.com` in its CSP (`script-src`, `frame-src`).
+
+  *(since v1.177)* **The widget must use action `login`** (`data-action="login"`, or `action: 'login'` when rendered from script), and it must be served from the frontend. The server accepts a token only if Turnstile reports both:
+  - action `login`;
+  - a hostname that is one of the configured frontend origins' hosts, or the frontend's Vercel preview pattern.
+
+  A token solved for another action or on another site gets `bcc_captcha_required` again.
 
   If Turnstile itself is unreachable, the server **fails open** to the login limits above (logged and counted), so an outage never locks members out.
 - **Rate limit:** *(since v1.152, F-290)* **20/min per network** (was 5; before the bcrypt compare). Guessing against one account is bounded by the per-identifier buckets (F-281: 20/15 min per typed identifier per network, 100/15 min per typed identifier, trusted networks exempt from the latter). *(since v1.157, F-290)* **A refused request is not counted**, in any of the three buckets, and gives back what the earlier buckets charged it, so retrying while refused never extends the wait. Every request the buckets let through still counts: wrong passwords, unknown identifiers, malformed requests **and correct passwords**. The 2FA challenge and emailed code that follow a correct password have no limit of their own, so a success is not given back.
@@ -2382,9 +2397,9 @@ Confirms email ownership and completes signup via either an OTP code or a one-sh
   ```
   OTP `code` = 6-digit email code (15-min TTL); `token` = self-identifying single-use link token (24-h TTL). The handler requires either `token` or both `email` and `code`.
 - **Response 200:** identical shape to `/auth/login` (`{ user_id, handle, token, expires_in, token_type, in_good_standing }`) so the frontend treats both uniformly, **plus `linked_wallet_count: int` (since v1.90)** — how many wallets are linked to the account whose email was just proven. When it is `> 0` the client asks "this account has a wallet linked — is it yours?", listing them with `GET /wallets` (using the fresh `token`) and removing one with `DELETE /wallets/{id}`. A count only: no wallet detail rides this auth response. If the wallet read fails the count is `0` and verification still succeeds (the prompt is advisory; wallets stay reviewable in Settings) — so **`0` can mean "read failed"**: a client must never take a destructive or irreversible action on `linked_wallet_count: 0`.
-- **Errors:** `bcc_invalid_request` 422 (neither token nor email+code) · `bcc_invalid_verify_token` 400 (token expired/used) · `bcc_invalid_otp` 400 (email unknown — generic; or code wrong/expired) · `bcc_already_verified` 409 (OTP path only) · `bcc_invalid_state` 409 (no handle) · `bcc_rate_limited` 429 · `bcc_internal_error` 500
+- **Errors:** `bcc_invalid_request` 422 (neither token nor email+code) · `bcc_invalid_verify_token` 400 (token expired/used) · `bcc_invalid_otp` 400 (email unknown — generic; or code wrong/expired) · `bcc_otp_exhausted` 400 *(since v1.175, F-294)* "Too many attempts. Request a new code." (the code was burned by the attempt cap below and no new one has been sent) · `bcc_already_verified` 409 (OTP path only) · `bcc_invalid_state` 409 (no handle) · `bcc_rate_limited` 429 · `bcc_internal_error` 500
 - **Rate limit:** *(since v1.152, F-290)* **30/hour per network** (was 10). Guessing is bounded by the per-code cap (5 wrong tries, then the code burns). *(since v1.157, F-290)* A refused request is not counted, so retrying while refused never extends the wait.
-- **Attempt cap (since v1.105, F-48):** at most **5 wrong codes per (account, current code)**; the 5th burns that code. Because a correct code signs the caller in, the per-IP bucket alone did not bound guesses spread across addresses. The answer stays the generic `400 bcc_invalid_otp` "Invalid or expired code." (no new code, no enumeration signal); the user requests a new code via `/auth/resend-verification`, which starts a fresh count, or uses the emailed link — the **token path is not capped and not affected**.
+- **Attempt cap (since v1.105, F-48):** at most **5 wrong codes per (account, current code)**; the 5th burns that code. Because a correct code signs the caller in, the per-IP bucket alone did not bound guesses spread across addresses. The burning attempt, and every attempt after it until a resend (the right code included), answers **`400 bcc_otp_exhausted`** "Too many attempts. Request a new code." *(since v1.175, F-294; it was the generic `bcc_invalid_otp` before, so a user typing the right code was told it was wrong)*. Wrong codes before the cap, and an unknown address, stay generic. The user requests a new code via `/auth/resend-verification`, which starts a fresh count and ends the exhausted state, or uses the emailed link — the **token path is not capped and not affected**.
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** token path consumes the `bcc_vt_<token>` transient (single-use); OTP path resolves by email, checks `_bcc_email_verified`, timing-safely (`hash_equals`) consumes the HMAC-hashed `bcc_otp_<userId>` transient. Both converge on `finalizeVerification` → sets `_bcc_email_verified='1'`, sets the auth cookie, **revokes every earlier bearer token for the account (JWT token-version bump, since v1.88)**, mints the JWT, emits `email_verified` audit, fires `do_action('bcc_email_verified', …)`. The revocation means a session held by whoever created the account before the address was proven does not survive the inbox owner's verification; the returned token is the caller's working session and must be stored. Handler `AuthEndpoint::verifyEmail` (route `AuthEndpoint.php:487`). Standard envelope per §1.4.
 
@@ -2393,10 +2408,11 @@ Confirms email ownership and completes signup via either an OTP code or a one-sh
 Re-sends a fresh verification OTP + link to an unverified account. Always returns `ok: true` regardless of whether the email matches a registered unverified account (anti-enumeration; mirrors `/auth/forgot-password`).
 
 - **Auth:** Anonymous (no token)
-- **Body:** `{ "email": "alice@example.com" }`
-- **Response 200:** `{ "ok": true }` (identical whether or not the email matches an account)
-- **Errors:** `bcc_invalid_request` 422 (missing/malformed email) · `bcc_rate_limited` 429
-- **Rate limit:** *(since v1.152, F-290)* **20/hour per network** (was 3), **3/hour per (email address, network)**, and **10/hour per email address across networks**, which the account's recently signed-in networks skip — the same caps and the same existence-blind keying as `POST /auth/forgot-password`. *(since v1.157, F-290)* Also the same counting: a refused request is not counted against the per-network limit, a request a per-address cap refuses gives its per-network slot back, and the per-address caps count every request.
+- **Body:** `{ "email": "alice@example.com" }` **or** *(since v1.175, F-294)* `{ "identifier": "alice" }`. `identifier` takes an email or a handle (one leading `@` ignored; resolved by the account's **current** handle), so a client that only knows the handle (an unverified handle sign-in) can offer "resend"; the mail goes to the address on file. `email` wins when both are given.
+- **Response 200:** `{ "ok": true }` (identical whether or not the email or handle matches an account)
+- **Errors:** `bcc_invalid_request` 422 (neither `email` nor `identifier`, or a malformed `email`) · `bcc_rate_limited` 429
+- ⚠ After a resend by handle, the 6-digit code still has to be entered with the account's **email** at `/auth/verify-email`; the emailed **link** works on its own.
+- **Rate limit:** *(since v1.152, F-290)* **20/hour per network** (was 3), **3/hour per (email address, network)**, and **10/hour per email address across networks**, which the account's recently signed-in networks skip — the same caps and the same existence-blind keying as `POST /auth/forgot-password`. *(since v1.157, F-290)* Also the same counting: a refused request is not counted against the per-network limit, a request a per-address cap refuses gives its per-network slot back, and the per-address caps count every request. *(since v1.175, F-294)* The handle form takes the same per-address caps, keyed on the handle and checked before the lookup, so a refusal (429, which gives its per-network slot back like the email form's) says nothing about whether the handle exists. The address the handle resolves to keeps its own caps too, so alternating the two forms cannot double the mail to one inbox: over them nothing is sent, the answer is the same `ok`, and the per-network slot is **kept** (a give-back only for handles that exist would let the per-network count say which ones do).
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** resolves by email; only when `_bcc_email_verified` is `'0'` (pending) **or `''` (legacy, never verified — since v1.88)** and the address is not a wallet placeholder (`@noreply.bcc.local`), generates + stores a fresh HMAC-hashed OTP (overwriting the prior `bcc_otp_<userId>` transient) + verify token, then dispatches the email. Already-verified accounts and placeholders are silently skipped. A legacy account uses this to verify and so become eligible for OAuth link-by-email (`/auth/oauth-complete` → the anti-pre-registration gate). Handler `AuthEndpoint::resendVerification` (route `AuthEndpoint.php:521`). Standard envelope per §1.4.
 
@@ -2409,7 +2425,8 @@ Returns a full Card view-model.
 - **Auth:** Anonymous OR Bearer (response varies — `permissions` and `social_proof` differ for authed viewers)
 - **Path:** `type` ∈ {`validator`, `project`, `creator`, `member`}; `id` is the integer entity ID
 - **Response 200:** Card view-model (§3.2)
-- **Errors:** `bcc_not_found` (entity missing OR risky-tier hidden), `bcc_invalid_request` (bad type)
+- **Errors:** `bcc_not_found` (entity missing OR risky-tier hidden OR a SECRET page the viewer may not see), `bcc_invalid_request` (bad type)
+- **SECRET pages** *(since v1.178)*: a page card whose page is secret (`peepso_page_privacy = 2`) is shown only to the page's author, site admins, and its members and invitees (PeepSo status `member*` or `pending_user`, with no `banned` row). Everyone else, anonymous included, gets the same `bcc_not_found` a missing page gets. An unreadable privacy state also answers `bcc_not_found`. Mapping: `PageAccess` → bcc-core `PeepSoPagePrivacy::isVisibleTo`.
 - **Rate limit:** 60/min/user (anonymous: 60/min/IP)
 - **Cache:** `Cache-Control: max-age=30, stale-while-revalidate=60`; React Query `staleTime: 30s`
 - **Mapping:**
@@ -2801,11 +2818,15 @@ Reviews this member has written (§V1.5 reviews-on-file tab), offset-paginated.
   **Replies (v1.159, F-345).** Every row also carries:
   - `reply` — `null`, or the page's ONE public response: `{ "id": int, "body": string, "author": MemberSummary (§3.1, the same shape as the row's `author`), "posted_at": ISO-8601, "edited_at": ISO-8601|null, "feed_id": "feed_<act_id>", "permissions": {…} }`. `null` when there is none, when the reply is moderation-hidden, and when its author no longer answers for the page (hand-over, below). A reply renders only under a visible review (a hidden review is not in this list at all). `feed_id` is the report target: send its number to `POST /me/reports` as `feed_item`. It is **not a post** anywhere else: comments, reactions, stoke, helpful marks, `DELETE /feed/{id}`, the view beacon and owner analytics answer `bcc_not_found` 404 for it.
   - `reply.permissions` — what the **viewer** may do with this reply, so clients never derive it. Each is `{allowed, unlock_hint, reason_code}`:
-    - `can_edit`: the author, in good standing. Reasons: `not_author` · `sender_restricted`.
+    - `can_edit`: the author, in good standing. Reasons: `not_author` · `sender_restricted` · `page_changed_hands` (only on `viewer_stale_reply`).
     - `can_delete`: the author. Reason: `not_author`. Not gated on suspension.
     - `can_report`: signed in, not the author, not restricted. Reasons: `sign_in_required` (`unlock_hint` "Sign in to report.") · `own_reply` · `sender_restricted`.
   - `permissions.can_reply` — `{allowed, unlock_hint, reason_code}` for the **viewer**: `allowed` only for the reviewed party when they have not replied to this review yet. Reason codes: `not_applicable` (not the reviewed party, the reviewer, or anonymous — hide) · `already_replied` (hide; their reply holds the slot, even when it is moderation-hidden) · `sender_restricted` (suspended/banned — hide) · `unavailable` (could not be determined — hide, retry later).
-  - **Hand-over (user decision 2026-11-17):** the reply shown is the one whose author **currently** answers for the page. When the page changes hands (claim revoked, operator changed, page reassigned), the old author's reply stops showing and no longer holds the slot, so the current party gets `can_reply.allowed` and may write their own. The old author can still delete theirs, but not edit it.
+  - **Hand-over (user decision 2026-11-17):** the reply shown is the one whose author **currently** answers for the page. When the page changes hands (claim revoked, operator changed, page reassigned), the old author's reply stops showing and no longer holds the slot, so the current party gets `can_reply.allowed` and may write their own. The old author can still delete theirs, but not edit it, and still sees it as `viewer_stale_reply`.
+  - `viewer_stale_reply` (v1.174) — `null`, or the **viewer's own** reply after a hand-over (user decision 2026-11-18). It is not the page's response, so it is not `reply`, and nobody else sees it.
+    - Same shape as `reply`. Its `permissions`: `can_edit` `{allowed: false, reason_code: "page_changed_hands"}` · `can_delete` allowed · `can_report` `own_reply`.
+    - `null` while it is moderation-hidden (frozen; `DELETE` answers 404 for it).
+    - It can sit beside `reply` when the new party has replied too. Delete it with `DELETE /reviews/{id}/reply`; it is then `null`.
   - "Reviewed party": the member, for a review of their own profile; the **verified operator**, for a validator page (none when the claim is ambiguous or absent); otherwise the **page owner** — so an unclaimed placeholder page has nobody. Write routes: `POST|PATCH|DELETE /reviews/{id}/reply` below.
 
   `scope_label` ∈ `PAGE|MEMBER` (v1.48). Member-target rows (reviews this user wrote **about another member**): `subject` = the member's display name, `subject_handle` = their `bcc_handle` (`""` when unset — the frontend suppresses the `ON @…` link; `user_login` is never projected), `scope_label` = `MEMBER`.
@@ -3168,12 +3189,14 @@ Claims a validator/creator/project page using a wallet signature (§B5, §N8).
     - `entity_not_bound` — the entity is **not bound to this page** (`That entity is not attached to this page.`).
     - `not_operator` — the caller's connected wallet **does not match the entity's operator** (§B5 — operator address + consensus pubkey only; delegators excluded). The one cause where connecting a different wallet can help.
     - `holder_not_owner` *(new in v1.137)* — the wallet only **holds** the collection (`Holding an NFT doesn't make you this collection's creator.`). Only an **operator** or **creator** can claim a page; a holder result records nothing.
+    - `creator_unverifiable` *(v1.173, F-339)* — a **Solana** collection whose creator the chain cannot prove (`We can't confirm this collection's creator on-chain.`): its update authority is renounced (none listed, or handed to the System Program or the incinerator), only a delegated (non-`full`) scope is listed, or the collection mint is not found. **Final**: retrying or another wallet won't help. Records nothing.
     ⚠ **This replaces `bcc_permission_denied`, which this route has never emitted.** Measured against the implementation: the endpoint produces zero `bcc_permission_denied`, and its 403 is `bcc_forbidden`. Same defect class as the `/members` `bcc_validation` line corrected in v1.80 — a documented code no producer emits is a code a client would wait forever to see.
   - `bcc_not_found` **404** — the page does not exist or is not a `peepso-page`; **or (new in v1.86) the claimed entity itself could not be found.**
   - `bcc_conflict` **409** — the entity is already claimed by another user.
   - `bcc_precondition_failed` **412** — no wallet connected yet (`Connect a wallet first to claim this.`).
   - `bcc_rate_limited` **429**.
   - `bcc_unavailable` **503 (new in v1.86)** — the claim could not be completed for a **server-side, transient** reason: an advisory-lock timeout (two submissions in quick succession), a failed write, or a database error. **Retryable** — a client may re-submit the same claim unchanged, and should offer that rather than suggesting the wallet is wrong.
+    - **(v1.173, F-339)** with `error.data.reason: "verification_unavailable"` — a **Solana** collection whose creator could not be read this time (the on-chain provider failed, or answered something unreadable): `We couldn't verify this collection's creator on-chain right now. Try again in a few minutes.` **Retryable**, and never a statement about the wallet. The other 503 causes carry no `reason`.
   - ⚠⚠ **Why the last two are a behaviour change and not just new documentation.** Both causes previously fell through to the **403** above, so a server fault and a missing entity both told a legitimate operator that *their wallet does not match the validator*. The plausible reaction to that message is to unlink a correct wallet or give up, and it left support with nothing to diagnose. A client that treats 403 as "wallet is wrong" MUST now distinguish these: 503 is retryable, 404 is not, and neither says anything about the wallet.
 - **Rate limit:** 3/hour/user, 10/day/IP, **30 attempts/day/page** (caps total claim attempts on a single page across all users to prevent attempt flooding per §B5)
 - ⚠⚠ **ERRATUM, OPEN (noted v1.86, NOT fixed here): the Body and Response blocks above do not describe this endpoint.** They show a signature-bearing body (`wallet_address`, `chain`, `nonce`, `signature`, `public_key`) and a **201**. The implementation reads **`entity_type` + `entity_id`** and proves ownership from the caller's **already-linked, already-verified** wallet — it takes no signature on this route — and the success path returns **200**. The accurate request shape is the one this contract already gives in §1's card action descriptor: `{ "entity_type": "validator", "entity_id": 47 }`. So the two halves of this document disagree, and §1 is the half that matches the code. **Send the §1 shape.** Only the error list above was brought in line with the implementation in v1.86; correcting the Body, the status code and the Mapping bullets is a larger, separate change, deliberately not bundled with an error-code correction.
@@ -4249,6 +4272,7 @@ Paginated list of Cards filtered + sorted server-side. Backs `/directory`.
   - `page` (1..20) — optional; default 1. The hard ceiling protects against unbounded `OFFSET` filesort
   - `per_page` (1..50) — optional; default 24
   - **Validator-axis note:** `chain`, `status`, `min_self_stake`, and `sort=self_stake` are served by the read-model query path's validator JOIN (through the `_bcc_onchain_validator_id` post-meta → `bcc_onchain_validators`). They are no-ops/empty on non-validator kinds and are **not** implemented by the legacy posts-table fallback (active only before the read model is populated).
+  - **SECRET pages are never listed** *(since v1.178)*, for any viewer, admins and the page's own members included. A page counts as secret when **any** of its `peepso_page_privacy` rows is `2`. Both query paths and their counts apply bcc-core's `PeepSoPagePrivacy::notSecretSql()`; closed pages (`1`) stay listed.
 - **Response 200:**
   ```json
   {
@@ -5619,6 +5643,7 @@ Cast a new attestation. Idempotent on `(attestor_user_id, target_kind, target_id
   - `bcc_not_found` (404) — "Target not found." The target does not exist, **or is not attestable by this attestor** (v1.165):
     - a `*_card` target must be a published `peepso-page` whose page type maps to exactly that `target_kind` (a page with no stored type counts as a project page, as its card renders it). A feed post, a group post or another kind of page is refused.
     - a `user_profile` target must be a member whose profile the attestor may view (the profile-visibility rule, suspension included), with no block in either direction.
+    - a SECRET page (`peepso_page_privacy = 2`) must also be one the attestor may see: its author, a site admin, or a member or invitee of the page *(since v1.178)*. An unreadable privacy state refuses too. The same applies to a reaffirm (§J.2.1).
     - Every refusal is this same 404, so the response never reveals which post ids exist or who is private or blocking.
   - `bcc_unavailable` (503) — the block state between attestor and member could not be read (v1.165). Retryable; a cast is never admitted on an unknown block state.
   - `bcc_attestation_self` (422) — attestor and target identity match
@@ -5737,7 +5762,8 @@ Read the attestation roster for an entity.
   attestation surface) MAY include the weights — that's a future
   endpoint, not in V1 scope.
 - **Attestor visibility (v1.150, F-356):** an item is **omitted** when the viewer may not see its attestor's profile — the profile gate (`ProfileAccess::canViewProfile`: the attestor's profile privacy level for this viewer, and suspension; the attestor and admins always pass). So an anonymous visitor never gets the handle, name, avatar or score of an attestor whose profile is private to signed-out viewers. **Display only:** `summary` counts and every score still include every attestation. `hide_from_search` does **not** hide an attestor here (it hides a member from search and the directory). No shape change; a page may hold fewer items than `per_page`. The profile vouch line's `top_vouchers` (§4.4) applies the same rule.
-- **Member target privacy (v1.168):** for `target_kind=user_profile` (where `target_id` is the user id) the roster is a read about that member, so it answers to the member's profile like every `/users/:handle/*` route. If their `profile_visibility` does not admit this viewer, or the account is suspended, the route answers `bcc_forbidden` **403** with `error.data.reason: "profile_private"` and no roster. The member and admins always pass. Card kinds are pages and are not gated. The attestor rule above still applies to each row.
+- **Member target privacy (v1.168):** for `target_kind=user_profile` (where `target_id` is the user id) the roster is a read about that member, so it answers to the member's profile like every `/users/:handle/*` route. If their `profile_visibility` does not admit this viewer, or the account is suspended, the route answers `bcc_forbidden` **403** with `error.data.reason: "profile_private"` and no roster. The member and admins always pass. Card kinds are pages, not members, so this profile gate does not apply to them; the secret-page rule below does. The attestor rule above still applies to each row.
+- **SECRET pages** *(since v1.178)*: for the three card kinds, a page that is secret (`peepso_page_privacy = 2`) and that the viewer may not see (author, site admins, members and invitees may; see `GET /cards/:type/:id`) answers the roster of a target nobody has vouched for: `items: []`, zero `summary` counts, `total_pages: 0`, `has_more: false`, with the requested `page` and `per_page`. That is exactly what a page that does not exist answers, so the response never shows the page is there.
 - **Errors:** `bcc_invalid_request` 400 (bad `target_kind`, `target_id`, `kind` or `sort`) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` (v1.168, `user_profile` only; see above)
 - **Cache:** `private, max-age=30`. Underlying read model is generation-counter invalidated by `POST` / `DELETE` against the same target. Invalid and `profile_private` (v1.168) → `private, no-store`.
 
@@ -6751,6 +6777,7 @@ Admin-curated first-pull follow candidates for the post-signup wizard (§B4). **
   Each bucket holds up to **4** cards; buckets present even when empty. Bucket→type→kind map locked in `OnboardingEndpoint::BUCKETS`.
 - **Errors:** `bcc_unauthorized` 401
 - **Cache:** `Cache-Control: private, max-age=60`
+- **SECRET pages are never suggested** *(since v1.178)*: the candidates come from the same discovery query as `GET /cards`, which lists no secret page.
 - **Mapping:** `OnboardingEndpoint::suggestions` (route `OnboardingEndpoint.php:119`) → `PageDiscoveryService::query` (§F1 ranker) re-hydrated through `CardViewService::getCard`. FE `onboarding-endpoints.ts`.
 
 #### `POST /bcc/v1/me/onboarding/complete`
@@ -7271,21 +7298,25 @@ Single Hall detail (auth-optional). Same item shape as the `/halls` directory ro
 Reviews-tab data plane for entity profiles AND member profiles (v1.48) — reviews filed **against** this target (by `votes.page_id`). Page-paginated. Auth-optional (public trust signal).
 
 - **Auth:** Anonymous OR Bearer (identical row set).
-- **Path:** `target_kind` ∈ `validator_card|project_card|creator_card|user_profile` · `target_id` (int > 0). For entity kinds, `target_id` is the page's `wp_post.ID`. For `user_profile` (v1.48), `target_id` is the **raw user id**, translated server-side to the member's self-page (`MemberSelfPageService::selfPageId`) — the same bridge the write path (`POST /posts kind=review target_kind=user_profile`) uses. Received member reviews are **public** and deliberately NOT governed by the subject's `reviews_hidden` privacy flag (that flag governs only the written list on `/users/:handle/reviews`) — locked 2026-07-22. ⚠ *(v1.168)* "Public" means `reviews_hidden` does not apply; the member's **profile** gate does. If their `profile_visibility` does not admit this viewer, or the account is suspended, the route answers `bcc_forbidden` **403** with `error.data.reason: "profile_private"`, asked about the raw user id before the self-page translation. Card kinds are not gated.
+- **Path:** `target_kind` ∈ `validator_card|project_card|creator_card|user_profile` · `target_id` (int > 0). For entity kinds, `target_id` is the page's `wp_post.ID`. For `user_profile` (v1.48), `target_id` is the **raw user id**, translated server-side to the member's self-page (`MemberSelfPageService::selfPageId`) — the same bridge the write path (`POST /posts kind=review target_kind=user_profile`) uses. Received member reviews are **public** and deliberately NOT governed by the subject's `reviews_hidden` privacy flag (that flag governs only the written list on `/users/:handle/reviews`) — locked 2026-07-22. ⚠ *(v1.168)* "Public" means `reviews_hidden` does not apply; the member's **profile** gate does. If their `profile_visibility` does not admit this viewer, or the account is suspended, the route answers `bcc_forbidden` **403** with `error.data.reason: "profile_private"`, asked about the raw user id before the self-page translation. Card kinds are not gated by a member's profile; a SECRET page is, as described under Response.
 - **Query:** `page` (default 1) · `per_page` (default 20, max 50)
 - **Response 200:**
   ```json
   { "items": [ { "id": 88, "grade": "A", "text": "Reliable validator.", "posted_at_label": "3 days ago", "author": { "...": "MemberSummary (§3.1)" }, "reply": null, "permissions": { "can_reply": { "allowed": true, "unlock_hint": null, "reason_code": null } } } ], "pagination": { "page": 1, "per_page": 20, "total": 12, "total_pages": 1 } }
   ```
-  `grade` ∈ `A|B|C`. `author` is the full §3.1 `MemberSummary` (hydrated like `/members`; authorless rows skipped). An unknown `target_id` returns `total: 0` (no 404).
+  `grade` ∈ `A|B|C`. `author` is the full §3.1 `MemberSummary` (hydrated like `/members`; authorless rows skipped). An unknown `target_id` returns `total: 0` (no 404). A SECRET page the viewer may not see (author, site admins, members and invitees may; see `GET /cards/:type/:id`) returns exactly that empty page *(since v1.178)*, so the answer never shows the page exists.
   **Replies (v1.159, F-345).** Every row also carries:
   - `reply` — `null`, or the page's ONE public response: `{ "id": int, "body": string, "author": MemberSummary (§3.1, the same shape as the row's `author`), "posted_at": ISO-8601, "edited_at": ISO-8601|null, "feed_id": "feed_<act_id>", "permissions": {…} }`. `null` when there is none, when the reply is moderation-hidden, and when its author no longer answers for the page (hand-over, below). A reply renders only under a visible review (a hidden review is not in this list at all). `feed_id` is the report target: send its number to `POST /me/reports` as `feed_item`. It is **not a post** anywhere else: comments, reactions, stoke, helpful marks, `DELETE /feed/{id}`, the view beacon and owner analytics answer `bcc_not_found` 404 for it.
   - `reply.permissions` — what the **viewer** may do with this reply, so clients never derive it. Each is `{allowed, unlock_hint, reason_code}`:
-    - `can_edit`: the author, in good standing. Reasons: `not_author` · `sender_restricted`.
+    - `can_edit`: the author, in good standing. Reasons: `not_author` · `sender_restricted` · `page_changed_hands` (only on `viewer_stale_reply`).
     - `can_delete`: the author. Reason: `not_author`. Not gated on suspension.
     - `can_report`: signed in, not the author, not restricted. Reasons: `sign_in_required` (`unlock_hint` "Sign in to report.") · `own_reply` · `sender_restricted`.
   - `permissions.can_reply` — `{allowed, unlock_hint, reason_code}` for the **viewer**: `allowed` only for the reviewed party when they have not replied to this review yet. Reason codes: `not_applicable` (not the reviewed party, the reviewer, or anonymous — hide) · `already_replied` (hide; their reply holds the slot, even when it is moderation-hidden) · `sender_restricted` (suspended/banned — hide) · `unavailable` (could not be determined — hide, retry later).
-  - **Hand-over (user decision 2026-11-17):** the reply shown is the one whose author **currently** answers for the page. When the page changes hands (claim revoked, operator changed, page reassigned), the old author's reply stops showing and no longer holds the slot, so the current party gets `can_reply.allowed` and may write their own. The old author can still delete theirs, but not edit it.
+  - **Hand-over (user decision 2026-11-17):** the reply shown is the one whose author **currently** answers for the page. When the page changes hands (claim revoked, operator changed, page reassigned), the old author's reply stops showing and no longer holds the slot, so the current party gets `can_reply.allowed` and may write their own. The old author can still delete theirs, but not edit it, and still sees it as `viewer_stale_reply`.
+  - `viewer_stale_reply` (v1.174) — `null`, or the **viewer's own** reply after a hand-over (user decision 2026-11-18). It is not the page's response, so it is not `reply`, and nobody else sees it.
+    - Same shape as `reply`. Its `permissions`: `can_edit` `{allowed: false, reason_code: "page_changed_hands"}` · `can_delete` allowed · `can_report` `own_reply`.
+    - `null` while it is moderation-hidden (frozen; `DELETE` answers 404 for it).
+    - It can sit beside `reply` when the new party has replied too. Delete it with `DELETE /reviews/{id}/reply`; it is then `null`.
   - "Reviewed party": the member, for a review of their own profile; the **verified operator**, for a validator page (none when the claim is ambiguous or absent); otherwise the **page owner** — so an unclaimed placeholder page has nobody. Write routes: `POST|PATCH|DELETE /reviews/{id}/reply` below.
   - ⚠ `can_reply` is viewer-scoped, which is why authed responses stay `private` here; anonymous viewers always get `not_applicable`, so the anon `public` cache stays correct.
 - **Errors:** `bcc_invalid_request` 400 (bad `target_kind` or `target_id ≤ 0`) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` (v1.168, `user_profile` only; see Path)
@@ -9536,6 +9567,70 @@ Ships with bcc-trust #736.
 - **`POST /me/blocks`:** every positive `user_id` now gets the same answer. The block is recorded (`state: "created"`, then `"existing"`) whether or not a member holds the id. The `bcc_not_found` 404 "User not found." is retired: it answered only for an id nobody held, which let any member list the ids that exist.
 - A block on an id nobody holds affects only the blocker. The 20-per-60 s per-viewer limit still comes first. Self and non-positive ids are still `bcc_invalid_request` 400.
 - **Clients:** a 404 can no longer come back from this route; no shape change.
+
+### v1.178 — 2026-11-18 — behaviour change (privacy) — SECRET pages leave discovery and answer as missing to non-members
+
+Ships with bcc-trust #731 and bcc-search #38 (both need bcc-core #131 deployed first). A PeepSo page with `peepso_page_privacy = 2` is "secret": non-members may not know it exists.
+
+- **Never listed, for anyone** (admins and the page's members included): `GET /cards` (§4.9), `GET /onboarding/suggestions`, and the trending pages behind `GET /search?trending=1`.
+  - A page counts as secret when **any** of its privacy rows is `2`. Trending's old filter let a page carrying rows `0` and `2` through, and listed a page with two rows twice.
+  - Closed pages (`1`) are still listed.
+- **One page by id answers as if it did not exist**, unless the viewer is the page's author, a site admin, or a member or invitee of the page (PeepSo `member*` or `pending_user`, no `banned` row). An unreadable privacy state counts as secret.
+  - `GET /cards/:type/:id`: `bcc_not_found` 404.
+  - `GET /entities/:target_kind/:target_id/reviews` (card kinds): the empty page, `total: 0`.
+  - `GET /entities/:target_kind/:target_id/attestations` (§J.4, card kinds): the roster of a target nobody vouched for.
+  - `POST /me/attestations` and its reaffirm (§J.2, §J.2.1): `bcc_not_found` 404 "Target not found.".
+  - The reviews and roster reads answer a missing page with an empty 200, not a 404, so a hidden page gets that same empty 200. A 404 there would show the page exists.
+- **Response shapes.** Unchanged.
+- **Mapping.** bcc-core `PeepSoPagePrivacy` (`notSecretSql()` for lists, `isVisibleTo()` for one page) and bcc-trust `PageAccess` (author and admin first).
+
+### v1.177 — 2026-11-18 — hardening — wallet sign-in counts completed sign-ins only; captcha tokens must come from our login widget
+
+Ships with bcc-trust #741. Both items come from the security review of bcc-trust #708 and #715.
+
+- **`POST /auth/wallet-login`:** the per-wallet (5 / min) and route-wide (300 / min) buckets now count **completed sign-ins only**. A signature that verifies but then ends `404 bcc_wallet_not_linked`, `409 bcc_invalid_state` or `400` (challenge already consumed) gives both slots back, so valid signatures from throwaway wallets can no longer fill the route ceiling. Answers and codes are unchanged.
+- **`POST /auth/login` captcha step-up:** a token counts only when Turnstile says it was solved on our frontend (hostname) by the login widget (action `login`). Anything else is refused with `bcc_captcha_required`, as for an invalid token.
+  - **Clients:** the widget must render with `data-action="login"`.
+  - The step-up is still OFF until Turnstile keys are configured. Keys must not be installed before the frontend widget, with that action and the CSP, is live.
+
+### v1.176 — 2026-11-18 — fix — a throttle 429's Retry-After is the time left, not the window (F-289)
+
+Ships with bcc-trust #734 and bcc-core #134 (merged). Either can deploy first, and the fix is complete once both are live.
+
+- **`bcc_rate_limited` 429s from a rate limit:** where one carries `Retry-After`, `error.data.retry_after_seconds` and `X-RateLimit-Reset`, they now give the time **left** on the limit that refused the request, at least 1. A few of these 429s still carry none of them (it is optional, §1.4.4).
+  - **Before:** they gave the limit's window. Because the limits are sliding windows, that was often wrong in both directions. A client that waited the window could come back too early, be refused, and, on a limit that counts refused calls, extend its own block.
+- **A 429 that no rate limit caused** no longer picks up an unrelated limit's window. Examples: `bcc_captcha_required`, and the 429s that come from an endpoint's own counter rather than a rate limit.
+- **No new fields, codes or shapes.** A client that already honours `Retry-After` or `retry_after_seconds` gets the fix with no change.
+
+### v1.175 — 2026-11-17 — behaviour change — account flows (F-294): wallet sign-up errors, auth timing parity, a burned verify code says so, resend by handle
+
+Ships with bcc-trust #687 (F-294 items 4a/4b), #689 (F-294 item 8) and #695 (F-294 items 2, 3).
+
+- **`POST /auth/wallet-signup`:** an already-registered `email` is reported (`bcc_conflict` 409) after the signature verifies but **before** the challenge is consumed, so the user can retry with another email without signing again.
+- **`POST /auth/wallet-signup`:** a wallet-link failure answers `bcc_wallet_already_linked` 409 only when another account holds the wallet; otherwise the new **`bcc_unavailable` 503** (retry; nothing was created).
+- **`POST /auth/login`, `POST /auth/forgot-password`:** an unknown account now pays one password hash at sign-in, like a known one; an unknown address at forgot-password pays the same key-hash cost as a real key generation; `/auth/forgot-password`'s note no longer promises timing parity (the key write and mail delivery can differ).
+- **`POST /auth/verify-email`:** new `bcc_otp_exhausted` 400 "Too many attempts. Request a new code." once the attempt cap has burned the code (until a resend).
+- **`POST /auth/resend-verification`:** also accepts `identifier` (email or handle); same silent `ok`. The handle form takes the same per-address caps, keyed on the handle, and the address it resolves to keeps its own (over those: no mail, the same `ok`).
+- **Clients:** treat `bcc_unavailable` 503 on wallet sign-up as "try again" (FE row F-252); on `bcc_otp_exhausted` offer "send a new code"; an unverified handle sign-in can call resend with `identifier`.
+
+### v1.174 — 2026-11-18 — additive — a handed-over review reply stays visible to its author (F-345 follow-up)
+
+Ships with bcc-trust #723.
+
+- **Additive on both Reviews lists** (`GET /users/:handle/reviews`, `GET /entities/:target_kind/:target_id/reviews`): every row gains `viewer_stale_reply`.
+  - It is `null`, or the viewer's own reply after the page changed hands: deletable, not editable, shown to its author only.
+  - It uses the `reply` shape. `can_edit` gains the reason `page_changed_hands`.
+- **Unchanged:** `reply`, `permissions.can_reply`, and every write route. `DELETE` already accepted a stale reply.
+- **Clients:** render `viewer_stale_reply` under the review for that viewer only, marked as no longer shown publicly. Offer Delete from its `permissions`.
+
+### v1.173 — 2026-11-17 — behaviour change — Solana collection creators can claim their page, by on-chain update authority (F-339)
+
+Ships with bcc-trust #677. Deploy after F-14 PR C (bcc-trust #693).
+
+- **`POST /pages/:id/claim`, Solana collections:** the creator is the wallet that is the collection mint's **current full update authority** (one DAS `getAsset`). Before, a Solana creator could never claim: the creator check was a stub that always answered "no".
+- **New outcomes on that route:** `403 bcc_forbidden`, reason **`creator_unverifiable`** (renounced authority, delegated scope only, or mint not found; final); and `503 bcc_unavailable`, reason **`verification_unavailable`** (the provider could not answer this time; retryable). Neither records anything. A holder wallet is still refused (`holder_not_owner`), but an unverifiable or unavailable creator check answers first, so a creator whose check failed is told to retry.
+- **Weekly claim re-verify:** Solana creator claims are now checked against the same authority. The wallet is still the authority → kept; a **different** real address holds it → the badge is removed (`no_longer_owner`, the existing bell); renounced, unreadable or unavailable → unknown, never removed (the F-14 rule).
+- **Clients:** branch on `error.data.reason`: offer a retry for `verification_unavailable`, and show `creator_unverifiable` as final. No shape change.
 
 ### v1.172 — 2026-11-17 — behaviour change (privacy) — an open group's roster omits members the viewer may not see
 
