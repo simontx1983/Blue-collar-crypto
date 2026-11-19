@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.176 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.177 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2099,7 +2099,7 @@ Verifies a signed nonce, looks up the BCC user the wallet is linked to, mints + 
   - `bcc_wallet_not_linked` 404 — no BCC account is bound to this wallet. Frontend should route the user to `/signup` (or the wallet-signup flow) with the wallet pre-attached. **Distinct, recoverable code** — never auto-promotes.
   - `bcc_invalid_state` 409 — account is missing a handle (created outside BCC signup); routes through handle-claim surface.
   - `bcc_rate_limited` 429.
-- **Rate limit (changed in v1.97; keyed per address since v1.106):** **per wallet** — `WALLET_LOGIN_RATE_LIMIT` (5) / min per lower-cased address (the chain is only known once a signature verifies) — plus a route-wide ceiling of 300 / min; **no longer per IP** (this route is called server-side by the frontend, so every request shares one IP and a per-IP bucket let anyone lock out all wallet logins). The check runs **after** a live challenge for the address is found (a bare junk request for an address with none does not count) and **before** the CPU-bound verify step. Case-variant base58/SS58 addresses share a bucket (fail-closed). *(since v1.162)* Both buckets count **verified sign-ins only**: a signature that verifies against none of the address's challenges gives both slots back, and a refused request is not counted. Before, junk signatures spent them, so anyone could spend one wallet's 5 / min, or the whole route's 300 / min and lock every wallet out. *(since v1.NEXT)* They count **completed sign-ins only**. A signature that verifies but does not sign anyone in also gives both slots back: `404 bcc_wallet_not_linked`, `409 bcc_invalid_state` (no handle), and `400` when the challenge was already consumed (a replay, or a concurrent duplicate that won). So valid signatures from throwaway wallets can't fill the 300 / min ceiling either.
+- **Rate limit (changed in v1.97; keyed per address since v1.106):** **per wallet** — `WALLET_LOGIN_RATE_LIMIT` (5) / min per lower-cased address (the chain is only known once a signature verifies) — plus a route-wide ceiling of 300 / min; **no longer per IP** (this route is called server-side by the frontend, so every request shares one IP and a per-IP bucket let anyone lock out all wallet logins). The check runs **after** a live challenge for the address is found (a bare junk request for an address with none does not count) and **before** the CPU-bound verify step. Case-variant base58/SS58 addresses share a bucket (fail-closed). *(since v1.162)* Both buckets count **verified sign-ins only**: a signature that verifies against none of the address's challenges gives both slots back, and a refused request is not counted. Before, junk signatures spent them, so anyone could spend one wallet's 5 / min, or the whole route's 300 / min and lock every wallet out. *(since v1.177)* They count **completed sign-ins only**. A signature that verifies but does not sign anyone in also gives both slots back: `404 bcc_wallet_not_linked`, `409 bcc_invalid_state` (no handle), and `400` when the challenge was already consumed (a replay, or a concurrent duplicate that won). So valid signatures from throwaway wallets can't fill the 300 / min ceiling either.
 - **Bad-signature cap (since v1.162):** at most **5 signature checks per live challenge** (`WALLET_LOGIN_CHALLENGE_MAX_FAILURES`), counted **before** the verify step so concurrent requests cannot race past it. The **5th bad signature deletes that challenge**, and a check beyond the cap deletes it without verifying; the answer is then `400` (no live challenge). Up to 4 bad signatures followed by the right one still sign in. A new challenge starts a fresh count. This is what bounds the CPU-bound verifies now: 5 per issued challenge, and challenges come from the per-network-limited `/auth/wallet-nonce`. ⚠ A stranger can still spoil one wallet's current challenge with 5 junk signatures, as they could spend its 5 / min before; the owner's next attempt gets a fresh challenge. **Clients:** none — the frontend already requests a new nonce for every sign-in attempt.
 - **Verify before consume (since v1.106, F-25):** the signature is checked against the address's live challenges (at most one per chain, each against its own stored message), and **only the challenge it verifies against is consumed** — atomically, so a replay or a concurrent duplicate gets `400`. A wrong signature consumes nothing, so a stranger can no longer burn the challenge the wallet owner is about to sign — until the 5th (see **Bad-signature cap**), which deletes it so that a fresh one can be issued.
 - **Cache:** `Cache-Control: no-store`
@@ -2259,7 +2259,7 @@ First factor of the password login. Validates credentials, then **always** initi
 
   **Clients:** render a Turnstile widget with `error.data.captcha.site_key` and re-submit the same body plus **`captcha_token`** (the widget's response token, single-use, about 5 min). A rejected or expired token gets `bcc_captcha_required` again: reset the widget. The page must allow `https://challenges.cloudflare.com` in its CSP (`script-src`, `frame-src`).
 
-  *(since v1.NEXT)* **The widget must use action `login`** (`data-action="login"`, or `action: 'login'` when rendered from script), and it must be served from the frontend. The server accepts a token only if Turnstile reports both:
+  *(since v1.177)* **The widget must use action `login`** (`data-action="login"`, or `action: 'login'` when rendered from script), and it must be served from the frontend. The server accepts a token only if Turnstile reports both:
   - action `login`;
   - a hostname that is one of the configured frontend origins' hosts, or the frontend's Vercel preview pattern.
 
@@ -9554,7 +9554,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-18 — hardening — wallet sign-in counts completed sign-ins only; captcha tokens must come from our login widget
+### v1.177 — 2026-11-18 — hardening — wallet sign-in counts completed sign-ins only; captcha tokens must come from our login widget
 
 Ships with bcc-trust #741. Both items come from the security review of bcc-trust #708 and #715.
 
