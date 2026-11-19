@@ -172,6 +172,7 @@ The canonical envelope's `message` is presentation; the *behavior fork* is on `c
 - **It assumes nothing else uses the limit meanwhile.** Another request from the same account or network can still use it up.
 - **Endpoints with their own wait.** A 429 that knows its exact wait sets it itself and is never overwritten, for example the `PATCH /me/handle` cooldown (v1.148).
 - **A 429 that no rate limit caused** carries no injected `Retry-After`, `X-RateLimit-*` or `retry_after_seconds`. For example, `bcc_captcha_required` on `POST /auth/login`: re-submit with a token straight away.
+- *(since vNEXT, F-391)* **The trust engine's own limits carry it too:** `POST /me/watching/watch`, `DELETE /me/watching/:follow_id`, `POST /bcc-trust/v1/device-fingerprint`, `POST /bcc-trust/v1/x/verify-share`, and on `POST /posts` `kind=review` the daily downvote cap and the per-account review limit. A signed-in member is limited per account AND per network, so the wait is until a retry would pass both.
 
 Rate-limit buckets are per-user (when authenticated) AND per-IP. Both must allow the request through; the more conservative rejection wins. The server never returns 429 from cached read paths (cached responses bypass throttling).
 
@@ -6928,7 +6929,7 @@ Create a post. The `kind` discriminator routes to one of three writers (`status`
 - **Response 200 (`kind=status`):** `{ "ok": true, "feed_id": "feed_2210184", "post_id": 4012, "act_id": 2210184 }`
 - **Response 200 (`kind=review`):** `{ "ok": true, "feed_id": null, "vote_id": 9001, "page_id": 55, "grade": "trust" }` — `feed_id` is `null` (the activity row is written async by `ActivityStreamWriter` on `bcc_review_published`). For a member review `page_id` is the resolved self-page id.
 - **Response 200 (`kind=blog`):** `{ "ok": true, "post_id": 4012, "excerpt_length": 142, "full_text_length": 5300, "status": "publish" }`
-- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (unsupported kind; missing/over-length content/excerpt/title/tag/source; under-length excerpt; review missing/zero `target_page_id` (entity) or `target_user_id` (member); invalid grade; unknown category/chain_tag; malformed tags/disclosure; cover not found/owned; invalid status; **`kind=blog` with a ranked `hall_feed` — v1.96, "Blog posts go to the main feed; they cannot target a ranked Hall channel."**; **`hall_feed=ranked` with no group or a non-Hall group — v1.62 §21.3**) · `bcc_invalid_mention_target` 400 (§3.3.12 `MentionPolicy`; echoes `{user_id}`) · `bcc_too_many_mentions` 400 (`{max: 10}`) · `bcc_forbidden` 403 (review eligibility / PeepSo `PERM_POST`; **or `hall_feed=ranked` by a Hall member failing `can('post_ranked_hall_feed')` — `error.data.reason` ∈ `suspended|new_member|below_journeyman|below_neutral|in_recovery`, v1.62 §21.3**) · `bcc_permission_denied` 403 (group-scoped status, non-member; **or `visibility=public_all` by a member not authorized to syndicate — §4.14 `visibility` rule**) · `bcc_not_found` 404 (group missing/secret) · `bcc_rate_limited` 429 · `bcc_unavailable` 503
+- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (unsupported kind; missing/over-length content/excerpt/title/tag/source; under-length excerpt; review missing/zero `target_page_id` (entity) or `target_user_id` (member); invalid grade; unknown category/chain_tag; malformed tags/disclosure; cover not found/owned; invalid status; **`kind=blog` with a ranked `hall_feed` — v1.96, "Blog posts go to the main feed; they cannot target a ranked Hall channel."**; **`hall_feed=ranked` with no group or a non-Hall group — v1.62 §21.3**) · `bcc_invalid_mention_target` 400 (§3.3.12 `MentionPolicy`; echoes `{user_id}`) · `bcc_too_many_mentions` 400 (`{max: 10}`) · `bcc_forbidden` 403 (review eligibility / PeepSo `PERM_POST`; **or `hall_feed=ranked` by a Hall member failing `can('post_ranked_hall_feed')` — `error.data.reason` ∈ `suspended|new_member|below_journeyman|below_neutral|in_recovery`, v1.62 §21.3**) · `bcc_permission_denied` 403 (group-scoped status, non-member; **or `visibility=public_all` by a member not authorized to syndicate — §4.14 `visibility` rule**) · `bcc_not_found` 404 (group missing/secret) · `bcc_rate_limited` 429 (the posting limits; **for `kind=review` also the daily downvote cap and the per-account review limit, which answered `bcc_forbidden` 403 before vNEXT — F-391**; with the time-left `Retry-After`, §1.4.4) · `bcc_unavailable` 503
 - **Side effects:** `bcc_post_created` / `bcc_review_published` / `bcc_blog_post_created` (publish only) on the §A3 bus; subscribers run async via Action Scheduler.
 - **Cache:** `no-store`.
 - **Mapping:** `PostsEndpoint::create` (route `PostsEndpoint.php:75`) → `PostsService::createStatus` / `createReview` / `createBlog`.
@@ -9614,6 +9615,19 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### vNEXT — 2026-11-18 — fix — more rate-limit 429s carry the time-left Retry-After; the review limits answer 429, not 403 (F-391)
+
+> ⚠ **Version deliberately left as `vNEXT`.** The number is assigned at merge.
+
+Ships with bcc-trust #763. No bcc-core change.
+
+- **These 429s now carry `Retry-After`, `X-RateLimit-*` and `error.data.retry_after_seconds`** (the time left, §1.4.4): `POST /me/watching/watch`, `DELETE /me/watching/:follow_id`, `POST /bcc-trust/v1/device-fingerprint` and `POST /bcc-trust/v1/x/verify-share`. They come from the trust engine's own limiter, which the v1.176 injection did not see. Status, code and message are unchanged.
+- **`POST /posts` `kind=review`: the daily downvote cap and the per-account review limit answer `bcc_rate_limited` 429** with the time-left `Retry-After`. They are rate limits and used to answer `bcc_forbidden` 403 like an eligibility rule.
+  - **The review limit's 403 was also wrong in itself.** It said "Review could not be cast." as if the write had failed. It now says "Too many reviews. Please wait a moment and try again."
+  - **The daily downvote cap keeps its message** ("Daily downvote limit reached."). Its wait is when another downvote would actually pass. The cap is a sliding 24-hour window, so that can be well under a day or over one.
+  - **Every other review refusal still answers `bcc_forbidden` 403**, including the rapid-voting fraud gate ("Vote rate limit exceeded."), which is not a counter and has no wait to give.
+- **Clients:** treat a review `bcc_rate_limited` as "wait and retry", using `retry_after_seconds` when present. `429` was already listed for this route; only which limits answer it changes.
 
 ### v1.188 — 2026-11-18 — behaviour change — a feed that could not be read answers 503, not an empty page (F-275)
 
