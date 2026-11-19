@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.189 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.190 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -6599,7 +6599,7 @@ Paginated list of users the signed-in viewer has blocked (§K1 Phase A). Owner-o
   ```json
   { "data": { "items": [ { "user_id": 412, "handle": "ramona", "display_name": "Ramona V.", "avatar_url": "https://…", "profile_url": "/u/ramona" } ], "pagination": { "page": 1, "per_page": 20, "total": 1, "total_pages": 1 } } }
   ```
-- **Identity** *(since v1.NEXT)*: a row names who holds the blocked id (`handle`, `display_name`, `avatar_url`, `profile_url`) only when a member holds it **and** the blocker may view that member's profile: their `profile_visibility` admits the blocker and the account is not suspended. The block itself is not counted. Every other row, including an id nobody holds, keeps its `user_id` and has `""` for all four: `{ "user_id": 413, "handle": "", "display_name": "", "avatar_url": "", "profile_url": "" }`. The two cases are indistinguishable. Render such a row as an unknown account; it can still be unblocked by `user_id`. Every block stays listed and counted.
+- **Identity** *(since v1.190)*: a row names who holds the blocked id (`handle`, `display_name`, `avatar_url`, `profile_url`) only when a member holds it **and** the blocker may view that member's profile: their `profile_visibility` admits the blocker and the account is not suspended. The block itself is not counted. Every other row, including an id nobody holds, keeps its `user_id` and has `""` for all four: `{ "user_id": 413, "handle": "", "display_name": "", "avatar_url": "", "profile_url": "" }`. The two cases are indistinguishable. Render such a row as an unknown account; it can still be unblocked by `user_id`. Every block stays listed and counted.
 - **Errors:** `bcc_unauthorized` (401)
 - **Mapping:** `MyBlocksEndpoint::list` (route `MyBlocksEndpoint.php:48`, READABLE entry) → `MyBlocksService::getMyBlocks` → `PeepSoBlockRepository`. FE `blocks-endpoints.ts:getMyBlocks`.
 
@@ -9617,7 +9617,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-18 — behaviour change (privacy) — `GET /me/blocks` shows who holds a blocked id only when the blocker may view their profile (F-404)
+### v1.190 — 2026-11-18 — behaviour change (privacy) — `GET /me/blocks` shows who holds a blocked id only when the blocker may view their profile (F-404)
 
 Ships with bcc-trust #759. Completes v1.179: blocking any id no longer tells which ids exist, and now listing the blocks does not either.
 
