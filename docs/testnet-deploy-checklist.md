@@ -196,7 +196,12 @@ cache **anonymous** GETs of the public read endpoints:
       AUTH CACHE BYPASS block from the timestamped `.htaccess` backup before
       anything else. Exit 1 = inconclusive (cache not exercised, or
       client-IP ban) — re-run from the server over SSH before trusting a
-      pass. Manual fallback (same protocol): bare `GET …/cards` twice →
+      pass. Exit 4 = SKIPPED (F-418): neither anon response carried
+      `x-litespeed-cache`, so the environment serves REST uncached (staging
+      has since ~2026-10-19) and there is nothing to isolate; no Bearer
+      request is sent. **SKIPPED is not a pass** — this gate still needs
+      exit 0 once caching is on. The weekly workflow shows it green with a
+      notice instead of failing red. Manual fallback (same protocol): bare `GET …/cards` twice →
       second call HIT; same URL **with** `Authorization: Bearer <any value>`
       → must never HIT and must return the viewer-aware body.
       **Production freeze (2026-07-19): do not access, modify, deploy to,

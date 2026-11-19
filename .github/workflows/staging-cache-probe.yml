@@ -6,6 +6,12 @@
 # P0 cache-isolation regression; exit 1 means the cache layer could not be
 # exercised (investigate before trusting green).
 #
+# F-418: exit 4 is SKIPPED: neither anon response carried x-litespeed-cache,
+# so staging serves REST uncached and there is nothing to test (the probe
+# sends no Bearer request then). The step stays green with a notice and a
+# job-summary line instead of failing red every week. Every other exit code
+# passes through unchanged.
+#
 # ACTIVE since 2026-07-19 (e5d25b6): scheduled weekly from the default
 # branch. Production is out of scope for this workflow entirely.
 name: staging-cache-probe
@@ -25,5 +31,15 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
+      # scripts/tests/auth-cache-isolation-probe.test.sh runs this block
+      # (by the line below and the indentation) against a fake curl.
       - name: Auth-cache isolation probe (staging)
-        run: bash scripts/auth-cache-isolation-probe.sh
+        run: |
+          set +e
+          bash scripts/auth-cache-isolation-probe.sh
+          rc=$?
+          if [ "$rc" -eq 4 ]; then
+            echo "::notice title=Auth-cache probe skipped::staging serves REST uncached; nothing to test"
+            exit 0
+          fi
+          exit "$rc"
