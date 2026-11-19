@@ -9617,7 +9617,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ### v1.NEXT — 2026-11-19 — behaviour change — the Blog tab and the cold-start panel's `recent_action` follow the feed read-failure rule (F-275)
 
-Ships with bcc-trust #762. Like v1.188, it needs bcc-core #138 deployed first.
+Ships with bcc-trust #762. Like v1.188, it relies on bcc-core #138. Deploying bcc-trust first is harmless: an older bcc-core ignores the extra positional argument, so these two reads keep their old answer (no fatal) until bcc-core #138 is live.
 
 - **`GET /users/:handle/blog`:** when the read that finds the member's blog posts did not run, the route answers `bcc_unavailable` **503**, `private, no-store`, with no `data`. Before, it answered **200 with an empty tab**, the same as a member who has written nothing. A Blogs section the owner has switched off still answers its documented empty (v1.163).
 - **`GET /feed/cold-start`:** when a listed operator's `recent_action` could not be read, the whole panel answers 503, as it already does for the hot-posts block. Before, that operator showed the `Recently on the floor.` fallback.
