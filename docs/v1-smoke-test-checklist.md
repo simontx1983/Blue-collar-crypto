@@ -106,7 +106,9 @@ Brand-new account through the §B6 + §O1 onboarding wizard.
   "3-20 chars" error; `simon!` (bad chars) shows the format error;
   `admin` (reserved) shows "reserved"; a known-taken handle shows
   "already taken".
-- [ ] **2.3** Submit a valid form → routes to `/verify-email?email=...`.
+- [ ] **2.3** Submit a valid form → routes to a **bare** `/verify-email`
+  (no `?email=` — F-410; the address is held client-side for this tab, so the
+  screen still names it).
   A 6-digit code (or verification link) lands in the account's inbox —
   locally, pull it from Mailpit. Code is valid for 15 minutes; the
   account doesn't work until verified.
