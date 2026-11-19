@@ -41,6 +41,7 @@
 #
 # No secrets: the Bearer token is a hardcoded dummy; it is never a real JWT
 # and the Authorization header value is never echoed.
+# The dummy Bearer is STAGING-ONLY: never point this probe at production.
 
 set -euo pipefail
 
