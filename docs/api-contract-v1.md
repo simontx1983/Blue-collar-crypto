@@ -4681,6 +4681,7 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
 - **v1.159 (F-345):** new bell key `bcc_review_reply` (default on, **in-app only**: no push variant, excluded from the email digest). To the reviewer when the reviewed party replies; `actor` = the replier; `external_id` = the reviewed page. `link` is the page (or `/u/{replier}` for a review of a member's profile). Message: *"@{replier} replied to your review of {page}."*, or *"@{replier} replied to your review."* when there is no page name (member profiles).
 - **v1.132 (F-272):** three new bell keys, all default on, **in-app only** (no push variant, excluded from the email digest). `external_id` is the group; `link` is the group's page (`/communities/{slug}`), or `/communities` if the group no longer resolves.
   - `bcc_group_join_requested` — to each owner and manager of a closed group (never to one blocked either way with the requester); `actor` = the requester. *"@{handle} asked to join {group}."*
+    - *v1.NEXT (bcc-trust #757, F-389):* its `link` is the Members tab's requests block, **`/communities/{slug}/members#requests`**, where the request is decided (`#requests` is the frontend's anchor, bcc-frontend #327). Same `/communities` fallback when the group no longer resolves.
   - `bcc_group_join_approved` — to the requester; `actor` = the approver. *"You're now a member of {group}."*
   - `bcc_group_invited` — to the invitee; `actor` = the inviter. *"@{handle} invited you to join {group}."*
   - A denied request, a declined or revoked invitation and a cancelled request notify nobody.
@@ -9572,6 +9573,14 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-18 — behaviour change — a join-request bell row opens the Members tab's requests block (F-389)
+
+Ships with bcc-trust **#757**.
+
+- **`bcc_group_join_requested` (bell, v1.132):** `link` changes from the group's page (`/communities/{slug}`) to `/communities/{slug}/members#requests`, the Members tab's "Requests & invitations" block, where the owner or manager approves or denies. The fallback for a group that no longer resolves is still `/communities`.
+- `bcc_group_join_approved` and `bcc_group_invited` still link the group's page.
+- The link is resolved when the bell is read, so rows already stored pick it up. No new key, field or route; the frontend renders `link` verbatim (§A2).
 
 ### v1.182 — 2026-11-17 — behaviour change — an oauth-complete retry is the same sign-up; a wallet sign-up's email is held pending until verified (F-294)
 
