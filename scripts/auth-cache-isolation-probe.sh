@@ -12,12 +12,24 @@
 # means an authenticated client was served the cached anonymous variant — the
 # original 2026-07-13 leak. That is a P0 cache-isolation failure.
 #
+# F-418: if NEITHER anon response carries an `x-litespeed-cache` header at all
+# (both answered 2xx), no edge cache sits in front of the route, so there is
+# nothing for a Bearer request to bypass. The probe stops there, before any
+# Bearer request, and reports SKIPPED (exit 4). Staging has answered this way
+# every week since ~2026-10-19, and it used to fail red as INCONCLUSIVE. A
+# marker that is present (hit OR miss) runs every check exactly as before.
+#
 # Exit codes:
 #   0  PASS  — anon caching live, both Bearer requests bypassed the cache
-#   1  INCONCLUSIVE — anon second request never HIT (cache off, CDN interference,
-#      or client-IP ban; see note below) — fix visibility before trusting a PASS
+#   1  INCONCLUSIVE — the cache marker is present but anon #2 never HIT, or no
+#      HTTP responses at all, or an anon answer was not 2xx (cache off, CDN
+#      interference, or client-IP ban; see note below) — fix visibility before
+#      trusting a PASS
 #   2  P0 FAIL — a Bearer request was served a cache HIT
 #   3  usage/target error
+#   4  SKIPPED — no cache marker on either anon 2xx response: the target
+#      serves REST uncached, nothing to test. No Bearer request was sent.
+#      NOT a pass: the pre-production gate (deploy checklist §1.6) needs 0.
 #
 # Scope guard: STAGING ONLY. The production hostname is refused outright —
 # production runs are out of scope until the production phase is explicitly
@@ -79,10 +91,30 @@ request() {
 echo "== auth-cache isolation probe =="
 echo "target: ${PROBE_URL}"
 
+is_2xx() { [[ "$1" =~ ^2[0-9][0-9]$ ]]; }
+
 request "anon #1 (store)"
+ANON1_LSC="$LAST_LSC"; ANON1_CODE="$LAST_CODE"
 sleep "$SPACING_SECONDS"
 request "anon #2 (expect HIT)"
 ANON2_LSC="$LAST_LSC"; ANON2_CODE="$LAST_CODE"
+
+# F-418: no cache marker on either anon answer → nothing to isolate. Decided
+# BEFORE the Bearer pair, so this path sends no Authorization header at all.
+if [ "$ANON1_LSC" = "absent" ] && [ "$ANON2_LSC" = "absent" ] \
+   && is_2xx "$ANON1_CODE" && is_2xx "$ANON2_CODE"; then
+  echo "--"
+  echo "SKIPPED: staging serves REST uncached; nothing to test."
+  echo "Neither anon response carried x-litespeed-cache, so no edge cache sits"
+  echo "in front of this route and the Bearer bypass has nothing to bypass."
+  echo "No Bearer request was sent. This is not a PASS: the pre-production"
+  echo "gate (deploy checklist §1.6) still needs exit 0 once caching is on."
+  if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+    printf '%s\n' "**Auth-cache isolation probe: SKIPPED** — staging serves REST uncached; nothing to test (no \`x-litespeed-cache\` on either anon response; no Bearer request sent)." >> "$GITHUB_STEP_SUMMARY"
+  fi
+  exit 4
+fi
+
 sleep "$SPACING_SECONDS"
 request "bearer #1 (must NOT hit)" bearer
 B1_LSC="$LAST_LSC"

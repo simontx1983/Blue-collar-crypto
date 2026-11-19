@@ -116,3 +116,12 @@ jobs:
       - name: site-url probe parser regressions
         run: bash scripts/tests/site-url-probe.test.sh
 
+      # Regression cases for scripts/auth-cache-isolation-probe.sh and the
+      # staging-cache-probe workflow step (F-418). Here for the same reason
+      # as the site-url parser tests: that workflow only runs weekly. No
+      # network: `curl` is a fake on PATH. Pins SKIPPED (exit 4, no Bearer
+      # request) only when no cache marker is present, and every other
+      # outcome exactly as before.
+      - name: auth-cache probe regressions
+        run: bash scripts/tests/auth-cache-isolation-probe.test.sh
+
