@@ -314,7 +314,7 @@ Per-(voter,page,category) trust vote with weight + vesting lifecycle.
 Per-(page,category) aggregate score row. Self-page tier is the page row here.
 - page_id · bigint unsigned · NO · PK
 - category_id · bigint unsigned · NO · PK
-- page_owner_id · bigint unsigned · NO · K
+- page_owner_id · bigint unsigned · NO · K — `0` means the page has no owner. That is an author an admin cleared, or, since bcc-trust #733, a **released page**: revoking a claim hands the page back, and its rows move from the revoked owner to `0`. They keep their score history until the next claim takes them over, and their `onchain_bonus` is cleared. A row is never *created* at `0`: `ScoreRepository::createIfNotExists()` refuses an unresolved owner and returns the existing row instead. Owner-keyed reads skip `0` (vote-integrity voted pages, vouch edges, the trust-edge backfill), since there is nobody to draw an edge to
 - total_score · decimal(5,2) · NO
 - onchain_bonus / attestation_bonus · decimal(10,2) · NO — `attestation_bonus` is the trust-attestation (vouch) synthesis term in `TrustScoreService`. It replaced `endorsement_bonus`, which `includes/database/drop-endorsement-bonus.php` dropped from both score tables (Slice E follow-up, 2026-06-28)
 - positive_score / negative_score · decimal(5,2) · NO
