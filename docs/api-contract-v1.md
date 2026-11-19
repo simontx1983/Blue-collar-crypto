@@ -2469,7 +2469,7 @@ Authenticated personalized feed (§F1, §N6).
   - **Scope-to-filter mapping:**
     - `for_you` → ranked stream, F1 priority chain applied
     - `following` → strict-time-ordered, posts attributed to entities/users in the viewer's `peepso_user_followers` set, signal kinds excluded
-    - `signals` → signal post-kinds only, ranked by recency + severity
+    - `signals` → signal post-kinds only, ranked by recency + severity. *(vNEXT, F-392)* Nothing writes a signal post yet, so this is an empty page (`items: []`, `has_more: false`). It used to serve unrelated legacy rows.
   - Shadow-limited authors (§K1, §O4.1) excluded from all scopes for this viewer
 
 #### `GET /bcc/v1/feed/hot`
@@ -9614,6 +9614,16 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### vNEXT — 2026-11-18 — fix — the profile Blogs tab shows blogs; the Signals feed no longer serves unrelated rows (F-392)
+
+> ⚠ **Version deliberately left as `vNEXT`.** The number is assigned at merge.
+
+Ships with bcc-trust **#770** and bcc-core **#144**. Merge #770 first.
+
+- **`GET /users/:handle/blog`:** returns the member's blog posts. It asked the database for blogs by their module *name*, which the database read as module 0. So it never matched a blog, which is stored as module 204, and could only match old rows of other kinds. On a site with none of those, the tab was always empty.
+- **`GET /feed?scope=signals`:** returns an empty page until signal posts exist; nothing writes them yet. It read the same name-as-0 way, so it could serve old rows the main feed deliberately hides.
+- **No new fields, codes or shapes.** Clients need no change. The frontend may hide the Signals tab while it is empty; that is a product choice, not part of this contract.
 
 ### v1.188 — 2026-11-18 — behaviour change — a feed that could not be read answers 503, not an empty page (F-275)
 
