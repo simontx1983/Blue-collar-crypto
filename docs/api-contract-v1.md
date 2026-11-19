@@ -4639,7 +4639,7 @@ The `MentionPolicy::filterMentionable` gate is applied a SECOND time at dispatch
 - **The gate is the permalink's.** For each mentionee `MentionPolicy` allows, the dispatcher asks the gate `GET /feed/{id}` uses whether that member could open the post the bell links to: the post itself, or for a comment its parent post.
 - **A refused mentionee gets no bell and no push.** Examples: a secret or closed group post they aren't in, a followers-only or only-me post, an author they're blocked with. Nothing tells the author, and the post or comment is still written.
 - **Fails closed:** when the check can't be read, that mentionee gets no bell.
-- **A shadow-limited author's mentions notify nobody.** Posts by a §O4.1 caution- or risky-tier author are withheld from every viewer but the author, so no mentionee can open them.
+- **A shadow-limited author's mentions notify nobody.** Posts by a §O4.1 caution- or risky-tier author cannot be opened by link by anyone but the author (even in an NFT holder room, whose feed shows them), so no mentionee can open them.
 - This covers `bcc_mention`'s bell and push. Rows stored before the change are untouched, and `target_available` is unchanged (it still doesn't fold in per-viewer visibility).
 
 ##### Primary-Hall post dispatch — policy locks (V2 retention slice, 2026-05-11)
