@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.190 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.191 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -7982,14 +7982,14 @@ Auth **optional**. The public list — published public data only.
 | `limit` | int | 20 | 1–50 (§4.32.4). **Out of range is a `400`, not a clamp.** |
 | `cursor` | string | — | opaque; tagged `ann_active` or `ann_archived` per `state` |
 
-- **Cache:** `Cache-Control: no-store` · `Vary: Authorization, Cookie` *(since v1.NEXT, for
+- **Cache:** `Cache-Control: no-store` · `Vary: Authorization, Cookie` *(since v1.191, for
   SECRET pages; still no TTL)* — see "Freshness" below.
 
 ⚠⚠ **Identical for every viewer, including the resolved operator** (§4.32.11), with one
 exception: a SECRET page. No `capabilities`, no `status`, no `body`, and no
 draft/scheduled/`blocked` row.
 
-- **SECRET pages** *(since v1.NEXT)*: a page with `peepso_page_privacy = 2` that the viewer
+- **SECRET pages** *(since v1.191)*: a page with `peepso_page_privacy = 2` that the viewer
   may not see (its author, site admins, and its members and invitees may; see `GET /cards/:type/:id`) answers exactly what a page that does not exist answers: the
   **empty page**, `items: []` with inert `pagination`. A missing page has no announcements; it
   is not a `404`. The read still runs first, so a read failure is the same `503` for a hidden
@@ -8011,10 +8011,10 @@ so a caller cannot page it. `pagination` is present and **inert**
 (`{next_cursor: null, has_more: false}`), because reusing the list envelope avoids a second
 response shape for the same rows (§4.32.14).
 
-- **Cache:** `Cache-Control: no-store` · `Vary: Authorization, Cookie` *(since v1.NEXT)* —
+- **Cache:** `Cache-Control: no-store` · `Vary: Authorization, Cookie` *(since v1.191)* —
   as the list above.
 
-Same public-data rules as the list, the SECRET-page rule included *(since v1.NEXT)*: a hidden
+Same public-data rules as the list, the SECRET-page rule included *(since v1.191)*: a hidden
 page's rotator is the empty one a missing page gets.
 
 #### `GET /bcc/v1/validators/:pageId/announcements/:id`
@@ -8037,7 +8037,7 @@ credential could hand one viewer the permissions resolved for another.
 ⚠ An archived announcement **still resolves here**: §4.32.6 keeps its permalink. Archival is
 a public record, not a deletion.
 
-- **SECRET pages** *(since v1.NEXT)*: an announcement on a page with
+- **SECRET pages** *(since v1.191)*: an announcement on a page with
   `peepso_page_privacy = 2` that the viewer may not see (its author, site admins, and its members and invitees may; see `GET /cards/:type/:id`) is the same
   `404 bcc_not_found` as a missing announcement. The reads run first, so a read failure is
   the same `503`.
@@ -8107,7 +8107,7 @@ nothing to say why.
 ##### Freshness — why no announcement read carries a TTL
 
 §4.32.11 says the public list is *"safely cacheable and its cache key needs no viewer
-component."* That is a statement about **cache keys**. It held until v1.NEXT; since then the
+component."* That is a statement about **cache keys**. It held until v1.191; since then the
 public list and the rotator send `Vary: Authorization, Cookie`, because a SECRET page's list
 is empty for a viewer the page does not admit and full for a member. It is **not** a freshness
 guarantee, and §1.6's endpoint-kind table has no announcements row — so these four routes
@@ -8188,7 +8188,7 @@ Auth **optional**. The canonical chronological discussion for one announcement.
 - **Success:** `200` with `{ items, pagination, can_comment }`.
 - **Cache:** `Cache-Control: private, no-store` · `Vary: Authorization, Cookie`
 - **Errors:** `404 bcc_not_found` (feature off, **or the announcement is not publicly
-  readable**, or *(since v1.NEXT)* it is on a SECRET page the viewer may not see:
+  readable**, or *(since v1.191)* it is on a SECRET page the viewer may not see:
   its author, site admins, and its members and invitees may; see `GET /cards/:type/:id`) · `503 bcc_unavailable`
 
 ⚠⚠ **A thread on a non-public announcement is `404`, and that is true even for the
@@ -8216,7 +8216,7 @@ Auth **member in good standing** (§4.32.7).
 
 - **Success:** `201` with the created comment in the §4.32.14 shape.
 - **Errors:** `403 bcc_forbidden` + `reason_code` · `404 bcc_not_found` (feature off, or the
-  announcement is not publicly readable, or *(since v1.NEXT)* it is on a SECRET page the
+  announcement is not publicly readable, or *(since v1.191)* it is on a SECRET page the
   viewer may not see) · `400 bcc_invalid_request` (absent, blank,
   oversized or non-UTF-8 body) · `400` + `reason_code: replies_not_supported` ·
   `503 bcc_unavailable`
@@ -8255,7 +8255,7 @@ in position as a tombstone.
 - **Success:** `200` with the tombstone shape — four keys, nothing else.
 - **Errors:** `403 bcc_forbidden` + `reason_code: not_comment_author` · `404 bcc_not_found`
   (feature off, no such comment, or the announcement is not publicly readable, or *(since
-  v1.NEXT)* it is on a SECRET page the viewer may not see) ·
+  v1.191)* it is on a SECRET page the viewer may not see) ·
   `409 bcc_conflict` (already removed) · `503 bcc_unavailable`
 
 ⚠⚠ **`not_comment_author` IS THE PUBLIC REASON FOR EVERY REMOVAL DENIAL**, whoever asks.
@@ -8578,7 +8578,7 @@ compensate.
 
 Three things follow, and each is a property worth having rather than a restriction:
 
-1. **The public list is viewer-independent**, except on a SECRET page *(since v1.NEXT)*, where a
+1. **The public list is viewer-independent**, except on a SECRET page *(since v1.191)*, where a
    viewer the page does not admit gets the empty page (see `GET /validators/:pageId/announcements`).
    Otherwise two readers of the same page and cursor get byte-identical responses. The response
    now sends `Vary: Authorization, Cookie`, so a cache must key it per credential. ⚠ A consumer that scopes its list cache per viewer **on the grounds that the list
@@ -9637,7 +9637,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-18 — behaviour change (privacy) — a SECRET page's announcements and their threads answer as missing to non-members
+### v1.191 — 2026-11-18 — behaviour change (privacy) — a SECRET page's announcements and their threads answer as missing to non-members
 
 Ships with bcc-trust #768 (needs bcc-core #131 deployed first, as v1.178 did). The v1.178 rule now covers announcements: a SECRET page (`peepso_page_privacy = 2`) is seen by its author, site admins, and its members and invitees, and everyone else gets what a page that does not exist gets.
 
