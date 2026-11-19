@@ -2541,13 +2541,13 @@ Single-activity permalink read (v1.33 backfill — shipped with the post-detail 
 
 #### Feed read failure (v1.188)
 
-<a id="feed-read-failure-vnext"></a>Applies to every route that reads a feed: `GET /feed`, `/feed/hot`, `/feed/tag`, `/feed/:id` (numeric and shortcode), `/groups/:id/feed`, `/pages/:id/feed`, `/users/:handle/activity` and `/feed/cold-start`.
+<a id="feed-read-failure-vnext"></a>Applies to every route that reads a feed: `GET /feed`, `/feed/hot`, `/feed/tag`, `/feed/:id` (numeric and shortcode), `/groups/:id/feed`, `/pages/:id/feed`, `/users/:handle/activity`, `/users/:handle/blog` *(v1.NEXT)* and `/feed/cold-start`. On `/feed/cold-start` the reads covered are the `hot_posts` block and, *(v1.NEXT)*, each listed operator's `recent_action`.
 
 - **When:** the database read that finds the page's posts did not run (a dropped connection, a failed query). Before v1.188 that answered **200 with `items: []`** (or **404** on a permalink), which a client could not tell from "nobody has posted".
 - **Response:** `bcc_unavailable` **503**, the standard error envelope, with **no `data`** (not even an empty page). Message: *"The feed is temporarily unavailable. Please try again."*, or *"This post is temporarily unavailable. Please try again."* on `/feed/:id`.
 - **Cache:** always `Cache-Control: private, no-store`, including on `/feed/hot`, whose success is publicly cacheable. Server-side, the shared `/feed/hot` first page is never written from a failed read, so an outage is not served to other readers after the database recovers.
 - **Retry:** safe and idempotent; nothing was written. **Clients:** render an error with a retry action, never the empty state ("No posts yet") or "post not found".
-- **Not covered:** the per-item details filled in after the posts are found (author badges, reactions, comment counts) keep their own fallbacks and degrade an item rather than fail the page. The profile Blog tab (`/users/:handle/blog`) is unchanged.
+- **Not covered:** the per-item details filled in after the posts are found (author badges, reactions, comment counts) keep their own fallbacks and degrade an item rather than fail the page. The `live_shift` strip inside the profile payload (`GET /users/:handle`) keeps its fallback too: a failed read leaves the strip empty and the rest of the profile still loads, so one decorative strip cannot blank the whole profile.
 
 #### Server-side group-privacy + visibility filter (applies to `/feed`, `/feed/hot`, and `/feed/tag`)
 
@@ -2813,7 +2813,7 @@ The member's long-form blog posts (§D6 blog tab), newest-first, cursor-paginate
 - **Path:** `handle`
 - **Query:** `cursor` (optional, opaque base64url `{t,id}`, same family as `/feed`) · `limit` (optional, default 20, min 1, max 50 — **refused above 50**, not clamped)
 - **Response 200:** `CursorEnvelope<FeedItem>` — same shape as `/feed`: `data = { items: FeedItem[] (§3.3), pagination: { next_cursor: string|null, has_more: bool } }`, scoped to `act_user_id = handle AND act_module_id = 'blog'`. The blog body carries the full `full_text` (the Floor variant omits it): `{ excerpt, full_text, wp_post_id, title, category (string|null), tags (string[]), chain_tags ([{id, slug, name, color, icon_url}]), disclosure ({tickers, note}|null), cover_image_url (string|null), cover_image_id (int|null), sources (string[]) }`.
-- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer, **or the account is suspended** *(v1.112)*
+- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer, **or the account is suspended** *(v1.112)* · `bcc_unavailable` **503** *(v1.NEXT)* when the blog posts could not be read, answered `private, no-store` rather than under the cache header below: see [Feed read failure](#feed-read-failure-vnext). Before, that answered an empty tab (`items: []`) for a member who has written blogs. A Blogs section the owner has switched off (above) still answers its documented empty: that gate runs before the read.
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - **Mapping:** `BlogService::getUserBlog` → `PeepSoActivityRepository::getActivities` (over-fetch-by-1 `has_more`, moderation-hidden excluded per §K1-C); body via `BlogService::hydrateForPostId(..., includeFullText: true)`. Handler `UsersEndpoint::blog` (route `UsersEndpoint.php:191`); the section gate itself lives in `BlogService::getUserBlog` via `ProfileSectionVisibility::hides`, NOT in the route — a route gate would be bypassed by any second caller.
 
@@ -7248,7 +7248,7 @@ Public cold-start three-block bridge for the home-feed empty state — a civic m
   { "halls": [ { "slug": "cosmos-hall", "name": "Cosmos Hall", "chain_slug": "cosmos", "member_count": 88 } ], "recent_operators": [ { "handle": "ramona", "display_name": "Ramona V.", "avatar_url": "https://…", "reputation_tier": "trusted", "reputation_tier_label": "Trusted", "rank_label": "Journeyman", "recent_action": "REVIEWED a card", "link": "/u/ramona" } ], "hot_posts": [ /* §3.3 FeedItem[] */ ] }
   ```
   `recent_operators` are ordered by a stable daily shuffle (NOT ranked); `recent_action` uses a locked past-tense verb allowlist with a `Recently on the floor.` fallback. `reputation_tier` is always a real band. `hot_posts` (v1.180, F-276): for an **anonymous** viewer, the first items of the shared `/feed/hot` page verbatim. For a **signed-in** viewer, the same posts read and hydrated **for that viewer** (`FeedRankingService::getHotFeedForViewer`, the tag feed's path without a hashtag), so `viewer_reaction`, the Stoke state, the author's vouch state and `is_followed_by_viewer`, and `permissions.can_report` / `can_delete` are the viewer's own, not a stranger's. Visibility is the hot feed's gates read **as this viewer**, the same as on `GET /feed/tag`, so three kinds of post can appear here that `/feed/hot` withholds: the viewer's **own** restricted posts (F-269), members-only posts (level 20) by any member, and friends-only posts (level 30) by the viewer's friends. Nothing at level 40 (`private`) by anyone else can. The friend list is empty in production today (peepso-friends is not installed), so in practice no other member's friends-only post appears; see `GET /feed/tag`.
-- **Errors:** `bcc_unavailable` **503** *(v1.188)* when the hot-posts block could not be read: the whole panel answers 503 rather than a panel with a silently empty `hot_posts`. See [Feed read failure](#feed-read-failure-vnext).
+- **Errors:** `bcc_unavailable` **503** *(v1.188)* when the hot-posts block could not be read: the whole panel answers 503 rather than a panel with a silently empty `hot_posts`. *(v1.NEXT)* The same when a listed operator's `recent_action` could not be read: the panel answers 503 rather than putting the `Recently on the floor.` fallback on a member whose last action is unknown. The fallback is unchanged for a member with no activity, or whose last action is outside the verb allowlist. See [Feed read failure](#feed-read-failure-vnext).
 - **Cache:** `Cache-Control: private, no-store` (per-viewer per-day stable-randomization).
 - **Mapping:** `FeedColdStartEndpoint::handle` (route `FeedColdStartEndpoint.php:45`) → `FeedColdStartService::getColdStart`; operator hydration reuses the `MemberSummaryPrefetcher` bundle. FE `cold-start-endpoints.ts:getColdStart`.
 
@@ -9614,6 +9614,15 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-19 — behaviour change — the Blog tab and the cold-start panel's `recent_action` follow the feed read-failure rule (F-275)
+
+Ships with bcc-trust #762. Like v1.188, it needs bcc-core #138 deployed first.
+
+- **`GET /users/:handle/blog`:** when the read that finds the member's blog posts did not run, the route answers `bcc_unavailable` **503**, `private, no-store`, with no `data`. Before, it answered **200 with an empty tab**, the same as a member who has written nothing. A Blogs section the owner has switched off still answers its documented empty (v1.163).
+- **`GET /feed/cold-start`:** when a listed operator's `recent_action` could not be read, the whole panel answers 503, as it already does for the hot-posts block. Before, that operator showed the `Recently on the floor.` fallback.
+- **Not covered, on purpose:** the profile payload's `live_shift` strip (`GET /users/:handle`) keeps its fallback (a failed read leaves it empty), so a decorative strip cannot blank the whole profile. See [Feed read failure](#feed-read-failure-vnext).
+- **Clients:** as for v1.188, a 503 here is retryable: show an error with a retry action, not the empty state. Successful responses are unchanged.
 
 ### v1.188 — 2026-11-18 — behaviour change — a feed that could not be read answers 503, not an empty page (F-275)
 
