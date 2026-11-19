@@ -6865,16 +6865,22 @@ Partial update of the viewer's DM-gating preferences. Registered as `WP_REST_Ser
 
 Admin-curated first-pull follow candidates for the post-signup wizard (§B4). **Auth-gated despite the public-looking path.**
 
-- **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
-- **Response 200:** three named buckets, each a list of polymorphic §L5/§3.2 Card view-models:
+- **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401 (checked before `chain`).
+- **Query** *(v1.NEXT)*: `chain` (optional). A home-chain slug from the same allowlist as `POST /me/onboarding/complete`'s `home_chain` (`cosmos|osmosis|injective|ethereum|solana|polkadot|thorchain|near`), lowercased and trimmed. Absent or empty means no chain.
+- **Response 200:** three named buckets, each a list of polymorphic §L5/§3.2 Card view-models, plus `bias`:
   ```json
-  { "data": { "validators": [ { "card_kind": "validator", "...": "..." } ], "projects": [ { "card_kind": "project", "...": "..." } ], "creators": [ { "card_kind": "creator", "...": "..." } ] } }
+  { "data": { "validators": [ { "card_kind": "validator", "...": "..." } ], "projects": [ { "card_kind": "project", "...": "..." } ], "creators": [ { "card_kind": "creator", "...": "..." } ], "bias": { "chain": "cosmos", "applied_to": ["validators"] } } }
   ```
   Each bucket holds up to **4** cards; buckets present even when empty. Bucket→type→kind map locked in `OnboardingEndpoint::BUCKETS`.
-- **Errors:** `bcc_unauthorized` 401
-- **Cache:** `Cache-Control: private, max-age=60`
+- **Chain bias** *(v1.NEXT)*: with `chain`, only the **validators** bucket changes. It takes that chain's validators first (up to 4, in the same trust order), then fills from the unbiased ranking, deduped. It never holds fewer cards than it would without `chain`.
+  - **Projects and creators never change:** builder pages carry no chain, and a creator's chain is only reachable through collection claims.
+  - **`bias`** is always present. It is `null` without `chain`. With one, it is `{ "chain", "applied_to" }`, where `applied_to` names the buckets the chain really re-ranked: `["validators"]`, or `[]`.
+  - **`applied_to` is `[]`** when no validator on that chain made the bucket, or when discovery is on its fallback path. The fallback is used while the page read model is empty, and it cannot filter by chain. The bucket is then exactly the unbiased one.
+  - **Clients label the bias from `applied_to`, never from the request.**
+- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (`chain` not in the allowlist; nothing is queried)
+- **Cache:** `Cache-Control: private, max-age=60`. `chain` is part of the URL, so each chain caches separately.
 - **SECRET pages are never suggested** *(since v1.178)*: the candidates come from the same discovery query as `GET /cards`, which lists no secret page.
-- **Mapping:** `OnboardingEndpoint::suggestions` (route `OnboardingEndpoint.php:119`) → `PageDiscoveryService::query` (§F1 ranker) re-hydrated through `CardViewService::getCard`. FE `onboarding-endpoints.ts`.
+- **Mapping:** `OnboardingEndpoint::suggestions` (route `OnboardingEndpoint.php:132`) → `PageDiscoveryService::query` (§F1 ranker) re-hydrated through `CardViewService::getCard`. The chain bias is `OnboardingEndpoint::chainFirstPageIds`, which uses `query()`'s `chain_slug` filter and reads its `chain_applied` result flag. FE `onboarding-endpoints.ts`.
 
 #### `POST /bcc/v1/me/onboarding/complete`
 
@@ -9677,6 +9683,16 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-19 — additive — `GET /onboarding/suggestions?chain=` puts a home chain's validators first (F-439)
+
+Ships with bcc-trust #785. No bcc-core change.
+
+- **`GET /onboarding/suggestions`:** an optional `chain` query parameter, a home-chain slug from the `POST /me/onboarding/complete` allowlist. An unknown slug answers `bcc_invalid_request` **400**.
+- **Validators only:** that bucket takes the chain's validators first, then fills from the unbiased trust ranking, deduped, so it never holds fewer cards than without `chain`. Projects and creators are unchanged.
+- **`data.bias`** *(additive, always present)*: `null` without `chain`; otherwise `{ "chain", "applied_to" }`. `applied_to` is `["validators"]` only when the chain really re-ranked that bucket. It is `[]` when no validator on the chain made the cut, or when discovery is on its fallback path, which cannot filter by chain.
+- **Clients:** label the bias from `applied_to`, not from the request. The onboarding chips' "Bias suggestions toward" changed nothing before this, since the endpoint took no chain.
+- **Unchanged:** without `chain`, the buckets are exactly as before and `bias` is `null`. Auth, the cache header and the card shapes are unchanged.
 
 ### v1.203 — 2026-11-19 — behaviour change — one mention bell per mentioner per member per 5 minutes (F-415)
 
