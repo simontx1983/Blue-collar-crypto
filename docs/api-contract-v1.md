@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.184 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.185 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -5705,7 +5705,7 @@ this is the underlying endpoint.
 - **Errors:** `bcc_not_found` (404), `bcc_forbidden` (403),
   `bcc_attestation_revoked` (409 — cannot reaffirm a revoked
   attestation), `bcc_rate_limited` (429).
-  - *v1.NEXT (bcc-trust #750):* a reaffirm renews the vouch, so it owes the cast's rules
+  - *v1.185 (bcc-trust #750):* a reaffirm renews the vouch, so it owes the cast's rules
     (§J.2), in the cast's order and with the cast's answers. All of them
     are checked before anything is renewed:
     - `bcc_attestation_ineligible` (403) — the attestor may not attest at
@@ -9601,7 +9601,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-18 — behaviour change (narrowing) — a reaffirm owes the cast's attestor and self rules
+### v1.185 — 2026-11-18 — behaviour change (narrowing) — a reaffirm owes the cast's attestor and self rules
 
 Ships with bcc-trust **#750**.
 
