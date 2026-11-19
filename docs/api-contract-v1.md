@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.184 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.185 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -5705,6 +5705,24 @@ this is the underlying endpoint.
 - **Errors:** `bcc_not_found` (404), `bcc_forbidden` (403),
   `bcc_attestation_revoked` (409 — cannot reaffirm a revoked
   attestation), `bcc_rate_limited` (429).
+  - *v1.185 (bcc-trust #750):* a reaffirm renews the vouch, so it owes the cast's rules
+    (§J.2), in the cast's order and with the cast's answers. All of them
+    are checked before anything is renewed:
+    - `bcc_attestation_ineligible` (403) — the attestor may not attest at
+      all: suspended (an unknown suspension state included, and with no
+      admin exemption), a New Member, or below Neutral standing (the
+      hint is worded for the attestation's kind: "Reach Neutral standing
+      to vouch." / "… to back operators."). It carries the cast's
+      `unlock_hint`.
+    - `bcc_attestation_fraud_blocked` (403) — the attestor's fraud score
+      is at or above the HIGH threshold.
+    - `bcc_not_found` (404) — the target is gone or no longer attestable
+      by this attestor (since bcc-trust #713; a secret page they may not
+      see, since #731). The same 404 a cast answers.
+    - `bcc_attestation_self` (422) — the attestor now owns the target, e.g.
+      a page they vouched for before they came to own it.
+    - `bcc_unavailable` (503) — whether attestor and target block each
+      other could not be read; retry. Since #713.
 - **Audit:** `action=attestation_reaffirmed` (new action type per
   the Destructive Mutation Hardening recipe).
 - **Side effects:** decay-curve reset to age=0; Layer 2
@@ -9582,6 +9600,19 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.185 — 2026-11-18 — behaviour change (narrowing) — a reaffirm owes the cast's attestor and self rules
+
+Ships with bcc-trust **#750**.
+
+- **`POST /me/attestations/:id/reaffirm` (§J.2.1):** a reaffirm renews a vouch (decay reset, owner belled), so it now runs the cast's checks in the cast's order, all before anything is renewed. It can answer:
+  - `bcc_attestation_ineligible` (403): a suspended attestor (an unknown suspension state included, with no admin exemption), a New Member, or one below Neutral standing;
+  - `bcc_attestation_fraud_blocked` (403): a HIGH fraud score;
+  - `bcc_attestation_self` (422): the attestor now owns the target.
+
+  Before, any of those members could keep renewing old vouches and backings, resetting their decay and belling the owner.
+- **Documented, not new:** the same entry now also lists the reaffirm's `bcc_not_found` (404) for a gone or no-longer-attestable target, and `bcc_unavailable` (503) for an unreadable block state. Both have answered since bcc-trust #713; the list did not say so.
+- **No new error code, no new route, no shape change.** Every code is one the cast (§J.2) already answers. No frontend code calls reaffirm today.
 
 ### v1.184 — 2026-11-18 — behaviour change (security) — an email changed outside BCC is no longer verified (H1)
 
