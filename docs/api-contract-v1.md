@@ -2455,7 +2455,7 @@ Authenticated personalized feed (§F1, §N6).
 
 - **Auth:** Bearer (required)
 - **Query:**
-  - `scope` ∈ {`for_you`, `following`, `signals`} — default `for_you` (§N6; "community" cut)
+  - `scope` ∈ {`for_you`, `following`, `signals`, `groups`} — default `for_you` (§N6; "community" cut). `groups` *(v1.NEXT, F-416)* is "My Groups", see the mapping below
   - `cursor` (optional)
   - `limit` (optional, default 20, max 50)
 - **Response 200:** `CursorEnvelope<FeedItem>` per §1.5 / §3.3
@@ -2470,7 +2470,16 @@ Authenticated personalized feed (§F1, §N6).
     - `for_you` → ranked stream, F1 priority chain applied
     - `following` → strict-time-ordered, posts attributed to entities/users in the viewer's `peepso_user_followers` set, signal kinds excluded
     - `signals` → signal post-kinds only, ranked by recency + severity
-  - Shadow-limited authors (§K1, §O4.1) excluded from all scopes for this viewer
+    - `groups` *(v1.NEXT, F-416)* → "My Groups": the posts of every group and Hall the viewer is an **active member** of, newest first. ⭐ It is the union of the viewer's own rooms, each post under its ROOM's rules, and it shows exactly what opening each room (`GET /groups/{id}/feed`) shows a member:
+      - **Membership:** published groups only, with the viewer's status `member*`. Pending, invited and banned rows are out, and a banned row beside a stale member row wins. At most the 200 most recently joined rooms are read.
+      - **A member read:** `members_only` posts are included (absent visibility meta counts as members_only), across open, closed, secret and NFT rooms. Both Hall channels (main and ranked) are included.
+      - **§F-02 profile privacy is NOT applied**, exactly as in the room. This is within the 2026-11-12 decision's intent: its "/feed keeps F-02" rule is about the mixed feed surfacing group posts to non-members, while this scope only returns posts from rooms the viewer belongs to.
+      - **Shadow-limit (§O4.1):** applied except in the rooms that lift it for their own posts, which today are NFT holder rooms, as on the room's own feed.
+      - **Blocks both ways and moderation hide:** applied, as in every scope.
+      - **Empty:** a viewer in no group gets `200` with `items: []` and `has_more: false`, not an error.
+      - **503:** a membership read that fails answers `bcc_unavailable` **503**, like any other feed read failure, never an empty page.
+      - **Signed-in only**, like every `/feed` scope.
+  - Shadow-limited authors (§K1, §O4.1) excluded from all scopes for this viewer, except inside an NFT holder room on `groups`, which follows the room
 
 #### `GET /bcc/v1/feed/hot`
 
@@ -9614,6 +9623,21 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-18 — additive — `GET /feed?scope=groups`, "My Groups" (F-416)
+
+Ships with bcc-core **#143** and bcc-trust **#769**. ⚠ **bcc-core first:** against an older core, `scope=groups` falls back to `for_you` silently, so the tab would show the wrong feed.
+
+- **`GET /feed` (additive):** new `scope=groups`. It returns the posts of every group and Hall the viewer is an active member of, each under its room's rules: exactly what opening each room shows a member. The full rules are in the endpoint's scope mapping:
+  - members_only included;
+  - both Hall channels;
+  - no §F-02 profile gate (this is within the 2026-11-12 decision, since the scope only returns posts from the viewer's own rooms);
+  - the shadow-limit lifted only in NFT holder rooms;
+  - blocks and moderation hide applied;
+  - published groups only, ranked so a ban wins, at most 200 rooms.
+- **Empty and failure:** no groups gives `200` with `items: []` and `has_more: false`. A failed membership read gives `503 bcc_unavailable`, as for any feed read failure.
+- **Product context (user decision 2026-11-18):** the home feed's Signals tab is replaced by a "My Groups" tab. `scope=signals` stays in the contract and in code, unchanged; the frontend hides its tab until automatic on-chain posts exist.
+- **No new field, no new error code, no change to any existing scope.** The response is the existing `CursorEnvelope<FeedItem>`.
 
 ### v1.188 — 2026-11-18 — behaviour change — a feed that could not be read answers 503, not an empty page (F-275)
 
