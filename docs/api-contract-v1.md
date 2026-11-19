@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.178 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.179 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -6554,7 +6554,8 @@ Block a target user. Idempotent — re-blocking returns `state: "existing"`.
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized 401`.
 - **Body (JSON):** `user_id` (**required**, int ≥ 1, `absint`)
 - **Response 200:** `{ "data": { "ok": true, "user_id": 412, "state": "created" } }` — `state` ∈ `created | existing`.
-- **Errors:** `bcc_unauthorized` (401) · `bcc_rate_limited` (429, > 20 creates/60s, checked before target resolution) · `bcc_invalid_request` (400, `user_id` ≤ 0 or self-block) · `bcc_not_found` (404, target missing) · `bcc_unavailable` (503, insert failed)
+- **Any positive `user_id` gets the same answer** *(since v1.179)*, whether or not a member holds it: the block is recorded (`created`, then `existing`). A block on an id nobody holds affects only the blocker. Before, an id nobody held answered `bcc_not_found` 404, which told any member which ids exist.
+- **Errors:** `bcc_unauthorized` (401) · `bcc_rate_limited` (429, > 20 creates/60s, checked before target resolution) · `bcc_invalid_request` (400, `user_id` ≤ 0 or self-block) · `bcc_unavailable` (503, insert failed) · ~~`bcc_not_found` (404, target missing)~~ *(retired v1.179)*
 - **Audit:** `user_blocked` fires only on the `created` transition.
 - **Side effect:** every successful block, `created` or `existing`, removes the member-to-member follows between the two members in **both** directions, together with their watch metadata. They leave both watchlists. Page follows (a member following a page the other member owns) are **not** removed. Unblocking (`DELETE /me/blocks/:user_id`) does **not** restore them. While the block exists, neither member can watch the other (`POST /me/watching/watch` → `bcc_forbidden` 403).
 - **Rate limit:** 20/60s/viewer
@@ -9558,6 +9559,14 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.179 — 2026-11-18 — behaviour change (privacy) — `POST /me/blocks` no longer tells which user ids exist
+
+Ships with bcc-trust #736.
+
+- **`POST /me/blocks`:** every positive `user_id` now gets the same answer. The block is recorded (`state: "created"`, then `"existing"`) whether or not a member holds the id. The `bcc_not_found` 404 "User not found." is retired: it answered only for an id nobody held, which let any member list the ids that exist.
+- A block on an id nobody holds affects only the blocker. The 20-per-60 s per-viewer limit still comes first. Self and non-positive ids are still `bcc_invalid_request` 400.
+- **Clients:** a 404 can no longer come back from this route; no shape change.
 
 ### v1.178 — 2026-11-18 — behaviour change (privacy) — SECRET pages leave discovery and answer as missing to non-members
 
