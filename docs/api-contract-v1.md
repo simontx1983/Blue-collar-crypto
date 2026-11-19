@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.180 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.181 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -3595,7 +3595,7 @@ Cross-kind list of all PeepSo groups a target user is an active member of: holde
 - **Privacy filtering (server-authoritative):**
   - ⚠ *v1.91:* the per-group filtering below is **unchanged and still applies**, but it is now reached only after the profile gate admits the viewer. The two are separate: the gate asks "may this viewer see this person", the filtering asks "which of their groups may this viewer see". Previously only the second question was asked, so a stranger could confirm an "only me" profile's open-group memberships.
   - ⚠ *v1.127 (F-270):* the member's own **`show_groups_on_profile`** preference is applied FIRST. When it is off, a viewer other than the owner (and other than an admin) sees **only Halls** — every other group is omitted. Halls are auto-provisioned one-per-chain with open membership, so they disclose nothing, and keeping them preserves the home-Hall chip. The owner always sees all of their own groups.
-  - ⚠ *v1.NEXT (F-341 PR 3):* individual **Halls** the owner has hidden (`hidden_hall_ids` on `/me/profile-prefs`) are omitted for every viewer but the owner and a §F-02-exempt admin — **even while the Halls section itself is shown**, and **in both states of `show_groups_on_profile`**. That last part is the opposite of what a reader tends to assume: with the toggle OFF a non-owner sees *only* Halls, so the hidden ones are the only choice still doing any work. Scoped to Halls; every other group type follows the section switch. An absent list hides nothing.
+  - ⚠ *v1.181 (F-341 PR 3):* individual **Halls** the owner has hidden (`hidden_hall_ids` on `/me/profile-prefs`) are omitted for every viewer but the owner and a §F-02-exempt admin — **even while the Halls section itself is shown**, and **in both states of `show_groups_on_profile`**. That last part is the opposite of what a reader tends to assume: with the toggle OFF a non-owner sees *only* Halls, so the hidden ones are the only choice still doing any work. Scoped to Halls; every other group type follows the section switch. An absent list hides nothing.
   - ⚠ *v1.127 (F-270):* **NFT-holder (`type: "nft"`) and delegator (`type: "validator"`) groups are returned only to a SIGNED-IN viewer**, even when `show_groups_on_profile` is on. Membership of either discloses an on-chain financial position — that the member holds a qualifying NFT on a named chain, or delegates to a named validator — and the rows carry `chain_slug`. Anonymous callers receive neither kind.
   - `secret` groups → included **only if the viewer is also a member**
   - `closed` groups → always included; non-members see name + member_count, content stays private at PeepSo's layer
@@ -5124,7 +5124,7 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
   - `hide_from_search` *(documented v1.64 — shipped earlier)* → `peepso_is_hide_profile_from_user_listing` user_meta, "1"/"0" — "1" excludes the user from directory + member search (direct profile links still work). **Since v1.133 (F-257) this is THE one hidden-from-search flag:** `/me/privacy`'s `discovery_optout` is an alias that reads and writes it, so the two always agree.
   - `default_post_audience` *(documented v1.64 — shipped earlier; `friends` added v1.121)* → `peepso_last_used_post_privacy` user_meta (int 10/20/30/40 ↔ public/members/friends/private) — defaults PeepSo's audience picker; PeepSo itself overwrites it on every post, so this is a default, not a lock. ⚠ The column is not a validated enum, so a value with no token at all is reported as `members`.
   - `show_groups_on_profile` *(v1.127 — F-270)* -> `bcc_show_groups_on_profile` user_meta, "1"/"0". Read/write bool. **⚠ ABSENT MEANS `true`.** The default preserves the pre-F-270 behaviour, so an account that has never touched the setting keeps listing its groups; only an explicit falsey value hides them. This is the only *permissive* default among the privacy prefs here.
-  - `hidden_hall_ids` *(v1.NEXT — F-341 PR 3)* → `bcc_hidden_hall_ids` user_meta, a **list of group ids** (not a bool). Read/write. The individual Halls the owner has hidden from their profile while the Halls **section** stays shown. **Absent or `[]` means nothing is hidden**, the same permissive default as the rest of F-341, so no existing profile changes until its owner opts out.
+  - `hidden_hall_ids` *(v1.181 — F-341 PR 3)* → `bcc_hidden_hall_ids` user_meta, a **list of group ids** (not a bool). Read/write. The individual Halls the owner has hidden from their profile while the Halls **section** stays shown. **Absent or `[]` means nothing is hidden**, the same permissive default as the rest of F-341, so no existing profile changes until its owner opts out.
     - ⚠⚠ **It is NOT dominated by `show_groups_on_profile`, and the direction surprises people.** Toggle OFF leaves Halls — and only Halls — visible to others, so with it off these hidden ids are the only remaining choice that does anything. The two controls are independent and both apply.
     - ⚠ **Halls only**, by product decision. Other group types follow the section switch. The stored values are plain group ids, so widening the scope later is a small change — but it would be a decision, not a drift, because the field name would then be misleading.
     - **PATCH semantics:** omitting the field leaves the stored list untouched; sending `[]` **clears** it (the only way to un-hide the last Hall). Ids may be sent as JSON numbers or as numeric strings (a form-encoded body sends strings); they are stored as ints and **de-duplicated**, so a `GET` round-trips exactly what was stored.
@@ -9569,7 +9569,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-18 — additive + behaviour change (privacy) — a member can hide individual Halls inside a shown Halls section (F-341 PR 3)
+### v1.181 — 2026-11-18 — additive + behaviour change (privacy) — a member can hide individual Halls inside a shown Halls section (F-341 PR 3)
 
 
 Ships with bcc-trust **#728** (F-341 PR 3). Completes the F-341 chain: PR 1 narrowed the profile payload, PR 2 and the Activity-tab follow-up gated the per-section routes, and this adds per-ITEM choice inside a section that stays shown.
