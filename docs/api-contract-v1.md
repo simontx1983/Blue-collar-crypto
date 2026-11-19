@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.177 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.178 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2426,7 +2426,7 @@ Returns a full Card view-model.
 - **Path:** `type` ∈ {`validator`, `project`, `creator`, `member`}; `id` is the integer entity ID
 - **Response 200:** Card view-model (§3.2)
 - **Errors:** `bcc_not_found` (entity missing OR risky-tier hidden OR a SECRET page the viewer may not see), `bcc_invalid_request` (bad type)
-- **SECRET pages** *(since v1.NEXT)*: a page card whose page is secret (`peepso_page_privacy = 2`) is shown only to the page's author, site admins, and its members and invitees (PeepSo status `member*` or `pending_user`, with no `banned` row). Everyone else, anonymous included, gets the same `bcc_not_found` a missing page gets. An unreadable privacy state also answers `bcc_not_found`. Mapping: `PageAccess` → bcc-core `PeepSoPagePrivacy::isVisibleTo`.
+- **SECRET pages** *(since v1.178)*: a page card whose page is secret (`peepso_page_privacy = 2`) is shown only to the page's author, site admins, and its members and invitees (PeepSo status `member*` or `pending_user`, with no `banned` row). Everyone else, anonymous included, gets the same `bcc_not_found` a missing page gets. An unreadable privacy state also answers `bcc_not_found`. Mapping: `PageAccess` → bcc-core `PeepSoPagePrivacy::isVisibleTo`.
 - **Rate limit:** 60/min/user (anonymous: 60/min/IP)
 - **Cache:** `Cache-Control: max-age=30, stale-while-revalidate=60`; React Query `staleTime: 30s`
 - **Mapping:**
@@ -4272,7 +4272,7 @@ Paginated list of Cards filtered + sorted server-side. Backs `/directory`.
   - `page` (1..20) — optional; default 1. The hard ceiling protects against unbounded `OFFSET` filesort
   - `per_page` (1..50) — optional; default 24
   - **Validator-axis note:** `chain`, `status`, `min_self_stake`, and `sort=self_stake` are served by the read-model query path's validator JOIN (through the `_bcc_onchain_validator_id` post-meta → `bcc_onchain_validators`). They are no-ops/empty on non-validator kinds and are **not** implemented by the legacy posts-table fallback (active only before the read model is populated).
-  - **SECRET pages are never listed** *(since v1.NEXT)*, for any viewer, admins and the page's own members included. A page counts as secret when **any** of its `peepso_page_privacy` rows is `2`. Both query paths and their counts apply bcc-core's `PeepSoPagePrivacy::notSecretSql()`; closed pages (`1`) stay listed.
+  - **SECRET pages are never listed** *(since v1.178)*, for any viewer, admins and the page's own members included. A page counts as secret when **any** of its `peepso_page_privacy` rows is `2`. Both query paths and their counts apply bcc-core's `PeepSoPagePrivacy::notSecretSql()`; closed pages (`1`) stay listed.
 - **Response 200:**
   ```json
   {
@@ -5643,7 +5643,7 @@ Cast a new attestation. Idempotent on `(attestor_user_id, target_kind, target_id
   - `bcc_not_found` (404) — "Target not found." The target does not exist, **or is not attestable by this attestor** (v1.165):
     - a `*_card` target must be a published `peepso-page` whose page type maps to exactly that `target_kind` (a page with no stored type counts as a project page, as its card renders it). A feed post, a group post or another kind of page is refused.
     - a `user_profile` target must be a member whose profile the attestor may view (the profile-visibility rule, suspension included), with no block in either direction.
-    - a SECRET page (`peepso_page_privacy = 2`) must also be one the attestor may see: its author, a site admin, or a member or invitee of the page *(since v1.NEXT)*. An unreadable privacy state refuses too. The same applies to a reaffirm (§J.2.1).
+    - a SECRET page (`peepso_page_privacy = 2`) must also be one the attestor may see: its author, a site admin, or a member or invitee of the page *(since v1.178)*. An unreadable privacy state refuses too. The same applies to a reaffirm (§J.2.1).
     - Every refusal is this same 404, so the response never reveals which post ids exist or who is private or blocking.
   - `bcc_unavailable` (503) — the block state between attestor and member could not be read (v1.165). Retryable; a cast is never admitted on an unknown block state.
   - `bcc_attestation_self` (422) — attestor and target identity match
@@ -5763,7 +5763,7 @@ Read the attestation roster for an entity.
   endpoint, not in V1 scope.
 - **Attestor visibility (v1.150, F-356):** an item is **omitted** when the viewer may not see its attestor's profile — the profile gate (`ProfileAccess::canViewProfile`: the attestor's profile privacy level for this viewer, and suspension; the attestor and admins always pass). So an anonymous visitor never gets the handle, name, avatar or score of an attestor whose profile is private to signed-out viewers. **Display only:** `summary` counts and every score still include every attestation. `hide_from_search` does **not** hide an attestor here (it hides a member from search and the directory). No shape change; a page may hold fewer items than `per_page`. The profile vouch line's `top_vouchers` (§4.4) applies the same rule.
 - **Member target privacy (v1.168):** for `target_kind=user_profile` (where `target_id` is the user id) the roster is a read about that member, so it answers to the member's profile like every `/users/:handle/*` route. If their `profile_visibility` does not admit this viewer, or the account is suspended, the route answers `bcc_forbidden` **403** with `error.data.reason: "profile_private"` and no roster. The member and admins always pass. Card kinds are pages, not members, so this profile gate does not apply to them; the secret-page rule below does. The attestor rule above still applies to each row.
-- **SECRET pages** *(since v1.NEXT)*: for the three card kinds, a page that is secret (`peepso_page_privacy = 2`) and that the viewer may not see (author, site admins, members and invitees may; see `GET /cards/:type/:id`) answers the roster of a target nobody has vouched for: `items: []`, zero `summary` counts, `total_pages: 0`, `has_more: false`, with the requested `page` and `per_page`. That is exactly what a page that does not exist answers, so the response never shows the page is there.
+- **SECRET pages** *(since v1.178)*: for the three card kinds, a page that is secret (`peepso_page_privacy = 2`) and that the viewer may not see (author, site admins, members and invitees may; see `GET /cards/:type/:id`) answers the roster of a target nobody has vouched for: `items: []`, zero `summary` counts, `total_pages: 0`, `has_more: false`, with the requested `page` and `per_page`. That is exactly what a page that does not exist answers, so the response never shows the page is there.
 - **Errors:** `bcc_invalid_request` 400 (bad `target_kind`, `target_id`, `kind` or `sort`) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` (v1.168, `user_profile` only; see above)
 - **Cache:** `private, max-age=30`. Underlying read model is generation-counter invalidated by `POST` / `DELETE` against the same target. Invalid and `profile_private` (v1.168) → `private, no-store`.
 
@@ -6776,7 +6776,7 @@ Admin-curated first-pull follow candidates for the post-signup wizard (§B4). **
   Each bucket holds up to **4** cards; buckets present even when empty. Bucket→type→kind map locked in `OnboardingEndpoint::BUCKETS`.
 - **Errors:** `bcc_unauthorized` 401
 - **Cache:** `Cache-Control: private, max-age=60`
-- **SECRET pages are never suggested** *(since v1.NEXT)*: the candidates come from the same discovery query as `GET /cards`, which lists no secret page.
+- **SECRET pages are never suggested** *(since v1.178)*: the candidates come from the same discovery query as `GET /cards`, which lists no secret page.
 - **Mapping:** `OnboardingEndpoint::suggestions` (route `OnboardingEndpoint.php:119`) → `PageDiscoveryService::query` (§F1 ranker) re-hydrated through `CardViewService::getCard`. FE `onboarding-endpoints.ts`.
 
 #### `POST /bcc/v1/me/onboarding/complete`
@@ -7303,7 +7303,7 @@ Reviews-tab data plane for entity profiles AND member profiles (v1.48) — revie
   ```json
   { "items": [ { "id": 88, "grade": "A", "text": "Reliable validator.", "posted_at_label": "3 days ago", "author": { "...": "MemberSummary (§3.1)" }, "reply": null, "permissions": { "can_reply": { "allowed": true, "unlock_hint": null, "reason_code": null } } } ], "pagination": { "page": 1, "per_page": 20, "total": 12, "total_pages": 1 } }
   ```
-  `grade` ∈ `A|B|C`. `author` is the full §3.1 `MemberSummary` (hydrated like `/members`; authorless rows skipped). An unknown `target_id` returns `total: 0` (no 404). A SECRET page the viewer may not see (author, site admins, members and invitees may; see `GET /cards/:type/:id`) returns exactly that empty page *(since v1.NEXT)*, so the answer never shows the page exists.
+  `grade` ∈ `A|B|C`. `author` is the full §3.1 `MemberSummary` (hydrated like `/members`; authorless rows skipped). An unknown `target_id` returns `total: 0` (no 404). A SECRET page the viewer may not see (author, site admins, members and invitees may; see `GET /cards/:type/:id`) returns exactly that empty page *(since v1.178)*, so the answer never shows the page exists.
   **Replies (v1.159, F-345).** Every row also carries:
   - `reply` — `null`, or the page's ONE public response: `{ "id": int, "body": string, "author": MemberSummary (§3.1, the same shape as the row's `author`), "posted_at": ISO-8601, "edited_at": ISO-8601|null, "feed_id": "feed_<act_id>", "permissions": {…} }`. `null` when there is none, when the reply is moderation-hidden, and when its author no longer answers for the page (hand-over, below). A reply renders only under a visible review (a hidden review is not in this list at all). `feed_id` is the report target: send its number to `POST /me/reports` as `feed_item`. It is **not a post** anywhere else: comments, reactions, stoke, helpful marks, `DELETE /feed/{id}`, the view beacon and owner analytics answer `bcc_not_found` 404 for it.
   - `reply.permissions` — what the **viewer** may do with this reply, so clients never derive it. Each is `{allowed, unlock_hint, reason_code}`:
@@ -9559,7 +9559,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-18 — behaviour change (privacy) — SECRET pages leave discovery and answer as missing to non-members
+### v1.178 — 2026-11-18 — behaviour change (privacy) — SECRET pages leave discovery and answer as missing to non-members
 
 Ships with bcc-trust #731 and bcc-search #38 (both need bcc-core #131 deployed first). A PeepSo page with `peepso_page_privacy = 2` is "secret": non-members may not know it exists.
 
