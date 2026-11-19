@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.200 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.201 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -6717,7 +6717,7 @@ File a content report against a feed item or an **announcement** (§K1 Phase B).
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
 - **Body (JSON):** `target_kind` (**required**, ∈ `feed_item | announcement`) · `target_id` (**required**, int ≥ 1 — the `act_id` for `feed_item`, the **bare integer announcement id, prefix stripped** for `announcement`; see below) · `reason_code` (**required**, ∈ `spam|harassment|hate|violence|misinformation|other`) · `comment` (optional, ≤ 500 chars; **required when `reason_code = other`**)
 - **Response 200:** `{ "data": { "ok": true, "report_id": 5512, "status": "created" } }` — `status` ∈ `created | existing` (UNIQUE `(reporter, target_kind, target_id)` blocks a second row; `existing` returns `report_id: 0`).
-- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (bad kind/id/reason, comment > 500, missing comment for `other`, or self-report) · **`bcc_not_found` 404** (`announcement`: the notice is not publicly readable · `feed_item` *(v1.93)*: the reporter cannot see the post; see below) · `bcc_rate_limited` 429 (FLAG limits, 5 / 5 min / reporter) · `bcc_unavailable` 503
+- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (bad kind/id/reason, comment > 500, missing comment for `other`, or self-report) · **`bcc_not_found` 404** (`announcement`: the notice is not publicly readable, or *(since v1.201)* it is on a SECRET page the reporter may not see · `feed_item` *(v1.93)*: the reporter cannot see the post; see below) · `bcc_rate_limited` 429 (FLAG limits, 5 / 5 min / reporter) · `bcc_unavailable` 503
 - **Mapping:** `MyReportsEndpoint::create` (route `MyReportsEndpoint.php:38`) → `ContentReportService::fileReport`; fires `do_action('bcc_content_reported', …)` for async Phase C subscribers.
 
 ⚠⚠ **FOR `announcement`, THE CLIENT SENDS THE NOTICE'S OWN ID AND NOTHING
@@ -9302,7 +9302,7 @@ preserves a challenge.
 |---|---|
 | **route** | `POST /bcc/v1/me/reports` with `target_kind: "announcement"` and the **notice's own id** as `target_id` (§4.32.4) |
 | **reportable** | exactly the notices that are **publicly readable** under §4.32.1 — including **archived** ones (§4.32.6) |
-| **not reportable** | draft, scheduled, `blocked`, and a `publish` row whose publication-authorization marker is absent, future or author-mismatched — all answering `404 bcc_not_found` *identically* |
+| **not reportable** | draft, scheduled, `blocked`, a `publish` row whose publication-authorization marker is absent, future or author-mismatched, and *(since v1.201)* a notice on a SECRET page (`peepso_page_privacy = 2`) the reporter may not see (its author, site admins, and its members and invitees may; see `GET /cards/:type/:id`) — all answering `404 bcc_not_found` *identically*, the same answer as an id that does not exist. The secret-page refusal is decided before the readability read, so a read failure answers it `404` too, as for a missing id. |
 | **not by** | the notice's **author** (`400`, and `can_report` denies with `own_content`), an anonymous viewer (`401`), or a suspended account (`403`) |
 | **capability** | `can_report`, row-scoped, on detail and the owner list only — never on the public list or rotator (§4.32.11) |
 | **idempotent** | UNIQUE `(reporter, target_kind, target_id)`; a second report is accepted and changes nothing (`status: "existing"`, `report_id: 0`) |
@@ -9670,6 +9670,14 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.201 — 2026-11-19 — behaviour change (privacy) — reporting a SECRET page's announcement answers as missing to non-members
+
+Ships with bcc-trust #773 (needs bcc-core #131 deployed first, as v1.178 did). Completes the announcement half of the v1.178 rule, after v1.191 covered the announcement reads and comment routes.
+
+- **`POST /me/reports`** with `target_kind: "announcement"`: a notice on a SECRET page the reporter may not see (its author, site admins, and its members and invitees may) is the same `404 bcc_not_found` "Not found." as an id that does not exist, and no report is filed. Before, sequential ids told a member that a secret page's notice existed.
+- It is decided before the readability read, so a read failure answers a hidden notice `404`, as for a missing id. A reporter the page admits still gets `503 bcc_unavailable` on a failed read.
+- **Unchanged:** `feed_item` reports, open pages, and every request and response shape. No new route or error code.
 
 ### v1.200 — 2026-11-19 — behaviour change (privacy) — a mention notifies only members who can open the post
 
