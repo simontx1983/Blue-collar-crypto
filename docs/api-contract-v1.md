@@ -6557,6 +6557,7 @@ Paginated list of users the signed-in viewer has blocked (§K1 Phase A). Owner-o
   ```json
   { "data": { "items": [ { "user_id": 412, "handle": "ramona", "display_name": "Ramona V.", "avatar_url": "https://…", "profile_url": "/u/ramona" } ], "pagination": { "page": 1, "per_page": 20, "total": 1, "total_pages": 1 } } }
   ```
+- **Identity** *(since v1.NEXT)*: a row names who holds the blocked id (`handle`, `display_name`, `avatar_url`, `profile_url`) only when a member holds it **and** the blocker may view that member's profile: their `profile_visibility` admits the blocker and the account is not suspended. The block itself is not counted. Every other row, including an id nobody holds, keeps its `user_id` and has `""` for all four: `{ "user_id": 413, "handle": "", "display_name": "", "avatar_url": "", "profile_url": "" }`. The two cases are indistinguishable. Render such a row as an unknown account; it can still be unblocked by `user_id`. Every block stays listed and counted.
 - **Errors:** `bcc_unauthorized` (401)
 - **Mapping:** `MyBlocksEndpoint::list` (route `MyBlocksEndpoint.php:48`, READABLE entry) → `MyBlocksService::getMyBlocks` → `PeepSoBlockRepository`. FE `blocks-endpoints.ts:getMyBlocks`.
 
@@ -9572,6 +9573,15 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-18 — behaviour change (privacy) — `GET /me/blocks` shows who holds a blocked id only when the blocker may view their profile (F-404)
+
+Ships with bcc-trust #NNN. Completes v1.179: blocking any id no longer tells which ids exist, and now listing the blocks does not either.
+
+- **`GET /me/blocks`:** a row's `handle`, `display_name`, `avatar_url` and `profile_url` are filled only when a member holds the id and the blocker may view their profile (profile visibility admits them, account not suspended; the block itself is not counted). Otherwise all four are `""`, the same for an id nobody holds as for a member the blocker may not view.
+- Before, every row was filled. An id nobody holds read `member-<id>` with a link to a profile that does not exist, and a private or suspended member's handle, name and avatar were shown. Blocking an id and then listing the blocks told a member whether the id is held, and by whom.
+- **Unchanged:** `user_id`, the row order, `pagination` (every block is still counted), and unblocking by `user_id`.
+- **Clients:** treat `handle === ""` as an unknown account (no link, no avatar).
 
 ### v1.182 — 2026-11-17 — behaviour change — an oauth-complete retry is the same sign-up; a wallet sign-up's email is held pending until verified (F-294)
 
