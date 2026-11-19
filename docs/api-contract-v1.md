@@ -1733,11 +1733,11 @@ The wire format on disk is PeepSo's mention shortcode `@peepso_user_<id>(<name>)
 - Failing the policy returns `bcc_invalid_mention_target` (with the offending `user_id` echoed in the error payload, but NOT the reason — privacy posture preserved). The post is rejected; nothing is written. Strict reject, not silent strip.
 - Cap: **10 mentions per post**. Over-cap returns `bcc_too_many_mentions` (echoes the cap as `max`).
 
-**Notification semantics — V1d ships a single mention notification type.** PeepSo's existing `Tags::after_save_post` dispatcher fires `tagged` notifications for every surviving (post-policy) mention in a status/photo/gif body. The post-V1 layered grammar (status vs dispute vs review distinct mention semantics) is **deferred** — when `kind_grammar` (§reactions) generalizes to mentions, this section grows a `kind_grammar` discriminator on `Mention`. V1d clients ride forward on additive fields.
+**Notification semantics — V1d ships a single mention notification type.** BCC's `NotificationDispatcher` sends one `bcc_mention` bell and push per surviving (post-policy) mention in a status/photo/gif body or a comment, only to members who can open the post (§4.10, @-mention dispatch). *(Since v1.NEXT, F-423)* PeepSo's own `Tags::after_save_post` / `after_save_comment` dispatcher (its "mentioned you" email and PeepSo-module notification) does **not** run on BCC writes: it was gated on the author's profile privacy, not the post's audience. The post-V1 layered grammar (status vs dispute vs review distinct mention semantics) is **deferred** — when `kind_grammar` (§reactions) generalizes to mentions, this section grows a `kind_grammar` discriminator on `Mention`. V1d clients ride forward on additive fields.
 
 **V1d scope:**
 
-- Composer-only. Comments inherit the wire format (PeepSo's `Tags::after_save_comment` runs on the same regex) but the V1d comment composer does NOT ship the autocomplete picker UI — typing the wire token by hand still works because the server validation runs identically. The `Mention[]` overlay is emitted for comments per §3.5.
+- Composer-only. Comments inherit the wire format (the same `@peepso_user_<id>(name)` token, extracted by the same regex) but the V1d comment composer does NOT ship the autocomplete picker UI — typing the wire token by hand still works because the server validation runs identically. The `Mention[]` overlay is emitted for comments per §3.5.
 - Pre-type "recent contacts" candidates, follow-bias ranking, and contentEditable token highlighting are deferred. V1d ships a prefix-search dropdown only (no candidates surfaced when the query is empty).
 
 ### 3.4 `HighlightStrip`
@@ -4931,7 +4931,7 @@ Create a comment on the parent post.
   - `bcc_not_found 404` — feed_id resolves to no activity, **or (v1.99) the caller fails the gate on a post they cannot see at all**. Same body ("Post not found.") either way.
   - `bcc_unavailable 503` — PeepSo `add_comment` returned a falsey result for any other reason.
 - **Side effects:**
-  - PeepSo notifications fire to the parent post author + post followers + every surviving (post-policy) mention via `Tags::after_save_comment`.
+  - PeepSo notifications fire to the parent post author + post followers. Mentions are notified by BCC's dispatcher (§4.10), not PeepSo's `Tags::after_save_comment` *(since v1.NEXT, F-423)*.
   - `bcc_comment_created` event emitted on the §A3 bus (subscribers: NotificationDispatcher, future analytics).
 - **Cache:** `no-store`.
 
@@ -4995,7 +4995,7 @@ Create a photo post on the viewer's own wall. Single photo per post; optional ca
   - `bcc_unavailable 503` — PeepSo deactivated, tmp dir un-creatable, persist failure.
 - **Side effects:**
   - `bcc_post_created` event emitted on the §A3 bus (subscribers: rank progression, future analytics) — uniform with status / blog paths.
-  - PeepSo's notification fan-out (followers, plus every surviving mention via `Tags::after_save_post`).
+  - PeepSo's notification fan-out to followers. Mentions are notified by BCC's dispatcher (§4.10), not PeepSo's `Tags::after_save_post` *(since v1.NEXT, F-423)*.
 - **Cache:** `no-store`.
 
 **V1 deferred:**
@@ -5042,7 +5042,7 @@ Create a GIF post on the viewer's own wall. Single GIF per post; optional captio
   - `bcc_unavailable 503` — PeepSo deactivated, persist failure.
 - **Side effects:**
   - `bcc_post_created` event emitted on the §A3 bus (uniform with status / photo paths).
-  - PeepSo's notification fan-out via the standard `peepso_after_add_post` action — including every surviving (post-policy) mention via `Tags::after_save_post`.
+  - PeepSo's notification fan-out via the standard `peepso_after_add_post` action. Mentions are notified by BCC's dispatcher (§4.10), not PeepSo's `Tags::after_save_post` *(since v1.NEXT, F-423)*.
 - **Cache:** `no-store`.
 
 **V1 deferred:** GIF in comments, multi-GIF posts, GIF stickers in chat, custom emoji / sticker providers (Tenor etc).
@@ -9647,6 +9647,14 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-19 — behaviour change (privacy) — PeepSo's own @mention email no longer runs on BCC writes (F-423)
+
+Ships with bcc-core #147.
+
+- **Mentions in posts, comments and messages:** PeepSo's `Tags::after_save_post` / `after_save_comment` no longer run when BCC writes the content. With PeepSo's tags option on, they emailed "Someone mentioned you" (with a permalink) and wrote a PeepSo-module notification to every mentionee, gated only on the author's profile privacy. So a mention in a secret or closed group post, a followers-only or only-me post, or a DM reached members who could not open it.
+- **What notifies a mention now:** only BCC's `bcc_mention` bell and push, sent to members who can open the post (§4.10). A mention in a **message** notifies no one: BCC has no mention notification for messages.
+- **No request or response changes.** Mentions still render from the stored content (`Mention[]`, §3.3.12), and `MentionPolicy` and its errors are unchanged.
 
 ### v1.194 — 2026-11-18 — fix — the profile Blogs tab shows blogs; the Signals feed no longer serves unrelated rows (F-392)
 
