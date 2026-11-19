@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.186 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.189 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2225,7 +2225,7 @@ Creates an email/password account with a public handle. Mints no JWT — the acc
   ```json
   { "ok": true, "email": "alice@example.com" }
   ```
-  Deliberately carries **no JWT** — the frontend routes to `/verify-email?email=…`.
+  Deliberately carries **no JWT** — the account must be verified before it can sign in. The `email` is echoed so the client knows which address to name on the verification screen; *(since v1.189, F-410)* the frontend stores it client-side and routes to a **bare `/verify-email`**, with no address in the URL.
 - **Errors:** `bcc_invalid_request` 400 (missing/malformed email or password < 8) · `bcc_invalid_handle` 422 (fails §B6) · `bcc_handle_reserved` 422 · `bcc_conflict` 409 (handle taken or email already registered; since v1.147 the message adds that an unconfirmed sign-up frees up after 7 days) · `bcc_password_breached` 422 (*(since v1.171, F-294)* the password appears in a known data breach (Have I Been Pwned's Pwned Passwords): *"This password has appeared in a data breach; please choose a different one."*; checked after the email, password-length and handle checks, so a request that fails those is answered without it; no account is created) · `bcc_rate_limited` 429 · `bcc_internal_error` 500 (`wp_insert_user` failure)
 - **An identical retry is the same sign-up (since v1.158, F-294):** a repeat of a sign-up (same `email`, `handle` and `password`) while that account is still unconfirmed and less than 10 minutes old answers the same `201`. No second account, no second email. Any difference, an older account or a confirmed one gets the usual `409`.
 - **Passwords known to have leaked are refused (since v1.171, F-294):** here, at `POST /auth/reset-password` and at `PATCH /me/account/password`. The server sends only the first 5 hex characters of the password's SHA-1 to Have I Been Pwned's range API (k-anonymity, with response padding) and matches the rest itself; the password never leaves the server. **Fails open:** if the breach list is unreachable, slow (2-second timeout) or answers badly, the password is accepted, so a sign-up is never blocked by a third-party outage. The 8-character minimum is unchanged.
@@ -2408,6 +2408,7 @@ Confirms email ownership and completes signup via either an OTP code or a one-sh
 - **Attempt cap (since v1.105, F-48):** at most **5 wrong codes per (account, current code)**; the 5th burns that code. Because a correct code signs the caller in, the per-IP bucket alone did not bound guesses spread across addresses. The burning attempt, and every attempt after it until a resend (the right code included), answers **`400 bcc_otp_exhausted`** "Too many attempts. Request a new code." *(since v1.175, F-294; it was the generic `bcc_invalid_otp` before, so a user typing the right code was told it was wrong)*. Wrong codes before the cap, and an unknown address, stay generic. The user requests a new code via `/auth/resend-verification`, which starts a fresh count and ends the exhausted state, or uses the emailed link — the **token path is not capped and not affected**.
 - **Address binding (since v1.184, H1):** each code and link records a keyed hash of the address it was mailed to, and verifies only that address. The address being proven is a wallet sign-up's pending address while `user_email` is still the wallet placeholder, and `user_email` otherwise. A right code or a link mailed to any other address is consumed and refused (`bcc_invalid_otp` / `bcc_invalid_verify_token` 400). This holds whatever route changed `user_email`, including one that fires no WordPress hook. ⚠ Codes and links mailed before v1.184 carry no address and are refused the same way. A code lives 15 minutes and a link 24 hours; the member requests a new email.
 - **Cache:** `Cache-Control: no-store`
+- **The mailed link carries the token only (since v1.189, F-410):** the verification email's link is `/verify-email?token=…` and carries **no address**, in any form. A verification link travels further than the inbox it was sent to — forwarded, pasted into support chats, recorded in proxy and referrer logs — so an address in it disclosed **whose account it is** everywhere the link went, on top of the token. Nothing needed it there: the token is self-identifying, the handler takes the token path **before** it reads `email`, and since v1.184 the address is bound to the token server-side anyway (**Address binding** above). Clients must not parse an address out of the link; a `/verify-email` page opened from the email has the token and nothing else, and asks for the address if it wants to offer the OTP form. ⚠ This is unrelated to the `POST /auth/signup` **response**, which still carries `email`. That address is one the client just typed on that device, and the response is not changed here — but it no longer travels in a URL either: the frontend stores it client-side (session-scoped, one tab) and routes to a **bare `/verify-email`**. The same applies to a sign-in refused as unverified. A `/verify-email` page therefore has an address only if it stored one; it asks for it otherwise, and a link token needs none.
 - **A wallet sign-up's pending address (since v1.182, F-294):** the OTP path's `email` resolves to the account whose email it is **or**, failing that, to the one wallet sign-up holding it as its pending address (see `/auth/wallet-signup` → "held pending"). If two wallet sign-ups hold the same pending address it resolves to **neither** (the generic `bcc_invalid_otp`); the emailed link still works, because it names its account. On success, by code or link, the pending address becomes the account's email before verification completes (WordPress's own "email changed" notice is not sent: the old address is the placeholder). A write failure answers `bcc_internal_error` 500 and keeps the pending address; request a new code.
 - **Mapping:** token path consumes the `bcc_vt_<token>` transient (single-use); OTP path resolves by email (or a pending address, above), checks `_bcc_email_verified`, timing-safely (`hash_equals`) consumes the HMAC-hashed `bcc_otp_<userId>` transient. Both converge on `finalizeVerification` → sets `_bcc_email_verified='1'`, sets the auth cookie, **revokes every earlier bearer token for the account (JWT token-version bump, since v1.88)**, mints the JWT, emits `email_verified` audit, fires `do_action('bcc_email_verified', …)`. The revocation means a session held by whoever created the account before the address was proven does not survive the inbox owner's verification; the returned token is the caller's working session and must be stored. Handler `AuthEndpoint::verifyEmail` (route `AuthEndpoint.php:487`). Standard envelope per §1.4.
 
@@ -2459,7 +2460,7 @@ Authenticated personalized feed (§F1, §N6).
   - `cursor` (optional)
   - `limit` (optional, default 20, max 50)
 - **Response 200:** `CursorEnvelope<FeedItem>` per §1.5 / §3.3
-- **Errors:** `bcc_unauthorized`, `bcc_invalid_request` (bad scope)
+- **Errors:** `bcc_unauthorized`, `bcc_invalid_request` (bad scope), `bcc_unavailable` **503** *(v1.188)* when the feed could not be read: see [Feed read failure](#feed-read-failure-vnext) below
 - **Rate limit:** 60/min/user
 - **Cache:** `Cache-Control: private, max-age=15`; React Query `staleTime: 15s`
 - **Mapping:**
@@ -2479,7 +2480,7 @@ Anonymous-friendly trending feed (§F2 zero-follow fallback).
 - **Auth:** Anonymous OR Bearer
 - **Query:** `cursor`, `limit` as above
 - **Response 200:** `CursorEnvelope<FeedItem>` (same shape as `/feed`)
-- **Errors:** `bcc_invalid_request`
+- **Errors:** `bcc_invalid_request`, `bcc_unavailable` **503** *(v1.188)* when the feed could not be read, answered `private, no-store` and never under the public cache header below: see [Feed read failure](#feed-read-failure-vnext) below
 - **Rate limit:** 60/min/IP (anon), 60/min/user (authed)
 - **Cache (v1.109 — NOW VARIES BY VIEWER):**
   - Anonymous: `Cache-Control: public, max-age=60, stale-while-revalidate=120`
@@ -2519,7 +2520,7 @@ Anonymous-friendly hashtag feed — the hot feed narrowed to a single tag.
   - `cursor` (optional)
   - `limit` (optional, default 20, min 1, max 50)
 - **Response 200:** `CursorEnvelope<FeedItem>` — **identical shape to `/feed` and `/feed/hot`**: `data = { items: FeedItem[], pagination: { next_cursor: string|null, has_more: bool } }`
-- **Errors:** `bcc_invalid_request` (missing/empty `tag`)
+- **Errors:** `bcc_invalid_request` (missing/empty `tag`), `bcc_unavailable` **503** *(v1.188)* when the feed could not be read: see [Feed read failure](#feed-read-failure-vnext) below
 - **Rate limit:** 60/min/IP (anon), 60/min/user (authed)
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - **Mapping:** Same `FeedRankingService` single brain (§F3) as `/feed/hot` — identical visibility gates (caution/risky shadow-limit, moderation hide, non-open group exclusion at the anonymous posture, and the global `public_all` visibility gate). The candidate set is then narrowed to posts that carry `#<tag>` as a **whole word**, by PeepSo's own predicate (`PeepSo::hashtags_query_where`: content wrapped in spaces, tab/CR/LF/NBSP read as spaces, `LIKE '% #<tag> %'`, case-insensitive). It is the same predicate the public trending recount uses (`GET /hashtags/trending`), so the feed lists exactly the posts a tag's trending count counts. `#eth` does not match `#ethereum` or `#eth2`, and a tag followed directly by punctuation (`#eth.`) matches in neither (since v1.126; previously a bare substring `LIKE '%#<tag>%'`). The narrowing predicate can only remove posts from the gated set. ⚠ That gated set is read **as the viewer** (the §F-02 per-post gate gets the real viewer id), so for a **signed-in** viewer it is wider than `/feed/hot`'s anonymous one in exactly three ways: the viewer's **own** restricted posts (F-269), members-only posts (level 20, e.g. by an author whose `profile_visibility` is `members`) by any member, and friends-only posts (level 30) by the viewer's friends. Nothing at level 40 (`private`) by anyone else appears. The friend list is **empty in production today** (the peepso-friends plugin is not installed), so in practice no other member's friends-only post appears; the rule is stated for when a friend graph exists. For an anonymous viewer the gated set is `/feed/hot`'s exactly. *(Corrected in v1.180: this entry used to say the tag feed never surfaces a post `/feed/hot` would not, which was not true for a signed-in viewer.)*
@@ -2534,10 +2535,20 @@ Single-activity permalink read (v1.33 backfill — shipped with the post-detail 
 - **Auth:** Anonymous OR Bearer
 - **Path:** `id` (int act_id **or** 8-letter shortcode — see above)
 - **Response 200:** a single §3.3 `FeedItem` (bare object in the §1.4 envelope — NOT a `CursorEnvelope`), same hydration pipeline as `/feed`
-- **Errors:** `bcc_not_found` 404 — covers both "no such activity" and "not visible to this viewer" (§O4.1 caution/risky author exclusion, §K1 mutual-block invisibility, §K1-C moderation hide, and — v1.94 — a `review` whose vote is no longer active (§3.3.2) all collapse to 404; no existence oracle)
+- **Errors:** `bcc_not_found` 404 — covers both "no such activity" and "not visible to this viewer" (§O4.1 caution/risky author exclusion, §K1 mutual-block invisibility, §K1-C moderation hide, and — v1.94 — a `review` whose vote is no longer active (§3.3.2) all collapse to 404; no existence oracle) · `bcc_unavailable` **503** *(v1.188)* when the post could not be read. This is NOT a 404: the post may well exist, so a client must offer a retry, not "post not found". see [Feed read failure](#feed-read-failure-vnext) below
 - **Rate limit:** none route-specific
 - **Cache:** `Cache-Control: private, max-age=15` · `Vary: Authorization, Cookie`
 - **Mapping:** `FeedEndpoint::feedItem` → `FeedRankingService::getActivityById` (same §F3 single brain + `FeedHydrationPipeline` as the list surfaces). FE post-detail page / quick-view modal.
+
+#### Feed read failure (v1.188)
+
+<a id="feed-read-failure-vnext"></a>Applies to every route that reads a feed: `GET /feed`, `/feed/hot`, `/feed/tag`, `/feed/:id` (numeric and shortcode), `/groups/:id/feed`, `/pages/:id/feed`, `/users/:handle/activity` and `/feed/cold-start`.
+
+- **When:** the database read that finds the page's posts did not run (a dropped connection, a failed query). Before v1.188 that answered **200 with `items: []`** (or **404** on a permalink), which a client could not tell from "nobody has posted".
+- **Response:** `bcc_unavailable` **503**, the standard error envelope, with **no `data`** (not even an empty page). Message: *"The feed is temporarily unavailable. Please try again."*, or *"This post is temporarily unavailable. Please try again."* on `/feed/:id`.
+- **Cache:** always `Cache-Control: private, no-store`, including on `/feed/hot`, whose success is publicly cacheable. Server-side, the shared `/feed/hot` first page is never written from a failed read, so an outage is not served to other readers after the database recovers.
+- **Retry:** safe and idempotent; nothing was written. **Clients:** render an error with a retry action, never the empty state ("No posts yet") or "post not found".
+- **Not covered:** the per-item details filled in after the posts are found (author badges, reactions, comment counts) keep their own fallbacks and degrade an item rather than fail the page. The profile Blog tab (`/users/:handle/blog`) is unchanged.
 
 #### Server-side group-privacy + visibility filter (applies to `/feed`, `/feed/hot`, and `/feed/tag`)
 
@@ -2873,7 +2884,7 @@ Per-member activity wall — a single-author slice of the same activity stream t
 - **Path:** `handle`
 - **Query:** `cursor` (optional, same family as `/feed`) · `limit` (optional, default 20, min 1, max 50 — **refused above 50**, not clamped)
 - **Response 200:** `CursorEnvelope<FeedItem>` — identical shape to `/feed`/`/feed/hot`/`/feed/tag`: `data = { items: FeedItem[] (§3.3), pagination: { next_cursor, has_more } }`, fully hydrated (bodies, viewer reactions, author badges/ranks, social proof, permissions, group context, comment counts).
-- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer, **or the account is suspended** *(v1.112)*
+- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer, **or the account is suspended** *(v1.112)* · `bcc_unavailable` **503** *(v1.188)* when the activity could not be read: see [Feed read failure](#feed-read-failure-vnext)
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - ⚠⚠ **THE BLOGS AND REVIEWS SECTION SWITCHES FILTER THIS TAB AS OF v1.163.** When the member has switched **Blogs** off, blog-module items are absent from this response; when they have switched **Reviews** off, the reviews they WROTE are absent. The owner and §F-02-exempt admins are unaffected, and a member who never touched a switch is unaffected (absent means shown).
   This tab is the **default** one a visitor lands on, so before this it returned every module the member had written and the Blogs switch was cosmetic on the surface most likely to be read.
@@ -3151,7 +3162,7 @@ columns→`*_at_watch`) via a data-preserving migration. Canonical celebration c
 - **Response 200:** the same `{ items: FeedItem[], pagination: { next_cursor, has_more } }` as `GET /groups/:id/feed`.
 - **Scope:** only posts carrying the page marker. Filtered by the marker alone, **never by current operator**: a post stays on the page, with its label, after its author loses operator status.
 - **Exclusions:** same as the author wall: the §O4.1 reputation shadow list (a caution or risky author's posts read as empty here too), §K1 mutual blocks, and moderation-hidden rows.
-- **Errors:** `bcc_not_found` 404 unless `id` is a published validator page.
+- **Errors:** `bcc_not_found` 404 unless `id` is a published validator page · `bcc_unavailable` **503** *(v1.188)* when the feed could not be read: see [Feed read failure](#feed-read-failure-vnext).
 - **Cache:** `private, no-store`, `Vary: Authorization, Cookie` (per-viewer exclusions).
 - **Mapping:** `PagesEndpoint::feed` → `FeedRankingService::getActivityForPage` → `ActivityFeedService::getActivityForPage`.
 
@@ -4687,6 +4698,7 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
 - **v1.159 (F-345):** new bell key `bcc_review_reply` (default on, **in-app only**: no push variant, excluded from the email digest). To the reviewer when the reviewed party replies; `actor` = the replier; `external_id` = the reviewed page. `link` is the page (or `/u/{replier}` for a review of a member's profile). Message: *"@{replier} replied to your review of {page}."*, or *"@{replier} replied to your review."* when there is no page name (member profiles).
 - **v1.132 (F-272):** three new bell keys, all default on, **in-app only** (no push variant, excluded from the email digest). `external_id` is the group; `link` is the group's page (`/communities/{slug}`), or `/communities` if the group no longer resolves.
   - `bcc_group_join_requested` — to each owner and manager of a closed group (never to one blocked either way with the requester); `actor` = the requester. *"@{handle} asked to join {group}."*
+    - *v1.187 (bcc-trust #757, F-389):* its `link` is the Members tab's requests block, **`/communities/{slug}/members#requests`**, where the request is decided (`#requests` is the frontend's anchor, bcc-frontend #327). Same `/communities` fallback when the group no longer resolves.
   - `bcc_group_join_approved` — to the requester; `actor` = the approver. *"You're now a member of {group}."*
   - `bcc_group_invited` — to the invitee; `actor` = the inviter. *"@{handle} invited you to join {group}."*
   - A denied request, a declined or revoked invitation and a cancelled request notify nobody.
@@ -7238,6 +7250,7 @@ Public cold-start three-block bridge for the home-feed empty state — a civic m
   { "halls": [ { "slug": "cosmos-hall", "name": "Cosmos Hall", "chain_slug": "cosmos", "member_count": 88 } ], "recent_operators": [ { "handle": "ramona", "display_name": "Ramona V.", "avatar_url": "https://…", "reputation_tier": "trusted", "reputation_tier_label": "Trusted", "rank_label": "Journeyman", "recent_action": "REVIEWED a card", "link": "/u/ramona" } ], "hot_posts": [ /* §3.3 FeedItem[] */ ] }
   ```
   `recent_operators` are ordered by a stable daily shuffle (NOT ranked); `recent_action` uses a locked past-tense verb allowlist with a `Recently on the floor.` fallback. `reputation_tier` is always a real band. `hot_posts` (v1.180, F-276): for an **anonymous** viewer, the first items of the shared `/feed/hot` page verbatim. For a **signed-in** viewer, the same posts read and hydrated **for that viewer** (`FeedRankingService::getHotFeedForViewer`, the tag feed's path without a hashtag), so `viewer_reaction`, the Stoke state, the author's vouch state and `is_followed_by_viewer`, and `permissions.can_report` / `can_delete` are the viewer's own, not a stranger's. Visibility is the hot feed's gates read **as this viewer**, the same as on `GET /feed/tag`, so three kinds of post can appear here that `/feed/hot` withholds: the viewer's **own** restricted posts (F-269), members-only posts (level 20) by any member, and friends-only posts (level 30) by the viewer's friends. Nothing at level 40 (`private`) by anyone else can. The friend list is empty in production today (peepso-friends is not installed), so in practice no other member's friends-only post appears; see `GET /feed/tag`.
+- **Errors:** `bcc_unavailable` **503** *(v1.188)* when the hot-posts block could not be read: the whole panel answers 503 rather than a panel with a silently empty `hot_posts`. See [Feed read failure](#feed-read-failure-vnext).
 - **Cache:** `Cache-Control: private, no-store` (per-viewer per-day stable-randomization).
 - **Mapping:** `FeedColdStartEndpoint::handle` (route `FeedColdStartEndpoint.php:45`) → `FeedColdStartService::getColdStart`; operator hydration reuses the `MemberSummaryPrefetcher` bundle. FE `cold-start-endpoints.ts:getColdStart`.
 
@@ -7269,7 +7282,7 @@ Group-scoped, cursor-paginated activity stream. Membership-gated in the handler;
 - **Path:** `id` (int, required — group id, not slug).
 - **Query:** `cursor` (optional, opaque per §1.5) · `limit` (optional, default 20, min 1, max 50) · `hall_feed` (optional, default `main`) ∈ `main|ranked` *(v1.62 — Rank Phase 7, spec §21.3)* — Hall feed-channel selector: `ranked` returns **only** ranked-channel posts (`_bcc_ranked_feed = '1'` INNER JOIN); `main`/absent returns the ordinary feed with ranked posts **excluded** (anti-join) so the channels never double-serve. **Reading the ranked channel is open to everyone** (member/non-member/anon alike — posting is what's gated, on the write side); anything except the literal `ranked` clamps to `main`. On a non-Hall group `ranked` is simply empty (no posts carry the marker outside Halls) — no error.
 - **Response 200:** `CursorEnvelope<FeedItem>` — identical shape to `/feed`: `data = { items: FeedItem[] (§3.3), pagination: { next_cursor, has_more } }`.
-- **Errors:** `bcc_invalid_request` 400 (invalid/zero id) · `bcc_not_found` 404 (group missing OR secret + non-member). No 403 in v1.24 (non-members get the teaser rather than a refusal).
+- **Errors:** `bcc_invalid_request` 400 (invalid/zero id) · `bcc_not_found` 404 (group missing OR secret + non-member). No 403 in v1.24 (non-members get the teaser rather than a refusal). · `bcc_unavailable` **503** *(v1.188)* when the feed could not be read: see [Feed read failure](#feed-read-failure-vnext).
 - **Cache:** `private, no-store`; `Vary: Authorization, Cookie`.
 - **Mapping:** `GroupsDetailEndpoint::feed` (route `GroupsDetailEndpoint.php:69`) → `GroupsService::gateGroupFeed` → `FeedRankingService::getGroupFeed($viewerId, $groupId, $cursor, $limit, $publicOnly, $hallFeed)` (channel filter applied in bcc-core `PeepSoActivityRepository` on the group-scoped path only). FE `useGroupFeed`.
 
@@ -9612,6 +9625,31 @@ Ships with bcc-trust #759. Completes v1.179: blocking any id no longer tells whi
 - Before, every row was filled. An id nobody holds read `member-<id>` with a link to a profile that does not exist, and a private or suspended member's handle, name and avatar were shown. Blocking an id and then listing the blocks told a member whether the id is held, and by whom.
 - **Unchanged:** `user_id`, the row order, `pagination` (every block is still counted), and unblocking by `user_id`.
 - **Clients:** treat `handle === ""` as an unknown account (no link, no avatar).
+
+### v1.189 — 2026-11-19 — behaviour change (privacy) — the mailed verification link carries no address (F-410)
+
+Ships with bcc-trust **#760** (F-410, backend half) and bcc-frontend **#325** (frontend half). Either side can land first: the frontend already verifies with `{ token }` alone and handles a page opened with no stored address.
+
+- **`POST /auth/verify-email` — the emailed link (behaviour change, narrowing):** the link is now `/verify-email?token=…`. It previously carried `email=` as well, which disclosed whose account the link belonged to wherever the link was forwarded, pasted or logged. The token path is otherwise unchanged — same 24-hour TTL, same single use, same address binding from v1.184.
+- **No request shape changes.** `POST /auth/verify-email` still accepts `{ token }` or `{ email, code }`, and the token path still wins when both are present. A client that posts the token it found in the link needs no change.
+- ⚠ **A client that parsed the address out of the link must stop.** The `/verify-email` page reached from the email now has the token only; ask for the address if you want to offer the 6-digit-code form beside it.
+- **The address no longer travels in a URL at all.** `POST /auth/signup` still returns `{ ok, email }` — that part is unchanged — but the frontend now stores the address client-side (session-scoped, one tab, cleared on success or sign-out) and routes to a **bare `/verify-email`**. Same for a sign-in refused as unverified. A legacy `?email=` link is still honoured for its 24-hour life: the page takes the address out of the URL and then removes the parameter from it.
+
+### v1.188 — 2026-11-18 — behaviour change — a feed that could not be read answers 503, not an empty page (F-275)
+
+Ships with bcc-trust #732 and bcc-core #138 (bcc-core first).
+
+- **Every feed route** (`GET /feed`, `/feed/hot`, `/feed/tag`, `/feed/:id`, `/groups/:id/feed`, `/pages/:id/feed`, `/users/:handle/activity`, `/feed/cold-start`): when the read that finds the posts did not run, the route now answers `bcc_unavailable` **503**, `private, no-store`, with no `data`. Before, it answered **200 with `items: []`** (a permalink: **404**), indistinguishable from an empty feed. See [Feed read failure](#feed-read-failure-vnext).
+- **`/feed/hot`:** the 503 is never publicly cacheable, and the shared first page is never written from a failed read.
+- **Clients:** treat a feed 503 as retryable: show an error with a retry action, not the empty state or "post not found". Successful responses are unchanged.
+
+### v1.187 — 2026-11-18 — behaviour change — a join-request bell row opens the Members tab's requests block (F-389)
+
+Ships with bcc-trust **#757**.
+
+- **`bcc_group_join_requested` (bell, v1.132):** `link` changes from the group's page (`/communities/{slug}`) to `/communities/{slug}/members#requests`, the Members tab's "Requests & invitations" block, where the owner or manager approves or denies. The fallback for a group that no longer resolves is still `/communities`.
+- `bcc_group_join_approved` and `bcc_group_invited` still link the group's page.
+- The link is resolved when the bell is read, so rows already stored pick it up. No new key, field or route; the frontend renders `link` verbatim (§A2).
 
 ### v1.186 — 2026-11-18 — behaviour change (security) — members sign in at the app only (H2)
 
