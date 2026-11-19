@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.201 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.202 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -4390,7 +4390,7 @@ Top-N search suggestions for the §G1 nav-bar autocomplete. Smaller per-item sha
   }
   ```
 - **`incomplete` (v1.199, F-421):** `boolean`, always present. `true` when a vertical this request searched could not be read: bcc-search answered **503** (degraded) or **429** (the shared `search` throttle bucket is spent). `items` then holds only what the other verticals found, possibly nothing. `false` otherwise, including for a `q` under 2 characters, which searches nothing. The status stays **200** either way: autocomplete never blocks mid-type. **Clients:** an empty `items` with `incomplete: true` means "suggestions are unavailable right now", not "no matches"; the next keystroke retries.
-  - ⚠ **Not covered:** a database failure inside member matching. bcc-search delegates the match to bcc-trust, which gets nothing back from WordPress's user query on a DB error, so `/search/users` answers 200 with no results and `incomplete` stays `false`. A follow-up covers it.
+  - **Member matching included** *(v1.202, F-432)*: a database failure inside member matching, or in PeepSo's privacy pass over the matches, now makes `/search/users` answer **503** (see that entry). So the member rows count as a vertical that could not be read, and `incomplete` is `true`. *(v1.199 listed this as not covered: `/search/users` answered 200 with no results, and `incomplete` stayed `false`.)*
 - **Result cap + All-scope allocation (v1.70):** the response never exceeds **12 items** (mirrors the upstream `/bcc/v1/search` cap; previously undocumented). With no `kind`, three verticals merge deterministically: floors first — 1 page, then 1 community, then 1 member, each only when that vertical returned results and capacity remains — then communities top up to **3**, members top up to **3**, and pages absorb ALL remaining capacity (unused community/member quota flows back to pages). Display grouping is pages → communities → members; within each vertical the upstream ranking order is preserved. The count may be **fewer** than 12 (vertical shortfall, dropped rows). With `kind`, the single vertical is queried and capped at 12. A degraded/rate-limited vertical is silently absent from the merge — autocomplete never surfaces a partial-failure error.
 - **Per-kind field semantics (v1.70):**
   - Page kinds (`validator`/`project`/`creator`): unchanged — real tier/label/score, `is_verified` (owner email), `is_claim_verified` per the verified-wins slice below.
@@ -4477,9 +4477,9 @@ Users vertical — separate cache + rate-limit bucket from project search so the
   ```
 - **Errors (legacy WP shape):**
   - `bcc_rate_limited` (HTTP 429)
-  - `bcc_upstream_unavailable` (HTTP 503; `Retry-After: 5`)
+  - `bcc_upstream_unavailable` (HTTP 503; `Retry-After: 5`): the search could not run. Retryable. *(v1.202, F-432)* This now includes a member-matching read or PeepSo's privacy read that did not run. Before, those answered **200 with no results**, the same as a search that matched nobody.
   *(doc corrected 2026-08-05: the previously listed `rate_limit_exceeded` / `user_search_unavailable` codes never existed in code)*
-- **Cache:** server-side `45s` per-query.
+- **Cache:** server-side `45s` per-query. A 503 is never cached.
 - **Envelope note (doc corrected 2026-08-05):** §1.4-enveloped on the wire like every `/bcc/v1` route — the shape above is the inner payload; same client routing as `GET /bcc/v1/search` above.
 
 #### `GET /bcc/v1/search/groups`
@@ -9670,6 +9670,15 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.202 — 2026-11-19 — behaviour change — a member search whose reads did not run answers 503, not "no members" (F-432)
+
+Ships with bcc-trust #778 and bcc-search #45. bcc-trust first; the other order is harmless, since an older bcc-trust ignores the new flag and keeps its old answer.
+
+- **`GET /search/users`:** when member matching or PeepSo's privacy pass over the matches did not run, the route answers `bcc_upstream_unavailable` **503** (`Retry-After: 5`, never cached). Before, it answered **200 with no results**, the same as a search that matched nobody.
+- **`GET /cards/search`:** that 503 marks the member vertical unreadable, so `incomplete` is `true` for it too. This closes the "not covered" case v1.199 listed.
+- **Unchanged:** the `/members` directory search and the @-mention picker still answer a failed match as no results. They use the same matcher but do not opt into failing closed.
+- **Clients:** no change. `/search/users`' 503 was already documented as retryable, and `/cards/search`'s `incomplete` already means "unavailable, not no matches".
 
 ### v1.201 — 2026-11-19 — behaviour change (privacy) — reporting a SECRET page's announcement answers as missing to non-members
 
