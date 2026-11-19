@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.192 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.197 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -172,6 +172,7 @@ The canonical envelope's `message` is presentation; the *behavior fork* is on `c
 - **It assumes nothing else uses the limit meanwhile.** Another request from the same account or network can still use it up.
 - **Endpoints with their own wait.** A 429 that knows its exact wait sets it itself and is never overwritten, for example the `PATCH /me/handle` cooldown (v1.148).
 - **A 429 that no rate limit caused** carries no injected `Retry-After`, `X-RateLimit-*` or `retry_after_seconds`. For example, `bcc_captcha_required` on `POST /auth/login`: re-submit with a token straight away.
+- *(since v1.193, F-391)* **The trust engine's own limits carry it too:** `POST /me/watching/watch`, `DELETE /me/watching/:follow_id`, `POST /bcc-trust/v1/device-fingerprint`, `POST /bcc-trust/v1/x/verify-share`, and on `POST /posts` `kind=review` the daily downvote cap and the per-account review limit. A signed-in member is limited per account AND per network, so the wait is until a retry would pass both.
 
 Rate-limit buckets are per-user (when authenticated) AND per-IP. Both must allow the request through; the more conservative rejection wins. The server never returns 429 from cached read paths (cached responses bypass throttling).
 
@@ -1732,11 +1733,11 @@ The wire format on disk is PeepSo's mention shortcode `@peepso_user_<id>(<name>)
 - Failing the policy returns `bcc_invalid_mention_target` (with the offending `user_id` echoed in the error payload, but NOT the reason — privacy posture preserved). The post is rejected; nothing is written. Strict reject, not silent strip.
 - Cap: **10 mentions per post**. Over-cap returns `bcc_too_many_mentions` (echoes the cap as `max`).
 
-**Notification semantics — V1d ships a single mention notification type.** PeepSo's existing `Tags::after_save_post` dispatcher fires `tagged` notifications for every surviving (post-policy) mention in a status/photo/gif body. The post-V1 layered grammar (status vs dispute vs review distinct mention semantics) is **deferred** — when `kind_grammar` (§reactions) generalizes to mentions, this section grows a `kind_grammar` discriminator on `Mention`. V1d clients ride forward on additive fields.
+**Notification semantics — V1d ships a single mention notification type.** BCC's `NotificationDispatcher` sends one `bcc_mention` bell and push per surviving (post-policy) mention in a status/photo/gif body or a comment (§4.10, @-mention dispatch). *(Since v1.196, F-423)* PeepSo's own `Tags::after_save_post` / `after_save_comment` dispatcher (its "mentioned you" email and PeepSo-module notification) does **not** run on BCC writes: it was gated on the author's profile privacy, not the post's audience. The post-V1 layered grammar (status vs dispute vs review distinct mention semantics) is **deferred** — when `kind_grammar` (§reactions) generalizes to mentions, this section grows a `kind_grammar` discriminator on `Mention`. V1d clients ride forward on additive fields.
 
 **V1d scope:**
 
-- Composer-only. Comments inherit the wire format (PeepSo's `Tags::after_save_comment` runs on the same regex) but the V1d comment composer does NOT ship the autocomplete picker UI — typing the wire token by hand still works because the server validation runs identically. The `Mention[]` overlay is emitted for comments per §3.5.
+- Composer-only. Comments inherit the wire format (the same `@peepso_user_<id>(name)` token, extracted by the same regex) but the V1d comment composer does NOT ship the autocomplete picker UI — typing the wire token by hand still works because the server validation runs identically. The `Mention[]` overlay is emitted for comments per §3.5.
 - Pre-type "recent contacts" candidates, follow-bias ranking, and contentEditable token highlighting are deferred. V1d ships a prefix-search dropdown only (no candidates surfaced when the query is empty).
 
 ### 3.4 `HighlightStrip`
@@ -2459,7 +2460,7 @@ Authenticated personalized feed (§F1, §N6).
 
 - **Auth:** Bearer (required)
 - **Query:**
-  - `scope` ∈ {`for_you`, `following`, `signals`} — default `for_you` (§N6; "community" cut)
+  - `scope` ∈ {`for_you`, `following`, `signals`, `groups`} — default `for_you` (§N6; "community" cut). `groups` *(v1.195, F-416)* is "My Groups", see the mapping below
   - `cursor` (optional)
   - `limit` (optional, default 20, max 50)
 - **Response 200:** `CursorEnvelope<FeedItem>` per §1.5 / §3.3
@@ -2473,8 +2474,17 @@ Authenticated personalized feed (§F1, §N6).
   - **Scope-to-filter mapping:**
     - `for_you` → ranked stream, F1 priority chain applied
     - `following` → strict-time-ordered, posts attributed to entities/users in the viewer's `peepso_user_followers` set, signal kinds excluded
-    - `signals` → signal post-kinds only, ranked by recency + severity
-  - Shadow-limited authors (§K1, §O4.1) excluded from all scopes for this viewer
+    - `signals` → signal post-kinds only, ranked by recency + severity. *(v1.194, F-392)* Nothing writes a signal post yet, so this is an empty page (`items: []`, `has_more: false`). It used to serve unrelated legacy rows.
+    - `groups` *(v1.195, F-416)* → "My Groups": the posts of every group and Hall the viewer is an **active member** of, newest first. ⭐ It is the union of the viewer's own rooms, each post under its ROOM's rules, and it shows exactly what opening each room (`GET /groups/{id}/feed`) shows a member:
+      - **Membership:** published groups only, with the viewer's status `member*`. Pending, invited and banned rows are out, and a banned row beside a stale member row wins. At most the 200 most recently joined rooms are read.
+      - **A member read:** `members_only` posts are included (absent visibility meta counts as members_only), across open, closed, secret and NFT rooms. Both Hall channels (main and ranked) are included.
+      - **§F-02 profile privacy is NOT applied**, exactly as in the room. This is within the 2026-11-12 decision's intent: its "/feed keeps F-02" rule is about the mixed feed surfacing group posts to non-members, while this scope only returns posts from rooms the viewer belongs to.
+      - **Shadow-limit (§O4.1):** applied except in the rooms that lift it for their own posts, which today are NFT holder rooms, as on the room's own feed.
+      - **Blocks both ways and moderation hide:** applied, as in every scope.
+      - **Empty:** a viewer in no group gets `200` with `items: []` and `has_more: false`, not an error.
+      - **503:** a membership read that fails answers `bcc_unavailable` **503**, like any other feed read failure, never an empty page.
+      - **Signed-in only**, like every `/feed` scope.
+  - Shadow-limited authors (§K1, §O4.1) excluded from all scopes for this viewer, except inside an NFT holder room on `groups`, which follows the room
 
 #### `GET /bcc/v1/feed/hot`
 
@@ -2545,13 +2555,13 @@ Single-activity permalink read (v1.33 backfill — shipped with the post-detail 
 
 #### Feed read failure (v1.188)
 
-<a id="feed-read-failure-vnext"></a>Applies to every route that reads a feed: `GET /feed`, `/feed/hot`, `/feed/tag`, `/feed/:id` (numeric and shortcode), `/groups/:id/feed`, `/pages/:id/feed`, `/users/:handle/activity` and `/feed/cold-start`.
+<a id="feed-read-failure-vnext"></a>Applies to every route that reads a feed: `GET /feed`, `/feed/hot`, `/feed/tag`, `/feed/:id` (numeric and shortcode), `/groups/:id/feed`, `/pages/:id/feed`, `/users/:handle/activity`, `/users/:handle/blog` *(v1.197)* and `/feed/cold-start`. On `/feed/cold-start` the reads covered are the `hot_posts` block and, *(v1.197)*, each listed operator's `recent_action`.
 
 - **When:** the database read that finds the page's posts did not run (a dropped connection, a failed query). Before v1.188 that answered **200 with `items: []`** (or **404** on a permalink), which a client could not tell from "nobody has posted".
 - **Response:** `bcc_unavailable` **503**, the standard error envelope, with **no `data`** (not even an empty page). Message: *"The feed is temporarily unavailable. Please try again."*, or *"This post is temporarily unavailable. Please try again."* on `/feed/:id`.
 - **Cache:** always `Cache-Control: private, no-store`, including on `/feed/hot`, whose success is publicly cacheable. Server-side, the shared `/feed/hot` first page is never written from a failed read, so an outage is not served to other readers after the database recovers.
 - **Retry:** safe and idempotent; nothing was written. **Clients:** render an error with a retry action, never the empty state ("No posts yet") or "post not found".
-- **Not covered:** the per-item details filled in after the posts are found (author badges, reactions, comment counts) keep their own fallbacks and degrade an item rather than fail the page. The profile Blog tab (`/users/:handle/blog`) is unchanged.
+- **Not covered:** the per-item details filled in after the posts are found (author badges, reactions, comment counts) keep their own fallbacks and degrade an item rather than fail the page. The `live_shift` strip inside the profile payload (`GET /users/:handle`) keeps its fallback too: a failed read leaves the strip empty and the rest of the profile still loads, so one decorative strip cannot blank the whole profile.
 
 #### Server-side group-privacy + visibility filter (applies to `/feed`, `/feed/hot`, and `/feed/tag`)
 
@@ -2817,7 +2827,7 @@ The member's long-form blog posts (§D6 blog tab), newest-first, cursor-paginate
 - **Path:** `handle`
 - **Query:** `cursor` (optional, opaque base64url `{t,id}`, same family as `/feed`) · `limit` (optional, default 20, min 1, max 50 — **refused above 50**, not clamped)
 - **Response 200:** `CursorEnvelope<FeedItem>` — same shape as `/feed`: `data = { items: FeedItem[] (§3.3), pagination: { next_cursor: string|null, has_more: bool } }`, scoped to `act_user_id = handle AND act_module_id = 'blog'`. The blog body carries the full `full_text` (the Floor variant omits it): `{ excerpt, full_text, wp_post_id, title, category (string|null), tags (string[]), chain_tags ([{id, slug, name, color, icon_url}]), disclosure ({tickers, note}|null), cover_image_url (string|null), cover_image_id (int|null), sources (string[]) }`.
-- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer, **or the account is suspended** *(v1.112)*
+- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer, **or the account is suspended** *(v1.112)* · `bcc_unavailable` **503** *(v1.197)* when the blog posts could not be read, answered `private, no-store` rather than under the cache header below: see [Feed read failure](#feed-read-failure-vnext). Before, that answered an empty tab (`items: []`) for a member who has written blogs. A Blogs section the owner has switched off (above) still answers its documented empty: that gate runs before the read.
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - **Mapping:** `BlogService::getUserBlog` → `PeepSoActivityRepository::getActivities` (over-fetch-by-1 `has_more`, moderation-hidden excluded per §K1-C); body via `BlogService::hydrateForPostId(..., includeFullText: true)`. Handler `UsersEndpoint::blog` (route `UsersEndpoint.php:191`); the section gate itself lives in `BlogService::getUserBlog` via `ProfileSectionVisibility::hides`, NOT in the route — a route gate would be bypassed by any second caller.
 
@@ -4933,7 +4943,7 @@ Create a comment on the parent post.
   - `bcc_not_found 404` — feed_id resolves to no activity, **or (v1.99) the caller fails the gate on a post they cannot see at all**. Same body ("Post not found.") either way.
   - `bcc_unavailable 503` — PeepSo `add_comment` returned a falsey result for any other reason.
 - **Side effects:**
-  - PeepSo notifications fire to the parent post author + post followers + every surviving (post-policy) mention via `Tags::after_save_comment`.
+  - PeepSo notifications fire to the parent post author + post followers. Mentions are notified by BCC's dispatcher (§4.10), not PeepSo's `Tags::after_save_comment` *(since v1.196, F-423)*.
   - `bcc_comment_created` event emitted on the §A3 bus (subscribers: NotificationDispatcher, future analytics).
 - **Cache:** `no-store`.
 
@@ -4997,7 +5007,7 @@ Create a photo post on the viewer's own wall. Single photo per post; optional ca
   - `bcc_unavailable 503` — PeepSo deactivated, tmp dir un-creatable, persist failure.
 - **Side effects:**
   - `bcc_post_created` event emitted on the §A3 bus (subscribers: rank progression, future analytics) — uniform with status / blog paths.
-  - PeepSo's notification fan-out (followers, plus every surviving mention via `Tags::after_save_post`).
+  - PeepSo itself sends no notification for an own-wall post. Mentions are notified by BCC's dispatcher (§4.10), not PeepSo's `Tags::after_save_post` *(since v1.196, F-423)*.
 - **Cache:** `no-store`.
 
 **V1 deferred:**
@@ -5044,7 +5054,7 @@ Create a GIF post on the viewer's own wall. Single GIF per post; optional captio
   - `bcc_unavailable 503` — PeepSo deactivated, persist failure.
 - **Side effects:**
   - `bcc_post_created` event emitted on the §A3 bus (uniform with status / photo paths).
-  - PeepSo's notification fan-out via the standard `peepso_after_add_post` action — including every surviving (post-policy) mention via `Tags::after_save_post`.
+  - PeepSo itself sends no notification for an own-wall post. Mentions are notified by BCC's dispatcher (§4.10), not PeepSo's `Tags::after_save_post` *(since v1.196, F-423)*.
 - **Cache:** `no-store`.
 
 **V1 deferred:** GIF in comments, multi-GIF posts, GIF stickers in chat, custom emoji / sticker providers (Tenor etc).
@@ -6942,7 +6952,7 @@ Create a post. The `kind` discriminator routes to one of three writers (`status`
 - **Response 200 (`kind=status`):** `{ "ok": true, "feed_id": "feed_2210184", "post_id": 4012, "act_id": 2210184 }`
 - **Response 200 (`kind=review`):** `{ "ok": true, "feed_id": null, "vote_id": 9001, "page_id": 55, "grade": "trust" }` — `feed_id` is `null` (the activity row is written async by `ActivityStreamWriter` on `bcc_review_published`). For a member review `page_id` is the resolved self-page id.
 - **Response 200 (`kind=blog`):** `{ "ok": true, "post_id": 4012, "excerpt_length": 142, "full_text_length": 5300, "status": "publish" }`
-- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (unsupported kind; missing/over-length content/excerpt/title/tag/source; under-length excerpt; review missing/zero `target_page_id` (entity) or `target_user_id` (member); invalid grade; unknown category/chain_tag; malformed tags/disclosure; cover not found/owned; invalid status; **`kind=blog` with a ranked `hall_feed` — v1.96, "Blog posts go to the main feed; they cannot target a ranked Hall channel."**; **`hall_feed=ranked` with no group or a non-Hall group — v1.62 §21.3**) · `bcc_invalid_mention_target` 400 (§3.3.12 `MentionPolicy`; echoes `{user_id}`) · `bcc_too_many_mentions` 400 (`{max: 10}`) · `bcc_forbidden` 403 (review eligibility / PeepSo `PERM_POST`; **or `hall_feed=ranked` by a Hall member failing `can('post_ranked_hall_feed')` — `error.data.reason` ∈ `suspended|new_member|below_journeyman|below_neutral|in_recovery`, v1.62 §21.3**) · `bcc_permission_denied` 403 (group-scoped status, non-member; **or `visibility=public_all` by a member not authorized to syndicate — §4.14 `visibility` rule**) · `bcc_not_found` 404 (group missing/secret) · `bcc_rate_limited` 429 · `bcc_unavailable` 503
+- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (unsupported kind; missing/over-length content/excerpt/title/tag/source; under-length excerpt; review missing/zero `target_page_id` (entity) or `target_user_id` (member); invalid grade; unknown category/chain_tag; malformed tags/disclosure; cover not found/owned; invalid status; **`kind=blog` with a ranked `hall_feed` — v1.96, "Blog posts go to the main feed; they cannot target a ranked Hall channel."**; **`hall_feed=ranked` with no group or a non-Hall group — v1.62 §21.3**) · `bcc_invalid_mention_target` 400 (§3.3.12 `MentionPolicy`; echoes `{user_id}`) · `bcc_too_many_mentions` 400 (`{max: 10}`) · `bcc_forbidden` 403 (review eligibility / PeepSo `PERM_POST`; **or `hall_feed=ranked` by a Hall member failing `can('post_ranked_hall_feed')` — `error.data.reason` ∈ `suspended|new_member|below_journeyman|below_neutral|in_recovery`, v1.62 §21.3**) · `bcc_permission_denied` 403 (group-scoped status, non-member; **or `visibility=public_all` by a member not authorized to syndicate — §4.14 `visibility` rule**) · `bcc_not_found` 404 (group missing/secret) · `bcc_rate_limited` 429 (the posting limits; **for `kind=review` also the daily downvote cap and the per-account review limit, which answered `bcc_forbidden` 403 before v1.193 — F-391**; with the time-left `Retry-After`, §1.4.4) · `bcc_unavailable` 503
 - **Side effects:** `bcc_post_created` / `bcc_review_published` / `bcc_blog_post_created` (publish only) on the §A3 bus; subscribers run async via Action Scheduler.
 - **Cache:** `no-store`.
 - **Mapping:** `PostsEndpoint::create` (route `PostsEndpoint.php:75`) → `PostsService::createStatus` / `createReview` / `createBlog`.
@@ -7262,7 +7272,7 @@ Public cold-start three-block bridge for the home-feed empty state — a civic m
   { "halls": [ { "slug": "cosmos-hall", "name": "Cosmos Hall", "chain_slug": "cosmos", "member_count": 88 } ], "recent_operators": [ { "handle": "ramona", "display_name": "Ramona V.", "avatar_url": "https://…", "reputation_tier": "trusted", "reputation_tier_label": "Trusted", "rank_label": "Journeyman", "recent_action": "REVIEWED a card", "link": "/u/ramona" } ], "hot_posts": [ /* §3.3 FeedItem[] */ ] }
   ```
   `recent_operators` are ordered by a stable daily shuffle (NOT ranked); `recent_action` uses a locked past-tense verb allowlist with a `Recently on the floor.` fallback. `reputation_tier` is always a real band. `hot_posts` (v1.180, F-276): for an **anonymous** viewer, the first items of the shared `/feed/hot` page verbatim. For a **signed-in** viewer, the same posts read and hydrated **for that viewer** (`FeedRankingService::getHotFeedForViewer`, the tag feed's path without a hashtag), so `viewer_reaction`, the Stoke state, the author's vouch state and `is_followed_by_viewer`, and `permissions.can_report` / `can_delete` are the viewer's own, not a stranger's. Visibility is the hot feed's gates read **as this viewer**, the same as on `GET /feed/tag`, so three kinds of post can appear here that `/feed/hot` withholds: the viewer's **own** restricted posts (F-269), members-only posts (level 20) by any member, and friends-only posts (level 30) by the viewer's friends. Nothing at level 40 (`private`) by anyone else can. The friend list is empty in production today (peepso-friends is not installed), so in practice no other member's friends-only post appears; see `GET /feed/tag`.
-- **Errors:** `bcc_unavailable` **503** *(v1.188)* when the hot-posts block could not be read: the whole panel answers 503 rather than a panel with a silently empty `hot_posts`. See [Feed read failure](#feed-read-failure-vnext).
+- **Errors:** `bcc_unavailable` **503** *(v1.188)* when the hot-posts block could not be read: the whole panel answers 503 rather than a panel with a silently empty `hot_posts`. *(v1.197)* The same when a listed operator's `recent_action` could not be read: the panel answers 503 rather than putting the `Recently on the floor.` fallback on a member whose last action is unknown. The fallback is unchanged for a member with no activity, or whose last action is outside the verb allowlist. See [Feed read failure](#feed-read-failure-vnext).
 - **Cache:** `Cache-Control: private, no-store` (per-viewer per-day stable-randomization).
 - **Mapping:** `FeedColdStartEndpoint::handle` (route `FeedColdStartEndpoint.php:45`) → `FeedColdStartService::getColdStart`; operator hydration reuses the `MemberSummaryPrefetcher` bundle. FE `cold-start-endpoints.ts:getColdStart`.
 
@@ -9659,6 +9669,58 @@ Ships with bcc-trust #744. Replaces v1.182's "two holding it → nobody".
 - **Verification mail:** names the account's `@handle` ("This code confirms the email for @handle. If that isn't your account, ignore this email.").
 - **A holder** counts only while the address is still the one its verification would prove (#766's rule): a sign-up whose `user_email` has moved off the placeholder is no holder of a leftover pending address.
 - **Clients:** no change; the same requests, answers and codes. A user with several codes in one inbox may enter any of them with that address.
+
+### v1.197 — 2026-11-19 — behaviour change — the Blog tab and the cold-start panel's `recent_action` follow the feed read-failure rule (F-275)
+
+Ships with bcc-trust #762. Like v1.188, it relies on bcc-core #138. Deploying bcc-trust first is harmless: an older bcc-core ignores the extra positional argument, so these two reads keep their old answer (no fatal) until bcc-core #138 is live.
+
+- **`GET /users/:handle/blog`:** when the read that finds the member's blog posts did not run, the route answers `bcc_unavailable` **503**, `private, no-store`, with no `data`. Before, it answered **200 with an empty tab**, the same as a member who has written nothing. A Blogs section the owner has switched off still answers its documented empty (v1.163).
+- **`GET /feed/cold-start`:** when a listed operator's `recent_action` could not be read, the whole panel answers 503, as it already does for the hot-posts block. Before, that operator showed the `Recently on the floor.` fallback.
+- **Not covered, on purpose:** the profile payload's `live_shift` strip (`GET /users/:handle`) keeps its fallback (a failed read leaves it empty), so a decorative strip cannot blank the whole profile. See [Feed read failure](#feed-read-failure-vnext).
+- **Clients:** as for v1.188, a 503 here is retryable: show an error with a retry action, not the empty state. Successful responses are unchanged.
+
+### v1.196 — 2026-11-19 — behaviour change (privacy) — PeepSo's own @mention email no longer runs on BCC writes (F-423)
+
+Ships with bcc-core #147.
+
+- **Mentions in posts, comments and messages:** PeepSo's `Tags::after_save_post` / `after_save_comment` no longer run when BCC writes the content. With PeepSo's tags option on, they emailed "Someone mentioned you" (with a permalink) and wrote a PeepSo-module notification to every mentionee, gated only on the author's profile privacy. So a mention in a secret or closed group post, a followers-only or only-me post, or a DM reached members who could not open it.
+- **What notifies a mention now:** only BCC's `bcc_mention` bell and push (§4.10). A mention in a **message** notifies no one: BCC has no mention notification for messages.
+- **No request or response changes.** Mentions still render from the stored content (`Mention[]`, §3.3.12), and `MentionPolicy` and its errors are unchanged.
+
+### v1.195 — 2026-11-18 — additive — `GET /feed?scope=groups`, "My Groups" (F-416)
+
+Ships with bcc-core **#143** and bcc-trust **#769**. ⚠ **bcc-core first:** against an older core, `scope=groups` answers `503 bcc_unavailable` (retryable) until bcc-core deploys; every other scope is unaffected.
+
+- **`GET /feed` (additive):** new `scope=groups`. It returns the posts of every group and Hall the viewer is an active member of, each under its room's rules: exactly what opening each room shows a member. The full rules are in the endpoint's scope mapping:
+  - members_only included;
+  - both Hall channels;
+  - no §F-02 profile gate (this is within the 2026-11-12 decision, since the scope only returns posts from the viewer's own rooms);
+  - the shadow-limit lifted only in NFT holder rooms;
+  - blocks and moderation hide applied;
+  - published groups only, ranked so a ban wins, at most 200 rooms.
+- **Empty and failure:** no groups gives `200` with `items: []` and `has_more: false`. A failed membership read gives `503 bcc_unavailable`, as for any feed read failure.
+- **Product context (user decision 2026-11-18):** the home feed's Signals tab is replaced by a "My Groups" tab. `scope=signals` stays in the contract and in code; it is an empty page until signal posts exist (v1.194), and the frontend hides its tab until then.
+- **No new field, no new error code, no change to any existing scope.** The response is the existing `CursorEnvelope<FeedItem>`.
+
+### v1.194 — 2026-11-18 — fix — the profile Blogs tab shows blogs; the Signals feed no longer serves unrelated rows (F-392)
+
+Ships with bcc-trust **#770** and bcc-core **#144**. Merge #770 first.
+
+- **`GET /users/:handle/blog`:** returns the member's blog posts. It asked the database for blogs by their module *name*, which the database read as module 0. So it never matched a blog, which is stored as module 204, and could only match old rows of other kinds. On a site with none of those, the tab was always empty.
+- **`GET /feed?scope=signals`:** returns an empty page until signal posts exist; nothing writes them yet. It read the same name-as-0 way, so it could serve old rows the main feed deliberately hides.
+- **No new fields, codes or shapes.** Clients need no change. The frontend may hide the Signals tab while it is empty; that is a product choice, not part of this contract.
+
+### v1.193 — 2026-11-18 — fix — more rate-limit 429s carry the time-left Retry-After; the review limits answer 429, not 403 (F-391)
+
+
+Ships with bcc-trust #763. No bcc-core change.
+
+- **These 429s now carry `Retry-After`, `X-RateLimit-*` and `error.data.retry_after_seconds`** (the time left, §1.4.4): `POST /me/watching/watch`, `DELETE /me/watching/:follow_id`, `POST /bcc-trust/v1/device-fingerprint` and `POST /bcc-trust/v1/x/verify-share`. They come from the trust engine's own limiter, which the v1.176 injection did not see. Status, code and message are unchanged.
+- **`POST /posts` `kind=review`: the daily downvote cap and the per-account review limit answer `bcc_rate_limited` 429** with the time-left `Retry-After`. They are rate limits and used to answer `bcc_forbidden` 403 like an eligibility rule.
+  - **The review limit's 403 was also wrong in itself.** It said "Review could not be cast." as if the write had failed. It now says "Too many reviews. Please wait a moment and try again."
+  - **The daily downvote cap keeps its message** ("Daily downvote limit reached."). Its wait is when another downvote would actually pass. The cap is a sliding 24-hour window, so that can be well under a day or over one.
+  - **Every other review refusal still answers `bcc_forbidden` 403**, including the rapid-voting fraud gate ("Vote rate limit exceeded."), which is not a counter and has no wait to give.
+- **Clients:** treat a review `bcc_rate_limited` as "wait and retry", using `retry_after_seconds` when present. `429` was already listed for this route; only which limits answer it changes.
 
 ### v1.192 — 2026-11-18 — behaviour change (privacy) — SECRET pages stay hidden in watchlists, watcher lists, feed labels and the page feed, and cannot be watched or reviewed by id
 
