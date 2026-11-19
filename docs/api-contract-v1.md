@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.175 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.176 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -90,6 +90,7 @@ Anonymous endpoints **must still respect privacy** (per K2): if a user's watchli
 - `X-BCC-Cache: HIT|MISS|STALE` — see §1.6
 - `Cache-Control: ...` per endpoint
 - `X-RateLimit-Limit: <n>` / `X-RateLimit-Remaining: <n>` / `X-RateLimit-Reset: <unix>` — on rate-limited endpoints
+- `Retry-After: <seconds>` — on a `bcc_rate_limited` 429. *(since v1.176, F-289)* On a 429 from a rate limit, it is the seconds until a retry can succeed: the time left on the limit that refused, not that limit's window. `X-RateLimit-Reset` is now plus that wait, and `error.data.retry_after_seconds` (§1.4.4) is the same number.
 
 ### 1.4 Errors
 
@@ -163,6 +164,12 @@ The canonical envelope's `message` is presentation; the *behavior fork* is on `c
 #### 1.4.4 Rate-limit semantics
 
 `bcc_rate_limited` (429) is retryable with backoff. The server MAY include `data.retry_after_seconds` (positive integer). When present, clients SHOULD wait at least that long before retrying. When absent, clients SHOULD apply at least 1.5× exponential backoff starting from 2 seconds.
+
+*(since v1.176, F-289)* On a 429 from a rate limit, `data.retry_after_seconds` and the `Retry-After` header carry the same number: the time **left** on the limit that refused the request, at least 1.
+- **It is not the limit's window.** The limits are sliding windows, so the wait can be shorter than the window or longer, up to two windows. A retry before it is over is refused again, and on most limits that retry is counted, which makes the wait longer.
+- **It assumes nothing else uses the limit meanwhile.** Another request from the same account or network can still use it up.
+- **Endpoints with their own wait.** A 429 that knows its exact wait sets it itself and is never overwritten, for example the `PATCH /me/handle` cooldown (v1.148).
+- **A 429 that no rate limit caused** carries no injected `Retry-After`, `X-RateLimit-*` or `retry_after_seconds`. For example, `bcc_captcha_required` on `POST /auth/login`: re-submit with a token straight away.
 
 Rate-limit buckets are per-user (when authenticated) AND per-IP. Both must allow the request through; the more conservative rejection wins. The server never returns 429 from cached read paths (cached responses bypass throttling).
 
@@ -9540,6 +9547,15 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.176 — 2026-11-18 — fix — a throttle 429's Retry-After is the time left, not the window (F-289)
+
+Ships with bcc-trust #734 and bcc-core #134 (merged). Either can deploy first, and the fix is complete once both are live.
+
+- **`bcc_rate_limited` 429s from a rate limit:** where one carries `Retry-After`, `error.data.retry_after_seconds` and `X-RateLimit-Reset`, they now give the time **left** on the limit that refused the request, at least 1. A few of these 429s still carry none of them (it is optional, §1.4.4).
+  - **Before:** they gave the limit's window. Because the limits are sliding windows, that was often wrong in both directions. A client that waited the window could come back too early, be refused, and, on a limit that counts refused calls, extend its own block.
+- **A 429 that no rate limit caused** no longer picks up an unrelated limit's window. Examples: `bcc_captcha_required`, and the 429s that come from an endpoint's own counter rather than a rate limit.
+- **No new fields, codes or shapes.** A client that already honours `Retry-After` or `retry_after_seconds` gets the fix with no change.
 
 ### v1.175 — 2026-11-17 — behaviour change — account flows (F-294): wallet sign-up errors, auth timing parity, a burned verify code says so, resend by handle
 
