@@ -5696,8 +5696,12 @@ this is the underlying endpoint.
     are checked before anything is renewed:
     - `bcc_attestation_ineligible` (403) — the attestor may not attest at
       all: suspended (an unknown suspension state included, and with no
-      admin exemption) or a New Member. It carries the cast's
+      admin exemption), a New Member, or below Neutral standing (the
+      hint is worded for the attestation's kind: "Reach Neutral standing
+      to vouch." / "… to back operators."). It carries the cast's
       `unlock_hint`.
+    - `bcc_attestation_fraud_blocked` (403) — the attestor's fraud score
+      is at or above the HIGH threshold.
     - `bcc_not_found` (404) — the target is gone or no longer attestable
       by this attestor (since bcc-trust #713; a secret page they may not
       see, since #731). The same 404 a cast answers.
@@ -9587,7 +9591,12 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 Ships with bcc-trust **#750**.
 
-- **`POST /me/attestations/:id/reaffirm` (§J.2.1):** a reaffirm renews a vouch (decay reset, owner belled), so it now runs the cast's checks in the cast's order, all before anything is renewed. It can answer `bcc_attestation_ineligible` (403: a suspended attestor, an unknown suspension state included and with no admin exemption, or a New Member) and `bcc_attestation_self` (422: the attestor now owns the target). Before, a suspended member, a New Member, or a member who came to own the page they once vouched for could keep renewing.
+- **`POST /me/attestations/:id/reaffirm` (§J.2.1):** a reaffirm renews a vouch (decay reset, owner belled), so it now runs the cast's checks in the cast's order, all before anything is renewed. It can answer:
+  - `bcc_attestation_ineligible` (403): a suspended attestor (an unknown suspension state included, with no admin exemption), a New Member, or one below Neutral standing;
+  - `bcc_attestation_fraud_blocked` (403): a HIGH fraud score;
+  - `bcc_attestation_self` (422): the attestor now owns the target.
+
+  Before, any of those members could keep renewing old vouches and backings, resetting their decay and belling the owner.
 - **Documented, not new:** the same entry now also lists the reaffirm's `bcc_not_found` (404) for a gone or no-longer-attestable target, and `bcc_unavailable` (503) for an unreadable block state. Both have answered since bcc-trust #713; the list did not say so.
 - **No new error code, no new route, no shape change.** Every code is one the cast (§J.2) already answers. No frontend code calls reaffirm today.
 
