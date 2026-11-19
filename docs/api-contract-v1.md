@@ -9606,7 +9606,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ### v1.NEXT — 2026-11-18 — behaviour change (privacy) — `GET /me/blocks` shows who holds a blocked id only when the blocker may view their profile (F-404)
 
-Ships with bcc-trust #NNN. Completes v1.179: blocking any id no longer tells which ids exist, and now listing the blocks does not either.
+Ships with bcc-trust #759. Completes v1.179: blocking any id no longer tells which ids exist, and now listing the blocks does not either.
 
 - **`GET /me/blocks`:** a row's `handle`, `display_name`, `avatar_url` and `profile_url` are filled only when a member holds the id and the blocker may view their profile (profile visibility admits them, account not suspended; the block itself is not counted). Otherwise all four are `""`, the same for an id nobody holds as for a member the blocker may not view.
 - Before, every row was filled. An id nobody holds read `member-<id>` with a link to a profile that does not exist, and a private or suspended member's handle, name and avatar were shown. Blocking an id and then listing the blocks told a member whether the id is held, and by whom.
