@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.199 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.200 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -4620,7 +4620,7 @@ Notifications are dispatched by `NotificationDispatcher` (sync subscribers, try/
 | `bcc_card_watched` (legacy `bcc_card_watched`) | the followee user | viewer === followee (impossible from the watchlist UI, defensive) |
 | `bcc_rank_awarded` | the recipient (self-notification) | rank label not in catalog |
 | `user_register` (WordPress core) | the new user (self-notification, type `bcc_welcome`) | `bcc_welcomed` user_meta already set (idempotency guard — once welcomed, never re-welcome) |
-| `bcc_post_created` | every user @-tagged in the post body (after `MentionPolicy::filterMentionable`) | author === mentionee (self-mention skip); banned / blocked / private mentionees stripped at validation time; the mentionee cannot open the post (v1.NEXT, [audience](#mention-audience)) |
+| `bcc_post_created` | every user @-tagged in the post body (after `MentionPolicy::filterMentionable`) | author === mentionee (self-mention skip); banned / blocked / private mentionees stripped at validation time; the mentionee cannot open the post (v1.200, [audience](#mention-audience)) |
 | `bcc_comment_created` | every user @-tagged in the comment body | same skip rules as post mention, with the audience check on the **parent post**; `act_id` passed is the **parent post's** act_id so the bell deep-links to the post on the floor |
 | `bcc_post_created` (async via `bcc_primary_hall_post_fanout`) | every user whose `bcc_primary_hall_group_id` user_meta matches the post's `peepso_group_id` | author === recipient (self-skip); same (recipient, group) already notified within the last 5 min (transient gate); post's group is NOT a Hall (no `_bcc_group_kind = 'hall'` meta); recipient cap of 1000 reached |
 | `bcc_comment_created` (priority 31; sibling of mention dispatch) | the parent post's author | commenter === post author (self-skip); same (recipient, post) already notified within the last 5 min (transient gate); parent activity row or post no longer resolvable |
@@ -4635,7 +4635,7 @@ Three behaviours are intentional and load-bearing — do not relitigate without 
 
 The `MentionPolicy::filterMentionable` gate is applied a SECOND time at dispatch (write-time validation already filtered) as defense in depth: a future write path that bypasses validation still cannot dispatch to banned / blocked / private mentionees.
 
-<a id="mention-audience"></a>**Audience (v1.NEXT).** A mention notifies only members who can open the post; others are dropped silently.
+<a id="mention-audience"></a>**Audience (v1.200).** A mention notifies only members who can open the post; others are dropped silently.
 - **The gate is the permalink's.** For each mentionee `MentionPolicy` allows, the dispatcher asks the gate `GET /feed/{id}` uses whether that member could open the post the bell links to: the post itself, or for a comment its parent post.
 - **A refused mentionee gets no bell and no push.** Examples: a secret or closed group post they aren't in, a followers-only or only-me post, an author they're blocked with. Nothing tells the author, and the post or comment is still written.
 - **Fails closed:** when the check can't be read, that mentionee gets no bell.
@@ -9671,7 +9671,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-19 — behaviour change (privacy) — a mention notifies only members who can open the post
+### v1.200 — 2026-11-19 — behaviour change (privacy) — a mention notifies only members who can open the post
 
 Ships with bcc-trust #767.
 
