@@ -216,7 +216,7 @@ memory of it.
 | Repo | PHP pin | Where | Composer | `require.php` | `config.platform.php` |
 |---|---|---|---|---|---|
 | `bcc-core` | **8.3** — already bumped | `ci.yml:27` | `install` | `>=8.0` | unset |
-| `bcc-trust` | **8.2** in **FIVE** jobs | `ci.yml:42`, `:285`, `:335`, `:390`, `:456` | `install` *(since #191)* | `>=8.1` | **`8.2.0`** |
+| `bcc-trust` | **8.2** in **FIVE** jobs | `ci.yml:42`, `:285`, `:335`, `:390`, `:456` | `install` *(since bcc-trust #379)* | `>=8.1` | **`8.2.0`** |
 | `bcc-search` | **8.2** | `ci.yml:42` | `install` | `>=8.1` | unset |
 
 All three commit `composer.lock`.
@@ -229,7 +229,8 @@ All three commit `composer.lock`.
    Bumping only two would leave three jobs behind *and* report a pass it had
    not earned.
 2. **`bcc-trust` runs `composer install`, not `composer update`.** Changed in
-   bcc-trust **#191**, which committed the lock for exactly this reason: `update`
+   bcc-trust **#379** (issue **#191**, still open), which committed the lock for
+   exactly this reason: `update`
    had CI testing guzzle 7.16.1 and brick/math 1.0.0 while production ran 7.10.0
    and 0.17.1. The workflow comment forbids reverting it. **There is no longer a
    repo whose transitive versions can shift with the runner.**
@@ -280,7 +281,7 @@ out of date — measured: `composer install` then warns *"The lock file is not u
 date with the latest changes in composer.json"* and recommends `composer update`.
 Since `vendor/` is committed and is what the deploy rsyncs to production, a
 platform bump necessarily re-resolves dependencies and ships a new `vendor/` — the
-very thing #191 exists to prevent. It also moves PHPStan's analysis target to 8.3,
+very thing bcc-trust #379 (issue #191) exists to prevent. It also moves PHPStan's analysis target to 8.3,
 which at level 8 can surface new findings. It therefore belongs in its own PR with
 its own review, never bundled with a runner bump.
 
