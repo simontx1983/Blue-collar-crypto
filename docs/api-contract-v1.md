@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.202 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.203 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1733,7 +1733,7 @@ The wire format on disk is PeepSo's mention shortcode `@peepso_user_<id>(<name>)
 - Failing the policy returns `bcc_invalid_mention_target` (with the offending `user_id` echoed in the error payload, but NOT the reason — privacy posture preserved). The post is rejected; nothing is written. Strict reject, not silent strip.
 - Cap: **10 mentions per post**. Over-cap returns `bcc_too_many_mentions` (echoes the cap as `max`).
 
-**Notification semantics — V1d ships a single mention notification type.** BCC's `NotificationDispatcher` sends one `bcc_mention` bell and push per surviving (post-policy) mention in a status/photo/gif body or a comment, only to members who can open the post (§4.10, @-mention dispatch → [Audience](#mention-audience)). *(Since v1.196, F-423)* PeepSo's own `Tags::after_save_post` / `after_save_comment` dispatcher (its "mentioned you" email and PeepSo-module notification) does **not** run on BCC writes: it was gated on the author's profile privacy, not the post's audience. The post-V1 layered grammar (status vs dispute vs review distinct mention semantics) is **deferred** — when `kind_grammar` (§reactions) generalizes to mentions, this section grows a `kind_grammar` discriminator on `Mention`. V1d clients ride forward on additive fields.
+**Notification semantics — V1d ships a single mention notification type.** BCC's `NotificationDispatcher` sends one `bcc_mention` bell and push per surviving (post-policy) mention in a status/photo/gif body or a comment, only to members who can open the post (§4.10, @-mention dispatch → [Audience](#mention-audience)). *(v1.203, F-415)* At most one mention bell per mentioner per member per 5 minutes ([Window](#mention-window)). *(Since v1.196, F-423)* PeepSo's own `Tags::after_save_post` / `after_save_comment` dispatcher (its "mentioned you" email and PeepSo-module notification) does **not** run on BCC writes: it was gated on the author's profile privacy, not the post's audience. The post-V1 layered grammar (status vs dispute vs review distinct mention semantics) is **deferred** — when `kind_grammar` (§reactions) generalizes to mentions, this section grows a `kind_grammar` discriminator on `Mention`. V1d clients ride forward on additive fields.
 
 **V1d scope:**
 
@@ -4620,7 +4620,7 @@ Notifications are dispatched by `NotificationDispatcher` (sync subscribers, try/
 | `bcc_card_watched` (legacy `bcc_card_watched`) | the followee user | viewer === followee (impossible from the watchlist UI, defensive) |
 | `bcc_rank_awarded` | the recipient (self-notification) | rank label not in catalog |
 | `user_register` (WordPress core) | the new user (self-notification, type `bcc_welcome`) | `bcc_welcomed` user_meta already set (idempotency guard — once welcomed, never re-welcome) |
-| `bcc_post_created` | every user @-tagged in the post body (after `MentionPolicy::filterMentionable`) | author === mentionee (self-mention skip); banned / blocked / private mentionees stripped at validation time; the mentionee cannot open the post (v1.200, [audience](#mention-audience)) |
+| `bcc_post_created` | every user @-tagged in the post body (after `MentionPolicy::filterMentionable`) | author === mentionee (self-mention skip); banned / blocked / private mentionees stripped at validation time; the mentionee cannot open the post (v1.200, [audience](#mention-audience)); bell only: the same mentioner already belled this member within the last 5 min (v1.203, [window](#mention-window)) |
 | `bcc_comment_created` | every user @-tagged in the comment body | same skip rules as post mention, with the audience check on the **parent post**; `act_id` passed is the **parent post's** act_id so the bell deep-links to the post on the floor |
 | `bcc_post_created` (async via `bcc_primary_hall_post_fanout`) | every user whose `bcc_primary_hall_group_id` user_meta matches the post's `peepso_group_id` | author === recipient (self-skip); same (recipient, group) already notified within the last 5 min (transient gate); post's group is NOT a Hall (no `_bcc_group_kind = 'hall'` meta); recipient cap of 1000 reached |
 | `bcc_comment_created` (priority 31; sibling of mention dispatch) | the parent post's author | commenter === post author (self-skip); same (recipient, post) already notified within the last 5 min (transient gate); parent activity row or post no longer resolvable |
@@ -4631,7 +4631,7 @@ Three behaviours are intentional and load-bearing — do not relitigate without 
 
 1. **Original-write only.** Mentions fire ONLY on initial create. No `bcc_post_edited` / `bcc_comment_edited` action emission exists in bcc-trust — the dispatcher subscribes to `*_created` exclusively, so an edit-as-ping abuse vector cannot fire. Even if such an edit action lands later, it would need to be wired explicitly.
 2. **Structural dedup per (post, mentioner, mentionee).** Three `@bob` tokens in one post produce exactly one bell row for Bob. The dedup is at `MentionExtractor::extractUserIds`, which returns unique-by-first-occurrence ids; the dispatcher never sees duplicates.
-3. **Bell + push from day one.** `bcc_mention` is in both `BELL_TYPES` and `PUSH_TYPES`. Push aggregation via the existing 5-min `(recipient, eventType)` debounce coalesces rapid-fire mention floods into a single "N new mentions" push body — bell still fires per-post for the in-app row count.
+3. **Bell + push from day one.** `bcc_mention` is in both `BELL_TYPES` and `PUSH_TYPES`. Push aggregation via the existing 5-min `(recipient, eventType)` debounce coalesces rapid-fire mention floods into a single "N new mentions" push body. *(Since v1.203, F-415)* The bell is coalesced too, to one per (mentioner, member) per 5 minutes ([Window](#mention-window)); it used to fire per post.
 
 The `MentionPolicy::filterMentionable` gate is applied a SECOND time at dispatch (write-time validation already filtered) as defense in depth: a future write path that bypasses validation still cannot dispatch to banned / blocked / private mentionees.
 
@@ -4641,6 +4641,13 @@ The `MentionPolicy::filterMentionable` gate is applied a SECOND time at dispatch
 - **Fails closed:** when the check can't be read, that mentionee gets no bell.
 - **A shadow-limited author's mentions notify nobody.** Posts by a §O4.1 caution- or risky-tier author cannot be opened by link by anyone but the author (even in an NFT holder room, whose feed shows them), so no mentionee can open them.
 - This covers `bcc_mention`'s bell and push. Rows stored before the change are untouched, and `target_available` is unchanged (it still doesn't fold in per-viewer visibility).
+
+<a id="mention-window"></a>**Window (v1.203, F-415).** At most one mention bell per mentioner per member per 5 minutes. Later mentions in the window fold into it, and push still counts them.
+- **Across every kind of mention:** a post, a comment or a quote. The window is keyed on the two members alone, so a new post or quote does not reopen it.
+- **Order:** the [audience](#mention-audience) check comes first. A mention the member cannot open claims no window and adds no push.
+- **Push:** every mention that passes the audience check is still pushed, so the existing 5-min debounce's "N new mentions" count stays true.
+- **Failure:** a window that cannot be read counts as open, so that mention still gets its one bell. A bell that fails to write frees its window for the next mention.
+- **Unchanged:** the per-body dedup (lock 2), the response shapes, and the `bcc_mention` type. No new field or error code.
 
 ##### Primary-Hall post dispatch — policy locks (V2 retention slice, 2026-05-11)
 
@@ -9670,6 +9677,14 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.203 — 2026-11-19 — behaviour change — one mention bell per mentioner per member per 5 minutes (F-415)
+
+Ships with bcc-trust **#782**.
+
+- **Mention bells:** at most one mention bell per mentioner per member per 5 minutes, across posts, comments and quotes. Later mentions in the window fold into it, and push still counts them. Before, one member could bell another once per post, comment or quote, and quotes are unlimited. See §4.10, @-mention dispatch → [Window](#mention-window).
+- **Order and failure:** the window comes after the v1.200 audience check, so a mention the member can't open claims nothing. A window that can't be read counts as open, so the mention still gets one bell. A bell that fails to write frees the window.
+- **Unchanged:** push (one per member per 5 minutes, counted), the `bcc_mention` type, and every response shape. No new field or error code. Rows stored before the change are untouched.
 
 ### v1.202 — 2026-11-19 — behaviour change — a member search whose reads did not run answers 503, not "no members" (F-432)
 
