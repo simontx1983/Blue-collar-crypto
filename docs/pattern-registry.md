@@ -141,7 +141,10 @@ should point at exactly one source-of-truth class or method per concept.
   `BCC\Trust\Core\Support\PageAccess::viewerMaySee($post, $viewerId)` /
   `viewerMaySeeId($pageId, $viewerId)` (author, site admin, then
   `PeepSoPagePrivacy::isVisibleTo`: members and invitees) and, on false,
-  answers exactly as for a page that does not exist. Never hand-roll a
+  answers exactly as for a page that does not exist. A list shown to ONE
+  viewer (their watchlist, a feed page's page labels) asks
+  `PageAccess::visibleAmong($pageIds, $viewerId)` instead: the same verdict
+  per page, with one batched read rather than one per page. Never hand-roll a
   `LEFT JOIN … peepso_page_privacy … <> 2`: that form lets a two-row page
   through.
   ([bcc-core/src/Repositories/PeepSoPagePrivacy.php](../app/public/wp-content/plugins/bcc-core/src/Repositories/PeepSoPagePrivacy.php),
