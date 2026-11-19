@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.184 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.186 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -76,6 +76,8 @@ Three modes:
 
 JWT lifetime: 1h access, 30d refresh. Refresh handled by NextAuth.
 Anonymous endpoints **must still respect privacy** (per K2): if a user's watchlist is hidden, anonymous reads see "Watchlist is private," not the contents.
+
+*(since v1.186)* **Members authenticate with the bearer token only.** On every `bcc` route (`bcc/v1`, `bcc-trust/v1`), a non-admin whose request was authenticated by anything else (a WordPress cookie plus `X-WP-Nonce`, an application password) gets `401 bcc_unauthorized` with the message "Sign in at the app.". Members also cannot sign in through WordPress itself: `wp-login.php`, XML-RPC and other `wp_signon()` callers refuse a member account, with the one answer every failed sign-in gets too, whatever the role, so it reveals neither the password nor which logins are admins. A signed-in member is sent from wp-admin to the app, and admin-ajax answers 403. Admins (`manage_options`) are otherwise unaffected. `POST /auth/forgot-password` is the only way to reset a password, for every role: WordPress's own lost-password form and PeepSo's recover-password page get no reset key. The frontend sends WordPress no cookies (`credentials: "omit"`), so clients need no change.
 
 ### 1.3 Headers
 
@@ -5706,6 +5708,24 @@ this is the underlying endpoint.
 - **Errors:** `bcc_not_found` (404), `bcc_forbidden` (403),
   `bcc_attestation_revoked` (409 — cannot reaffirm a revoked
   attestation), `bcc_rate_limited` (429).
+  - *v1.185 (bcc-trust #750):* a reaffirm renews the vouch, so it owes the cast's rules
+    (§J.2), in the cast's order and with the cast's answers. All of them
+    are checked before anything is renewed:
+    - `bcc_attestation_ineligible` (403) — the attestor may not attest at
+      all: suspended (an unknown suspension state included, and with no
+      admin exemption), a New Member, or below Neutral standing (the
+      hint is worded for the attestation's kind: "Reach Neutral standing
+      to vouch." / "… to back operators."). It carries the cast's
+      `unlock_hint`.
+    - `bcc_attestation_fraud_blocked` (403) — the attestor's fraud score
+      is at or above the HIGH threshold.
+    - `bcc_not_found` (404) — the target is gone or no longer attestable
+      by this attestor (since bcc-trust #713; a secret page they may not
+      see, since #731). The same 404 a cast answers.
+    - `bcc_attestation_self` (422) — the attestor now owns the target, e.g.
+      a page they vouched for before they came to own it.
+    - `bcc_unavailable` (503) — whether attestor and target block each
+      other could not be read; retry. Since #713.
 - **Audit:** `action=attestation_reaffirmed` (new action type per
   the Destructive Mutation Hardening recipe).
 - **Side effects:** decay-curve reset to age=0; Layer 2
@@ -9591,6 +9611,33 @@ Ships with bcc-trust **#757**.
 - **`bcc_group_join_requested` (bell, v1.132):** `link` changes from the group's page (`/communities/{slug}`) to `/communities/{slug}/members#requests`, the Members tab's "Requests & invitations" block, where the owner or manager approves or denies. The fallback for a group that no longer resolves is still `/communities`.
 - `bcc_group_join_approved` and `bcc_group_invited` still link the group's page.
 - The link is resolved when the bell is read, so rows already stored pick it up. No new key, field or route; the frontend renders `link` verbatim (§A2).
+
+### v1.186 — 2026-11-18 — behaviour change (security) — members sign in at the app only (H2)
+
+Ships with bcc-trust #746.
+
+- **Why:** `wp-login.php` signed a member in with the password alone. Its cookie, plus a `wp_rest` nonce, then authenticated every `bcc` route, skipping the email-code 2FA, the sign-in throttles and the captcha step-up.
+- **Every `bcc` route** (§1.2): a non-admin authenticated by anything other than a BCC bearer token (a WordPress cookie plus nonce, an application password) gets `401 bcc_unauthorized`. Bearer requests are unchanged.
+- **WordPress's own doors:**
+  - `wp-login.php`, XML-RPC and other `wp_signon()` callers refuse member accounts, with the one answer every failed sign-in gets too (a wrong password, an unknown login or email), whatever the role.
+  - wp-admin sends a signed-in member to the app.
+  - admin-ajax answers 403.
+  - Admins keep all of them.
+- **Password resets:** `POST /auth/forgot-password` is the only way to reset a password, for every role, admins included. WordPress's lost-password form and PeepSo's recover-password page get no reset key: they answer "Reset your password at the app". The request and response of `/auth/forgot-password` and `/auth/reset-password` are unchanged.
+- **Clients:** no change. The frontend is bearer-only.
+
+### v1.185 — 2026-11-18 — behaviour change (narrowing) — a reaffirm owes the cast's attestor and self rules
+
+Ships with bcc-trust **#750**.
+
+- **`POST /me/attestations/:id/reaffirm` (§J.2.1):** a reaffirm renews a vouch (decay reset, owner belled), so it now runs the cast's checks in the cast's order, all before anything is renewed. It can answer:
+  - `bcc_attestation_ineligible` (403): a suspended attestor (an unknown suspension state included, with no admin exemption), a New Member, or one below Neutral standing;
+  - `bcc_attestation_fraud_blocked` (403): a HIGH fraud score;
+  - `bcc_attestation_self` (422): the attestor now owns the target.
+
+  Before, any of those members could keep renewing old vouches and backings, resetting their decay and belling the owner.
+- **Documented, not new:** the same entry now also lists the reaffirm's `bcc_not_found` (404) for a gone or no-longer-attestable target, and `bcc_unavailable` (503) for an unreadable block state. Both have answered since bcc-trust #713; the list did not say so.
+- **No new error code, no new route, no shape change.** Every code is one the cast (§J.2) already answers. No frontend code calls reaffirm today.
 
 ### v1.184 — 2026-11-18 — behaviour change (security) — an email changed outside BCC is no longer verified (H1)
 
