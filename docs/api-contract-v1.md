@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.194 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.195 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2457,7 +2457,7 @@ Authenticated personalized feed (§F1, §N6).
 
 - **Auth:** Bearer (required)
 - **Query:**
-  - `scope` ∈ {`for_you`, `following`, `signals`, `groups`} — default `for_you` (§N6; "community" cut). `groups` *(v1.NEXT, F-416)* is "My Groups", see the mapping below
+  - `scope` ∈ {`for_you`, `following`, `signals`, `groups`} — default `for_you` (§N6; "community" cut). `groups` *(v1.195, F-416)* is "My Groups", see the mapping below
   - `cursor` (optional)
   - `limit` (optional, default 20, max 50)
 - **Response 200:** `CursorEnvelope<FeedItem>` per §1.5 / §3.3
@@ -2472,7 +2472,7 @@ Authenticated personalized feed (§F1, §N6).
     - `for_you` → ranked stream, F1 priority chain applied
     - `following` → strict-time-ordered, posts attributed to entities/users in the viewer's `peepso_user_followers` set, signal kinds excluded
     - `signals` → signal post-kinds only, ranked by recency + severity. *(v1.194, F-392)* Nothing writes a signal post yet, so this is an empty page (`items: []`, `has_more: false`). It used to serve unrelated legacy rows.
-    - `groups` *(v1.NEXT, F-416)* → "My Groups": the posts of every group and Hall the viewer is an **active member** of, newest first. ⭐ It is the union of the viewer's own rooms, each post under its ROOM's rules, and it shows exactly what opening each room (`GET /groups/{id}/feed`) shows a member:
+    - `groups` *(v1.195, F-416)* → "My Groups": the posts of every group and Hall the viewer is an **active member** of, newest first. ⭐ It is the union of the viewer's own rooms, each post under its ROOM's rules, and it shows exactly what opening each room (`GET /groups/{id}/feed`) shows a member:
       - **Membership:** published groups only, with the viewer's status `member*`. Pending, invited and banned rows are out, and a banned row beside a stale member row wins. At most the 200 most recently joined rooms are read.
       - **A member read:** `members_only` posts are included (absent visibility meta counts as members_only), across open, closed, secret and NFT rooms. Both Hall channels (main and ranked) are included.
       - **§F-02 profile privacy is NOT applied**, exactly as in the room. This is within the 2026-11-12 decision's intent: its "/feed keeps F-02" rule is about the mixed feed surfacing group posts to non-members, while this scope only returns posts from rooms the viewer belongs to.
@@ -9657,7 +9657,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-18 — additive — `GET /feed?scope=groups`, "My Groups" (F-416)
+### v1.195 — 2026-11-18 — additive — `GET /feed?scope=groups`, "My Groups" (F-416)
 
 Ships with bcc-core **#143** and bcc-trust **#769**. ⚠ **bcc-core first:** against an older core, `scope=groups` answers `503 bcc_unavailable` (retryable) until bcc-core deploys; every other scope is unaffected.
 
