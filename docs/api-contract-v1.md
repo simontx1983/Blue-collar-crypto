@@ -77,7 +77,7 @@ Three modes:
 JWT lifetime: 1h access, 30d refresh. Refresh handled by NextAuth.
 Anonymous endpoints **must still respect privacy** (per K2): if a user's watchlist is hidden, anonymous reads see "Watchlist is private," not the contents.
 
-*(since v1.NEXT)* **Members authenticate with the bearer token only.** On every `bcc` route (`bcc/v1`, `bcc-trust/v1`), a non-admin whose request was authenticated by anything else (a WordPress cookie plus `X-WP-Nonce`, an application password) gets `401 bcc_unauthorized` with the message "Sign in at the app.". Members also cannot sign in through WordPress itself: `wp-login.php`, XML-RPC and other `wp_signon()` callers refuse a member account, with the same answer whether the password was right or wrong. A signed-in member is sent from wp-admin to the app, and admin-ajax answers 403. Admins (`manage_options`) are unaffected. The frontend sends WordPress no cookies (`credentials: "omit"`), so clients need no change.
+*(since v1.NEXT)* **Members authenticate with the bearer token only.** On every `bcc` route (`bcc/v1`, `bcc-trust/v1`), a non-admin whose request was authenticated by anything else (a WordPress cookie plus `X-WP-Nonce`, an application password) gets `401 bcc_unauthorized` with the message "Sign in at the app.". Members also cannot sign in through WordPress itself: `wp-login.php`, XML-RPC and other `wp_signon()` callers refuse a member account, with the one answer every failed sign-in gets too, whatever the role, so it reveals neither the password nor which logins are admins. A signed-in member is sent from wp-admin to the app, and admin-ajax answers 403. Admins (`manage_options`) are otherwise unaffected. `POST /auth/forgot-password` is the only way to reset a password, for every role: WordPress's own lost-password form and PeepSo's recover-password page get no reset key. The frontend sends WordPress no cookies (`credentials: "omit"`), so clients need no change.
 
 ### 1.3 Headers
 
@@ -9547,10 +9547,11 @@ Ships with bcc-trust #746.
 - **Why:** `wp-login.php` signed a member in with the password alone. Its cookie, plus a `wp_rest` nonce, then authenticated every `bcc` route, skipping the email-code 2FA, the sign-in throttles and the captcha step-up.
 - **Every `bcc` route** (§1.2): a non-admin authenticated by anything other than a BCC bearer token (a WordPress cookie plus nonce, an application password) gets `401 bcc_unauthorized`. Bearer requests are unchanged.
 - **WordPress's own doors:**
-  - `wp-login.php`, XML-RPC and other `wp_signon()` callers refuse member accounts, with one answer for a right or wrong password.
+  - `wp-login.php`, XML-RPC and other `wp_signon()` callers refuse member accounts, with the one answer every failed sign-in gets too (a wrong password, an unknown login or email), whatever the role.
   - wp-admin sends a signed-in member to the app.
   - admin-ajax answers 403.
   - Admins keep all of them.
+- **Password resets:** `POST /auth/forgot-password` is the only way to reset a password, for every role, admins included. WordPress's lost-password form and PeepSo's recover-password page get no reset key: they answer "Reset your password at the app". The request and response of `/auth/forgot-password` and `/auth/reset-password` are unchanged.
 - **Clients:** no change. The frontend is bearer-only.
 
 ### v1.174 — 2026-11-18 — additive — a handed-over review reply stays visible to its author (F-345 follow-up)
