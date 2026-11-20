@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.210 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.211 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2549,7 +2549,12 @@ Single-activity permalink read (v1.33 backfill — shipped with the post-detail 
 - **Auth:** Anonymous OR Bearer
 - **Path:** `id` (int act_id **or** 8-letter shortcode — see above)
 - **Response 200:** a single §3.3 `FeedItem` (bare object in the §1.4 envelope — NOT a `CursorEnvelope`), same hydration pipeline as `/feed`
-- **Errors:** `bcc_not_found` 404 — covers both "no such activity" and "not visible to this viewer" (§O4.1 caution/risky author exclusion, §K1 mutual-block invisibility, §K1-C moderation hide, and — v1.94 — a `review` whose vote is no longer active (§3.3.2), and — v1.207 — a SECRET page's announcement the viewer may not see (§4.32.8) all collapse to 404; no existence oracle) · `bcc_unavailable` **503** *(v1.188)* when the post could not be read. This is NOT a 404: the post may well exist, so a client must offer a retry, not "post not found". see [Feed read failure](#feed-read-failure-vnext) below
+- **Rooms that lift the shadow-limit** *(v1.211, F-451)*: a post in a room that shows a caution- or risky-tier member's posts (NFT holder rooms, see `GET /groups/{id}/feed`) opens by link for that room's **active** members, as in the room and in `scope=groups`.
+  - Active means status `member*`: a ban wins over a stale member row, and pending or invited rows don't count.
+  - A post tagged into several rooms opens through any such room the viewer is in.
+  - Everyone else, and a plain room's members, still get the 404 below. Every other gate (blocks both ways, moderation hide, §F-02 outside groups, the room's own rule) still applies.
+  - A room-membership read that fails answers the same 404 as a missing id, not a 503. It is reached only for an existing post in such a room, so a 503 would reveal both.
+- **Errors:** `bcc_not_found` 404 — covers both "no such activity" and "not visible to this viewer" (§O4.1 caution/risky author exclusion, except as above, §K1 mutual-block invisibility, §K1-C moderation hide, and — v1.94 — a `review` whose vote is no longer active (§3.3.2), and — v1.207 — a SECRET page's announcement the viewer may not see (§4.32.8) all collapse to 404; no existence oracle) · `bcc_unavailable` **503** *(v1.188)* when the post could not be read. This is NOT a 404: the post may well exist, so a client must offer a retry, not "post not found". see [Feed read failure](#feed-read-failure-vnext) below
 - **Rate limit:** none route-specific
 - **Cache:** `Cache-Control: private, max-age=15` · `Vary: Authorization, Cookie`
 - **Mapping:** `FeedEndpoint::feedItem` → `FeedRankingService::getActivityById` (same §F3 single brain + `FeedHydrationPipeline` as the list surfaces). FE post-detail page / quick-view modal.
@@ -4641,7 +4646,7 @@ The `MentionPolicy::filterMentionable` gate is applied a SECOND time at dispatch
 - **The gate is the permalink's.** For each mentionee `MentionPolicy` allows, the dispatcher asks the gate `GET /feed/{id}` uses whether that member could open the post the bell links to: the post itself, or for a comment its parent post.
 - **A refused mentionee gets no bell and no push.** Examples: a secret or closed group post they aren't in, a followers-only or only-me post, an author they're blocked with. Nothing tells the author, and the post or comment is still written.
 - **Fails closed:** when the check can't be read, that mentionee gets no bell.
-- **A shadow-limited author's mentions notify nobody.** Posts by a §O4.1 caution- or risky-tier author cannot be opened by link by anyone but the author (even in an NFT holder room, whose feed shows them), so no mentionee can open them.
+- **A shadow-limited author's mentions notify only the members of a room that shows them.** Posts by a §O4.1 caution- or risky-tier author cannot be opened by link by anyone but the author, so no mentionee can open them. *(v1.211, F-451)* The exception is a post in an NFT holder room: it opens by link for that room's active members, as the room's feed shows it to them ([`GET /feed/:id`](#get-bccv1feedid)). So a mention of such a member notifies them, and anyone else is still dropped.
 - This covers `bcc_mention`'s bell and push. Rows stored before the change are untouched, and `target_available` is unchanged (it still doesn't fold in per-viewer visibility).
 
 <a id="mention-window"></a>**Window (v1.203, F-415).** At most one mention bell per mentioner per member per 5 minutes. Later mentions in the window fold into it, and push still counts them.
@@ -9702,6 +9707,15 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.211 — 2026-11-19 — behaviour change — a post an NFT holder room shows opens by link for its members (F-451)
+
+Ships with bcc-trust **#788**.
+
+- **`GET /feed/:id`:** a caution- or risky-tier (§O4.1) member's post in an NFT holder room opens for that room's active members, as the room's feed (`GET /groups/{id}/feed`) and `scope=groups` already show it. Before, it answered `404` for every fellow member, so the room's comment and share links dead-ended. Non-members, members of plain rooms, banned, pending and invited members all still get the `404`. See [`GET /feed/:id`](#get-bccv1feedid).
+- **Mentions:** a mention in such a post now reaches the room's active members, per the v1.200 [audience](#mention-audience) rule, which is the permalink's own gate.
+- **Failure:** a room-membership read that fails answers `404`, the same as a missing id, never `503`, so it reveals nothing about the post.
+- **Unchanged:** every other gate and response shape. No new field or error code.
 
 ### v1.210 — 2026-11-19 — behaviour change (security) — a revocation or sign-out that could not be written is never claimed (F-495)
 
