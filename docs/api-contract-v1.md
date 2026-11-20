@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.212 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.213 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -416,7 +416,7 @@ The single most important shared type. Encodes §N7 (always visible, disabled wi
   - **Member self-pages (member-disputes slice, 2026-06-30):** a member is the owner of their own self-page, so on their OWN member card/profile `can_open_dispute` is `allowed: true` when they have a contestable active downvote on their self-page, else `reason_code: "no_contestable_downvote"`. Non-owners and anonymous viewers get `reason_code: "not_applicable"` (members can't dispute votes on each other — only the subject can contest a downvote on themselves, mirroring the entity owner-contests-downvote model). Ownership resolves via the zero-DB self-page identity (`page_id = ID_BASE + user_id`).
 - `can_message` (v1.53) mirrors the DM write gates exactly — it is produced by the SAME messaging-policy evaluator the send path runs, so a rendered Message button and the `POST /me/conversations` it triggers can never disagree on a permanent rule. Only the transient rate limit is POST-only. On **validator page cards** it targets the page's resolved verified operator (or the queue, when the validator has never been claimed); on community cards it is `not_applicable`. On **member cards** (since v1.135, F-246) a signed-in viewer gets the live gate to that member — the same evaluator, batched per page on list surfaces — and `self_action_blocked` on their own card; anonymous viewers' member cards are unchanged. Reason codes: `not_applicable` (hide) · `auth_required` (visible-disabled, sign-in copy) · `self_action_blocked` (hide — viewer is the operator) · `sender_restricted` (hide — suspended/banned sender) · `sender_chat_disabled` (visible-disabled, resolvable hint) · `messaging_unavailable` (hide) · `friends_only` (visible-disabled + hint) · **`unavailable` (hide — v1.92)**.
 
-  - ⚠⚠ **`unavailable` (v1.92) means "the server could not determine the block state", not "you may not message".** It is emitted when the block table cannot be READ — a transient database failure — and it exists because the alternative is worse: the previous behaviour reported an unreadable block table as "not blocked", so the client rendered a live Message button and the `POST` then refused it. Clients MUST **omit** the affordance, never render it disabled: the condition is not something the viewer can resolve, so §N7's visible-disabled rule does not apply.
+  - ⚠⚠ **`unavailable` (v1.92) means "the server could not determine the block state", not "you may not message".** *(Since v1.213, H6, it also covers a DM setting, the viewer's or the recipient's `chat_enabled` / `chat_friends_only`, that could not be read; same meaning, same client rule.)* It is emitted when the block table cannot be READ — a transient database failure — and it exists because the alternative is worse: the previous behaviour reported an unreadable block table as "not blocked", so the client rendered a live Message button and the `POST` then refused it. Clients MUST **omit** the affordance, never render it disabled: the condition is not something the viewer can resolve, so §N7's visible-disabled rule does not apply.
   - ⚠⚠ **It is ALWAYS paired with `unlock_hint: null`, and that pairing is load-bearing rather than cosmetic.** A client that hides on the hint rather than on the code — which is what the member-card pill did before the omit branch shipped — would render a DISABLED pill if a hint string ever accompanied this code. The server therefore guarantees the null, and a backend test asserts the pairing independently of the code.
   - ⚠ It is deliberately a **different** code from `messaging_unavailable`. That one is the §4.19 info-leak shield, hiding WHICH of mutual-block / DMs-off / no-such-user applies. `unavailable` states a fact about the REQUEST rather than about the pair, so it reveals nothing the shield protects — and on a failed read every candidate in a batch receives it uniformly, which is why a shared payload is safe here.
   - The matching write paths answer `bcc_unavailable` **503** (§4.19), so a client that retries gets a coherent answer from both sides.
@@ -5469,7 +5469,7 @@ Addresses EITHER a user (`recipient_id`) OR a validator page (`page_id`) — mut
   - `bcc_queue_limit 409` — sender already holds the maximum pending queued messages for this validator (3).
   - `bcc_queue_full 409` — the validator's pending queue is at capacity (500).
   - `bcc_rate_limited 429` — 30/5min cap exceeded. Queue submissions and PeepSo sends share one budget.
-  - `bcc_unavailable 503` — PeepSo write failure.
+  - `bcc_unavailable 503` — PeepSo write failure. *(Since v1.213, H6)* also: the sender's or recipient's DM setting could not be read ("Messaging is temporarily unavailable. Please try again."). Retryable; it never means DMs are off.
 - **Server-authoritative resolution:** the destination is re-resolved on EVERY submission from the canonical claim source. A client may not infer it from the card; the card's `messaging.destination` is a rendering hint whose staleness is always resolved server-side.
 - **Side effects:** PeepSo's `peepso_messages_new_conversation` action fires; email notification queued; `peepso_should_get_chats` SSE event triggered for every participant (powers PeepSo-native UIs that share the database). The queued path has no PeepSo side effects until delivery.
 - **Cache:** `no-store`.
@@ -5513,7 +5513,7 @@ Paginated message history. `{id}` is either the conversation root msg id OR any 
     "pagination": { "page": 1, "per_page": 30, "total": null, "has_more": true }
   }
   ```
-- `conversation.can_reply` (v1.135, F-246, additive) — would `POST /me/conversations/{id}/messages` be accepted right now? `{allowed, unlock_hint, reason_code}`, produced by exactly the reply path's gates: the sender's permanent rules (suspension/ban → `sender_restricted`; own DMs off → `sender_chat_disabled` with a resolvable hint) and, for a 1-on-1, the messaging-policy evaluator against the other participant (`messaging_unavailable` for peer DMs off **or** a mutual block — indistinguishable, the §4.19 shield; `friends_only` + hint; `unavailable` when the block table cannot be read). Group threads are gated by the sender rules only. The transient rate limit is POST-only, as on `can_message`. A client that does not know the field treats it as allowed (today's behaviour).
+- `conversation.can_reply` (v1.135, F-246, additive) — would `POST /me/conversations/{id}/messages` be accepted right now? `{allowed, unlock_hint, reason_code}`, produced by exactly the reply path's gates: the sender's permanent rules (suspension/ban → `sender_restricted`; own DMs off → `sender_chat_disabled` with a resolvable hint) and, for a 1-on-1, the messaging-policy evaluator against the other participant (`messaging_unavailable` for peer DMs off **or** a mutual block — indistinguishable, the §4.19 shield; `friends_only` + hint; `unavailable` when the block table, or *(since v1.213, H6)* a DM setting, cannot be read). Group threads are gated by the sender rules only. The transient rate limit is POST-only, as on `can_message`. A client that does not know the field treats it as allowed (today's behaviour).
 - `is_inline_notice` is `true` for system rows (`peepso-message-notic` post_type) — "Phillip joined the conversation," "Admin left." Frontend renders these with an austere centered treatment (no avatar, no bubble).
 - `sender_blocked_by_viewer` (v1.87) — `true` when the viewer has blocked that message's author. **Always present.**
 - ⚠ **When it is `true`, `body` is the fixed string `Message from someone you have blocked`, NOT the real text** (v1.87). `id`, `author`, `posted_at` and `is_inline_notice` are unaffected. The real text is reachable only through `GET …/messages/{message_id}/reveal` below, on an explicit per-message request — so a blocked sender's words never enter the viewer's browser unless the viewer asks for them. See **Blocked senders** below for why this changed within v1.87's own development.
@@ -6855,8 +6855,8 @@ Report another **member** (distinct from `POST /me/reports`, which reports a `fe
 Read the viewer's DM-gating preferences (PeepSo-backed). Relates to §4.19. Self-only.
 
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
-- **Response 200:** `{ "data": { "chat_enabled": true, "chat_friends_only": false } }` — `chat_enabled` defaults **true**, `chat_friends_only` defaults **false** when no meta row exists.
-- **Errors:** `bcc_unauthorized` 401
+- **Response 200:** `{ "data": { "chat_enabled": true, "chat_friends_only": false } }` — `chat_enabled` defaults **true** when no meta row exists. `chat_friends_only` with no meta row follows the site's PeepSo `messages_friends_only` setting (PeepSo default: on), as the send gate does. *(Corrected in v1.213: this line used to say it defaults to false, which the code has not done since the settings and the send gate were aligned.)*
+- **Errors:** `bcc_unauthorized` 401 · *(since v1.213, H6)* `bcc_unavailable` 503 "Could not read your messaging preferences. Please try again." when the settings could not be read. Retryable; the client must not show either switch as off or on from it.
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** `MyMessagesPrefsEndpoint::get` (route `MyMessagesPrefsEndpoint.php:66`, READABLE) → reads `peepso_chat_enabled` + `peepso_chat_friends_only`. FE `messages-prefs-endpoints.ts`.
 
@@ -6867,7 +6867,7 @@ Partial update of the viewer's DM-gating preferences. Registered as `WP_REST_Ser
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
 - **Body (JSON, every field optional):** `chat_enabled` (bool) · `chat_friends_only` (bool), stored as `"1"`/`"0"`. *(Since v1.158, F-294: a value that is not a boolean is a 422, and both fields are validated before either is written; it used to be read as `false`.)*
 - **Response 200:** same shape as the GET (full re-read after write).
-- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 422 (no recognized field, or "`<field>` must be true or false.")
+- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 422 (no recognized field, or "`<field>` must be true or false.") · *(since v1.213, H6)* `bcc_unavailable` 503 when the re-read after the write could not be read. The write has been applied; repeating the PATCH is safe.
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** `MyMessagesPrefsEndpoint::patch` (route `MyMessagesPrefsEndpoint.php:76`, EDITABLE) → `update_user_meta` on the two PeepSo keys, then re-read.
 
@@ -9709,6 +9709,17 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.213 — 2026-11-19 — behaviour change — a DM setting that can't be read is "try again", never a default (H6)
+
+Ships with bcc-trust #804. ⛔ Deploy bcc-core #158 first.
+
+- **What changed:** every DM gate and `/me/messages-prefs` read the DM settings through a read that tells "failed" from "no row", and none of them writes a setting. Before, the read went through PeepSo's model, which writes a default when its read is empty.
+- **`POST /me/conversations`, `POST /me/conversations/{id}/messages`, and the validator-page queue send:** a sender's or recipient's DM setting that cannot be read is a retryable `bcc_unavailable` 503, like an unreadable block table. Never "DMs off" and never "allowed".
+- **`can_message` (cards, batch and single), `conversation.can_reply`:** the same case answers `reason_code: unavailable` (§3.2.4: omit the button).
+- **`GET` / `PATCH /me/messages-prefs`:** `bcc_unavailable` 503 when the settings can't be read. On a PATCH the write has already been applied.
+- **Doc correction (§4 `GET /me/messages-prefs`):** a missing `chat_friends_only` follows the site's `messages_friends_only` setting (PeepSo default: on), not `false`. The code already did this.
+- **Unchanged:** every answer when the read works, every shape, and the first-claim release (it bypasses the DM settings and reads none). No new code or field.
 
 ### v1.212 — 2026-11-19 — behaviour change (security) — password reset and change revoke first; sign-out-everywhere claims only what landed (F-508)
 
