@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.203 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.204 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -158,6 +158,7 @@ Two distinct codes, two distinct UX paths:
 - `bcc_token_expired` (401) — the bearer was once valid but has aged past expiry. Clients SHOULD attempt a silent refresh (`POST /bcc/v1/auth/refresh`, see §β.3) and retry once. If the refresh itself returns `bcc_token_expired` or `bcc_unauthorized`, sign the user out.
 - `bcc_token_invalid` (401) — the bearer is malformed, was revoked, or never validated. Do NOT retry. Sign the user out and route to `/login`.
 - `bcc_unauthorized` (401) — no bearer was provided. Route to `/login`.
+- `bcc_unavailable` (**503**, since v1.204, F-462): the presented bearer's revocation state (sign-out-everywhere version, single-logout denylist, refresh retired list) **could not be read**, so whether the token still counts is unknown. **Keep the session. Do NOT sign out and do NOT refresh;** retry after a moment. Sent on ANY route, public ones included, for a request that presented a bearer in that state; such a request is never served as signed out. `Cache-Control: private, no-store`.
 
 The canonical envelope's `message` is presentation; the *behavior fork* is on `code` alone.
 
@@ -2337,7 +2338,7 @@ Silent-refresh seam: exchanges a recently-expired (or near-expiry) Bearer JWT fo
   { "token": "<fresh JWT>", "expires_in": 604800, "token_type": "Bearer", "suspended": false }
   ```
   Unlike `/auth/login`, omits `user_id` / `handle` / `in_good_standing`. `suspended` (v1.136) as on sign-in: a suspended member's refresh **succeeds** (read-only sign-in) and says so.
-- **Errors:** `bcc_unauthorized` 401 (missing/malformed Bearer, decode failed, grace window exceeded, or invalid `user_id` claim — collapsed to one code) · `bcc_forbidden` 403 with `error.data.reason_code: "account_suspended"` (v1.136: the token was revoked **because the account was suspended** — suspension revokes every earlier token; the client shows the suspension notice and sends the member to sign in again, read-only. Before v1.136 this 403 meant "suspended" and fired on every suspended refresh; a suspended member's revoked token got the plain 401.) · `bcc_invalid_state` 409 (no handle) · `bcc_rate_limited` 429
+- **Errors:** `bcc_unauthorized` 401 (missing/malformed Bearer, decode failed, grace window exceeded, or invalid `user_id` claim — collapsed to one code) · `bcc_forbidden` 403 with `error.data.reason_code: "account_suspended"` (v1.136: the token was revoked **because the account was suspended** — suspension revokes every earlier token; the client shows the suspension notice and sends the member to sign in again, read-only. Before v1.136 this 403 meant "suspended" and fired on every suspended refresh; a suspended member's revoked token got the plain 401.) · `bcc_invalid_state` 409 (no handle) · `bcc_rate_limited` 429 · `bcc_unavailable` 503 (v1.204, F-462: the token's revocation state, or the retired list it would be written to, could not be read. **Nothing is minted and nothing is written;** keep the session and retry)
 - **Rate limit:** IP-bucketed, 30 / 60s
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** decodes via `JwtToken::decodeForRefresh`, re-reads `bcc_handle` from authoritative storage (a handle change since the original mint is reflected; the JWT payload is not trusted), mints a fresh JWT, emits the `token_refreshed` audit log. No cookie set, no DB mutation beyond the audit row. Handler `AuthEndpoint::refresh` (route `AuthEndpoint.php:292`). Standard envelope per §1.4.
@@ -2357,7 +2358,7 @@ Silent-refresh seam: exchanges a recently-expired (or near-expiry) Bearer JWT fo
   - `handle` — the user's **current** handle from authoritative storage (the token's own claim goes stale after a handle change).
   - `in_good_standing` — the same value `/auth/login` returns; it **fails open** (`true`) when the standing lookup errors, so it is display state, **never a security gate**.
   - `expires_at` — the token's own `exp` (unix seconds). `decode` accepts a token up to **60 s past** it (the standard skew), so a client may see a `200` with `expires_at` slightly in the past.
-- **Errors:** `bcc_unauthorized` 401 for a missing, malformed, invalid, expired, revoked or deleted-user token — **one code, one message, no reason** (the reason is written to the audit log only) · `bcc_invalid_state` 409 (the user has no handle) · `bcc_rate_limited` 429.
+- **Errors:** `bcc_unauthorized` 401 for a missing, malformed, invalid, expired, revoked or deleted-user token — **one code, one message, no reason** (the reason is written to the audit log only) · `bcc_invalid_state` 409 (the user has no handle) · `bcc_rate_limited` 429 · `bcc_unavailable` 503 (v1.204, F-462: the token's revocation state could not be read. Not a sign-out: keep the session and retry. `Cache-Control: private, no-store`).
 - **Rate limit:** **per token**, 60 / 60 s — keyed on a hash of the presented token and checked **before** decode (calls arrive from the frontend server's single IP, so a per-IP bucket would be shared by every user).
 - **Cache:** `Cache-Control: no-store`, `Vary: Authorization`.
 - **Mapping:** reads the Bearer via `BearerAuth::readBearerToken` (the same header reader authentication uses), `JwtToken::decode`, `get_userdata`, `bcc_handle` meta, `AuthSupport::resolveInGoodStanding`, `AuthSupport::resolveSuspended`. No writes beyond an `auth_session_rejected` audit-log line on a 401. Handler `SessionController::session`. Standard envelope per §1.4.
@@ -2382,8 +2383,8 @@ Silent-refresh seam: exchanges a recently-expired (or near-expiry) Bearer JWT fo
 
 - **Auth:** the token to sign out, in `Authorization: Bearer <jwt>`. Decoded in-handler with `JwtToken::decodeForRefresh`, so a token still inside its refresh-grace window is signed out too (it could otherwise be refreshed back to life).
 - **Body:** none.
-- **Response 200:** `{ "ok": true }` — **always**, and idempotent: a missing, malformed, invalid, expired or already-signed-out token also gets `200 { ok: true }` and changes nothing. Logout never fails visibly.
-- **Errors:** `bcc_rate_limited` 429 only.
+- **Response 200:** `{ "ok": true }`, idempotent: a missing, malformed, invalid, expired or already-signed-out token also gets `200 { ok: true }` and changes nothing. That is every answer except the two errors below.
+- **Errors:** `bcc_rate_limited` 429 · `bcc_unavailable` 503 (v1.204, F-462): the token's revocation state, or the denylist its sign-out would be written to, could not be read, so the sign-out was NOT recorded. The token may still work. The client clears its own session as before, and may retry the call. `Cache-Control: private, no-store`.
 - **Rate limit:** **per token**, 30 / 60 s — keyed on a hash of the presented token, checked before decode (calls can arrive from the frontend server's single IP).
 - **Cache:** `Cache-Control: no-store`, `Vary: Authorization`.
 - **Effect:** the token's `jti` is denylisted until the token can no longer be used or refreshed (`exp` + 60 s skew + the 24 h refresh grace). From then on `JwtToken::decode` and `decodeForRefresh` reject it (`jwt_logged_out`), so every Bearer-authenticated route answers `401`, `GET /auth/session` answers `401`, and `POST /auth/refresh` answers `401`. Other tokens of the same user are unaffected.
@@ -9685,6 +9686,17 @@ Ships with bcc-trust #787.
 
 - **`GET /me/notifications` (`message`) and the weekly digest email:** the actor's `@handle` at the start of a message is their current one, matching `actor.handle`. Before, it was the handle they had when the row was written, so after a rename the bell and the digest showed the retired handle beside the new one, linking the two.
 - **No shape change.** The same fields, still capped at 200 characters. Stored rows are not rewritten; only their rendering changes.
+
+### v1.204 — 2026-11-19 — behaviour change (security) — a bearer whose revocation state can't be read is refused with 503, never trusted (F-462)
+
+Ships with bcc-trust **#792**.
+
+- **Before:** a token's revocation state (the sign-out-everywhere version, the single-logout denylist, the refresh retired list) was read through WordPress's meta cache. After a failed meta read that cache holds an EMPTY array, so a revoked, signed-out or retired token was ACCEPTED until the user's meta was next written.
+- **Now:** the state is read from the database in one guarded query. When that read fails, the token is refused with **`503 bcc_unavailable`**, `Cache-Control: private, no-store`, on any route. It is never served as signed out, and never answered `bcc_token_invalid` (which would sign the app out). See §1.4.3.
+- **`POST /auth/refresh`:** `503 bcc_unavailable` when the state can't be read. Nothing is minted and nothing is written.
+- **`POST /auth/logout`:** `503 bcc_unavailable` when the sign-out can't be recorded. Before, logout always answered `200 { ok: true }`.
+- **`GET /auth/session`:** `503 bcc_unavailable`, not its 401.
+- **Clients:** on `bcc_unavailable` keep the session and retry later. Do not sign out, do not refresh. No new field; no other response shape changes.
 
 ### v1.203 — 2026-11-19 — behaviour change — one mention bell per mentioner per member per 5 minutes (F-415)
 
