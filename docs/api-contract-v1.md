@@ -9747,7 +9747,7 @@ Ships with bcc-trust #785. No bcc-core change.
 
 Ships with bcc-trust **#792**.
 
-- **Before:** a token's revocation state (the sign-out-everywhere version, the single-logout denylist, the refresh retired list) was read through WordPress's meta cache. After a failed meta read that cache holds an EMPTY array, so a revoked, signed-out or retired token was ACCEPTED until the user's meta was next written.
+- **Before:** a token's revocation state (the sign-out-everywhere version, the single-logout denylist, the refresh retired list) was read through WordPress's meta cache.
 - **Now:** the state is read from the database in one guarded query. When that read fails, the token is refused with **`503 bcc_unavailable`**, `Cache-Control: private, no-store`, on any route. It is never served as signed out, and never answered `bcc_token_invalid` (which would sign the app out). See §1.4.3.
 - **`POST /auth/refresh`:** `503 bcc_unavailable` when the state can't be read. Nothing is minted and nothing is written.
 - **`POST /auth/logout`:** `503 bcc_unavailable` when the sign-out can't be recorded. Before, logout always answered `200 { ok: true }`.
