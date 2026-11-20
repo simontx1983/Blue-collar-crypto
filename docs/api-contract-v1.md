@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.215 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.216 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2556,7 +2556,7 @@ Single-activity permalink read (v1.33 backfill — shipped with the post-detail 
   - A post tagged into several rooms opens through any such room the viewer is in.
   - Everyone else, and a plain room's members, still get the 404 below. Every other gate (blocks both ways, moderation hide, §F-02 outside groups, the room's own rule) still applies.
   - A room-membership read that fails answers the same 404 as a missing id, not a 503. It is reached only for an existing post in such a room, so a 503 would reveal both.
-- **Errors:** `bcc_not_found` 404 — covers both "no such activity" and "not visible to this viewer" (§O4.1 caution/risky author exclusion, except as above, §K1 mutual-block invisibility, §K1-C moderation hide, and — v1.94 — a `review` whose vote is no longer active (§3.3.2), and — v1.207 — a SECRET page's announcement the viewer may not see (§4.32.8) all collapse to 404; no existence oracle) · `bcc_unavailable` **503** *(v1.188)* when the post could not be read. This is NOT a 404: the post may well exist, so a client must offer a retry, not "post not found". see [Feed read failure](#feed-read-failure-vnext) below
+- **Errors:** `bcc_not_found` 404 — covers both "no such activity" and "not visible to this viewer" (§O4.1 caution/risky author exclusion, except as above, §K1 mutual-block invisibility, §K1-C moderation hide, and — v1.94 — a `review` whose vote is no longer active (§3.3.2), and — v1.207 — a SECRET page's announcement the viewer may not see (§4.32.8) all collapse to 404; no existence oracle) · `bcc_unavailable` **503** *(v1.188)* when the post could not be read. This is NOT a 404: the post may well exist, so a client must offer a retry, not "post not found". *(v1.216)* The same 503 when the viewer's block lists or the moderation-hidden list could not be read, and, on the shortcode route, when the code lookup did not run. Those are read before the post (the shortcode route reads the lists before it resolves the code), so the 503 is identical for an id or code that exists and one that doesn't. see [Feed read failure](#feed-read-failure-vnext) below
 - **Rate limit:** none route-specific
 - **Cache:** `Cache-Control: private, max-age=15` · `Vary: Authorization, Cookie`
 - **Mapping:** `FeedEndpoint::feedItem` → `FeedRankingService::getActivityById` (same §F3 single brain + `FeedHydrationPipeline` as the list surfaces). FE post-detail page / quick-view modal.
@@ -2566,6 +2566,9 @@ Single-activity permalink read (v1.33 backfill — shipped with the post-detail 
 <a id="feed-read-failure-vnext"></a>Applies to every route that reads a feed: `GET /feed`, `/feed/hot`, `/feed/tag`, `/feed/:id` (numeric and shortcode), `/groups/:id/feed`, `/pages/:id/feed`, `/users/:handle/activity`, `/users/:handle/blog` *(v1.197)* and `/feed/cold-start`. On `/feed/cold-start` the reads covered are the `hot_posts` block and, *(v1.197)*, each listed operator's `recent_action`.
 
 - **When:** the database read that finds the page's posts did not run (a dropped connection, a failed query). Before v1.188 that answered **200 with `items: []`** (or **404** on a permalink), which a client could not tell from "nobody has posted".
+- *(v1.216)* **Also when** a list that a signed-in viewer's reads exclude could not be read: the viewer's §K1 block lists (who they block, who blocks them), or the §K1-C moderation-hidden list when no last-known-good copy of it exists. On `/feed/:id`'s shortcode route, also when the code lookup did not run. Before v1.216 a failed block read answered **200 with `items: []`** (or **404** on a permalink), and a hidden list with no last-good copy was a **500**. On `/feed/hot` the hidden list is read for anonymous readers too; the block lists are read only for a signed-in reader, so an anonymous reader is never failed by them.
+  - These lists are read **before** any post or page, so the 503 is the same whether the post, the code or the page exists.
+  - **Not a 503:** the exact block check made after the posts are found (over each page's authors). When only that check fails, the route answers as if those posts were not there: the page comes back without them (possibly empty), and a permalink is `bcc_not_found` 404. Never the posts unfiltered. This keeps the answer independent of what the page holds.
 - **Response:** `bcc_unavailable` **503**, the standard error envelope, with **no `data`** (not even an empty page). Message: *"The feed is temporarily unavailable. Please try again."*, or *"This post is temporarily unavailable. Please try again."* on `/feed/:id`.
 - **Cache:** always `Cache-Control: private, no-store`, including on `/feed/hot`, whose success is publicly cacheable. Server-side, the shared `/feed/hot` first page is never written from a failed read, so an outage is not served to other readers after the database recovers.
 - **Retry:** safe and idempotent; nothing was written. **Clients:** render an error with a retry action, never the empty state ("No posts yet") or "post not found".
@@ -9711,6 +9714,16 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.216 — 2026-11-19 — behaviour change — a feed or post whose block or hidden list could not be read answers 503, not an empty page or a 404 (F-438, F-455)
+
+Ships with bcc-trust **#810**. bcc-trust only: it uses bcc-core readers already in production.
+
+- **Every feed route with a signed-in reader** (`GET /feed` in every scope, `/feed/hot`, `/feed/tag`, `/feed/:id` numeric and shortcode, `/groups/:id/feed`, `/pages/:id/feed`, `/users/:handle/activity`, `/feed/cold-start`'s hot posts): when the viewer's block lists could not be read, the route answers **`503 bcc_unavailable`**, `Cache-Control: private, no-store`. Before, it answered **200 with `items: []`**, or **404** on a permalink. Anonymous readers read no block lists and are unaffected.
+- **Every feed route, any reader:** when the moderation-hidden list could not be read and no last-known-good copy exists, the same 503. Before, a **500**. The shared `/feed/hot` first page is never cached from such a read.
+- **`/feed/:id` shortcode route:** the lists are read before the code is resolved, so the 503 is the same for a known code and an unknown one. A code lookup that did not run is the same 503, never `bcc_not_found`.
+- **Unchanged:** a block check that fails after the posts are found still answers as if those posts were not there (the page without them, or 404 on a permalink), never the posts unfiltered. Every refusal (blocked, hidden, shadow-limited, not visible, missing) is still the same 404 body. No new field or error code; success responses are unchanged. See [Feed read failure](#feed-read-failure-vnext).
+- **Clients:** no change. The 503 was already documented as retryable on these routes (v1.188).
 
 ### v1.215 — 2026-11-19 — behaviour change — a join whose opt-out state can't be read is "try again" (H7)
 
