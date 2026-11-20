@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.206 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.207 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2549,7 +2549,7 @@ Single-activity permalink read (v1.33 backfill — shipped with the post-detail 
 - **Auth:** Anonymous OR Bearer
 - **Path:** `id` (int act_id **or** 8-letter shortcode — see above)
 - **Response 200:** a single §3.3 `FeedItem` (bare object in the §1.4 envelope — NOT a `CursorEnvelope`), same hydration pipeline as `/feed`
-- **Errors:** `bcc_not_found` 404 — covers both "no such activity" and "not visible to this viewer" (§O4.1 caution/risky author exclusion, §K1 mutual-block invisibility, §K1-C moderation hide, and — v1.94 — a `review` whose vote is no longer active (§3.3.2), and — v1.NEXT — a SECRET page's announcement the viewer may not see (§4.32.8) all collapse to 404; no existence oracle) · `bcc_unavailable` **503** *(v1.188)* when the post could not be read. This is NOT a 404: the post may well exist, so a client must offer a retry, not "post not found". see [Feed read failure](#feed-read-failure-vnext) below
+- **Errors:** `bcc_not_found` 404 — covers both "no such activity" and "not visible to this viewer" (§O4.1 caution/risky author exclusion, §K1 mutual-block invisibility, §K1-C moderation hide, and — v1.94 — a `review` whose vote is no longer active (§3.3.2), and — v1.207 — a SECRET page's announcement the viewer may not see (§4.32.8) all collapse to 404; no existence oracle) · `bcc_unavailable` **503** *(v1.188)* when the post could not be read. This is NOT a 404: the post may well exist, so a client must offer a retry, not "post not found". see [Feed read failure](#feed-read-failure-vnext) below
 - **Rate limit:** none route-specific
 - **Cache:** `Cache-Control: private, max-age=15` · `Vary: Authorization, Cookie`
 - **Mapping:** `FeedEndpoint::feedItem` → `FeedRankingService::getActivityById` (same §F3 single brain + `FeedHydrationPipeline` as the list surfaces). FE post-detail page / quick-view modal.
@@ -8433,7 +8433,7 @@ never hosts a discussion** (`peepso_disable_comments` is set on the backing post
 - Archival withdraws the activity.
 - **No reactions, no stoke, no helpful mark** — see §4.32.15. An announcement is an official
   notice, not a post competing for engagement.
-- **SECRET pages** *(since v1.NEXT)*: the activity of an announcement on a page with
+- **SECRET pages** *(since v1.207)*: the activity of an announcement on a page with
   `peepso_page_privacy = 2` is shown only to a viewer the page admits (its author, site admins, and its members and invitees; see `GET /cards/:type/:id`).
   Anonymous is never admitted. Everyone else gets exactly what they would get if the activity
   did not exist:
@@ -9702,7 +9702,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-19 — behaviour change (privacy) — a SECRET page's announcements leave the feeds and answer as missing by id to non-members
+### v1.207 — 2026-11-19 — behaviour change (privacy) — a SECRET page's announcements leave the feeds and answer as missing by id to non-members
 
 Ships with bcc-trust #786 (needs bcc-core #131 deployed first, as v1.178 did). Completes the announcement half of the v1.178 rule. v1.191 covered the announcement routes; this covers the announcement's feed activity (§4.32.8), which is written as the operator's own post and named no page.
 
