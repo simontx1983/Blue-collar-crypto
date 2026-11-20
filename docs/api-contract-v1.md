@@ -9712,7 +9712,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ### v1.NEXT — 2026-11-19 — behaviour change (security) — password reset and change revoke first; sign-out-everywhere claims only what landed (F-508)
 
-Ships with bcc-trust **#PR**. Follow-ups to v1.210 (F-495).
+Ships with bcc-trust **#805**. Follow-ups to v1.210 (F-495).
 
 - **`POST /auth/reset-password`:** the account's bearer tokens are revoked **before** the password is written. When that does not land: new `503 bcc_unavailable` (`private, no-store`), and nothing changed: the old password still works and the key is unspent, so the same link works again. *v1.210's "unchanged on the wire" list should have named this route; it changes here instead.*
 - **`PATCH /me/account/password`:** the same order. New `503 bcc_unavailable`; nothing changed, and the member retries with the same current password.
