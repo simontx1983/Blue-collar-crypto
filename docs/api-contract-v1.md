@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.205 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.206 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -4548,6 +4548,7 @@ PeepSo's `peepso_notifications` table is the storage layer (§I1 "extend, don't 
 
 - `type` ∈ {`bcc_reaction`, `bcc_review`, `bcc_card_watched`, `bcc_rank_up`, `bcc_welcome`, `bcc_mention`, `bcc_hall_post`, `bcc_comment_received`}. V1 catalogue per §I2; follow-posts deferred. *(v1.50: `bcc_endorse` retired — its subscriber never fired after the Slice-E endorse-write cutover; entity-page vouch casts dispatch `bcc_attestation_vouch_received` instead. Historical `bcc_endorse` rows are rejected by read-side validation, not rendered.)* **Legacy alias:** `bcc_card_watched` is emitted in parallel with `bcc_card_watched` during the §1.1.1 deprecation window; clients SHOULD branch on the new name and accept either. Removed in release N+1.
 - `message` is server-rendered per §A2 — frontend renders verbatim. Plain English, capped at 200 chars (PeepSo's column width).
+  - *(since v1.206, F-412)* A `message` that opens with the actor's `@handle` names their **current** handle, the same one as `actor.handle`. It is re-rendered when the bell is read, so a member who renamed is never shown by their retired handle beside the new one. The weekly digest email names actors the same way. A message from an actor that no longer resolves keeps its stored text.
 - `actor.handle` may be empty when the originating user has been deleted; the frontend renders the message verbatim regardless.
 - `link` is a server-built relative path. Per type:
   - `bcc_reaction` → `/post/<act_id>` (the permalink of the post that was reacted to) *(v1.140 — was `/?focus=<act_id>`, which no client route reads)*
@@ -9684,6 +9685,13 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.206 — 2026-11-19 — behaviour change (privacy) — a bell names its actor by their current @handle (F-412)
+
+Ships with bcc-trust #787.
+
+- **`GET /me/notifications` (`message`) and the weekly digest email:** the actor's `@handle` at the start of a message is their current one, matching `actor.handle`. Before, it was the handle they had when the row was written, so after a rename the bell and the digest showed the retired handle beside the new one, linking the two.
+- **No shape change.** The same fields, still capped at 200 characters. Stored rows are not rewritten; only their rendering changes.
 
 ### v1.205 — 2026-11-19 — additive — `GET /onboarding/suggestions?chain=` puts a home chain's validators first (F-439)
 
