@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.203 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.209 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -158,6 +158,7 @@ Two distinct codes, two distinct UX paths:
 - `bcc_token_expired` (401) — the bearer was once valid but has aged past expiry. Clients SHOULD attempt a silent refresh (`POST /bcc/v1/auth/refresh`, see §β.3) and retry once. If the refresh itself returns `bcc_token_expired` or `bcc_unauthorized`, sign the user out.
 - `bcc_token_invalid` (401) — the bearer is malformed, was revoked, or never validated. Do NOT retry. Sign the user out and route to `/login`.
 - `bcc_unauthorized` (401) — no bearer was provided. Route to `/login`.
+- `bcc_unavailable` (**503**, since v1.204, F-462): the presented bearer's revocation state (sign-out-everywhere version, single-logout denylist, refresh retired list) **could not be read**, so whether the token still counts is unknown. **Keep the session. Do NOT sign out and do NOT refresh;** retry after a moment. Sent on ANY route, public ones included, for a request that presented a bearer in that state; such a request is never served as signed out. `Cache-Control: private, no-store`.
 
 The canonical envelope's `message` is presentation; the *behavior fork* is on `code` alone.
 
@@ -2140,7 +2141,7 @@ Verifies a signed nonce, creates a new user (placeholder email if none supplied)
   }
   ```
 - **Errors:**
-  - `bcc_invalid_request` 400 — missing field, bad address; no live challenge for the address (expired, never issued, or already used).
+  - `bcc_invalid_request` 400 — missing field, bad address; a typed `email` that isn't a valid address (*since v1.209 (F-458)*, including any address on the reserved `@noreply.bcc.local` domain); no live challenge for the address (expired, never issued, or already used).
   - `bcc_invalid_handle` 400 / `bcc_handle_reserved` 409 / `bcc_conflict` 409 — handle validation per §B6.
   - `bcc_signature_invalid` 401 — signature verification failed.
   - `bcc_wallet_already_linked` 409 — wallet is already bound to an account. Frontend should route to `/login`.
@@ -2227,7 +2228,7 @@ Creates an email/password account with a public handle. Mints no JWT — the acc
   { "ok": true, "email": "alice@example.com" }
   ```
   Deliberately carries **no JWT** — the account must be verified before it can sign in. The `email` is echoed so the client knows which address to name on the verification screen; *(since v1.189, F-410)* the frontend stores it client-side and routes to a **bare `/verify-email`**, with no address in the URL.
-- **Errors:** `bcc_invalid_request` 400 (missing/malformed email or password < 8) · `bcc_invalid_handle` 422 (fails §B6) · `bcc_handle_reserved` 422 · `bcc_conflict` 409 (handle taken or email already registered; since v1.147 the message adds that an unconfirmed sign-up frees up after 7 days) · `bcc_password_breached` 422 (*(since v1.171, F-294)* the password appears in a known data breach (Have I Been Pwned's Pwned Passwords): *"This password has appeared in a data breach; please choose a different one."*; checked after the email, password-length and handle checks, so a request that fails those is answered without it; no account is created) · `bcc_rate_limited` 429 · `bcc_internal_error` 500 (`wp_insert_user` failure)
+- **Errors:** `bcc_invalid_request` 400 (missing/malformed email (*since v1.209 (F-458)*, including any address on the reserved `@noreply.bcc.local` domain) or password < 8) · `bcc_invalid_handle` 422 (fails §B6) · `bcc_handle_reserved` 422 · `bcc_conflict` 409 (handle taken or email already registered; since v1.147 the message adds that an unconfirmed sign-up frees up after 7 days) · `bcc_password_breached` 422 (*(since v1.171, F-294)* the password appears in a known data breach (Have I Been Pwned's Pwned Passwords): *"This password has appeared in a data breach; please choose a different one."*; checked after the email, password-length and handle checks, so a request that fails those is answered without it; no account is created) · `bcc_rate_limited` 429 · `bcc_internal_error` 500 (`wp_insert_user` failure)
 - **An identical retry is the same sign-up (since v1.158, F-294):** a repeat of a sign-up (same `email`, `handle` and `password`) while that account is still unconfirmed and less than 10 minutes old answers the same `201`. No second account, no second email. Any difference, an older account or a confirmed one gets the usual `409`.
 - **Passwords known to have leaked are refused (since v1.171, F-294):** here, at `POST /auth/reset-password` and at `PATCH /me/account/password`. The server sends only the first 5 hex characters of the password's SHA-1 to Have I Been Pwned's range API (k-anonymity, with response padding) and matches the rest itself; the password never leaves the server. **Fails open:** if the breach list is unreachable, slow (2-second timeout) or answers badly, the password is accepted, so a sign-up is never blocked by a third-party outage. The 8-character minimum is unchanged.
 - **Unconfirmed sign-ups free up after 7 days (since v1.147, F-285):** an account created by email sign-up that was never confirmed (`_bcc_email_verified='0'`, a password, no wallet or OAuth link, registered more than 7 days ago) no longer holds its handle or email. A sign-up that wants either deletes it first (audited as `abandoned_signup_reclaimed`, by user id only). Such an account can never have signed in. Wallet, OAuth and confirmed accounts are never touched.
@@ -2320,7 +2321,7 @@ Completes an OAuth (Google/X) signup for a first-time user: exchanges the `provi
   ```
   `provider_token`, `handle` required; `display_name` optional (falls back to the provider's display name, then the handle). `email` is **required iff the provider didn't supply one** (X/Twitter's OAuth2 user-context never returns an email; Google always does) and is ignored when it did.
 - **Response 201:** identical shape to `/auth/2fa/verify` (`{ user_id, handle, token, expires_in, token_type, in_good_standing, suspended }`) — the user is signed in immediately.
-- **Errors:** `bcc_invalid_request` 400 (missing provider_token) · `bcc_invalid_oauth_token` 400 (provider_token expired (15 min) or consumed — restart the OAuth flow) · `bcc_invalid_handle` 422 / `bcc_handle_reserved` 422 (§B6) · `bcc_invalid_email` 422 (email missing/invalid when the provider supplied none) · `bcc_conflict` 409 (handle or email already taken) · `bcc_rate_limited` 429 · `bcc_unavailable` 503 *(since v1.182, F-294)* "Your sign-up is still being completed. Please try again." (another submit with the same `provider_token` is still being processed; nothing was created by this submit; retry the same request) · `bcc_internal_error` 500. Validation errors leave the provider_token intact so the user corrects and retries in place.
+- **Errors:** `bcc_invalid_request` 400 (missing provider_token) · `bcc_invalid_oauth_token` 400 (provider_token expired (15 min) or consumed — restart the OAuth flow) · `bcc_invalid_handle` 422 / `bcc_handle_reserved` 422 (§B6) · `bcc_invalid_email` 422 (email missing/invalid when the provider supplied none or supplied an unusable one; *since v1.209 (F-458)*, including any address on the reserved `@noreply.bcc.local` domain. A typed address is never taken as provider-verified) · `bcc_conflict` 409 (handle or email already taken) · `bcc_rate_limited` 429 · `bcc_unavailable` 503 *(since v1.182, F-294)* "Your sign-up is still being completed. Please try again." (another submit with the same `provider_token` is still being processed; nothing was created by this submit; retry the same request) · `bcc_internal_error` 500. Validation errors leave the provider_token intact so the user corrects and retries in place.
 - **A retry is the same sign-up (since v1.182, F-294):** submits with one `provider_token` are processed one at a time (a submit waits up to 5 seconds, then answers the 503 above). After a successful create, **one** retry of the same request signs in as **that** account: a fresh token, the same 201 shape, no second account and no second mail. It counts only if it comes within **2 minutes**, carries the **same `handle`** (compared trimmed and lowercased, as the create does), and arrives before any "sign out everywhere" on the account. Anything else answers the spent-token `bcc_invalid_oauth_token` 400 "Session expired. Please sign in again.": a second retry, a later one, one with another handle (which also uses up the one retry), or one after the account's sessions were revoked. A double submit or a retry after a lost response used to answer "That handle is already taken." or "Session expired." for an account that existed. The narrow window is there because the token sits in the `/signup/complete-profile?pt=…` URL, where browser history keeps it. **Clients:** resend the same request once; after a 201, drop the `provider_token` (and strip it from the URL).
 - **Rate limit:** IP-bucketed, 5 / 60s
 - **Cache:** `Cache-Control: no-store`
@@ -2337,7 +2338,7 @@ Silent-refresh seam: exchanges a recently-expired (or near-expiry) Bearer JWT fo
   { "token": "<fresh JWT>", "expires_in": 604800, "token_type": "Bearer", "suspended": false }
   ```
   Unlike `/auth/login`, omits `user_id` / `handle` / `in_good_standing`. `suspended` (v1.136) as on sign-in: a suspended member's refresh **succeeds** (read-only sign-in) and says so.
-- **Errors:** `bcc_unauthorized` 401 (missing/malformed Bearer, decode failed, grace window exceeded, or invalid `user_id` claim — collapsed to one code) · `bcc_forbidden` 403 with `error.data.reason_code: "account_suspended"` (v1.136: the token was revoked **because the account was suspended** — suspension revokes every earlier token; the client shows the suspension notice and sends the member to sign in again, read-only. Before v1.136 this 403 meant "suspended" and fired on every suspended refresh; a suspended member's revoked token got the plain 401.) · `bcc_invalid_state` 409 (no handle) · `bcc_rate_limited` 429
+- **Errors:** `bcc_unauthorized` 401 (missing/malformed Bearer, decode failed, grace window exceeded, or invalid `user_id` claim — collapsed to one code) · `bcc_forbidden` 403 with `error.data.reason_code: "account_suspended"` (v1.136: the token was revoked **because the account was suspended** — suspension revokes every earlier token; the client shows the suspension notice and sends the member to sign in again, read-only. Before v1.136 this 403 meant "suspended" and fired on every suspended refresh; a suspended member's revoked token got the plain 401.) · `bcc_invalid_state` 409 (no handle) · `bcc_rate_limited` 429 · `bcc_unavailable` 503 (v1.204, F-462: the token's revocation state, or the retired list it would be written to, could not be read. **Nothing is minted and nothing is written;** keep the session and retry)
 - **Rate limit:** IP-bucketed, 30 / 60s
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** decodes via `JwtToken::decodeForRefresh`, re-reads `bcc_handle` from authoritative storage (a handle change since the original mint is reflected; the JWT payload is not trusted), mints a fresh JWT, emits the `token_refreshed` audit log. No cookie set, no DB mutation beyond the audit row. Handler `AuthEndpoint::refresh` (route `AuthEndpoint.php:292`). Standard envelope per §1.4.
@@ -2357,7 +2358,7 @@ Silent-refresh seam: exchanges a recently-expired (or near-expiry) Bearer JWT fo
   - `handle` — the user's **current** handle from authoritative storage (the token's own claim goes stale after a handle change).
   - `in_good_standing` — the same value `/auth/login` returns; it **fails open** (`true`) when the standing lookup errors, so it is display state, **never a security gate**.
   - `expires_at` — the token's own `exp` (unix seconds). `decode` accepts a token up to **60 s past** it (the standard skew), so a client may see a `200` with `expires_at` slightly in the past.
-- **Errors:** `bcc_unauthorized` 401 for a missing, malformed, invalid, expired, revoked or deleted-user token — **one code, one message, no reason** (the reason is written to the audit log only) · `bcc_invalid_state` 409 (the user has no handle) · `bcc_rate_limited` 429.
+- **Errors:** `bcc_unauthorized` 401 for a missing, malformed, invalid, expired, revoked or deleted-user token — **one code, one message, no reason** (the reason is written to the audit log only) · `bcc_invalid_state` 409 (the user has no handle) · `bcc_rate_limited` 429 · `bcc_unavailable` 503 (v1.204, F-462: the token's revocation state could not be read. Not a sign-out: keep the session and retry. `Cache-Control: private, no-store`).
 - **Rate limit:** **per token**, 60 / 60 s — keyed on a hash of the presented token and checked **before** decode (calls arrive from the frontend server's single IP, so a per-IP bucket would be shared by every user).
 - **Cache:** `Cache-Control: no-store`, `Vary: Authorization`.
 - **Mapping:** reads the Bearer via `BearerAuth::readBearerToken` (the same header reader authentication uses), `JwtToken::decode`, `get_userdata`, `bcc_handle` meta, `AuthSupport::resolveInGoodStanding`, `AuthSupport::resolveSuspended`. No writes beyond an `auth_session_rejected` audit-log line on a 401. Handler `SessionController::session`. Standard envelope per §1.4.
@@ -2382,8 +2383,8 @@ Silent-refresh seam: exchanges a recently-expired (or near-expiry) Bearer JWT fo
 
 - **Auth:** the token to sign out, in `Authorization: Bearer <jwt>`. Decoded in-handler with `JwtToken::decodeForRefresh`, so a token still inside its refresh-grace window is signed out too (it could otherwise be refreshed back to life).
 - **Body:** none.
-- **Response 200:** `{ "ok": true }` — **always**, and idempotent: a missing, malformed, invalid, expired or already-signed-out token also gets `200 { ok: true }` and changes nothing. Logout never fails visibly.
-- **Errors:** `bcc_rate_limited` 429 only.
+- **Response 200:** `{ "ok": true }`, idempotent: a missing, malformed, invalid, expired or already-signed-out token also gets `200 { ok: true }` and changes nothing. That is every answer except the two errors below.
+- **Errors:** `bcc_rate_limited` 429 · `bcc_unavailable` 503 (v1.204, F-462): the token's revocation state, or the denylist its sign-out would be written to, could not be read, so the sign-out was NOT recorded. The token may still work. The client clears its own session as before, and may retry the call. `Cache-Control: private, no-store`.
 - **Rate limit:** **per token**, 30 / 60 s — keyed on a hash of the presented token, checked before decode (calls can arrive from the frontend server's single IP).
 - **Cache:** `Cache-Control: no-store`, `Vary: Authorization`.
 - **Effect:** the token's `jti` is denylisted until the token can no longer be used or refreshed (`exp` + 60 s skew + the 24 h refresh grace). From then on `JwtToken::decode` and `decodeForRefresh` reject it (`jwt_logged_out`), so every Bearer-authenticated route answers `401`, `GET /auth/session` answers `401`, and `POST /auth/refresh` answers `401`. Other tokens of the same user are unaffected.
@@ -2548,7 +2549,7 @@ Single-activity permalink read (v1.33 backfill — shipped with the post-detail 
 - **Auth:** Anonymous OR Bearer
 - **Path:** `id` (int act_id **or** 8-letter shortcode — see above)
 - **Response 200:** a single §3.3 `FeedItem` (bare object in the §1.4 envelope — NOT a `CursorEnvelope`), same hydration pipeline as `/feed`
-- **Errors:** `bcc_not_found` 404 — covers both "no such activity" and "not visible to this viewer" (§O4.1 caution/risky author exclusion, §K1 mutual-block invisibility, §K1-C moderation hide, and — v1.94 — a `review` whose vote is no longer active (§3.3.2) all collapse to 404; no existence oracle) · `bcc_unavailable` **503** *(v1.188)* when the post could not be read. This is NOT a 404: the post may well exist, so a client must offer a retry, not "post not found". see [Feed read failure](#feed-read-failure-vnext) below
+- **Errors:** `bcc_not_found` 404 — covers both "no such activity" and "not visible to this viewer" (§O4.1 caution/risky author exclusion, §K1 mutual-block invisibility, §K1-C moderation hide, and — v1.94 — a `review` whose vote is no longer active (§3.3.2), and — v1.207 — a SECRET page's announcement the viewer may not see (§4.32.8) all collapse to 404; no existence oracle) · `bcc_unavailable` **503** *(v1.188)* when the post could not be read. This is NOT a 404: the post may well exist, so a client must offer a retry, not "post not found". see [Feed read failure](#feed-read-failure-vnext) below
 - **Rate limit:** none route-specific
 - **Cache:** `Cache-Control: private, max-age=15` · `Vary: Authorization, Cookie`
 - **Mapping:** `FeedEndpoint::feedItem` → `FeedRankingService::getActivityById` (same §F3 single brain + `FeedHydrationPipeline` as the list surfaces). FE post-detail page / quick-view modal.
@@ -4547,6 +4548,7 @@ PeepSo's `peepso_notifications` table is the storage layer (§I1 "extend, don't 
 
 - `type` ∈ {`bcc_reaction`, `bcc_review`, `bcc_card_watched`, `bcc_rank_up`, `bcc_welcome`, `bcc_mention`, `bcc_hall_post`, `bcc_comment_received`}. V1 catalogue per §I2; follow-posts deferred. *(v1.50: `bcc_endorse` retired — its subscriber never fired after the Slice-E endorse-write cutover; entity-page vouch casts dispatch `bcc_attestation_vouch_received` instead. Historical `bcc_endorse` rows are rejected by read-side validation, not rendered.)* **Legacy alias:** `bcc_card_watched` is emitted in parallel with `bcc_card_watched` during the §1.1.1 deprecation window; clients SHOULD branch on the new name and accept either. Removed in release N+1.
 - `message` is server-rendered per §A2 — frontend renders verbatim. Plain English, capped at 200 chars (PeepSo's column width).
+  - *(since v1.206, F-412)* A `message` that opens with the actor's `@handle` names their **current** handle, the same one as `actor.handle`. It is re-rendered when the bell is read, so a member who renamed is never shown by their retired handle beside the new one. The weekly digest email names actors the same way. A message from an actor that no longer resolves keeps its stored text.
 - `actor.handle` may be empty when the originating user has been deleted; the frontend renders the message verbatim regardless.
 - `link` is a server-built relative path. Per type:
   - `bcc_reaction` → `/post/<act_id>` (the permalink of the post that was reacted to) *(v1.140 — was `/?focus=<act_id>`, which no client route reads)*
@@ -5219,7 +5221,7 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
 - ⚠ This includes a change WordPress itself confirmed by email (wp-admin profile.php's own confirmation link). The member verifies once more through BCC.
 
 - **Response 200:** `{ "ok": true, "pending": true, "email_masked": "v*****@gmail.com", "expires_in": 900 }`. Same address as the current one (case-insensitive) → `{ "ok": true, "pending": false }`, nothing mailed.
-- **Errors:** `bcc_invalid_request` (422 — bad email or wrong current password; message disambiguates), `bcc_conflict` (409 — email already taken by another user), `bcc_unauthorized` 401, `bcc_rate_limited` 429 (5/min/user, before the password check).
+- **Errors:** `bcc_invalid_request` (422 — bad email (*since v1.209 (F-458)*, including any address on the reserved `@noreply.bcc.local` domain) or wrong current password; message disambiguates), `bcc_conflict` (409 — email already taken by another user), `bcc_unauthorized` 401, `bcc_rate_limited` 429 (5/min/user, before the password check).
 - **Confirming with a wallet instead — accounts with NO password only (since v1.130, F-253):** a member whose account has no password (`GET /wallets` → `recovery.has_password === false`: a wallet or OAuth signup that never set one) sends `wallet_address`, `chain_slug`, `signature` (and `extra` where the chain needs it — Cosmos `pub_key`, as for wallet linking) **instead of** `current_password`. Every other account — `has_password` `true` **or `null`** — must type its current password: wallet fields from such an account → `bcc_forbidden` 403 *"Your account has a password. Confirm with your current password."* (a stolen session can link its own wallet without a password, so a wallet can't stand in for one). The proving wallet must be the caller's own, **verified** and **established**: verified at least 48 hours ago (else `bcc_forbidden` 403, `data.usable_at` = when it can be used) **and** before the current sign-in began (else `bcc_forbidden` 403 *"This wallet was verified after you signed in. Sign out, sign back in, and try again."*). Unlinking and relinking a wallet restarts its clock. The signature must be over a `GET /auth/nonce` challenge issued for this wallet **and chain** with `purpose=confirm_email_change`. `current_password` wins when both are sent. Other wallet-path errors: `bcc_invalid_request` 400 (missing wallet field, unknown chain, wallet not linked or not verified, challenge missing / expired / issued for another purpose or another chain — request a new one), `bcc_signature_invalid` 401, `bcc_unauthorized` 401 (no valid bearer session to date the wallet against), `bcc_unavailable` 503 (server's bcc-core predates purpose-bound challenges; the password path still works). Neither credential → `bcc_invalid_request` 422, naming the one this account uses: *"Confirm with your current password."* or *"Confirm with a signature from one of your verified wallets."* Input errors (a missing or malformed `email`) and every account / wallet-age refusal are answered **before** the challenge is spent, so the member can fix them and resubmit the same signature. The audit row records `confirmed_by: "password" | "wallet"`.
 - **Side effects:** stages `{ email, otp_hash, purpose: "change" }` in the account's pending-email transient (15-min TTL, one per account — shared with the recovery-email route below, so a new request of either kind supersedes the previous one); mails the OTP via `AuthMailer::sendEmailChangeOtp` (subject "Confirm your new email address"); writes an `account_email_change_requested` audit row. The change canary goes out on **confirmation**, not here.
 - **Cache:** `Cache-Control: no-store`.
@@ -6724,7 +6726,7 @@ File a content report against a feed item or an **announcement** (§K1 Phase B).
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
 - **Body (JSON):** `target_kind` (**required**, ∈ `feed_item | announcement`) · `target_id` (**required**, int ≥ 1 — the `act_id` for `feed_item`, the **bare integer announcement id, prefix stripped** for `announcement`; see below) · `reason_code` (**required**, ∈ `spam|harassment|hate|violence|misinformation|other`) · `comment` (optional, ≤ 500 chars; **required when `reason_code = other`**)
 - **Response 200:** `{ "data": { "ok": true, "report_id": 5512, "status": "created" } }` — `status` ∈ `created | existing` (UNIQUE `(reporter, target_kind, target_id)` blocks a second row; `existing` returns `report_id: 0`).
-- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (bad kind/id/reason, comment > 500, missing comment for `other`, or self-report) · **`bcc_not_found` 404** (`announcement`: the notice is not publicly readable, or *(since v1.201)* it is on a SECRET page the reporter may not see · `feed_item` *(v1.93)*: the reporter cannot see the post; see below) · `bcc_rate_limited` 429 (FLAG limits, 5 / 5 min / reporter) · `bcc_unavailable` 503
+- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (bad kind/id/reason, comment > 500, missing comment for `other`, or self-report) · **`bcc_not_found` 404** (`announcement`: the notice is not publicly readable, or *(since v1.201)* it is on a SECRET page the reporter may not see · `feed_item` *(v1.93)*: the reporter cannot see the post, or *(since v1.208)* `target_id` is a COMMENT's act id, which is never a feed item; see below) · `bcc_rate_limited` 429 (FLAG limits, 5 / 5 min / reporter) · `bcc_unavailable` 503
 - **Mapping:** `MyReportsEndpoint::create` (route `MyReportsEndpoint.php:38`) → `ContentReportService::fileReport`; fires `do_action('bcc_content_reported', …)` for async Phase C subscribers.
 
 ⚠⚠ **FOR `announcement`, THE CLIENT SENDS THE NOTICE'S OWN ID AND NOTHING
@@ -6865,16 +6867,22 @@ Partial update of the viewer's DM-gating preferences. Registered as `WP_REST_Ser
 
 Admin-curated first-pull follow candidates for the post-signup wizard (§B4). **Auth-gated despite the public-looking path.**
 
-- **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
-- **Response 200:** three named buckets, each a list of polymorphic §L5/§3.2 Card view-models:
+- **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401 (checked before `chain`).
+- **Query** *(v1.205)*: `chain` (optional). A home-chain slug from the same allowlist as `POST /me/onboarding/complete`'s `home_chain` (`cosmos|osmosis|injective|ethereum|solana|polkadot|thorchain|near`), lowercased and trimmed. Absent or empty means no chain.
+- **Response 200:** three named buckets, each a list of polymorphic §L5/§3.2 Card view-models, plus `bias`:
   ```json
-  { "data": { "validators": [ { "card_kind": "validator", "...": "..." } ], "projects": [ { "card_kind": "project", "...": "..." } ], "creators": [ { "card_kind": "creator", "...": "..." } ] } }
+  { "data": { "validators": [ { "card_kind": "validator", "...": "..." } ], "projects": [ { "card_kind": "project", "...": "..." } ], "creators": [ { "card_kind": "creator", "...": "..." } ], "bias": { "chain": "cosmos", "applied_to": ["validators"] } } }
   ```
   Each bucket holds up to **4** cards; buckets present even when empty. Bucket→type→kind map locked in `OnboardingEndpoint::BUCKETS`.
-- **Errors:** `bcc_unauthorized` 401
-- **Cache:** `Cache-Control: private, max-age=60`
+- **Chain bias** *(v1.205)*: with `chain`, only the **validators** bucket changes. It takes that chain's validators first (up to 4, in the same trust order), then fills from the unbiased ranking, deduped. It never holds fewer cards than it would without `chain`.
+  - **Projects and creators never change:** builder pages carry no chain, and a creator's chain is only reachable through collection claims.
+  - **`bias`** is always present. It is `null` without `chain`. With one, it is `{ "chain", "applied_to" }`, where `applied_to` names the buckets the chain really re-ranked: `["validators"]`, or `[]`.
+  - **`applied_to` is `[]`** when no validator on that chain made the bucket, or when discovery is on its fallback path. The fallback is used while the page read model is empty, and it cannot filter by chain. The bucket is then exactly the unbiased one.
+  - **Clients label the bias from `applied_to`, never from the request.**
+- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (`chain` not in the allowlist; nothing is queried)
+- **Cache:** `Cache-Control: private, max-age=60`. `chain` is part of the URL, so each chain caches separately.
 - **SECRET pages are never suggested** *(since v1.178)*: the candidates come from the same discovery query as `GET /cards`, which lists no secret page.
-- **Mapping:** `OnboardingEndpoint::suggestions` (route `OnboardingEndpoint.php:119`) → `PageDiscoveryService::query` (§F1 ranker) re-hydrated through `CardViewService::getCard`. FE `onboarding-endpoints.ts`.
+- **Mapping:** `OnboardingEndpoint::suggestions` (route `OnboardingEndpoint.php:132`) → `PageDiscoveryService::query` (§F1 ranker) re-hydrated through `CardViewService::getCard`. The chain bias is `OnboardingEndpoint::chainFirstPageIds`, which uses `query()`'s `chain_slug` filter and reads its `chain_applied` result flag. FE `onboarding-endpoints.ts`.
 
 #### `POST /bcc/v1/me/onboarding/complete`
 
@@ -8425,6 +8433,22 @@ never hosts a discussion** (`peepso_disable_comments` is set on the backing post
 - Archival withdraws the activity.
 - **No reactions, no stoke, no helpful mark** — see §4.32.15. An announcement is an official
   notice, not a post competing for engagement.
+- **SECRET pages** *(since v1.207)*: the activity of an announcement on a page with
+  `peepso_page_privacy = 2` is shown only to a viewer the page admits (its author, site admins, and its members and invitees; see `GET /cards/:type/:id`).
+  Anonymous is never admitted. Everyone else gets exactly what they would get if the activity
+  did not exist:
+  - **Lists** leave it out: `GET /feed` (every scope), `GET /feed/tag`, `GET /feed/hot`,
+    `GET /users/:handle/activity` and the posts on `GET /feed/cold-start`. A page this empties
+    is read past, as a page emptied by blocks is.
+  - **`GET /feed/hot`:** the shared first page still holds the activity; it is dropped per
+    request, after that cache, so a page made secret is hidden on the next request and the
+    page's members still see it there. ⚠ A browser or proxy holding the anonymous
+    `max-age=60` response can show it until that expires, as for a deleted post.
+  - **`GET /feed/:id`** and the shortcode alias: `bcc_not_found` 404 "Post not found.".
+  - **By id:** reactions, stoke and helpful marks answer `bcc_not_found` 404 (not the
+    §4.32.15 `403`); the comment thread, a new comment, `DELETE /feed/:id`, a comment removal
+    under it and a `feed_item` report answer `404` as for a missing post. The view beacon still
+    answers `204` and counts nothing.
 
 #### 4.32.9 Error codes
 
@@ -9677,6 +9701,58 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.209 — 2026-11-19 — behaviour change (narrowing) — no typed email may use the reserved placeholder domain (F-458)
+
+Ships with bcc-trust #791.
+
+- **`POST /auth/signup`, `POST /auth/wallet-signup` (the typed `email`), `POST /auth/oauth-complete`, `PATCH /me/account/email`:** an address on `@noreply.bcc.local`, in any letter case, is refused with each route's usual invalid-email error. That domain is BCC's marker for a wallet sign-up's placeholder address (no inbox), so an ordinary account typing it would pass for a wallet account. `POST /me/recovery-email` already refused it.
+- **`POST /auth/oauth-complete`:** when the provider's address is unusable and a typed one replaces it, the typed address is never treated as provider-verified; it goes through the usual verify-email flow.
+- **Clients:** no change for real addresses.
+
+### v1.208 — 2026-11-19 — fix (privacy) — a comment's act id is not a reportable feed item
+
+Ships with bcc-trust #789. Works on any bcc-core; no deploy order.
+
+- **`POST /me/reports`** with `target_kind: "feed_item"`: a `target_id` that is a COMMENT's act id is `404 bcc_not_found` "Not found.", the same as an id that does not exist, and nothing is filed. Before, a comment's activity row passed as a public post (same module as a status, no group on its own post), so a comment under a secret- or closed-group post, a followers-only post or a page wall was reportable by anyone, which confirmed it exists and let non-members feed the auto-hide counter.
+- **Unchanged:** reporting a post, a review reply (v1.159) and an announcement; every shape. No new route or error code.
+
+### v1.207 — 2026-11-19 — behaviour change (privacy) — a SECRET page's announcements leave the feeds and answer as missing by id to non-members
+
+Ships with bcc-trust #786 (needs bcc-core #131 deployed first, as v1.178 did). Completes the announcement half of the v1.178 rule. v1.191 covered the announcement routes; this covers the announcement's feed activity (§4.32.8), which is written as the operator's own post and named no page.
+
+- **Lists:** `GET /feed` (every scope), `/feed/tag`, `/feed/hot`, `/users/:handle/activity` and `/feed/cold-start`'s posts leave out a SECRET page's announcement for a viewer the page does not admit (its author, site admins, and its members and invitees may see it), anonymous included. A page this empties is read past, as for blocks.
+- **`/feed/hot`:** filtered per request, after the shared cache, so the page's members still see it and a page made secret is hidden on the next request. The HTTP cache headers are unchanged.
+- **By id:** `GET /feed/:id` and the shortcode alias are `404 bcc_not_found` "Post not found.". Reactions, stoke and helpful marks are `404` instead of the §4.32.15 `403`. The comment thread, a new comment, `DELETE /feed/:id`, a comment removal under it and a `feed_item` report are `404`, all as for a missing post. The view beacon still answers `204` and no longer counts the view.
+- **Unchanged:** open pages, and every request and response shape. No new route or error code.
+
+### v1.206 — 2026-11-19 — behaviour change (privacy) — a bell names its actor by their current @handle (F-412)
+
+Ships with bcc-trust #787.
+
+- **`GET /me/notifications` (`message`) and the weekly digest email:** the actor's `@handle` at the start of a message is their current one, matching `actor.handle`. Before, it was the handle they had when the row was written, so after a rename the bell and the digest showed the retired handle beside the new one, linking the two.
+- **No shape change.** The same fields, still capped at 200 characters. Stored rows are not rewritten; only their rendering changes.
+
+### v1.205 — 2026-11-19 — additive — `GET /onboarding/suggestions?chain=` puts a home chain's validators first (F-439)
+
+Ships with bcc-trust #785. No bcc-core change.
+
+- **`GET /onboarding/suggestions`:** an optional `chain` query parameter, a home-chain slug from the `POST /me/onboarding/complete` allowlist. An unknown slug answers `bcc_invalid_request` **400**.
+- **Validators only:** that bucket takes the chain's validators first, then fills from the unbiased trust ranking, deduped, so it never holds fewer cards than without `chain`. Projects and creators are unchanged.
+- **`data.bias`** *(additive, always present)*: `null` without `chain`; otherwise `{ "chain", "applied_to" }`. `applied_to` is `["validators"]` only when the chain really re-ranked that bucket. It is `[]` when no validator on the chain made the cut, or when discovery is on its fallback path, which cannot filter by chain.
+- **Clients:** label the bias from `applied_to`, not from the request. The onboarding chips' "Bias suggestions toward" changed nothing before this, since the endpoint took no chain.
+- **Unchanged:** without `chain`, the buckets are exactly as before and `bias` is `null`. Auth, the cache header and the card shapes are unchanged.
+
+### v1.204 — 2026-11-19 — behaviour change (security) — a bearer whose revocation state can't be read is refused with 503, never trusted (F-462)
+
+Ships with bcc-trust **#792**.
+
+- **Before:** a token's revocation state (the sign-out-everywhere version, the single-logout denylist, the refresh retired list) was read through WordPress's meta cache. After a failed meta read that cache holds an EMPTY array, so a revoked, signed-out or retired token was ACCEPTED until the user's meta was next written.
+- **Now:** the state is read from the database in one guarded query. When that read fails, the token is refused with **`503 bcc_unavailable`**, `Cache-Control: private, no-store`, on any route. It is never served as signed out, and never answered `bcc_token_invalid` (which would sign the app out). See §1.4.3.
+- **`POST /auth/refresh`:** `503 bcc_unavailable` when the state can't be read. Nothing is minted and nothing is written.
+- **`POST /auth/logout`:** `503 bcc_unavailable` when the sign-out can't be recorded. Before, logout always answered `200 { ok: true }`.
+- **`GET /auth/session`:** `503 bcc_unavailable`, not its 401.
+- **Clients:** on `bcc_unavailable` keep the session and retry later. Do not sign out, do not refresh. No new field; no other response shape changes.
 
 ### v1.203 — 2026-11-19 — behaviour change — one mention bell per mentioner per member per 5 minutes (F-415)
 
