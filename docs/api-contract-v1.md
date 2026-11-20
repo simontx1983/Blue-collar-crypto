@@ -5252,7 +5252,7 @@ Body `{ "code": "123456" }`.
 
 #### `PATCH /bcc/v1/me/account/password` (V2 Phase 2.5)
 
-Change password. Body `{ "current_password": "...", "password": "..." }`. New password ≥ **8** chars (server-enforced; *since v1.158, F-294: was 10, now the same minimum as sign-up and reset; existing passwords are unaffected*). Server calls `wp_set_password` (which destroys all session tokens) and immediately re-issues the current session's auth cookie so the user is not kicked out mid-flow. It also bumps the per-user JWT token-version (revoking every outstanding bearer token, the bearer analogue of the session-token wipe) and mints a **fresh token** for the current session, returned below — bearer clients must swap to it. *(since v1.212, F-508)* The token version is bumped **before** the password is written: if that does not land, the answer is `bcc_unavailable` **503** (`Cache-Control: private, no-store`) and **nothing was changed**. The current password still works, the presented token still works, and the member can simply try again. *(since v1.100)* It also deletes every Web Push subscription of the user — the caller's own included; the client re-registers push if it is enabled.
+Change password. Body `{ "current_password": "...", "password": "..." }`. New password ≥ **8** chars (server-enforced; *since v1.158, F-294: was 10, now the same minimum as sign-up and reset; existing passwords are unaffected*). Server calls `wp_set_password` (which destroys all session tokens) and immediately re-issues the current session's auth cookie so the user is not kicked out mid-flow. It also bumps the per-user JWT token-version (revoking every outstanding bearer token, the bearer analogue of the session-token wipe) and mints a **fresh token** for the current session, returned below — bearer clients must swap to it. *(since v1.212, F-508)* The token version is bumped **before** the password is written: if that does not land, the answer is `bcc_unavailable` **503** (`Cache-Control: private, no-store`) and **nothing was changed**. The current password still works, the presented token still works, and the member can simply try again *(clarified in v1.NEXT: a wallet-confirmed change signs a **new** challenge to retry, because the first one was spent before the revocation; the password path retries with the same current password)*. *(since v1.100)* It also deletes every Web Push subscription of the user — the caller's own included; the client re-registers push if it is enabled.
 
 - **Response 200:** `{ "ok": true, "token": "<jwt>", "expires_in": 604800, "token_type": "Bearer" }`
 - **A password known to have leaked** → `bcc_password_breached` 422 — *(since v1.171, F-294)* the password appears in a known data breach (Have I Been Pwned's Pwned Passwords): *"This password has appeared in a data breach; please choose a different one."*. Checked after the length check and before either confirmation (current password or wallet signature); fails open, as at `POST /auth/signup`.
@@ -9714,6 +9714,10 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-19 — clarification, no behaviour change — retrying a password change after its 503 (F-509)
+
+- **`PATCH /me/account/password`:** after v1.212's `503 bcc_unavailable`, a **wallet-confirmed** change signs a **new** challenge to retry: the first one was already spent when the revocation failed. The password path retries with the same current password, as v1.212 says. No wire change.
 
 ### v1.216 — 2026-11-19 — behaviour change — a feed or post whose block or hidden list could not be read answers 503, not an empty page or a 404 (F-438, F-455)
 

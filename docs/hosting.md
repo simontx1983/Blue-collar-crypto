@@ -172,3 +172,19 @@ Vercel cron relay already uses. Exists on **both** production and staging.
 - Caching is refused twice — `Cache-Control: no-store` *and* the LiteSpeed
   exclusion, because LSCWP caches REST on this site and a cached identity
   response would report healthy long after the rows changed.
+
+## Repair: one member's requests all answer 503 `bcc_unavailable`
+
+bcc-trust reads a member's token state (the user-meta keys
+`bcc_token_version`, `bcc_jwt_denylist` and `bcc_jwt_retired`) in one bounded
+query of 30 rows. If a member ever has 30 or more rows across those keys, the
+read counts as unknown, every bearer request of theirs answers 503, and each
+read logs `token state read failed`. It does not heal by itself. On the host:
+
+1. List the rows: `wp user meta list <id> --keys=bcc_token_version,bcc_jwt_denylist,bcc_jwt_retired --fields=umeta_id,meta_key`.
+2. Keep the **newest** row (highest `umeta_id`) of each key and delete the
+   rest: `wp db query "DELETE FROM <prefix>usermeta WHERE umeta_id IN (…)"`.
+3. End the member's sessions: they sign out everywhere from the app, or bump
+   `bcc_token_version` (`wp user meta update <id> bcc_token_version <current + 1>`).
+
+The same note sits on `TokenStateRepository::MAX_ROWS` (F-508).
