@@ -17,6 +17,14 @@ REST index. Only BCC's namespaces answer a caller who is not an admin, so
 `/wp-json/` itself is **401** to a signed-out caller (bcc-trust
 `RestRouteAllowlist`).
 
+**Before enabling a service that calls back into `cms.` signed out:**
+enabling any third-party service that calls back into cms `/wp-json/` while
+signed out requires an `EXEMPT_ROUTES` PR in bcc-trust **first**. That covers
+Wordfence Central, QUIC.cloud image/CSS/CDN callbacks over GET, Rank Math
+headless `getHead`, WP Mail SMTP provider webhooks and Hostinger callbacks.
+Since bcc-trust #761, every signed-out non-BCC `/wp-json/` request answers
+**401**, so such a callback fails until its exact `"METHOD /route"` is exempted.
+
 ## Production is deliberately asymmetric
 
 ```
