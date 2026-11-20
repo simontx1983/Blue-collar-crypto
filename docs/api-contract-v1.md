@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.204 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.205 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -6867,13 +6867,13 @@ Partial update of the viewer's DM-gating preferences. Registered as `WP_REST_Ser
 Admin-curated first-pull follow candidates for the post-signup wizard (§B4). **Auth-gated despite the public-looking path.**
 
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401 (checked before `chain`).
-- **Query** *(v1.NEXT)*: `chain` (optional). A home-chain slug from the same allowlist as `POST /me/onboarding/complete`'s `home_chain` (`cosmos|osmosis|injective|ethereum|solana|polkadot|thorchain|near`), lowercased and trimmed. Absent or empty means no chain.
+- **Query** *(v1.205)*: `chain` (optional). A home-chain slug from the same allowlist as `POST /me/onboarding/complete`'s `home_chain` (`cosmos|osmosis|injective|ethereum|solana|polkadot|thorchain|near`), lowercased and trimmed. Absent or empty means no chain.
 - **Response 200:** three named buckets, each a list of polymorphic §L5/§3.2 Card view-models, plus `bias`:
   ```json
   { "data": { "validators": [ { "card_kind": "validator", "...": "..." } ], "projects": [ { "card_kind": "project", "...": "..." } ], "creators": [ { "card_kind": "creator", "...": "..." } ], "bias": { "chain": "cosmos", "applied_to": ["validators"] } } }
   ```
   Each bucket holds up to **4** cards; buckets present even when empty. Bucket→type→kind map locked in `OnboardingEndpoint::BUCKETS`.
-- **Chain bias** *(v1.NEXT)*: with `chain`, only the **validators** bucket changes. It takes that chain's validators first (up to 4, in the same trust order), then fills from the unbiased ranking, deduped. It never holds fewer cards than it would without `chain`.
+- **Chain bias** *(v1.205)*: with `chain`, only the **validators** bucket changes. It takes that chain's validators first (up to 4, in the same trust order), then fills from the unbiased ranking, deduped. It never holds fewer cards than it would without `chain`.
   - **Projects and creators never change:** builder pages carry no chain, and a creator's chain is only reachable through collection claims.
   - **`bias`** is always present. It is `null` without `chain`. With one, it is `{ "chain", "applied_to" }`, where `applied_to` names the buckets the chain really re-ranked: `["validators"]`, or `[]`.
   - **`applied_to` is `[]`** when no validator on that chain made the bucket, or when discovery is on its fallback path. The fallback is used while the page read model is empty, and it cannot filter by chain. The bucket is then exactly the unbiased one.
@@ -9685,7 +9685,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-19 — additive — `GET /onboarding/suggestions?chain=` puts a home chain's validators first (F-439)
+### v1.205 — 2026-11-19 — additive — `GET /onboarding/suggestions?chain=` puts a home chain's validators first (F-439)
 
 Ships with bcc-trust #785. No bcc-core change.
 
