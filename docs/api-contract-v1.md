@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.211 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.212 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2205,9 +2205,11 @@ Consumes a reset key issued by `/auth/forgot-password` and sets a new password. 
   - `bcc_password_breached` 422 — *(since v1.171, F-294)* the password appears in a known data breach (Have I Been Pwned's Pwned Passwords): *"This password has appeared in a data breach; please choose a different one."*. Checked only once the key is valid (an invalid key answers `bcc_invalid_reset_token` without the check), and the key is **not** consumed, so the same link can submit another password.
   - `bcc_invalid_reset_token` 400 — key is expired, single-use already consumed, or never existed. Generic for both "expired" and "wrong key" to avoid leaking which failed.
   - `bcc_rate_limited` 429 — the per-network limit under **Rate limit** refused the request.
+  - `bcc_unavailable` 503 — *(since v1.212, F-508)* the account's existing sessions could not be signed out, so **nothing was changed**: the old password still works and the key is **not** consumed. The same link can be submitted again. `Cache-Control: private, no-store`.
 - **Rate limit:** *(since v1.152, F-290)* `RESET_PASSWORD_RATE_LIMIT` = **30/hour per network** (was 10) — abuse insurance; reset keys are ~20 random characters and single-use. *(since v1.157, F-290)* A refused request is not counted, so retrying while refused never extends the wait.
 - **Cache:** `Cache-Control: no-store`
 - **Side effects:**
+  - *(since v1.212, F-508)* **First**, every bearer token of the account is revoked (the per-user token version is bumped). If that does not land, the request stops with the `503` above, before anything below.
   - `reset_password($user, $password)` hashes the new password, clears `user_activation_key` (single-use), fires the `password_reset` action — other plugins listening invalidate sessions for this user.
   - `AccountSecurityMailer::passwordChanged($userId)` canary email (same one fired by the in-app password change in `/me/account`).
   - `AuditLogger::log('password_reset_completed', $userId, [], 'user', $userId)`.
@@ -5245,7 +5247,7 @@ Body `{ "code": "123456" }`.
 
 #### `PATCH /bcc/v1/me/account/password` (V2 Phase 2.5)
 
-Change password. Body `{ "current_password": "...", "password": "..." }`. New password ≥ **8** chars (server-enforced; *since v1.158, F-294: was 10, now the same minimum as sign-up and reset; existing passwords are unaffected*). Server calls `wp_set_password` (which destroys all session tokens) and immediately re-issues the current session's auth cookie so the user is not kicked out mid-flow. It also bumps the per-user JWT token-version (revoking every outstanding bearer token, the bearer analogue of the session-token wipe) and mints a **fresh token** for the current session, returned below — bearer clients must swap to it. *(since v1.100)* It also deletes every Web Push subscription of the user — the caller's own included; the client re-registers push if it is enabled.
+Change password. Body `{ "current_password": "...", "password": "..." }`. New password ≥ **8** chars (server-enforced; *since v1.158, F-294: was 10, now the same minimum as sign-up and reset; existing passwords are unaffected*). Server calls `wp_set_password` (which destroys all session tokens) and immediately re-issues the current session's auth cookie so the user is not kicked out mid-flow. It also bumps the per-user JWT token-version (revoking every outstanding bearer token, the bearer analogue of the session-token wipe) and mints a **fresh token** for the current session, returned below — bearer clients must swap to it. *(since v1.212, F-508)* The token version is bumped **before** the password is written: if that does not land, the answer is `bcc_unavailable` **503** (`Cache-Control: private, no-store`) and **nothing was changed**. The current password still works, the presented token still works, and the member can simply try again. *(since v1.100)* It also deletes every Web Push subscription of the user — the caller's own included; the client re-registers push if it is enabled.
 
 - **Response 200:** `{ "ok": true, "token": "<jwt>", "expires_in": 604800, "token_type": "Bearer" }`
 - **A password known to have leaked** → `bcc_password_breached` 422 — *(since v1.171, F-294)* the password appears in a known data breach (Have I Been Pwned's Pwned Passwords): *"This password has appeared in a data breach; please choose a different one."*. Checked after the length check and before either confirmation (current password or wallet signature); fails open, as at `POST /auth/signup`.
@@ -6281,12 +6283,12 @@ Both surfaces require Bearer JWT; suspended accounts → `bcc_forbidden 403`. St
 - **Errors:**
   - `bcc_unauthorized 401` — anonymous.
   - `bcc_rate_limited 429` — 5/60/user (`logout_everywhere` bucket). Tight cap because the blast radius is total session invalidation; no legitimate user fires this more than a few times per minute.
-  - `bcc_unavailable 503` *(since v1.210, F-495)* — the token-version write did not land, so **no token was revoked**: every outstanding token, this request's included, still works. Steps 1, 2 and 4 below, and the WordPress sessions and application passwords, still happened. `Cache-Control: private, no-store`. The client keeps its session, tells the member it did not work, and lets them try again. It does NOT sign out (that would leave every other device signed in while this one is not).
+  - `bcc_unavailable 503` *(since v1.210, F-495)* — the token-version write did not land, so **no token was revoked**: every outstanding token, this request's included, still works. Step 4 below, and the WordPress sessions and application passwords, still happened; *(since v1.212, F-508)* steps 2 and 3 did not (no "sessions revoked" audit row or email): the failure is audited as `sessions_revoke_failed` instead, which admins see and the member's §4.23 timeline does not list. `Cache-Control: private, no-store`. The client keeps its session, tells the member it did not work, and lets them try again. It does NOT sign out (that would leave every other device signed in while this one is not).
 - **Rate limit:** 5/60/user.
 - **Side effects (in order):**
-  1. Audit row written: `AuditLogger::log('sessions_revoked_all', $userId, [], 'user', $userId)`. Counts toward the §4.23 GET timeline + 90-day retention.
-  2. Out-of-band email: `AccountSecurityMailer::sessionsRevokedAll($userId)`. Track-F redundancy — if an attacker triggers this to lock the legitimate user out, the email channel still warns. Failure records `account_security_mail` / `sessions_revoked_all_send_failed` DegradationMetric per `project_account_security_mailer.md`.
-  3. Token version bumped: `JwtToken::revokeAllForUser($userId)`. Every outstanding JWT for this user (including the bearer that authenticated THIS request) fails the `tv` check on next decode and returns `ERR_REVOKED`. *(since v1.210, F-495)* When that write does not land, the answer is the `503` above instead of `200`.
+  1. Token version bumped: `JwtToken::revokeAllForUser($userId)`. Every outstanding JWT for this user (including the bearer that authenticated THIS request) fails the `tv` check on next decode and returns `ERR_REVOKED`. When that write does not land, the answer is the `503` above instead of `200`. *(Order since v1.212, F-508: this used to be step 3, after the audit row and the email.)*
+  2. *Only once step 1 landed:* audit row written: `AuditLogger::log('sessions_revoked_all', $userId, [], 'user', $userId)`. Counts toward the §4.23 GET timeline + 90-day retention.
+  3. *Only once step 1 landed:* out-of-band email: `AccountSecurityMailer::sessionsRevokedAll($userId)`. Track-F redundancy — if an attacker triggers this to lock the legitimate user out, the email channel still warns. Failure records `account_security_mail` / `sessions_revoked_all_send_failed` DegradationMetric per `project_account_security_mailer.md`.
   4. *(since v1.100)* Every Web Push subscription of the user is deleted, so the signed-out devices stop receiving pushes. Each device re-registers when it next signs in and enables push.
 - **Client-side responsibility:** on 200 the bearer is invalidated by the time the response is read. The client MUST call `signOut({ callbackUrl: "/" })` (or equivalent) immediately on 200 — any subsequent authenticated request will 401. The hook `useLogoutEverywhere()` in `useAccount.ts` does this automatically in `onSuccess`.
 - **Self-revocation note:** the user CAN sign themselves out of their own current session. The mutation is intentionally not session-aware (no "all OTHER devices" carve-out) — this is the minimal D2 per the Tier D scope decision; the per-device listing UI is deferred to a future planning session.
@@ -9707,6 +9709,15 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.212 — 2026-11-19 — behaviour change (security) — password reset and change revoke first; sign-out-everywhere claims only what landed (F-508)
+
+Ships with bcc-trust **#805**. Follow-ups to v1.210 (F-495).
+
+- **`POST /auth/reset-password`:** the account's bearer tokens are revoked **before** the password is written. When that does not land: new `503 bcc_unavailable` (`private, no-store`), and nothing changed: the old password still works and the key is unspent, so the same link works again. *v1.210's "unchanged on the wire" list should have named this route; it changes here instead.*
+- **`PATCH /me/account/password`:** the same order. New `503 bcc_unavailable`; nothing changed, and the member retries with the same current password.
+- **`POST /auth/logout-everywhere`:** the `sessions_revoked_all` audit row and the "sessions revoked" email now come **after** the revocation landed. On its `503` neither is written or sent, and a failure audit (`sessions_revoke_failed`, admin-only) is written instead. Steps renumbered: the revocation is now step 1.
+- **Unchanged on the wire:** the other revoking routes (email change, the recovery email, email verification, the OAuth first link, a wallet unlink) keep their answers and log a lost revocation. An admin suspension now also tells the admin, with a retry.
 
 ### v1.211 — 2026-11-19 — behaviour change — a post an NFT holder room shows opens by link for its members (F-451)
 
