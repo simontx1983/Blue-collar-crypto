@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.214 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.215 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -3588,6 +3588,8 @@ Explicit user-initiated join. Verifies eligibility server-side, clears any activ
     ownership (timeout / 429 / circuit-breaker open / malformed response), OR
     the membership write itself failed (PeepSo unavailable). A banned row is
     refused as a moderator eviction above since v1.129, not here.
+    *(Since v1.215, H7)* also when the member's group opt-out state could
+    not be read. Retryable, like the rest.
     Transient; retry with backoff. The join **fails closed** — the user is NOT
     added when ownership can't be confirmed, so an outage never grants access.
     (Mirrors the §J read-time 503 precedent; the §1.4.6 standard-codes table
@@ -3949,7 +3951,7 @@ Shape mirrors §4.7.1 exactly, with a `validator_stats` block replacing `collect
   - `bcc_permission_denied` **403** — a moderator removed this member (`error.data.reason_code` = `opt_out_active`, v1.84; **narrowed in v1.95**: emitted ONLY for a moderator eviction, since a voluntary leave no longer blocks an explicit join; **v1.129**: a ban gets the same refusal instead of a 503), **or** not eligible (`error.data.reason_code` = `not_eligible`, v1.85). Both carry a `reason_code`, so the two are told apart by its **value** and never by the presence or absence of `error.data`.
     - **`error.data.min_stake_display` (v1.85)** — on the `not_eligible` refusal only: the same server-pre-formatted string the card and the unlock hint carry (`"10 ATOM"`, or a bare amount when the chain’s native token is unknown). `null` when the gate config or the native token is unreadable; the key is always present on this refusal, so a client can tell "unknown" from "field absent". ⚠ **This field exists because the minimum must NOT be read out of `error.message`.** §γ forbids a client rendering `error.message`, so a figure carried only in the sentence is a figure the user never sees — which is exactly what the card surfaces showed before v1.85 ("you don’t delegate enough", with no amount). Render the amount from this field, interpolated into your own code-keyed copy.
     - `error.message` remains the server-pinned sentence (e.g. `"Delegate at least 10 ATOM to Coinbase01 to join this community."`) for non-browser clients and the logs. It is **not** for display: earlier revisions of this line said to render it verbatim, which contradicted §γ and is withdrawn.
-  - `bcc_upstream_unavailable` **503** — **could not verify** the delegation. This is NOT "you don't qualify": the join failed **closed** during an upstream outage. Clients MUST present it as retryable and MUST NOT render it as an eligibility failure.
+  - `bcc_upstream_unavailable` **503** — **could not verify** the delegation. This is NOT "you don't qualify": the join failed **closed** during an upstream outage. Clients MUST present it as retryable and MUST NOT render it as an eligibility failure. *(Since v1.215, H7)* also when the member's group opt-out state could not be read; same client rule.
   - `bcc_internal_error` **503** — community sits on an unsupported (non-Cosmos) chain.
 
 #### `POST /bcc/v1/me/validator-groups/:id/leave`
@@ -9709,6 +9711,13 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.215 — 2026-11-19 — behaviour change — a join whose opt-out state can't be read is "try again" (H7)
+
+Ships with bcc-trust #807 (after #804). ⛔ Deploy bcc-core #158 first.
+
+- **`POST /me/holder-groups/:id/join`, `POST /me/validator-groups/:id/join`:** when the member's group opt-out state cannot be read, the join answers the existing retryable `bcc_upstream_unavailable` 503, before any provider call, and writes nothing. Clients already treat this code as "try again".
+- **Unchanged:** every answer when the read works, and every shape. No new code or field.
 
 ### v1.214 — 2026-11-20 — behaviour change — a community's kind and trust minimum are read reliably, and an unreadable one refuses (F-463)
 
