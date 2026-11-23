@@ -4619,7 +4619,7 @@ Single, several, or all, in one route.
 - **Auth:** Bearer (required)
 - **Body:** one of:
   - `{ "id": 4827 }`: mark a single notification;
-  - *(since v1.NEXT, F-516)* `{ "ids": [4827, 4828] }`: mark exactly these. That's 1 to **50** positive integers; digit strings count too, and duplicates collapse. It is meant for the `notification_ids` a push carried (see the [push catalogue](#push-subscriber-catalogue)). When `ids` is present it wins over `id`;
+  - *(since v1.NEXT, F-516)* `{ "ids": [4827, 4828] }`: mark exactly these. That's 1 to **50** positive integers; digit strings count too, and duplicates collapse. It is meant for the `notification_ids` a push carried (see the [push catalogue](#push-subscriber-catalogue)). **A client sends `ids` only when the push carried `notification_ids`; it never calls mark-read when a push it opens has no `notification_ids`.** When `ids` is sent at all, even as `null`, it wins over `id` and is validated;
   - `{}` (no body): mark every unread notification for the viewer.
 - **Response 200:**
   ```json
@@ -4629,7 +4629,7 @@ Single, several, or all, in one route.
 - **Errors:**
   - `bcc_unauthorized`;
   - `bcc_rate_limited` (429, the §1.4.4 self-scoped bucket);
-  - *(since v1.NEXT)* `bcc_invalid_request` **400**, "`ids` must list 1 to 50 notification ids.", when `ids` is not a list of 1 to 50 positive integers. That includes an empty list, a zero, a negative, a non-numeric entry or a nested list. Nothing is marked: an invalid or empty `ids` never falls through to "mark all".
+  - *(since v1.NEXT)* `bcc_invalid_request` **400**, "`ids` must list 1 to 50 notification ids.", when `ids` is not a list of 1 to 50 positive integers. That includes an explicit `null`, an empty list, a zero, a negative, a non-numeric entry or a nested list. Nothing is marked: an invalid or empty `ids` never falls through to "mark all".
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** `UPDATE peepso_notifications SET not_read = 1 WHERE not_user_id = ? AND not_module_id = 9000 AND not_read = 0`. It adds `AND not_id = ?` when `id` was passed, or *(v1.NEXT)* `AND not_id IN (…)` when `ids` was. Each mode is one statement. Idempotent: already-read rows are a no-op success.
 
