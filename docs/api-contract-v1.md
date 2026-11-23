@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.222 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.223 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -4619,7 +4619,7 @@ Single, several, or all, in one route.
 - **Auth:** Bearer (required)
 - **Body:** one of:
   - `{ "id": 4827 }`: mark a single notification;
-  - *(since v1.NEXT, F-516)* `{ "ids": [4827, 4828] }`: mark exactly these. That's 1 to **50** positive integers; digit strings count too, and duplicates collapse. It is meant for the `notification_ids` a push carried (see the [push catalogue](#push-subscriber-catalogue)). **A client sends `ids` only when the push carried `notification_ids`; it never calls mark-read when a push it opens has no `notification_ids`.** When `ids` is sent at all, even as `null`, it wins over `id` and is validated;
+  - *(since v1.223, F-516)* `{ "ids": [4827, 4828] }`: mark exactly these. That's 1 to **50** positive integers; digit strings count too, and duplicates collapse. It is meant for the `notification_ids` a push carried (see the [push catalogue](#push-subscriber-catalogue)). **A client sends `ids` only when the push carried `notification_ids`; it never calls mark-read when a push it opens has no `notification_ids`.** When `ids` is sent at all, even as `null`, it wins over `id` and is validated;
   - `{}` (no body): mark every unread notification for the viewer.
 - **Response 200:**
   ```json
@@ -4629,9 +4629,9 @@ Single, several, or all, in one route.
 - **Errors:**
   - `bcc_unauthorized`;
   - `bcc_rate_limited` (429, the §1.4.4 self-scoped bucket);
-  - *(since v1.NEXT)* `bcc_invalid_request` **400**, "`ids` must list 1 to 50 notification ids.", when `ids` is not a list of 1 to 50 positive integers. That includes an explicit `null`, an empty list, a zero, a negative, a non-numeric entry or a nested list. Nothing is marked: an invalid or empty `ids` never falls through to "mark all".
+  - *(since v1.223)* `bcc_invalid_request` **400**, "`ids` must list 1 to 50 notification ids.", when `ids` is not a list of 1 to 50 positive integers. That includes an explicit `null`, an empty list, a zero, a negative, a non-numeric entry or a nested list. Nothing is marked: an invalid or empty `ids` never falls through to "mark all".
 - **Cache:** `Cache-Control: no-store`
-- **Mapping:** `UPDATE peepso_notifications SET not_read = 1 WHERE not_user_id = ? AND not_module_id = 9000 AND not_read = 0`. It adds `AND not_id = ?` when `id` was passed, or *(v1.NEXT)* `AND not_id IN (…)` when `ids` was. Each mode is one statement. Idempotent: already-read rows are a no-op success.
+- **Mapping:** `UPDATE peepso_notifications SET not_read = 1 WHERE not_user_id = ? AND not_module_id = 9000 AND not_read = 0`. It adds `AND not_id = ?` when `id` was passed, or *(v1.223)* `AND not_id IN (…)` when `ids` was. Each mode is one statement. Idempotent: already-read rows are a no-op success.
 
 #### Subscriber catalogue
 
@@ -4875,7 +4875,7 @@ Push deliveries fan out via `PushDispatcher::enqueue` (5-minute debounce + count
 
 **Anti-noise rules (P1.E):** debounce + count aggregation at the queue boundary mean rapid-fire events on the same (recipient, event_type) become exactly one push ("3 new reviews on Blacksmith Node") rather than three buzzes. Tombstoned subscriptions (404/410 from the push service) are deleted on the next flush — no retry storms.
 
-**`notification_ids` (since v1.NEXT, F-516).** A push body (`title`, `body`, `url`, …) may also carry `notification_ids`: the ids of the bell rows the push stands for, for the page it opens to mark read with `POST /me/notifications/mark-read` `{ "ids": [...] }`. The service worker holds no credentials, so it hands them to the page.
+**`notification_ids` (since v1.223, F-516).** A push body (`title`, `body`, `url`, …) may also carry `notification_ids`: the ids of the bell rows the push stands for, for the page it opens to mark read with `POST /me/notifications/mark-read` `{ "ids": [...] }`. The service worker holds no credentials, so it hands them to the page.
 - Every event a push aggregates adds the id of the bell row that same event wrote. It adds none when it wrote no bell row: the bell is off for this recipient, PeepSo suppressed it, the bell write failed, a later mention folded into an existing mention bell (v1.203's window), or the event has no bell at all (`dispute_outcome`).
 - An event whose actor is removed at send time takes its id with it. That happens when a block is made in either direction inside the 5-minute window, or when the block state can't be read.
 - At most **50** ids, the mark-read cap. Events past that still count in the wording; their bell rows simply stay unread.
@@ -9732,7 +9732,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-23 — additive — opening a push can mark its bell rows read (F-516)
+### v1.223 — 2026-11-23 — additive — opening a push can mark its bell rows read (F-516)
 
 Ships with bcc-trust **#827**. No deploy order: bcc-trust only.
 
