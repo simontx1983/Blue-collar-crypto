@@ -7504,7 +7504,7 @@ Paginated NFT collection gallery for a creator page (`/c/[slug]`). **Supersedes 
 
 The vote-dispute system (owner files a dispute against a downvote → an **open community vote** on the meaningful-voting poll engine decides it → the verdict resolves async), plus the endorsement read direction. Rank Phase 6 (owner decision D-7) retired the §D5 five-member peer panel: there is no panelist selection, no panel queue, and no participation credit. Any eligible member (Apprentice+ · Trust Neutral+ · not a party · not fraud-blocked) may vote `uphold`/`reject`; the poll closes on **dual quorum (10 counted voters AND 7.5 counted effective weight) + 60% effective-weight majority**, no earlier than day 7, or Inconclusive at day 90. Dispute endpoints live in `DisputeController`; the endorsement reads live in `UserEndorsementsEndpoint`.
 
-> **Envelope note (corrected v1.75 — the v1.23 "unenveloped" claim was never true on the wire):** dispute endpoints emit the canonical `{ data, _meta }` envelope via `ApiResponse::ok`/`error`. The legacy `DisputeController` routes use bare (non-`bcc_`-prefixed) error codes; the Phase 6 `/disputes/:id/vote` trio uses `bcc_dispute_vote_*` codes. The two `/endorsements/mine*` reads build their payloads via raw `rest_ensure_response([...])`, but the global `Envelope` filter (`rest_post_dispatch`, priority 999) wraps every `/bcc/v1/` response lacking envelope markers — so the **wire** shape is the standard `{ data: { items, total }, _meta }` on success and `{ error: {...} }` on failure, same as every other route (wire-verified 2026-08-06). Residual quirk, fixed in the 2026-08-06 sweep: the throttle denial used to return a bare `{message}` body that the wrapper *success*-wrapped under HTTP 429; it now returns the canonical `bcc_rate_limited` error shape, so the 429 carries `{ error: {...} }` and the `retry_after_seconds` injection engages. The admin-only `POST /disputes/:id/resolve` (force-resolve) and `GET /disputes/health` are **internal** and intentionally undocumented (allowlisted).
+> **Envelope note (corrected v1.75 — the v1.23 "unenveloped" claim was never true on the wire):** dispute endpoints emit the canonical `{ data, _meta }` envelope via `ApiResponse::ok`/`error`. The legacy `DisputeController` routes use bare (non-`bcc_`-prefixed) error codes; the Phase 6 `/disputes/:id/vote` trio uses `bcc_dispute_vote_*` codes. The two `/endorsements/mine*` reads build their payloads via raw `rest_ensure_response([...])`, but the global `Envelope` filter (`rest_post_dispatch`, priority 999) wraps every `/bcc/v1/` response lacking envelope markers — so the **wire** shape is the standard `{ data: { items, total }, _meta }` on success and `{ error: {...} }` on failure, same as every other route (wire-verified 2026-08-06). Residual quirk, fixed in the 2026-08-06 sweep: the throttle denial used to return a bare `{message}` body that the wrapper *success*-wrapped under HTTP 429; it now returns the canonical error shape with the bare `rate_limited` code (the legacy routes' convention above; the frontend's dispute view keys on it), so the 429 carries `{ error: {...} }` and the `retry_after_seconds` injection engages. *(Corrected v1.NEXT: this note used to name the code `bcc_rate_limited`; the wire has always sent `rate_limited`.)* The admin-only `POST /disputes/:id/resolve` (force-resolve) and `GET /disputes/health` are **internal** and intentionally undocumented (allowlisted).
 
 #### `POST /bcc/v1/disputes`
 
@@ -9714,6 +9714,13 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-23 — docs fix — the dispute throttle's 429 code is `rate_limited`, as the routes' Errors lists say (F-351)
+
+Docs only; no code change.
+
+- **§4.30 envelope note:** it said the throttle denial "now returns the canonical `bcc_rate_limited` error shape". The wire sends the bare `rate_limited` code (`DisputeController::throttle`), matching the legacy dispute routes' bare-code convention and each route's own Errors list. The note now says so. Its shape claims stand: the 429 carries `{ error: {...} }`, and `retry_after_seconds` is injected.
+- **Clients:** no change. The frontend's dispute view already handles `rate_limited`.
 
 ### v1.216 — 2026-11-19 — behaviour change — a feed or post whose block or hidden list could not be read answers 503, not an empty page or a 404 (F-438, F-455)
 
