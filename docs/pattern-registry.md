@@ -144,7 +144,13 @@ should point at exactly one source-of-truth class or method per concept.
   answers exactly as for a page that does not exist. A list shown to ONE
   viewer (their watchlist, a feed page's page labels) asks
   `PageAccess::visibleAmong($pageIds, $viewerId)` instead: the same verdict
-  per page, with one batched read rather than one per page. Never hand-roll a
+  per page, with one batched read rather than one per page. A paginated list
+  read in SQL (a member's reviews or disputes, as another viewer sees them)
+  finds its secret pages with `NOT (notSecretSql(…))`, asks
+  `PageAccess::hiddenAmong($pageIds, $viewerId)` for the ones this viewer may
+  not see, and leaves those out of BOTH the count and the page
+  (`page_id NOT IN (…)`), so the totals agree; a failed read or more than
+  `PageAccess::HIDDEN_LIST_CAP` secret pages fails closed. Never hand-roll a
   `LEFT JOIN … peepso_page_privacy … <> 2`: that form lets a two-row page
   through.
   ([bcc-core/src/Repositories/PeepSoPagePrivacy.php](../app/public/wp-content/plugins/bcc-core/src/Repositories/PeepSoPagePrivacy.php),
