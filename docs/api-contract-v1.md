@@ -2698,6 +2698,7 @@ Full User view-model.
   `live_shift` (recent-activity events for the hero panel), `tabs`
   (counts strip). `reviews` and `disputes` ship as empty arrays in
   V1; lazy-load list endpoints for those tabs land in V1.5.
+- **`indexable`** *(v1.NEXT, F-518)*: `true` when a search engine may index this profile page, by the same rule `GET /bcc/v1/sitemap/members` lists members with (§4.33), so a profile is in the sitemap exactly when its page is indexable. It is the anonymous answer whoever asks, the owner included, and `false` whenever a read behind it fails. Clients set the page's robots tag from it and never derive it from `flags`, `profile_visibility` or the handle.
 
   `tabs` entries are `{key, label, count, hidden}`. **v1.49 split:**
   key `reviews` counts reviews RECEIVED (`counts.reviews_received` —
@@ -2785,7 +2786,7 @@ Paginated directory of human members. Sibling to §4.9 `/cards` (entity-card dir
   this contract sets it no maximum.
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - **Pagination envelope:** offset (`OffsetPagination` per §1.5) — `total_pages` is the canonical field; clients derive "has more" as `page < total_pages`.
-- **Mapping:** `WP_User_Query` ordered by `user_registered DESC`; each row composed via `CardViewService::getMemberCardForList` (one call per user). `UsersEndpoint::members` prefetches eleven batched maps — followers count, primary-Hall resolution, owned-page count, owned-page typed counts, endorsements received, solids received, reviews written, disputes signed, verified-wallet count, X connections, GitHub connections — via `MemberSummaryPrefetcher::primeFor` before the per-row loop; the card builder delegates the dossier resolution to `UserViewService::getSummary($userId, $viewerId, $prefetched)` so the total query budget stays bounded regardless of `per_page` (no parallel dossier query — same resolution as before, now wrapped in the Card shape). `reputation_tier` is the tier slug (all five bands). `reputation_tier_label` is the pre-rendered §A2 display string. Frontends should encode the tier as a color/border treatment on the rank chip rather than rendering the label as a duplicate word next to `rank_label`.
+- **Mapping:** `PeepSoUserSearch`, PeepSo's privacy-aware user search, ordered by `user_registered DESC` *(corrected in v1.NEXT: this said `WP_User_Query`, which the route no longer uses)*. The privacy rules apply inside the query: profile visibility for this viewer, banned and unvalidated accounts left out, blocks in either direction, `hide_from_search` and suspension (F-182). Admins are exempt. Without PeepSo the list is empty (fail closed). Each row is composed via `CardViewService::getMemberCardForList` (one call per user). `UsersEndpoint::members` prefetches eleven batched maps — followers count, primary-Hall resolution, owned-page count, owned-page typed counts, endorsements received, solids received, reviews written, disputes signed, verified-wallet count, X connections, GitHub connections — via `MemberSummaryPrefetcher::primeFor` before the per-row loop; the card builder delegates the dossier resolution to `UserViewService::getSummary($userId, $viewerId, $prefetched)` so the total query budget stays bounded regardless of `per_page` (no parallel dossier query — same resolution as before, now wrapped in the Card shape). `reputation_tier` is the tier slug (all five bands). `reputation_tier_label` is the pre-rendered §A2 display string. Frontends should encode the tier as a color/border treatment on the rank chip rather than rendering the label as a duplicate word next to `rank_label`.
 - **Field rules** (the `member_dossier` sub-blocks; the rest follow the §3.2 Card rules):
     - `trust_score` ∈ [0, 100] — the reputation base, clamped at the boundary (v1.60: the §D5 read-time panel-participation bonus retired with the panel; `trust_score` no longer carries any augmentation). Clients render as a stencil number, never derive. (Top-level card field per §3.2.)
     - `stats[].watchers` (the member-card third stat per §3.2.2) is the passive side of `peepso_user_followers` (people who follow this user), sourced from `UserViewService::getSummary`'s `followers_count`. The full `/users/:handle` response carries both `followers` and `following`; the directory ships the followers count only — `following` isn't a meaningful directory signal and the second SQL isn't worth the cost.
@@ -2798,7 +2799,7 @@ Paginated directory of human members. Sibling to §4.9 `/cards` (entity-card dir
 
 #### `GET /bcc/v1/users/mention-search` (v1.5)
 
-Slim prefix-search endpoint backing the composer's `@`-mention autocomplete (§3.3.12). Distinct from `/members` because keystroke autocomplete needs a tiny payload and tighter privacy filtering than the directory grid — the dropdown MUST NOT leak hidden / banned / blocked users that the directory might surface to peers via different code paths.
+Slim prefix-search endpoint backing the composer's `@`-mention autocomplete (§3.3.12). Distinct from `/members` because keystroke autocomplete needs a tiny payload and applies its own mention policy on top of the directory's privacy rules — the dropdown MUST NOT leak hidden / banned / blocked users.
 
 - **Auth:** Bearer required. Anonymous → `bcc_unauthorized 401`. The mention picker is composer-only and the composer is auth-gated, so the endpoint is too.
 - **Query:**
@@ -9441,6 +9442,47 @@ enforce it: `PATCH` and pin answer `409 bcc_announcement_moderation_hidden` befo
 Unpin and archive stay allowed. Before v1.160 the notice listed with no indicator and both
 writes were accepted.
 
+### 4.33 Public index (sitemap) — v1.NEXT
+
+The app's `/sitemap.xml` is built from these three routes (F-518). Each lists what a signed-out visitor may open, as paths the app serves. WordPress's own sitemaps are off, so this is the only sitemap.
+
+**Shared rules (all three routes):**
+
+- **Auth:** Anonymous. ⚠ **Viewer-independent:** the answer is the anonymous one whoever asks. A Bearer token, an admin's included, never widens it.
+- **Query:** `after` (optional, default 0, at least 0) · `limit` (optional, default 500, 1–1000). A value out of range, or not a whole number, is refused with `bcc_invalid_request` **400**, never clamped.
+- **Response 200:**
+  ```json
+  { "data": { "items": [ { "path": "/u/alice" } ], "next_after": 1234 },
+    "_meta": { "version": "v1" } }
+  ```
+  Items ascend by id. `path` is the page's canonical path, the one its canonical tag and `links.self` carry; the client adds its origin.
+- **Paging:** keyset. Pass `next_after` back as `after`. `next_after` is the last id **scanned**: eligibility is checked after the scan, so a page can hold fewer than `limit` items, even none, and still have a next page. It is `null` only when the scan reached the end.
+- **Errors:** `bcc_invalid_request` 400 · `bcc_rate_limited` 429 · `bcc_unavailable` **503** when any read behind the page could not be trusted. ⚠ **Never a partial list:** a 503 carries no items, and a client keeps its last good copy.
+- **Cache:** `Cache-Control: public, max-age=300` · `Vary: Authorization, Cookie`. A 503 is `no-store`.
+- **Rate limit:** 120/min per caller.
+- **Mapping:** `SitemapEndpoint` → `PublicProfileIndex`, the one owner of the rule, which `GET /users/:handle`'s `indexable` also uses → `PublicIndexRepository` (ProbesReads), and bcc-core's `UserMetaRepository` and `PeepSoGroupRepository::openGroupsAfter`, with `GroupContextResolver` for groups. Paths come from `CardUrlMap`.
+
+#### `GET /bcc/v1/sitemap/members`
+
+Member profiles, as `/u/{handle}`. A member is listed only when **all** of these hold:
+
+- a PeepSo user row exists, and the role is not `register` (email unvalidated), `verified` (awaiting approval) or `ban`;
+- the profile is visible to a signed-out visitor (`profile_visibility` `public`);
+- the account is not suspended;
+- the member has not hidden their profile from listings (`hide_from_search`, or the legacy discovery opt-out it replaced; any opted-out value counts);
+- the account is not hidden, shadow-limited or under review;
+- the member has a current handle of the current shape (lowercase letters and digits, in runs joined by single hyphens) that is not the `member-{id}` fallback. Legacy handles, an email address for example, are never listed.
+
+The same rule sets `indexable` on `GET /users/:handle`.
+
+#### `GET /bcc/v1/sitemap/pages`
+
+Validator, project and creator pages, as `/v/`, `/p/` or `/c/{slug}`: published, not secret, with a slug and a page type that has a card kind (a page with no type is a project). Closed pages are listed: anyone may read them.
+
+#### `GET /bcc/v1/sitemap/groups`
+
+Open communities and Halls, as `/communities/{slug}` or `/halls/{slug}`: published, with a slug, and **explicitly** open (a privacy row reads open and none reads closed or secret). Closed and secret groups are never listed. A group the app cannot place, one with disagreeing kind rows for example, is left out, so every listed URL is one the app serves.
+
 ## 5. Encoded rules — quick reference
 
 ### 5.1 §N7 — gated actions always visible
@@ -9731,6 +9773,14 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-23 — additive — the public index for the app sitemap, and `indexable` on profiles (F-518)
+
+Ships with bcc-trust **#838**. ⛔ It needs bcc-core **#171** (merged) deployed first.
+
+- **New (§4.33):** `GET /bcc/v1/sitemap/members`, `/sitemap/pages` and `/sitemap/groups` list what a signed-out visitor may open, for the app's `/sitemap.xml`. Anonymous and viewer-independent, keyset-paged, and fail-closed: a read that cannot be trusted answers `503 bcc_unavailable`, never a partial list.
+- **`GET /users/:handle`:** gains `indexable` (boolean) from the same rule the members route lists by. Additive; no other field changes.
+- **Docs fix, no behaviour change:** `GET /members`'s Mapping said `WP_User_Query`; the route uses `PeepSoUserSearch`, with its privacy rules inside the query. The mention-search entry no longer says the directory may surface hidden or banned users.
 
 ### v1.224 — 2026-11-23 — behaviour change — a gate that cannot read a member's standing answers 503, never the neutral default (F-469)
 
