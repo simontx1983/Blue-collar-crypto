@@ -68,15 +68,23 @@ session leaks in.
   Sign in / Sign up buttons (no bell, no user menu).
 - [ ] **1.2** Click any card on the Floor → entity profile loads at
   `/v/<slug>` or `/c/<slug>`. Card hero renders with stats + bio.
-- [ ] **1.3** On a validator profile, the **Wanted poster + Claim
-  CTA** renders when the page is unclaimed. The CTA is disabled with
-  a "Sign in to claim" tooltip.
-- [ ] **1.4** **VOUCH + STAND BEHIND buttons visible-but-disabled**
-  (the `AttestationActionCluster`) with a "Sign in to …" tooltip on
-  hover. (A legacy ENDORSE button may still render alongside during the
-  §J.11 cutover — also disabled anon; it is not the canonical path.)
-- [ ] **1.5** **WRITE A REVIEW button visible-but-disabled** with
-  sign-in tooltip.
+- [ ] **1.3** On an unclaimed validator profile, the **claim callout**
+  renders: the neutral "UNCLAIMED · IS THIS YOURS?" ribbon (never
+  "WANTED") and, signed out, a **SIGN IN TO CLAIM →** link to
+  `/login?callbackUrl=<this page>`, so sign-in returns to the page, plus
+  a "Create a free account" link. On a chain that can't be claimed, the
+  callout states the reason instead of offering a CTA.
+- [ ] **1.4** On a **claimed** validator (or a project / creator page):
+  **VOUCH + STAND BEHIND buttons visible-but-disabled** (the
+  `AttestationActionCluster`), each with its reason as a **visible line
+  under the button** (the server's unlock hint), not a hover tooltip.
+  On a **never-claimed** validator the cluster is not offered at all;
+  Watch and the Message CTA stay. (A legacy ENDORSE button may still
+  render alongside during the §J.11 cutover — also disabled anon, with
+  the same visible "Sign in …" line; it is not the canonical path.)
+- [ ] **1.5** **WRITE A REVIEW button visible-but-disabled**, with a
+  visible "**Sign in** to write a review." line under it ("Sign in" is
+  a link), not only a tooltip (F-321: a tooltip never shows on touch).
 - [ ] **1.6** **GlobalSearch** in the header opens a dropdown when you
   type 2+ chars; results link to `/v/<slug>` etc. Dropdown closes on
   Esc + outside click.
