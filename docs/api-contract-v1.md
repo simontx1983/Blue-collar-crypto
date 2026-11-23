@@ -9716,6 +9716,15 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
+### v1.NEXT — 2026-11-23 — behaviour change — a community create or receive whose owned-group count can't be read is "try again" (F-503)
+
+Ships with bcc-trust **#811**. ⛔ Deploy bcc-core **#159** first.
+
+- **`POST /me/groups` (create):** when the viewer's owned-group count cannot be read, the custody gate answers `bcc_unavailable` **503** instead of a `bcc_forbidden` 403, with `error.data.reason` = `unavailable`. **Retryable**; nothing is created. A 403 told clients to stop trying, and the generic copy read as a permanent no for a transient fault. Answered at both denial points — the pre-lock gate and the re-check inside the advisory lock.
+- **`POST /me/groups/:id/transfer` (receive):** the same unreadable count on the RECEIVER's gate answers `bcc_unavailable` **503** with `reason` = `unavailable`, rather than collapsing into the generic `receiver_ineligible` 403. Nothing transfers and no custody row is written.
+- **The receiver's status still cannot be probed.** On receive the count is read BEFORE the status gates, so during a fault EVERY receiver gets the same 503 whatever their suspension / rank / tier / recovery / cap / cooldown — all six of which still collapse to `receiver_ineligible`. `unavailable` is a statement that OUR read failed, not a property of the receiver.
+- **Unchanged:** create's documented gate order, every answer when the read works, and every response shape. No new field.
+
 ### v1.217 — 2026-11-23 — docs fix — the dispute throttle's 429 code is `rate_limited`, as the routes' Errors lists say (F-351)
 
 Docs only; no code change.
