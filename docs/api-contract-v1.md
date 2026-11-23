@@ -9719,7 +9719,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.221 — additive + behaviour change — a validator page says whether it can be claimed, and the claim write agrees (F-515)
+### v1.221 — 2026-11-23 — additive + behaviour change — a validator page says whether it can be claimed, and the claim write agrees (F-515)
 
 Ships with bcc-trust **#821**. bcc-trust only.
 
