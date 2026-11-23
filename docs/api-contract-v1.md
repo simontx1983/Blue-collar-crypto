@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.217 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.218 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2568,6 +2568,7 @@ Single-activity permalink read (v1.33 backfill — shipped with the post-detail 
 - **When:** the database read that finds the page's posts did not run (a dropped connection, a failed query). Before v1.188 that answered **200 with `items: []`** (or **404** on a permalink), which a client could not tell from "nobody has posted".
 - *(v1.216)* **Also when** a list that a signed-in viewer's reads exclude could not be read: the viewer's §K1 block lists (who they block, who blocks them), or the §K1-C moderation-hidden list when no last-known-good copy of it exists. On `/feed/:id`'s shortcode route, also when the code lookup did not run. Before v1.216 a failed block read answered **200 with `items: []`** (or **404** on a permalink), and a hidden list with no last-good copy was a **500**. On `/feed/hot` the hidden list is read for anonymous readers too; the block lists are read only for a signed-in reader, so an anonymous reader is never failed by them.
   - These lists are read **before** any post or page, so the 503 is the same whether the post, the code or the page exists.
+  - *(v1.218, F-454)* **The §O4.1 caution/risky list** is read the same way, on every route above and for any reader (the anonymous `/feed/hot` page excludes it whole). It is never treated as empty: when it cannot be read, the server uses its last successful copy if that copy is no more than 24 hours old, and otherwise the route answers this 503.
   - **Not a 503:** the exact block check made after the posts are found (over each page's authors). When only that check fails, the route answers as if those posts were not there: the page comes back without them (possibly empty), and a permalink is `bcc_not_found` 404. Never the posts unfiltered. This keeps the answer independent of what the page holds.
 - **Response:** `bcc_unavailable` **503**, the standard error envelope, with **no `data`** (not even an empty page). Message: *"The feed is temporarily unavailable. Please try again."*, or *"This post is temporarily unavailable. Please try again."* on `/feed/:id`.
 - **Cache:** always `Cache-Control: private, no-store`, including on `/feed/hot`, whose success is publicly cacheable. Server-side, the shared `/feed/hot` first page is never written from a failed read, so an outage is not served to other readers after the database recovers.
@@ -2648,7 +2649,7 @@ Personalized "who to follow" recommender. **Relevance/affinity-based, NOT popula
   - `suggestion_reason` is the single highest-CONTRIBUTING affinity signal, or `null` for civic cold-start fallback rows. `code` ∈ `follows_you | mutual_follows | co_hall | co_validator | co_nft_community`; `label` is a server-rendered §A2 string (e.g. `"Watches you"`, `"Watched by N you watch"`, `"In the Cosmos Hall with you"`, `"Backs Stakecito too"`, `"In Bored Apes with you"` — the two follow-graph labels moved to watch vocabulary in v1.61).
   - *(v1.61, additive)* `mutual_follows` rows may carry `suggestion_reason.avatars` — up to 3 `{ "handle": string, "avatar_url": string }` sampled mutual connections (`getSecondDegreeCandidatesWithSamples`) so the row can render avatar chips beside the count. Absent for other codes and on older backends; consumers treat missing as empty.
 - **Scoring (affinity only):** `W_RECIP·followsViewer + W_MUTUAL·min(mutualFollows, MUTUAL_CAP) + W_HALL·sharedHalls + W_VALIDATOR·sharedValidatorBacking + W_NFT·sharedHolderCommunities`. Weights are server constants (tunable). **No popularity/trust term participates in ranking.**
-- **Exclusions (security-sensitive):** self; already-following (**exact, whatever the size of the viewer's follow graph**, v1.146: checked over the final candidates, so a viewer following more than 200 members is never suggested one of them); caution/risky reputation tier; active suspensions; mutual blocks (either direction); and any candidate who hid their watching graph (`watching_hidden`).
+- **Exclusions (security-sensitive):** self; already-following (**exact, whatever the size of the viewer's follow graph**, v1.146: checked over the final candidates, so a viewer following more than 200 members is never suggested one of them); caution/risky reputation tier; active suspensions; mutual blocks (either direction); and any candidate who hid their watching graph (`watching_hidden`). *(v1.218, F-454)* When the caution/risky list (with no usable last-good copy) or either block list cannot be read, the route answers `items: []`: no suggestions rather than suggestions without those exclusions.
 - **Visibility (v1.168):** suggestions are discovery, so they apply the member directory's rule (PeepSo's privacy-aware user search; admins see everyone, as on the profile gate): a member is never suggested, nor shown in a `mutual_follows` reason's `avatars`, unless that rule admits the viewer. The rule covers profile visibility, banned or unvalidated accounts, blocks in either direction, and `hide_from_search`. It is applied before the cut, on the scored candidates and on the cold-start top-up, so a hidden member never takes a slot. A response may hold fewer than `limit` items. No shape change.
 - **Cold-start fallback:** when fewer than `limit` candidates survive scoring + exclusions (the dominant empty-graph case), the response tops up from the same civic recent-operators source the cold-start feed uses (recency + stable daily shuffle, NOT ranked), with `suggestion_reason: null`.
 - **Errors:** `bcc_unauthorized` (anonymous)
@@ -9714,6 +9715,15 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.218 — 2026-11-19 — behaviour change — the caution/risky list is never read as empty: its last good copy (24 h), else 503 (F-454)
+
+Ships with bcc-trust **#818**, after v1.216 (F-438 + F-455, bcc-trust #810). Its health events are bcc-core #154 (merged) and #168 (`caution_list_risky_ceiling`).
+
+- **Every feed route** (`GET /feed` in every scope, `/feed/hot`, `/feed/tag`, `/feed/:id` numeric and shortcode, `/groups/:id/feed`, `/pages/:id/feed`, `/users/:handle/activity`, `/feed/cold-start`'s hot posts) excludes the §O4.1 caution/risky members through a list read before any post or page. When that read fails, the server uses its last successful copy if it is no more than 24 hours old; otherwise the route answers **`503 bcc_unavailable`**, `private, no-store`, the same whatever the id, code or page. The shared `/feed/hot` first page is never cached from such a failure; a page built from the last good copy may be. See [Feed read failure](#feed-read-failure-vnext).
+- **`GET /suggestions/users`:** `items: []` when the caution/risky list (no usable copy) or a block list cannot be read.
+- **The list itself:** read most severe first (risky, then caution, lowest score first), up to a fixed ceiling far above any realistic size. Reaching the ceiling is recorded and logged (`caution_list` / `ceiling_reached`).
+- **Unchanged:** every refusal answers exactly as before; no new field or error code; success responses are unchanged. **Clients:** no change, the 503 is already retryable on these routes (v1.188).
 
 ### v1.217 — 2026-11-23 — docs fix — the dispute throttle's 429 code is `rate_limited`, as the routes' Errors lists say (F-351)
 
