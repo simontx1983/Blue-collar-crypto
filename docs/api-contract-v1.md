@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.211 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.217 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -416,7 +416,7 @@ The single most important shared type. Encodes §N7 (always visible, disabled wi
   - **Member self-pages (member-disputes slice, 2026-06-30):** a member is the owner of their own self-page, so on their OWN member card/profile `can_open_dispute` is `allowed: true` when they have a contestable active downvote on their self-page, else `reason_code: "no_contestable_downvote"`. Non-owners and anonymous viewers get `reason_code: "not_applicable"` (members can't dispute votes on each other — only the subject can contest a downvote on themselves, mirroring the entity owner-contests-downvote model). Ownership resolves via the zero-DB self-page identity (`page_id = ID_BASE + user_id`).
 - `can_message` (v1.53) mirrors the DM write gates exactly — it is produced by the SAME messaging-policy evaluator the send path runs, so a rendered Message button and the `POST /me/conversations` it triggers can never disagree on a permanent rule. Only the transient rate limit is POST-only. On **validator page cards** it targets the page's resolved verified operator (or the queue, when the validator has never been claimed); on community cards it is `not_applicable`. On **member cards** (since v1.135, F-246) a signed-in viewer gets the live gate to that member — the same evaluator, batched per page on list surfaces — and `self_action_blocked` on their own card; anonymous viewers' member cards are unchanged. Reason codes: `not_applicable` (hide) · `auth_required` (visible-disabled, sign-in copy) · `self_action_blocked` (hide — viewer is the operator) · `sender_restricted` (hide — suspended/banned sender) · `sender_chat_disabled` (visible-disabled, resolvable hint) · `messaging_unavailable` (hide) · `friends_only` (visible-disabled + hint) · **`unavailable` (hide — v1.92)**.
 
-  - ⚠⚠ **`unavailable` (v1.92) means "the server could not determine the block state", not "you may not message".** It is emitted when the block table cannot be READ — a transient database failure — and it exists because the alternative is worse: the previous behaviour reported an unreadable block table as "not blocked", so the client rendered a live Message button and the `POST` then refused it. Clients MUST **omit** the affordance, never render it disabled: the condition is not something the viewer can resolve, so §N7's visible-disabled rule does not apply.
+  - ⚠⚠ **`unavailable` (v1.92) means "the server could not determine the block state", not "you may not message".** *(Since v1.213, H6, it also covers a DM setting, the viewer's or the recipient's `chat_enabled` / `chat_friends_only`, that could not be read; same meaning, same client rule.)* It is emitted when the block table cannot be READ — a transient database failure — and it exists because the alternative is worse: the previous behaviour reported an unreadable block table as "not blocked", so the client rendered a live Message button and the `POST` then refused it. Clients MUST **omit** the affordance, never render it disabled: the condition is not something the viewer can resolve, so §N7's visible-disabled rule does not apply.
   - ⚠⚠ **It is ALWAYS paired with `unlock_hint: null`, and that pairing is load-bearing rather than cosmetic.** A client that hides on the hint rather than on the code — which is what the member-card pill did before the omit branch shipped — would render a DISABLED pill if a hint string ever accompanied this code. The server therefore guarantees the null, and a backend test asserts the pairing independently of the code.
   - ⚠ It is deliberately a **different** code from `messaging_unavailable`. That one is the §4.19 info-leak shield, hiding WHICH of mutual-block / DMs-off / no-such-user applies. `unavailable` states a fact about the REQUEST rather than about the pair, so it reveals nothing the shield protects — and on a failed read every candidate in a batch receives it uniformly, which is why a shared payload is safe here.
   - The matching write paths answer `bcc_unavailable` **503** (§4.19), so a client that retries gets a coherent answer from both sides.
@@ -2205,9 +2205,11 @@ Consumes a reset key issued by `/auth/forgot-password` and sets a new password. 
   - `bcc_password_breached` 422 — *(since v1.171, F-294)* the password appears in a known data breach (Have I Been Pwned's Pwned Passwords): *"This password has appeared in a data breach; please choose a different one."*. Checked only once the key is valid (an invalid key answers `bcc_invalid_reset_token` without the check), and the key is **not** consumed, so the same link can submit another password.
   - `bcc_invalid_reset_token` 400 — key is expired, single-use already consumed, or never existed. Generic for both "expired" and "wrong key" to avoid leaking which failed.
   - `bcc_rate_limited` 429 — the per-network limit under **Rate limit** refused the request.
+  - `bcc_unavailable` 503 — *(since v1.212, F-508)* the account's existing sessions could not be signed out, so **nothing was changed**: the old password still works and the key is **not** consumed. The same link can be submitted again. `Cache-Control: private, no-store`.
 - **Rate limit:** *(since v1.152, F-290)* `RESET_PASSWORD_RATE_LIMIT` = **30/hour per network** (was 10) — abuse insurance; reset keys are ~20 random characters and single-use. *(since v1.157, F-290)* A refused request is not counted, so retrying while refused never extends the wait.
 - **Cache:** `Cache-Control: no-store`
 - **Side effects:**
+  - *(since v1.212, F-508)* **First**, every bearer token of the account is revoked (the per-user token version is bumped). If that does not land, the request stops with the `503` above, before anything below.
   - `reset_password($user, $password)` hashes the new password, clears `user_activation_key` (single-use), fires the `password_reset` action — other plugins listening invalidate sessions for this user.
   - `AccountSecurityMailer::passwordChanged($userId)` canary email (same one fired by the in-app password change in `/me/account`).
   - `AuditLogger::log('password_reset_completed', $userId, [], 'user', $userId)`.
@@ -2554,7 +2556,7 @@ Single-activity permalink read (v1.33 backfill — shipped with the post-detail 
   - A post tagged into several rooms opens through any such room the viewer is in.
   - Everyone else, and a plain room's members, still get the 404 below. Every other gate (blocks both ways, moderation hide, §F-02 outside groups, the room's own rule) still applies.
   - A room-membership read that fails answers the same 404 as a missing id, not a 503. It is reached only for an existing post in such a room, so a 503 would reveal both.
-- **Errors:** `bcc_not_found` 404 — covers both "no such activity" and "not visible to this viewer" (§O4.1 caution/risky author exclusion, except as above, §K1 mutual-block invisibility, §K1-C moderation hide, and — v1.94 — a `review` whose vote is no longer active (§3.3.2), and — v1.207 — a SECRET page's announcement the viewer may not see (§4.32.8) all collapse to 404; no existence oracle) · `bcc_unavailable` **503** *(v1.188)* when the post could not be read. This is NOT a 404: the post may well exist, so a client must offer a retry, not "post not found". see [Feed read failure](#feed-read-failure-vnext) below
+- **Errors:** `bcc_not_found` 404 — covers both "no such activity" and "not visible to this viewer" (§O4.1 caution/risky author exclusion, except as above, §K1 mutual-block invisibility, §K1-C moderation hide, and — v1.94 — a `review` whose vote is no longer active (§3.3.2), and — v1.207 — a SECRET page's announcement the viewer may not see (§4.32.8) all collapse to 404; no existence oracle) · `bcc_unavailable` **503** *(v1.188)* when the post could not be read. This is NOT a 404: the post may well exist, so a client must offer a retry, not "post not found". *(v1.216)* The same 503 when the viewer's block lists or the moderation-hidden list could not be read, and, on the shortcode route, when the code lookup did not run. Those are read before the post (the shortcode route reads the lists before it resolves the code), so the 503 is identical for an id or code that exists and one that doesn't. see [Feed read failure](#feed-read-failure-vnext) below
 - **Rate limit:** none route-specific
 - **Cache:** `Cache-Control: private, max-age=15` · `Vary: Authorization, Cookie`
 - **Mapping:** `FeedEndpoint::feedItem` → `FeedRankingService::getActivityById` (same §F3 single brain + `FeedHydrationPipeline` as the list surfaces). FE post-detail page / quick-view modal.
@@ -2564,6 +2566,9 @@ Single-activity permalink read (v1.33 backfill — shipped with the post-detail 
 <a id="feed-read-failure-vnext"></a>Applies to every route that reads a feed: `GET /feed`, `/feed/hot`, `/feed/tag`, `/feed/:id` (numeric and shortcode), `/groups/:id/feed`, `/pages/:id/feed`, `/users/:handle/activity`, `/users/:handle/blog` *(v1.197)* and `/feed/cold-start`. On `/feed/cold-start` the reads covered are the `hot_posts` block and, *(v1.197)*, each listed operator's `recent_action`.
 
 - **When:** the database read that finds the page's posts did not run (a dropped connection, a failed query). Before v1.188 that answered **200 with `items: []`** (or **404** on a permalink), which a client could not tell from "nobody has posted".
+- *(v1.216)* **Also when** a list that a signed-in viewer's reads exclude could not be read: the viewer's §K1 block lists (who they block, who blocks them), or the §K1-C moderation-hidden list when no last-known-good copy of it exists. On `/feed/:id`'s shortcode route, also when the code lookup did not run. Before v1.216 a failed block read answered **200 with `items: []`** (or **404** on a permalink), and a hidden list with no last-good copy was a **500**. On `/feed/hot` the hidden list is read for anonymous readers too; the block lists are read only for a signed-in reader, so an anonymous reader is never failed by them.
+  - These lists are read **before** any post or page, so the 503 is the same whether the post, the code or the page exists.
+  - **Not a 503:** the exact block check made after the posts are found (over each page's authors). When only that check fails, the route answers as if those posts were not there: the page comes back without them (possibly empty), and a permalink is `bcc_not_found` 404. Never the posts unfiltered. This keeps the answer independent of what the page holds.
 - **Response:** `bcc_unavailable` **503**, the standard error envelope, with **no `data`** (not even an empty page). Message: *"The feed is temporarily unavailable. Please try again."*, or *"This post is temporarily unavailable. Please try again."* on `/feed/:id`.
 - **Cache:** always `Cache-Control: private, no-store`, including on `/feed/hot`, whose success is publicly cacheable. Server-side, the shared `/feed/hot` first page is never written from a failed read, so an outage is not served to other readers after the database recovers.
 - **Retry:** safe and idempotent; nothing was written. **Clients:** render an error with a retry action, never the empty state ("No posts yet") or "post not found".
@@ -3586,6 +3591,8 @@ Explicit user-initiated join. Verifies eligibility server-side, clears any activ
     ownership (timeout / 429 / circuit-breaker open / malformed response), OR
     the membership write itself failed (PeepSo unavailable). A banned row is
     refused as a moderator eviction above since v1.129, not here.
+    *(Since v1.215, H7)* also when the member's group opt-out state could
+    not be read. Retryable, like the rest.
     Transient; retry with backoff. The join **fails closed** — the user is NOT
     added when ownership can't be confirmed, so an outage never grants access.
     (Mirrors the §J read-time 503 precedent; the §1.4.6 standard-codes table
@@ -3715,13 +3722,13 @@ For non-gated, non-Hall PeepSo groups (the residual case: user/system groups cre
 - **Response 200:** `{ "joined": true, "group_id": 4231 }`
 - **Errors:**
   - `bcc_forbidden` (403) — account suspended ("Your account is suspended."). Checked before everything else; admin bypass off — a suspended account is blocked regardless of role.
-  - `bcc_invalid_request` (404) — group not found, **or (v1.99) a `secret` group the caller is not an active member of**. The two are byte-identical, so the response never confirms that an id is a secret group.
+  - `bcc_invalid_request` (404) — group not found, **or (v1.99) a `secret` group the caller is not an active member of**. The two are byte-identical, so the response never confirms that an id is a secret group. **(v1.214)** A group whose kind can't be read answers the same 404, and nothing is joined.
   - `bcc_invalid_request` (400) — group is a holder group or Hall; use the dedicated endpoint
   - `bcc_permission_denied` (403):
     - `closed` group: "This community requires admin approval. Visit the group page to request access." *(v1.132: ask with `POST /me/groups/:id/request-join`)*
     - `secret` group, caller already a member: "This community is invite-only." *(v1.99: a non-member gets the 404 above instead; v1.132: an invitee accepts with `POST /me/groups/:id/invite/accept`)*
   - `bcc_permission_denied` (403) — **(v1.129)** the caller is banned from the group: "A moderator removed you from this community, so you cannot rejoin it." Checked before the write.
-  - `bcc_unavailable` (503) — the membership write failed (PeepSo unavailable). Fail-closed; nothing was joined. Same surface as the Halls join. (Before v1.129 a ban also landed here.)
+  - `bcc_unavailable` (503) — the membership write failed (PeepSo unavailable), **or (v1.214) the community's trust minimum could not be read** (a stored minimum that is not a number counts as unreadable). Fail-closed; nothing was joined; retryable. Same surface as the Halls join. (Before v1.129 a ban also landed here.)
 - **Mapping:** Resolves `GroupContext`; if `type` is `nft` or `hall` rejects (use the dedicated endpoint); for `open` groups calls `PeepSoGroupWriter::join` and honors its verdict — a `false` return is surfaced as `bcc_unavailable`, never as `joined: true`. Closed/secret are not joined here — PeepSo's request-flow / invitation machinery is not replicated by this endpoint.
 
 #### `POST /bcc/v1/me/groups/:id/leave`
@@ -3729,7 +3736,7 @@ For non-gated, non-Hall PeepSo groups (the residual case: user/system groups cre
 - **Auth:** Bearer (401 anonymous)
 - **Response 200:** `{ "left": true, "group_id": 4231 }`
 - **Errors:**
-  - `bcc_invalid_request` (404) — group not found, **or (v1.99) a `secret` group the caller is not an active member of** (previously a `200` no-op). Nothing is written.
+  - `bcc_invalid_request` (404) — group not found, **or (v1.99) a `secret` group the caller is not an active member of** (previously a `200` no-op). **(v1.214)** A group whose kind can't be read answers the same 404. Nothing is written.
   - `bcc_invalid_request` (400) — group is a holder group or Hall
   - `bcc_permission_denied` (403) — caller is the group owner ("Owners cannot leave their own community. Hand off ownership or delete the group first."). **(v1.132)** Decided by a membership read made **before** the write; only the owner ever gets this copy.
   - `bcc_unavailable` (503) — **(v1.132)** the membership read failed, or the leave did not happen for any other reason (the per-member write lock was busy, the write failed, PeepSo unavailable). Fail-closed; **retryable**; nothing was left. Before v1.132 these answered the owner 403.
@@ -3947,7 +3954,7 @@ Shape mirrors §4.7.1 exactly, with a `validator_stats` block replacing `collect
   - `bcc_permission_denied` **403** — a moderator removed this member (`error.data.reason_code` = `opt_out_active`, v1.84; **narrowed in v1.95**: emitted ONLY for a moderator eviction, since a voluntary leave no longer blocks an explicit join; **v1.129**: a ban gets the same refusal instead of a 503), **or** not eligible (`error.data.reason_code` = `not_eligible`, v1.85). Both carry a `reason_code`, so the two are told apart by its **value** and never by the presence or absence of `error.data`.
     - **`error.data.min_stake_display` (v1.85)** — on the `not_eligible` refusal only: the same server-pre-formatted string the card and the unlock hint carry (`"10 ATOM"`, or a bare amount when the chain’s native token is unknown). `null` when the gate config or the native token is unreadable; the key is always present on this refusal, so a client can tell "unknown" from "field absent". ⚠ **This field exists because the minimum must NOT be read out of `error.message`.** §γ forbids a client rendering `error.message`, so a figure carried only in the sentence is a figure the user never sees — which is exactly what the card surfaces showed before v1.85 ("you don’t delegate enough", with no amount). Render the amount from this field, interpolated into your own code-keyed copy.
     - `error.message` remains the server-pinned sentence (e.g. `"Delegate at least 10 ATOM to Coinbase01 to join this community."`) for non-browser clients and the logs. It is **not** for display: earlier revisions of this line said to render it verbatim, which contradicted §γ and is withdrawn.
-  - `bcc_upstream_unavailable` **503** — **could not verify** the delegation. This is NOT "you don't qualify": the join failed **closed** during an upstream outage. Clients MUST present it as retryable and MUST NOT render it as an eligibility failure.
+  - `bcc_upstream_unavailable` **503** — **could not verify** the delegation. This is NOT "you don't qualify": the join failed **closed** during an upstream outage. Clients MUST present it as retryable and MUST NOT render it as an eligibility failure. *(Since v1.215, H7)* also when the member's group opt-out state could not be read; same client rule.
   - `bcc_internal_error` **503** — community sits on an unsupported (non-Cosmos) chain.
 
 #### `POST /bcc/v1/me/validator-groups/:id/leave`
@@ -5245,7 +5252,7 @@ Body `{ "code": "123456" }`.
 
 #### `PATCH /bcc/v1/me/account/password` (V2 Phase 2.5)
 
-Change password. Body `{ "current_password": "...", "password": "..." }`. New password ≥ **8** chars (server-enforced; *since v1.158, F-294: was 10, now the same minimum as sign-up and reset; existing passwords are unaffected*). Server calls `wp_set_password` (which destroys all session tokens) and immediately re-issues the current session's auth cookie so the user is not kicked out mid-flow. It also bumps the per-user JWT token-version (revoking every outstanding bearer token, the bearer analogue of the session-token wipe) and mints a **fresh token** for the current session, returned below — bearer clients must swap to it. *(since v1.100)* It also deletes every Web Push subscription of the user — the caller's own included; the client re-registers push if it is enabled.
+Change password. Body `{ "current_password": "...", "password": "..." }`. New password ≥ **8** chars (server-enforced; *since v1.158, F-294: was 10, now the same minimum as sign-up and reset; existing passwords are unaffected*). Server calls `wp_set_password` (which destroys all session tokens) and immediately re-issues the current session's auth cookie so the user is not kicked out mid-flow. It also bumps the per-user JWT token-version (revoking every outstanding bearer token, the bearer analogue of the session-token wipe) and mints a **fresh token** for the current session, returned below — bearer clients must swap to it. *(since v1.212, F-508)* The token version is bumped **before** the password is written: if that does not land, the answer is `bcc_unavailable` **503** (`Cache-Control: private, no-store`) and **nothing was changed**. The current password still works, the presented token still works, and the member can simply try again. *(since v1.100)* It also deletes every Web Push subscription of the user — the caller's own included; the client re-registers push if it is enabled.
 
 - **Response 200:** `{ "ok": true, "token": "<jwt>", "expires_in": 604800, "token_type": "Bearer" }`
 - **A password known to have leaked** → `bcc_password_breached` 422 — *(since v1.171, F-294)* the password appears in a known data breach (Have I Been Pwned's Pwned Passwords): *"This password has appeared in a data breach; please choose a different one."*. Checked after the length check and before either confirmation (current password or wallet signature); fails open, as at `POST /auth/signup`.
@@ -5467,7 +5474,7 @@ Addresses EITHER a user (`recipient_id`) OR a validator page (`page_id`) — mut
   - `bcc_queue_limit 409` — sender already holds the maximum pending queued messages for this validator (3).
   - `bcc_queue_full 409` — the validator's pending queue is at capacity (500).
   - `bcc_rate_limited 429` — 30/5min cap exceeded. Queue submissions and PeepSo sends share one budget.
-  - `bcc_unavailable 503` — PeepSo write failure.
+  - `bcc_unavailable 503` — PeepSo write failure. *(Since v1.213, H6)* also: the sender's or recipient's DM setting could not be read ("Messaging is temporarily unavailable. Please try again."). Retryable; it never means DMs are off.
 - **Server-authoritative resolution:** the destination is re-resolved on EVERY submission from the canonical claim source. A client may not infer it from the card; the card's `messaging.destination` is a rendering hint whose staleness is always resolved server-side.
 - **Side effects:** PeepSo's `peepso_messages_new_conversation` action fires; email notification queued; `peepso_should_get_chats` SSE event triggered for every participant (powers PeepSo-native UIs that share the database). The queued path has no PeepSo side effects until delivery.
 - **Cache:** `no-store`.
@@ -5511,7 +5518,7 @@ Paginated message history. `{id}` is either the conversation root msg id OR any 
     "pagination": { "page": 1, "per_page": 30, "total": null, "has_more": true }
   }
   ```
-- `conversation.can_reply` (v1.135, F-246, additive) — would `POST /me/conversations/{id}/messages` be accepted right now? `{allowed, unlock_hint, reason_code}`, produced by exactly the reply path's gates: the sender's permanent rules (suspension/ban → `sender_restricted`; own DMs off → `sender_chat_disabled` with a resolvable hint) and, for a 1-on-1, the messaging-policy evaluator against the other participant (`messaging_unavailable` for peer DMs off **or** a mutual block — indistinguishable, the §4.19 shield; `friends_only` + hint; `unavailable` when the block table cannot be read). Group threads are gated by the sender rules only. The transient rate limit is POST-only, as on `can_message`. A client that does not know the field treats it as allowed (today's behaviour).
+- `conversation.can_reply` (v1.135, F-246, additive) — would `POST /me/conversations/{id}/messages` be accepted right now? `{allowed, unlock_hint, reason_code}`, produced by exactly the reply path's gates: the sender's permanent rules (suspension/ban → `sender_restricted`; own DMs off → `sender_chat_disabled` with a resolvable hint) and, for a 1-on-1, the messaging-policy evaluator against the other participant (`messaging_unavailable` for peer DMs off **or** a mutual block — indistinguishable, the §4.19 shield; `friends_only` + hint; `unavailable` when the block table, or *(since v1.213, H6)* a DM setting, cannot be read). Group threads are gated by the sender rules only. The transient rate limit is POST-only, as on `can_message`. A client that does not know the field treats it as allowed (today's behaviour).
 - `is_inline_notice` is `true` for system rows (`peepso-message-notic` post_type) — "Phillip joined the conversation," "Admin left." Frontend renders these with an austere centered treatment (no avatar, no bubble).
 - `sender_blocked_by_viewer` (v1.87) — `true` when the viewer has blocked that message's author. **Always present.**
 - ⚠ **When it is `true`, `body` is the fixed string `Message from someone you have blocked`, NOT the real text** (v1.87). `id`, `author`, `posted_at` and `is_inline_notice` are unaffected. The real text is reachable only through `GET …/messages/{message_id}/reveal` below, on an explicit per-message request — so a blocked sender's words never enter the viewer's browser unless the viewer asks for them. See **Blocked senders** below for why this changed within v1.87's own development.
@@ -6281,12 +6288,12 @@ Both surfaces require Bearer JWT; suspended accounts → `bcc_forbidden 403`. St
 - **Errors:**
   - `bcc_unauthorized 401` — anonymous.
   - `bcc_rate_limited 429` — 5/60/user (`logout_everywhere` bucket). Tight cap because the blast radius is total session invalidation; no legitimate user fires this more than a few times per minute.
-  - `bcc_unavailable 503` *(since v1.210, F-495)* — the token-version write did not land, so **no token was revoked**: every outstanding token, this request's included, still works. Steps 1, 2 and 4 below, and the WordPress sessions and application passwords, still happened. `Cache-Control: private, no-store`. The client keeps its session, tells the member it did not work, and lets them try again. It does NOT sign out (that would leave every other device signed in while this one is not).
+  - `bcc_unavailable 503` *(since v1.210, F-495)* — the token-version write did not land, so **no token was revoked**: every outstanding token, this request's included, still works. Step 4 below, and the WordPress sessions and application passwords, still happened; *(since v1.212, F-508)* steps 2 and 3 did not (no "sessions revoked" audit row or email): the failure is audited as `sessions_revoke_failed` instead, which admins see and the member's §4.23 timeline does not list. `Cache-Control: private, no-store`. The client keeps its session, tells the member it did not work, and lets them try again. It does NOT sign out (that would leave every other device signed in while this one is not).
 - **Rate limit:** 5/60/user.
 - **Side effects (in order):**
-  1. Audit row written: `AuditLogger::log('sessions_revoked_all', $userId, [], 'user', $userId)`. Counts toward the §4.23 GET timeline + 90-day retention.
-  2. Out-of-band email: `AccountSecurityMailer::sessionsRevokedAll($userId)`. Track-F redundancy — if an attacker triggers this to lock the legitimate user out, the email channel still warns. Failure records `account_security_mail` / `sessions_revoked_all_send_failed` DegradationMetric per `project_account_security_mailer.md`.
-  3. Token version bumped: `JwtToken::revokeAllForUser($userId)`. Every outstanding JWT for this user (including the bearer that authenticated THIS request) fails the `tv` check on next decode and returns `ERR_REVOKED`. *(since v1.210, F-495)* When that write does not land, the answer is the `503` above instead of `200`.
+  1. Token version bumped: `JwtToken::revokeAllForUser($userId)`. Every outstanding JWT for this user (including the bearer that authenticated THIS request) fails the `tv` check on next decode and returns `ERR_REVOKED`. When that write does not land, the answer is the `503` above instead of `200`. *(Order since v1.212, F-508: this used to be step 3, after the audit row and the email.)*
+  2. *Only once step 1 landed:* audit row written: `AuditLogger::log('sessions_revoked_all', $userId, [], 'user', $userId)`. Counts toward the §4.23 GET timeline + 90-day retention.
+  3. *Only once step 1 landed:* out-of-band email: `AccountSecurityMailer::sessionsRevokedAll($userId)`. Track-F redundancy — if an attacker triggers this to lock the legitimate user out, the email channel still warns. Failure records `account_security_mail` / `sessions_revoked_all_send_failed` DegradationMetric per `project_account_security_mailer.md`.
   4. *(since v1.100)* Every Web Push subscription of the user is deleted, so the signed-out devices stop receiving pushes. Each device re-registers when it next signs in and enables push.
 - **Client-side responsibility:** on 200 the bearer is invalidated by the time the response is read. The client MUST call `signOut({ callbackUrl: "/" })` (or equivalent) immediately on 200 — any subsequent authenticated request will 401. The hook `useLogoutEverywhere()` in `useAccount.ts` does this automatically in `onSuccess`.
 - **Self-revocation note:** the user CAN sign themselves out of their own current session. The mutation is intentionally not session-aware (no "all OTHER devices" carve-out) — this is the minimal D2 per the Tier D scope decision; the per-device listing UI is deferred to a future planning session.
@@ -6853,8 +6860,8 @@ Report another **member** (distinct from `POST /me/reports`, which reports a `fe
 Read the viewer's DM-gating preferences (PeepSo-backed). Relates to §4.19. Self-only.
 
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
-- **Response 200:** `{ "data": { "chat_enabled": true, "chat_friends_only": false } }` — `chat_enabled` defaults **true**, `chat_friends_only` defaults **false** when no meta row exists.
-- **Errors:** `bcc_unauthorized` 401
+- **Response 200:** `{ "data": { "chat_enabled": true, "chat_friends_only": false } }` — `chat_enabled` defaults **true** when no meta row exists. `chat_friends_only` with no meta row follows the site's PeepSo `messages_friends_only` setting (PeepSo default: on), as the send gate does. *(Corrected in v1.213: this line used to say it defaults to false, which the code has not done since the settings and the send gate were aligned.)*
+- **Errors:** `bcc_unauthorized` 401 · *(since v1.213, H6)* `bcc_unavailable` 503 "Could not read your messaging preferences. Please try again." when the settings could not be read. Retryable; the client must not show either switch as off or on from it.
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** `MyMessagesPrefsEndpoint::get` (route `MyMessagesPrefsEndpoint.php:66`, READABLE) → reads `peepso_chat_enabled` + `peepso_chat_friends_only`. FE `messages-prefs-endpoints.ts`.
 
@@ -6865,7 +6872,7 @@ Partial update of the viewer's DM-gating preferences. Registered as `WP_REST_Ser
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
 - **Body (JSON, every field optional):** `chat_enabled` (bool) · `chat_friends_only` (bool), stored as `"1"`/`"0"`. *(Since v1.158, F-294: a value that is not a boolean is a 422, and both fields are validated before either is written; it used to be read as `false`.)*
 - **Response 200:** same shape as the GET (full re-read after write).
-- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 422 (no recognized field, or "`<field>` must be true or false.")
+- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 422 (no recognized field, or "`<field>` must be true or false.") · *(since v1.213, H6)* `bcc_unavailable` 503 when the re-read after the write could not be read. The write has been applied; repeating the PATCH is safe.
 - **Cache:** `Cache-Control: no-store`
 - **Mapping:** `MyMessagesPrefsEndpoint::patch` (route `MyMessagesPrefsEndpoint.php:76`, EDITABLE) → `update_user_meta` on the two PeepSo keys, then re-read.
 
@@ -7498,7 +7505,7 @@ Paginated NFT collection gallery for a creator page (`/c/[slug]`). **Supersedes 
 
 The vote-dispute system (owner files a dispute against a downvote → an **open community vote** on the meaningful-voting poll engine decides it → the verdict resolves async), plus the endorsement read direction. Rank Phase 6 (owner decision D-7) retired the §D5 five-member peer panel: there is no panelist selection, no panel queue, and no participation credit. Any eligible member (Apprentice+ · Trust Neutral+ · not a party · not fraud-blocked) may vote `uphold`/`reject`; the poll closes on **dual quorum (10 counted voters AND 7.5 counted effective weight) + 60% effective-weight majority**, no earlier than day 7, or Inconclusive at day 90. Dispute endpoints live in `DisputeController`; the endorsement reads live in `UserEndorsementsEndpoint`.
 
-> **Envelope note (corrected v1.75 — the v1.23 "unenveloped" claim was never true on the wire):** dispute endpoints emit the canonical `{ data, _meta }` envelope via `ApiResponse::ok`/`error`. The legacy `DisputeController` routes use bare (non-`bcc_`-prefixed) error codes; the Phase 6 `/disputes/:id/vote` trio uses `bcc_dispute_vote_*` codes. The two `/endorsements/mine*` reads build their payloads via raw `rest_ensure_response([...])`, but the global `Envelope` filter (`rest_post_dispatch`, priority 999) wraps every `/bcc/v1/` response lacking envelope markers — so the **wire** shape is the standard `{ data: { items, total }, _meta }` on success and `{ error: {...} }` on failure, same as every other route (wire-verified 2026-08-06). Residual quirk, fixed in the 2026-08-06 sweep: the throttle denial used to return a bare `{message}` body that the wrapper *success*-wrapped under HTTP 429; it now returns the canonical `bcc_rate_limited` error shape, so the 429 carries `{ error: {...} }` and the `retry_after_seconds` injection engages. The admin-only `POST /disputes/:id/resolve` (force-resolve) and `GET /disputes/health` are **internal** and intentionally undocumented (allowlisted).
+> **Envelope note (corrected v1.75 — the v1.23 "unenveloped" claim was never true on the wire):** dispute endpoints emit the canonical `{ data, _meta }` envelope via `ApiResponse::ok`/`error`. The legacy `DisputeController` routes use bare (non-`bcc_`-prefixed) error codes; the Phase 6 `/disputes/:id/vote` trio uses `bcc_dispute_vote_*` codes. The two `/endorsements/mine*` reads build their payloads via raw `rest_ensure_response([...])`, but the global `Envelope` filter (`rest_post_dispatch`, priority 999) wraps every `/bcc/v1/` response lacking envelope markers — so the **wire** shape is the standard `{ data: { items, total }, _meta }` on success and `{ error: {...} }` on failure, same as every other route (wire-verified 2026-08-06). Residual quirk, fixed in the 2026-08-06 sweep: the throttle denial used to return a bare `{message}` body that the wrapper *success*-wrapped under HTTP 429; it now returns the canonical error shape with the bare `rate_limited` code (the legacy routes' convention above; the frontend's dispute view keys on it), so the 429 carries `{ error: {...} }` and the `retry_after_seconds` injection engages. *(Corrected v1.217: this note used to name the code `bcc_rate_limited`; the wire has always sent `rate_limited`.)* The admin-only `POST /disputes/:id/resolve` (force-resolve) and `GET /disputes/health` are **internal** and intentionally undocumented (allowlisted).
 
 #### `POST /bcc/v1/disputes`
 
@@ -9708,6 +9715,58 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.217 — 2026-11-23 — docs fix — the dispute throttle's 429 code is `rate_limited`, as the routes' Errors lists say (F-351)
+
+Docs only; no code change.
+
+- **§4.30 envelope note:** it said the throttle denial "now returns the canonical `bcc_rate_limited` error shape". The wire sends the bare `rate_limited` code (`DisputeController::throttle`), matching the legacy dispute routes' bare-code convention and each route's own Errors list. The note now says so. Its shape claims stand: the 429 carries `{ error: {...} }`, and `retry_after_seconds` is injected.
+- **Clients:** no change. The frontend's dispute view already handles `rate_limited`.
+
+### v1.216 — 2026-11-19 — behaviour change — a feed or post whose block or hidden list could not be read answers 503, not an empty page or a 404 (F-438, F-455)
+
+Ships with bcc-trust **#810**. bcc-trust only: it uses bcc-core readers already in production.
+
+- **Every feed route with a signed-in reader** (`GET /feed` in every scope, `/feed/hot`, `/feed/tag`, `/feed/:id` numeric and shortcode, `/groups/:id/feed`, `/pages/:id/feed`, `/users/:handle/activity`, `/feed/cold-start`'s hot posts): when the viewer's block lists could not be read, the route answers **`503 bcc_unavailable`**, `Cache-Control: private, no-store`. Before, it answered **200 with `items: []`**, or **404** on a permalink. Anonymous readers read no block lists and are unaffected.
+- **Every feed route, any reader:** when the moderation-hidden list could not be read and no last-known-good copy exists, the same 503. Before, a **500**. The shared `/feed/hot` first page is never cached from such a read.
+- **`/feed/:id` shortcode route:** the lists are read before the code is resolved, so the 503 is the same for a known code and an unknown one. A code lookup that did not run is the same 503, never `bcc_not_found`.
+- **Unchanged:** a block check that fails after the posts are found still answers as if those posts were not there (the page without them, or 404 on a permalink), never the posts unfiltered. Every refusal (blocked, hidden, shadow-limited, not visible, missing) is still the same 404 body. No new field or error code; success responses are unchanged. See [Feed read failure](#feed-read-failure-vnext).
+- **Clients:** no change. The 503 was already documented as retryable on these routes (v1.188).
+
+### v1.215 — 2026-11-19 — behaviour change — a join whose opt-out state can't be read is "try again" (H7)
+
+Ships with bcc-trust #807 (after #804). ⛔ Deploy bcc-core #158 first.
+
+- **`POST /me/holder-groups/:id/join`, `POST /me/validator-groups/:id/join`:** when the member's group opt-out state cannot be read, the join answers the existing retryable `bcc_upstream_unavailable` 503, before any provider call, and writes nothing. Clients already treat this code as "try again".
+- **Unchanged:** every answer when the read works, and every shape. No new code or field.
+
+### v1.214 — 2026-11-20 — behaviour change — a community's kind and trust minimum are read reliably, and an unreadable one refuses (F-463)
+
+Ships with bcc-trust **#814** (needs bcc-core **#164**).
+
+- **`POST /me/groups/:id/join`:** its existing `503 bcc_unavailable` now also covers a community whose trust minimum can't be read, including a stored minimum that is not a number. Nothing is joined; retry. Where a minimum is stored more than once, the highest counts.
+- **A community whose kind can't be read** answers as missing (`404`) on the join, leave and invitation routes, and is left out of lists, rather than being treated as a plain community.
+- **Unchanged:** response shapes. No new field or error code.
+
+### v1.213 — 2026-11-19 — behaviour change — a DM setting that can't be read is "try again", never a default (H6)
+
+Ships with bcc-trust #804. ⛔ Deploy bcc-core #158 first.
+
+- **What changed:** every DM gate and `/me/messages-prefs` read the DM settings through a read that tells "failed" from "no row", and none of them writes a setting. Before, the read went through PeepSo's model, which writes a default when its read is empty.
+- **`POST /me/conversations`, `POST /me/conversations/{id}/messages`, and the validator-page queue send:** a sender's or recipient's DM setting that cannot be read is a retryable `bcc_unavailable` 503, like an unreadable block table. Never "DMs off" and never "allowed".
+- **`can_message` (cards, batch and single), `conversation.can_reply`:** the same case answers `reason_code: unavailable` (§3.2.4: omit the button).
+- **`GET` / `PATCH /me/messages-prefs`:** `bcc_unavailable` 503 when the settings can't be read. On a PATCH the write has already been applied.
+- **Doc correction (§4 `GET /me/messages-prefs`):** a missing `chat_friends_only` follows the site's `messages_friends_only` setting (PeepSo default: on), not `false`. The code already did this.
+- **Unchanged:** every answer when the read works, every shape, and the first-claim release (it bypasses the DM settings and reads none). No new code or field.
+
+### v1.212 — 2026-11-19 — behaviour change (security) — password reset and change revoke first; sign-out-everywhere claims only what landed (F-508)
+
+Ships with bcc-trust **#805**. Follow-ups to v1.210 (F-495).
+
+- **`POST /auth/reset-password`:** the account's bearer tokens are revoked **before** the password is written. When that does not land: new `503 bcc_unavailable` (`private, no-store`), and nothing changed: the old password still works and the key is unspent, so the same link works again. *v1.210's "unchanged on the wire" list should have named this route; it changes here instead.*
+- **`PATCH /me/account/password`:** the same order. New `503 bcc_unavailable`; nothing changed, and the member retries with the same current password.
+- **`POST /auth/logout-everywhere`:** the `sessions_revoked_all` audit row and the "sessions revoked" email now come **after** the revocation landed. On its `503` neither is written or sent, and a failure audit (`sessions_revoke_failed`, admin-only) is written instead. Steps renumbered: the revocation is now step 1.
+- **Unchanged on the wire:** the other revoking routes (email change, the recovery email, email verification, the OAuth first link, a wallet unlink) keep their answers and log a lost revocation. An admin suspension now also tells the admin, with a retry.
 
 ### v1.211 — 2026-11-19 — behaviour change — a post an NFT holder room shows opens by link for its members (F-451)
 
