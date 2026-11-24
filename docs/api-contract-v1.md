@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.231 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.240 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1123,6 +1123,7 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
 - `flags` is an array of short slugs; if non-empty, the frontend may render moderation chips. V1 codes: `suspended`, `shadow_limited`, `hidden`, `under_review`.
 - Hidden privacy fields (per `privacy.*_hidden: true`) cause the corresponding sections in `counts`, `wallets`, etc. to either be omitted or zeroed depending on the viewer's relationship — server decides, client doesn't.
 - **Secret pages in the counts *(v1.230, F-571)*:** on a single member's view (this `User`, and that member's `MemberSummary.engagement`), `counts.reviews_written` and `counts.disputes_signed` leave out the SECRET pages this viewer may not see, by the same rule as `/users/:handle/reviews` and `/disputes`. So the secret-page part of a count agrees with its list. The member and site admins see the full count. When the pages' privacy cannot be read, or the member has more than 100 secret pages, both counts are `0` for that viewer. Member cards built in batches (the directory, feeds) still show the unfiltered count. `reviews_written` still counts every active vote, as before, so it can exceed the Reviews list's `total` by moderation-hidden reviews.
+- **`joined_at` for other viewers *(since v1.238, R12)*:** the member themselves receives the exact time. Every other viewer, anonymous included, receives the **first of the month at `00:00:00Z`** (e.g. `2026-01-12T09:41:07Z` → `2026-01-01T00:00:00Z`), so neither the payload nor a page built from it carries the day or the time. The same holds for `MemberSummary.joined_at` wherever it appears (review and reply authors, group request and invite items, rosters, member cards). `""` (unknown) is unchanged. Admin routes keep the stored value.
 - `cover_photo_url` is `null` when no custom cover photo is set; the frontend renders a default treatment in that case. URL is absolute (per §1.7) and points at PeepSo's stored cover image. Self-edits go through `PATCH /me/profile/cover` (multipart upload) — see §V2 Phase 2 endpoints.
 - `cover_photo_position` is `{x, y}` percentages (0–100) for the CSS `object-position` of the cover crop. Defaults to `{x: 50, y: 50}` (center). Self-edits go through `PATCH /me/profile/cover/position`.
 
@@ -1175,6 +1176,7 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
 - `is_claim_verified` (verified-wins slice, 2026-06-30) — `true` when the page has a **verified on-chain operator/creator claim** (`onchain_claims.status='verified' AND claim_role IN ('operator','creator')`), i.e. the real entity proved key control. Distinct from `is_claimed` (ANY claim exists) and from `is_verified`/the member email flag. Drives the "✓ Verified Operator" badge + the dominant search-ranking bonus + same-name look-alike demotion. `false` on `member`/`community` cards (not on-chain-claimed). Projected from the read model (`has_verified_claim`), refreshed whenever a claim verify/revoke re-syncs the page.
 - `claim_target` (per §N8) — non-null only when the page is unclaimed AND a claim target resolves. Drives the four-step claim modal.
   - **v1.221 (F-515), additive:** `claim_target` is `{ entity_type, entity_id, chain_slug, claimable, unclaimable_reason_code, unclaimable_hint }`. `claimable` (bool) says whether BCC can prove an operator on this validator's chain from the data it stores. When it is `false`, the block is still present (so the card can say why), `unclaimable_reason_code` is one of `operator_address_missing` (the validator has no operator address on record), `solana_unsupported` (a Solana validator needs its vote account's withdraw authority, which BCC does not record), `evm_no_validator_pages` (an EVM chain) and `operator_unprovable` (any other chain, or one whose stored operator address no wallet can match, such as THORChain's node address), and `unclaimable_hint` is server copy naming the chain by its display name, never its slug. Both are `null` when `claimable` is `true`. `POST /pages/:id/claim` refuses an unclaimable validator with the same code and hint, so the card and the write agree. Clients decide claimability from these fields, never from a chain allowlist of their own.
+- `onchain_signals.status` (validator cards; `onchain_signals` is `null` for other kinds) ∈ {`active`, `jailed`, `inactive`, `unknown`}: the status the validator's chain last reported. **v1.233 (F-584):** it reads `unknown` when BCC has had no successful call to the validator's chain in 72 hours (whatever the chain last reported; it shows again once the chain answers). `last_fetched_at` is unchanged.
 - `messaging` (v1.53) — **server-owned destination state** for entity-addressed messages. Always present. Shape: `{ destination: "queue" | "operator" | "unavailable" | "none", operator: { handle, name } | null }`.
   - `operator` — exactly one verified operator; `POST /me/conversations {page_id}` opens an ordinary DM with them. `operator` is non-null ONLY in this state.
   - `queue` — validator has **never** been claimed; a message is durably queued for its first verified operator (see §4.19 First-claim backlog release).
@@ -2381,6 +2383,8 @@ Silent-refresh seam: exchanges a recently-expired (or near-expiry) Bearer JWT fo
 
 **Suspended members sign in read-only (v1.136, F-305).** A suspended member may sign in and browse; they cannot post, comment, vote, attest, claim or join (every write gate already answers `bcc_forbidden` 403 "Your account is suspended."). Every response that carries `in_good_standing` also carries **`suspended`** (bool), and so does `/auth/refresh`. The list: `/auth/wallet-login`, `/auth/wallet-signup`, `/auth/2fa/verify`, `/auth/oauth-complete`, `/auth/verify-email`, `POST /auth/login` when it mints a token directly (the 2FA-bypass path), the OAuth sign-in response of the internal `/auth/oauth` bridge, and `GET /auth/session`. `true` means a moderator suspended the account: show a persistent notice that the member cannot post, comment or vote. It is **display state**: `false` when the suspension could not be read, and never a security gate. A suspension revokes every token issued before it, so a signed-in member's next refresh answers `403` `account_suspended` (above). Show the notice and route to sign-in; the new session carries `suspended: true`.
 
+**Admin cue (v1.240, structure A).** Every response that carries `suspended` also carries **`can_moderate`** (bool): whether the user holds the capability the admin routes require (`manage_options`, the same check). The frontend shows its "Admin" avatar group only when it is `true`. It is **display state only**: the admin routes enforce on every request, so it is never a security gate, and it is `false` when the capability could not be read.
+
 **One write gate.** Every non-GET request to `bcc/v1` or `bcc-trust/v1` from a **known-suspended** member (admin bypass off) is refused before the route runs, with `403` `bcc_forbidden` "Your account is suspended." and `error.data.reason_code: "account_suspended"`. Routes are matched **case-insensitively**, as WordPress dispatches them, and each sub-request of a `/batch/v1` call is gated on its own route. Routes' own suspension checks stay as a second line.
 - **Allowed while suspended:**
   - these `/auth/` routes only: `login`, `logout`, `logout-everywhere`, `refresh`, `session`, `nonce`, `wallet-nonce`, `wallet-login`, `wallet-signup`, `signup`, `oauth`, `oauth-complete`, `2fa/verify`, `2fa/resend`, `forgot-password`, `reset-password`, `verify-email`, `resend-verification`. An `/auth/` route not on this list is gated;
@@ -3330,7 +3334,9 @@ in PeepSo's `peepso_group_members` (single graph rule, §E3); BCC stores only a
 List of available Halls (PeepSo Groups in BCC clothing).
 
 - **Auth:** Anonymous OR Bearer
-- **Query:** `page` (default 1), `page_size` (default 20, max 50), `chain` (optional filter)
+- **Query:** `page` (default 1), `page_size` (default 20, max 50), `chain` (optional filter), `q` (optional; v1.239)
+  - **`q`** *(v1.239)*: a name search, as on `GET /groups`. It matches the Hall's name anywhere in it, case-insensitively, and LIKE's wildcards in it match themselves. At most **100 characters** (longer is `400`). A search is throttled to **10 per 5 s** (`429 bcc_rate_limited`).
+    - `pagination.total` counts the Halls matching the same `chain` and `q`, so the page and its total agree.
 - **Response 200:**
   ```json
   {
@@ -3856,7 +3862,15 @@ The invitee declines. Nobody is notified. **200:** `{ "status": "none", "group_i
 Cross-kind discovery list. Sort key: `verified DESC, heat_score DESC, member_count DESC`. Verified groups rank above non-verified, but active verified beats sleepy verified — so a "verified but dead" community doesn't dominate the discovery surface.
 
 - **Auth:** Anonymous OR Bearer
-- **Query:** `verified` (0/1; default 0), `page` (default 1), `page_size` (default 20, max 50)
+- **Query:** `verified` (0/1; default 0), `q`, `kind`, `chain`, `mine` (0/1; default 0), `page` (default 1), `page_size` (default 20, max 50)
+  - **`q`** *(v1.239)*: a name search, matching the group's name anywhere in it, case-insensitively. LIKE's wildcards (`%`, `_`) in it match themselves.
+    - At most **100 characters**; a longer one is `400` (`rest_invalid_param`, or `bcc_invalid_request` "q must be at most 100 characters." from the handler), as on `GET /cards`.
+    - A request with a `q` is throttled to **10 per 5 s** (per account, or per /24 subnet signed out). Over that, it is `429 bcc_rate_limited` "Too many searches. Please wait a few seconds." Browsing without a `q` is never throttled.
+    - ⭐ **A `q` never finds a secret group**, the viewer's own secret groups included (with `mine=1` too): the name is matched only among the groups this list may show at all.
+  - **`kind`** *(v1.239)*: only groups of one `type`, using the same values as the items' `type`: `hall`, `nft` (holder groups), `validator` (delegator groups), `user` (member-made), `system`. Any other value is `400 bcc_invalid_request` "kind must be one of: …".
+  - **`chain`** *(documented in v1.239; unchanged)*: a chain slug. It keeps the groups whose chain is that chain: Halls (their chain tag), holder and delegator groups (the chain they are gated on). Member-made and system groups have no chain and drop out. An unknown slug is an empty page, not an error.
+  - **`mine=1`** *(documented in v1.239; unchanged)*: only the groups the viewer is an active member of, among the groups this list may show (a secret membership never appears here). Signed out, it is an empty page with `200`, not a `401`.
+  - The filters combine; `pagination.total` counts the filtered set.
 - **Response 200:**
   ```json
   {
@@ -3912,7 +3926,7 @@ Cross-kind discovery list. Sort key: `verified DESC, heat_score DESC, member_cou
 - **Cache:** anon → `Cache-Control: public, max-age=60` (60s window keeps newly-warming groups discoverable quickly); authed → `private, no-store` (v1.27 — each item's `card.community_dossier.viewer_is_member` is viewer-scoped, so authed responses must never sit in a shared cache; this matches the §4.7.5 detail posture).
 - **Privacy:** `secret` groups never appear here regardless of viewer. `closed` groups appear with name + member_count visible; content stays private at PeepSo's layer.
 - **Filter `verified=1`:** restricts to groups with `_bcc_group_kind IN ('holders','delegators')`. Use this to render an "On-Chain Verified only" filter chip on the discovery page. **Widened in v1.52** — it previously meant `'holders'` alone. Both kinds emit `verification.kind = "on_chain"`, so an existing chip keeps working and simply returns delegator communities too; the same widening applies to the `verified` component of the sort key.
-- **`validator_stats` (v1.52):** stats block for `validator`-type cards only — `{ moniker, chain_name, status, commission, total_stake, delegator_count, min_stake_display, validator_page }` (`chain_name` new in v1.84). `null` for every other kind, and `null` when the underlying validator is not yet indexed. Each inner field is independently nullable (enrichment can leave any column unpopulated). `commission` and `total_stake` are numbers; `delegator_count` an integer; `min_stake_display` a server-pre-formatted string (`"1 ATOM"`, or a bare amount when the chain's native token is unknown) rendered verbatim per §A2/§S; `validator_page` is the frontend path to the backing validator page (`/v/{slug}`, composed server-side via the locked `CardUrlMap`) or `null` when no page backs the validator. This is the delegator-community analogue of `collection_stats` — the two are mutually exclusive by kind and never both non-null.
+- **`validator_stats` (v1.52):** stats block for `validator`-type cards only — `{ moniker, chain_name, status, commission, total_stake, delegator_count, min_stake_display, validator_page }` (`chain_name` new in v1.84). `null` for every other kind, and `null` when the underlying validator is not yet indexed. Each inner field is independently nullable (enrichment can leave any column unpopulated). `commission` and `total_stake` are numbers; `delegator_count` an integer; `min_stake_display` a server-pre-formatted string (`"1 ATOM"`, or a bare amount when the chain's native token is unknown) rendered verbatim per §A2/§S; `validator_page` is the frontend path to the backing validator page (`/v/{slug}`, composed server-side via the locked `CardUrlMap`) or `null` when no page backs the validator. This is the delegator-community analogue of `collection_stats` — the two are mutually exclusive by kind and never both non-null. **v1.233 (F-584):** `status` reads `unknown` when BCC has had no successful call to the validator's chain in 72 hours (whatever the chain last reported; it shows again once the chain answers).
 - **`image_url`:** cover-art URL. NFT-type cards return the underlying collection's `image_url` (joined through `wp_bcc_onchain_collections`). Non-NFT cards (`hall`/`system`/`user`) return `null` in V1 — the frontend falls back to a generated initials block. PeepSo group avatars for non-NFT kinds is V1.5.
 - **`description`:** group post body, plain-text + tag-stripped + truncated to ~200 chars (em-dash ellipsis when truncated). `null` when the group has no description on file. Applies to all kinds — `hall`/`system`/`user` cards can use the same field on a future detail surface.
 - **`collection_stats`:** market-data block for NFT-type cards only — drives the discovery card's flip-to-back UX (floor price, holder distribution, lifetime volume, listed %, royalty %). Each inner field is independently nullable since the upstream fetch can leave any column unpopulated. Currency-bearing fields (`floor_price`, `total_volume`) are returned as raw strings (full decimal precision) PLUS server-pre-formatted `*_display` strings (`floor_display`, `volume_display`, `holders_display`, `supply_display`, `listed_display`, `royalty_display`, `min_balance_display`). Frontend renders `*_display` verbatim per §A2 / §S — no client-side number-formatting decisions. `distribution_pct` is the server-computed `holders / supply * 100` (rounded), exposed as a number alongside `holders_display` for charting use. `min_balance` mirrors the gate threshold (`_bcc_gate_min_balance` post-meta). Em-dash (`"—"`) appears in `*_display` when the underlying value is missing/zero so the wire never surfaces "0.00 STARS" as a fake-low signal. Non-NFT cards return `null` for the entire block — there is no equivalent for `hall`/`system`/`user` kinds.
@@ -4344,7 +4358,7 @@ Paginated list of Cards filtered + sorted server-side. Backs `/directory`.
   - `q` (search string) — optional; passed verbatim to the underlying `PageDiscoveryService`. **At most 100 characters** *(since v1.167)*: longer is a `400` before the handler runs (`rest_invalid_param`, from WordPress's validator), and the handler re-checks (`bcc_invalid_request`). **A request carrying `q` is rate limited** *(since v1.167)*: 10 per 5 s per account, or per /24 subnet (IPv6 /48) when anonymous, the same numbers as `GET /search`. Over the limit → `429 bcc_rate_limited`. Requests without `q` are not limited.
   - `good_standing_only` (`1`|`true`|`on`|`yes` → true; anything else → false) — optional; default false. When true, restricts results to operators in good standing per §E1 (`reputation_tier ∈ {neutral, trusted, elite}`). Composes with `tier` via AND server-side, so `tier=common&good_standing_only=1` is a vacuously empty intersection rather than an error.
   - `chain` (chain slug, e.g. `cosmos`) — optional; **validator-only**. Unknown slugs → `bcc_invalid_request` 400 (rejected at the boundary so a typo never silently returns empty).
-  - `status` ∈ {`active`, `jailed`, `inactive`} — optional; **validator-only** on-chain status. `unknown` is intentionally not selectable.
+  - `status` ∈ {`active`, `jailed`, `inactive`} — optional; **validator-only** on-chain status. `unknown` is intentionally not selectable. **v1.233 (F-584):** matches only validators on an active chain BCC has had a successful call to in the last 72 hours; on any other chain the stored status is not current, so no `status` value matches.
   - `min_self_stake` (number ≥ 0) — optional; **validator-only**. Lower bound on bonded self-stake; validators below the floor (and those with no stake reading) are excluded. Negative → `bcc_invalid_request` 400.
   - `page` (1..20) — optional; default 1. The hard ceiling protects against unbounded `OFFSET` filesort
   - `per_page` (1..50) — optional; default 24
@@ -5230,7 +5244,7 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
   - `post_visibility` → `peepso_profile_post_acc` user_meta. PUBLIC is intentionally absent (matches PeepSo's `access-profile-post` UI which strips it).
   - `hide_birthday_year` → `peepso_hide_birthday_year` user_meta, "1"/"0".
   - `hide_online` *(documented v1.64 — shipped earlier)* → `peepso_hide_online_status` user_meta, "1"/"0" — PeepSo's presence indicators treat "1" as "hide the green dot".
-  - `hide_from_search` *(documented v1.64 — shipped earlier)* → `peepso_is_hide_profile_from_user_listing` user_meta, "1"/"0" — "1" excludes the user from directory + member search (direct profile links still work). **Since v1.133 (F-257) this is THE one hidden-from-search flag:** `/me/privacy`'s `discovery_optout` is an alias that reads and writes it, so the two always agree.
+  - `hide_from_search` *(documented v1.64 — shipped earlier)* → `peepso_is_hide_profile_from_user_listing` user_meta, "1"/"0" — "1" excludes the user from directory + member search (direct profile links still work). **Since v1.133 (F-257) this is THE one hidden-from-search flag:** `/me/privacy`'s `discovery_optout` is an alias that reads and writes it, so the two always agree. *(Since v1.235, F-519)* Directory and member search exclude the user when ANY stored row of this key reads as on: `1`, `true`, `on` or `yes`, in any case. The strictest row wins. BCC itself writes only `"1"`/`"0"`. The legacy `bcc_privacy_discovery_optout` counts only until the F-257 fold has completed, as before. Its old rows stay in place, so reading them afterwards would hide again a member who has since turned visibility back on.
   - `default_post_audience` *(documented v1.64 — shipped earlier; `friends` added v1.121)* → `peepso_last_used_post_privacy` user_meta (int 10/20/30/40 ↔ public/members/friends/private) — defaults PeepSo's audience picker; PeepSo itself overwrites it on every post, so this is a default, not a lock. ⚠ The column is not a validated enum, so a value with no token at all is reported as `members`.
   - `show_groups_on_profile` *(v1.127 — F-270)* -> `bcc_show_groups_on_profile` user_meta, "1"/"0". Read/write bool. **⚠ ABSENT MEANS `true`.** The default preserves the pre-F-270 behaviour, so an account that has never touched the setting keeps listing its groups; only an explicit falsey value hides them. This is the only *permissive* default among the privacy prefs here.
   - `hidden_hall_ids` *(v1.181 — F-341 PR 3)* → `bcc_hidden_hall_ids` user_meta, a **list of group ids** (not a bool). Read/write. The individual Halls the owner has hidden from their profile while the Halls **section** stays shown. **Absent or `[]` means nothing is hidden**, the same permissive default as the rest of F-341, so no existing profile changes until its owner opts out.
@@ -5250,6 +5264,7 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
   - `mentor_opt_in` *(v1.62 — Rank Phase 7, spec §21.4)* → `bcc_mentor_opt_in` user_meta, "1"/"0" (via `MentorListingService`). Read/write bool. Opting in requires **no** eligibility — a non-Veteran may pre-opt-in and lists automatically the day they qualify.
 - **Read-only mentor pair (v1.62, GET response only — never writable):** `mentor_listed` (bool) — whether the user is **actively listed** in the mentor directory *right now*; the listing composes **live** as opt-in AND `can('list_as_mentor')` (**Veteran** rank AND trust tier ≥ **Trusted** AND not suspended AND not in §14.2 Rank recovery). Nothing is materialized — when any condition fails the listing **pauses automatically on the next read** (no sweep, no flag to un-stick). `mentor_eligibility_reason` (string|null) — the resolver's stable deny slug ∈ `suspended|new_member|below_veteran|below_trusted|in_recovery` so the frontend can explain a paused listing; `null` while eligible (regardless of opt-in). *(v1.227, F-469)* **`unavailable`**: the trust tier could not be read, so the listing is paused for that read and the directory leaves the member out; a client that does not know the value shows its generic paused line.
 - **Read-only `handle_next_change_at` (since v1.148, F-333, GET and the PATCH echo — never writable):** when the owner may next change their handle (`PATCH /me/handle`), as ISO-8601 UTC (`"2026-06-17T14:05:00Z"`), or `null` when they can change it now. The same instant the cooldown `429` reports in `error.data.next_change_at`.
+- **`hide_from_search` reads as search applies it (since v1.236, F-519):** `GET` and the `PATCH` echo report `true` when ANY stored row of the flag reads as on (exactly `1`, `true`, `on` or `yes`, in any case, nothing trimmed, as search matches it), or, until the F-257 fold has completed, when the legacy `bcc_privacy_discovery_optout` does: exactly the members search leaves out. The strictest row wins. A setting that could not be read reports `true`, as `/me/privacy` does. It is now read the same way as its `/me/privacy` alias `discovery_optout`, so the two always agree. The `show_*` switches are unchanged. **Writing it `false`** (here or as `/me/privacy` `discovery_optout`) also writes the legacy opt-out `"0"`, so the member is listed whatever the fold's state; writing `true` writes the flag only. Here, if either write fails, the field is reported as not saved (`data.failed`) and the member stays hidden.
 - **PATCH** is partial — missing keys are untouched.
   - **Every field is validated before anything is written** (F-97): an invalid value (`bcc_invalid_request` 422; *since v1.158, F-294, that includes a boolean switch whose value is not a boolean, "`<field>` must be true or false.": it used to be read as `false` and switch the setting off with a 200. Accepted: `true`/`false`, `1`/`0`, `"yes"`/`"no"`, `"on"`/`"off"`, any case*) or PeepSo missing when `profile_visibility` is sent (`bcc_peepso_unavailable` 503) writes **nothing**.
   - **A write that fails after validation (v1.108)** stops the request: `bcc_internal_error` **500**, message "Some of your preferences could not be saved. Please try again.", with `error.data.saved` (list of the request's field names that DID persist, in write order: `profile_visibility`, then the user-meta fields, then `mentor_opt_in`) and `error.data.failed` (the field that did not). Earlier writes are **not** rolled back. A client must not report the save as successful, and may re-send the whole request (every write is idempotent).
@@ -6668,7 +6683,7 @@ Read the signed-in viewer's privacy toggles (§K2 + §G1 discovery opt-out).
   ```json
   { "data": { "watching_hidden": false, "reviews_hidden": false, "disputes_hidden": false, "delegations_hidden": false, "follower_count_hidden": false, "real_name_hidden": false, "email_hidden": false, "discovery_optout": false } }
   ```
-  - `discovery_optout` (§G1) is owner-only and appears ONLY here (the other 7 also surface inside the User view-model). **Since v1.133 (F-257) it is an alias of `/me/profile-prefs` `hide_from_search`:** both read and write the same flag (`peepso_is_hide_profile_from_user_listing`), so a change through either endpoint shows on the other. The field is kept for compatibility; new clients should use `hide_from_search`.
+  - `discovery_optout` (§G1) is owner-only and appears ONLY here (the other 7 also surface inside the User view-model). **Since v1.133 (F-257) it is an alias of `/me/profile-prefs` `hide_from_search`:** both read and write the same flag (`peepso_is_hide_profile_from_user_listing`), so a change through either endpoint shows on the other. The field is kept for compatibility; new clients should use `hide_from_search`. *(Since v1.236, F-519)* It reads as search applies it, as `hide_from_search` does (§4 `/me/profile-prefs`): `true` when any stored row of the flag reads as on, or, until the F-257 fold has completed, when the legacy opt-out does.
 - **Errors:** `bcc_unauthorized` (401)
 - **Mapping:** `MyPrivacyEndpoint::get` (route `MyPrivacyEndpoint.php:48`, READABLE) → `PrivacySettings::readAll`. FE `privacy-endpoints.ts:getMyPrivacy`.
 
@@ -6761,8 +6776,9 @@ Coalesced per-viewer badge payload. Replaces three previously-uncached polling e
 - **Query:** `open_threads` (optional) — comma-separated conversation root ids; non-numeric tokens dropped; capped at **5**. Threads the viewer isn't a participant of are silently absent.
 - **Response 200:**
   ```json
-  { "data": { "messages_unread": 3, "notifications_unread": 1, "open_thread_hints": { "12": { "latest_message_id": 9981, "posted_at": "2026-06-10T14:03:11Z" } }, "polled_at": "2026-06-10T14:05:00Z" } }
+  { "data": { "messages_unread": 3, "notifications_unread": 1, "disputes_open": 1, "open_thread_hints": { "12": { "latest_message_id": 9981, "posted_at": "2026-06-10T14:03:11Z" } }, "polled_at": "2026-06-10T14:05:00Z" } }
   ```
+  *(v1.237, structure A row 18)* `disputes_open` (`int | null`): the number of disputes the viewer filed that are still open (status `reviewing`), the same cases `/disputes` lists; `null` when the count couldn't be read (never `0` on a failure, and not cached), and the frontend then shows no dot and no number. Fresh after the viewer files a dispute or one changes status.
   `open_thread_hints` lets an open conversation refetch only when `latest_message_id` advances. `polled_at` refreshes even on a cache hit (counts may be up to 15s older than `polled_at`).
 - **Errors:** `bcc_unauthorized` 401
 - **Cache:** `Cache-Control: private, max-age=10`. Server-side: 15s payload cache via the §5 generation-counter pattern (group `bcc_badges`), bumped on bell-row create, mark-read, DM send, DM view.
@@ -6772,7 +6788,7 @@ Coalesced per-viewer badge payload. Replaces three previously-uncached polling e
 
 File a content report against a feed item or an **announcement** (§K1 Phase B). Idempotent per (reporter, target).
 
-- **Review replies (v1.159, F-345):** a reply is reported as a `feed_item` with the number from its `reply.feed_id` (`feed_<n>` → `n`), although no feed shows it. It is reportable while the reply is published, not hidden, and its review active and not hidden; otherwise 404. That includes a reply that no longer renders after a hand-over (its author no longer answers for the page). *(v1.229, F-532)* A reply on a PeepSo page's review also needs the reporter to be able to see that page: a SECRET page admits its members, invitees, author and site admins, and an unreadable privacy answers no. Anyone else gets the same 404, exactly as for a missing item. A review of a member's own profile has no page rule. The moderation queue shows it as `post_kind: "review_reply"` (preview = the reply body, no `post_url`), and `GET /admin/reports?post_kind=review_reply` filters to it.
+- **Review replies (v1.159, F-345):** a reply is reported as a `feed_item` with the number from its `reply.feed_id` (`feed_<n>` → `n`), although no feed shows it. It is reportable while the reply is published, not hidden, and its review active and not hidden; otherwise 404. That includes a reply that no longer renders after a hand-over (its author no longer answers for the page). *(v1.229, F-532)* A reply on a PeepSo page's review also needs the reporter to be able to see that page: a SECRET page admits its members, invitees, author and site admins, and an unreadable privacy answers no. Anyone else gets the same 404, exactly as for a missing item. A review of a member's own profile has no page rule. *(v1.234)* A reply is reportable only where its Reviews tab shows it to the reporter: on a review of a member's own profile, the reporter must be able to open that member's profile (that member's Reviews tab answers 403 otherwise); and the reply's author must be shown to the reporter, as on the tab (`reply` is `null` there for an author hidden by a block either way, a suspension, a ban, or a state that cannot be read). Otherwise the same 404. On a card page's review, a reply shown as the page's own response (`author_kind: "page"`, v1.226) stays reportable. This rule is about who may be seen, not who answers for the page now: a reply after a hand-over stays reportable, as above. The moderation queue shows it as `post_kind: "review_reply"` (preview = the reply body, no `post_url`), and `GET /admin/reports?post_kind=review_reply` filters to it.
 
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
 - **Body (JSON):** `target_kind` (**required**, ∈ `feed_item | announcement`) · `target_id` (**required**, int ≥ 1 — the `act_id` for `feed_item`, the **bare integer announcement id, prefix stripped** for `announcement`; see below) · `reason_code` (**required**, ∈ `spam|harassment|hate|violence|misinformation|other`) · `comment` (optional, ≤ 500 chars; **required when `reason_code = other`**)
@@ -7393,9 +7409,9 @@ Paginated group roster. Offset-paginated (stable-ordered by role + joined_at).
 - **Path:** `id` (int, required). **Query:** `offset` (default 0, min 0) · `limit` (default 24, min 1, max 100)
 - **Response 200:**
   ```json
-  { "items": [ { "...": "MemberSummary (§3.1)", "role": "owner", "role_label": "OWNER", "joined_at": "2026-01-12T00:00:00Z" } ], "pagination": { "offset": 0, "limit": 24, "total": 87, "has_more": true } }
+  { "items": [ { "...": "MemberSummary (§3.1)", "role": "owner", "role_label": "OWNER" } ], "pagination": { "offset": 0, "limit": 24, "total": 87, "has_more": true } }
   ```
-  Each item is the shared `MemberSummary` (§3.1, via `UserViewService::getSummary` + `MemberSummaryPrefetcher`) merged with `role` ∈ `owner|moderator|member`, `role_label` (server-rendered §A2, filterable via `bcc_group_role_labels`), `joined_at` (ISO 8601 UTC or `null`). Rows for deleted users are skipped (so `items.length` can trail `total`). **(v1.172, privacy)** On an **`open`** group, a member **the viewer may not see** is omitted from `items`: a profile private to the viewer (its privacy level), a suspended or banned account, or a block in either direction. This is the one list-visibility rule (`ProfileAccess::filterVisible`); the viewer always sees themselves. **Not** `hide_from_search`: that setting scopes to member search and the directory, while rosters follow profile privacy. This group's **owner and managers, and site admins**, see the whole roster, since they already decide its membership (and the transfer-ownership picker reads this roster). `total` (and the group's `member_count`) are **unchanged**, and `has_more` follows the unfiltered page, so a page can hold fewer than `limit` items, even none, mid-list. Advance by `offset + limit`, never by `items.length`. `closed`/`secret` rosters are shown only to members and are not filtered.
+  Each item is the shared `MemberSummary` (§3.1, via `UserViewService::getSummary` + `MemberSummaryPrefetcher`) merged with `role` ∈ `owner|moderator|member`, `role_label` (server-rendered §A2, filterable via `bcc_group_role_labels`), and, **for site admins only**, `joined_at` (ISO 8601 UTC or `null`) *(v1.238, R4: no other viewer, this group's owner and managers included, receives when a member joined; the key is absent)*. The order (role, then join time) is unchanged and server-side. Rows for deleted users are skipped (so `items.length` can trail `total`). **(v1.172, privacy)** On an **`open`** group, a member **the viewer may not see** is omitted from `items`: a profile private to the viewer (its privacy level), a suspended or banned account, or a block in either direction. This is the one list-visibility rule (`ProfileAccess::filterVisible`); the viewer always sees themselves. **Not** `hide_from_search`: that setting scopes to member search and the directory, while rosters follow profile privacy. This group's **owner and managers, and site admins**, see the whole roster, since they already decide its membership (and the transfer-ownership picker reads this roster). `total` (and the group's `member_count`) are **unchanged**, and `has_more` follows the unfiltered page, so a page can hold fewer than `limit` items, even none, mid-list. Advance by `offset + limit`, never by `items.length`. `closed`/`secret` rosters are shown only to members and are not filtered.
 - **Errors:** `bcc_invalid_request` 400 · `bcc_not_found` 404 (missing or secret-non-member) · `bcc_permission_denied` 403 (closed/secret non-member)
 - **Cache:** anon (open) → `public, max-age=300`; authed → `private, no-store` + `Vary`; denials → `private, no-store`.
 - **Mapping:** `GroupMembersEndpoint::list` (route `GroupMembersEndpoint.php:58`) → `GroupMembersService::listMembers` (shares `GroupsService::resolveGroupAccess` with §4.7.5/§4.7.6).
@@ -8332,7 +8348,8 @@ Auth **member in good standing** (§4.32.7).
   announcement is not publicly readable, or *(since v1.191)* it is on a SECRET page the
   viewer may not see) · `400 bcc_invalid_request` (absent, blank,
   oversized or non-UTF-8 body) · `400` + `reason_code: replies_not_supported` ·
-  `503 bcc_unavailable`
+  `503 bcc_unavailable` (*v1.232, F-469:* also with `reason_code: unavailable` when the
+  commenter's standing could not be read; retryable, nothing written)
 
 ⚠ **`body` is NOT declared `required` in the route schema**, deliberately. A
 schema-required field is validated by WordPress BEFORE the handler runs, so a request
@@ -8349,11 +8366,15 @@ the body is refused by the handler, after the feature gate.
 | `auth_required` | Not signed in. **No anonymous comments.** |
 | `suspended` | Suspended account, **or** a reputation tier below `neutral`. See below. |
 | `fraud_locked` | The account is restricted. |
+| `unavailable` | *(v1.232, F-469)* The commenter's standing could not be READ. Retryable: this POST answers **503** `bcc_unavailable`, and `can_comment` carries a hint saying so. |
 
 ⚠⚠ **STANDING AND SUSPENSION PRESENT IDENTICALLY, AND THAT IS DELIBERATE.** §4.32.11's
 reason inventory is CLOSED and has no "standing" entry, and the frontend closes the
 composer on an unrecognised reason — so a new code would produce a disabled control with
-no copy. To a member, both mean "you may not post right now".
+no copy. To a member, both mean "you may not post right now". *(v1.232, F-469)* A
+standing that could not be READ is different, and has its own retryable reason,
+`unavailable`. It carries an `unlock_hint`, which the frontend's fallback renders for a
+code it does not know, so it is never shown as a suspension.
 
 ⚠ "Good standing" resolves through `UserViewService::isInGoodStanding()`, the documented
 single source of truth: tier ∈ {`neutral`, `trusted`, `elite`}. A member with **no score
@@ -8742,7 +8763,8 @@ to `false`.
 closes the composer:
 
 `auth_required` · `comments_disabled` · `announcement_archived` · `announcement_unavailable` ·
-`suspended` · `fraud_locked` · `feature_disabled`
+`suspended` · `fraud_locked` · `feature_disabled` · *(v1.232, F-469)* `unavailable` (the
+commenter's standing could not be read; retryable, and it carries an `unlock_hint`)
 
 **`can_report` denial reasons** — a separate CLOSED inventory, and deliberately
 not the comment list:
@@ -9586,7 +9608,7 @@ For each view-model field, the table below names the existing BCC system that ow
 | `handle` | `wp_usermeta.bcc_handle` (new V1, per §B6) |
 | `display_name` | `wp_users.display_name` |
 | `avatar_url` | PeepSo profile photo + `wp_usermeta` fallback. **Always returned as absolute URL** (WP host or CDN origin); never relative |
-| `joined_at` | `wp_users.user_registered` |
+| `joined_at` | `wp_users.user_registered`; month only (first of the month, `00:00:00Z`) for every viewer but the member *(v1.238, R12)* |
 | `trust_score` | `bcc-trust` `ReputationCalculatorService` (§A4) |
 | `reputation_tier` | `bcc-trust` `ReputationCalculatorService` |
 | `reputation_tier_label` | Server-side mapping `reputation_tier → label` (`ReputationTierMap::TIER_LABEL`; elite → "Elite") — the sole tier vocabulary since v1.57 |
@@ -9832,6 +9854,93 @@ in the SAME release — see below.
   verbatim and holds no copy of this vocabulary. (One stale example in a
   `src/lib/api/types.ts` doc comment still cites `"HOLDER COMMUNITY"` — a
   comment, not behaviour.)
+
+### v1.240 — 2026-11-24 — additive — the auth responses carry `can_moderate`, the cue for the frontend's "Admin" group (structure A)
+
+Ships with bcc-trust **#876**. bcc-trust only.
+
+- **`can_moderate`** (bool, additive) is on every response that carries `suspended`: the sign-in responses, `/auth/refresh` and `GET /auth/session`.
+- It says whether that user holds the capability the admin routes require. It is the same check (`manage_options`), so the two cannot disagree.
+- The frontend shows its "Admin" avatar group only when it is `true`; when the field is present and `false`, the group is hidden.
+- **Display only.** The admin routes enforce on every request, and this is never a security gate. It is `false` when the capability could not be read.
+- Like `suspended`, it reflects a role change at the next sign-in or refresh.
+- **Unchanged:** every other auth field and every admin route.
+
+### v1.239 — 2026-11-24 — additive — name search on GET /groups and GET /halls; a `kind` filter on GET /groups
+
+Ships with bcc-trust #875, which needs bcc-core #185 deployed first. Structure A, route map rows 13 and 15.
+
+- **`GET /groups`:**
+  - New `q`, a name search: at most 100 characters, and throttled to 10 per 5 s, as on `GET /cards`.
+  - ⭐ A `q` never finds a secret group, with `mine=1` too.
+  - New `kind`, taking the items' own `type` values (`hall`, `nft`, `validator`, `user`, `system`). Any other value is a 400.
+  - `chain` and `mine` were already accepted and are now documented, unchanged. `chain` covers Halls, holder and delegator groups.
+- **`GET /halls`:** new `q`, a name search with the same rules. `pagination.total` counts the same matches as the page.
+- **Unchanged:** every response shape, the sort, and every request without the new parameters.
+
+### v1.238 — 2026-11-24 — behaviour change (privacy) — other users no longer receive join or claim times; account creation is month only (R4, R12, R13)
+
+Ships with bcc-trust #869. Merges after bcc-frontend #405, which already tolerates the shapes below.
+
+- **`User.joined_at` / `MemberSummary.joined_at`:** the member receives the exact time; every other viewer receives the first of the month at `00:00:00Z`. Same key and type.
+- **`GET /groups/:id/members`:** each item carries `joined_at` for **site admins only**; for every other viewer the key is absent. The roster's order is unchanged.
+- **`page_claim` feed post body:** no longer carries the claim's `verified_at`. The post's own `posted_at` stays.
+- **Unchanged, the viewer's own data:** `viewer_membership.joined_at` on groups and Halls, `User.wallets[].verified_at` (own profile only), and the member's own quest progress. Group managers keep request and invite times.
+
+### v1.237 — 2026-11-24 — additive — `GET /me/badges` carries `disputes_open`, the viewer's open filed disputes (structure A row 18)
+
+Ships with bcc-trust **#870**. bcc-trust only. Drives the avatar's "My cases · N open" dot.
+
+- **`disputes_open`** (`int | null`, additive): the number of disputes the viewer filed that are still open (status `reviewing`), the same cases `/disputes` lists (`GET /disputes/mine`). The viewer's own data only.
+- **`null`** when the count couldn't be read. It is never `0` on a failure, and it is not cached, so the next poll reads again. The frontend then shows no dot and no number.
+- The dot shows whenever the count is above 0. It is status, not a call to act: it counts no disputes against the viewer and no community votes.
+- Fresh on change: filing a dispute and any status change of one invalidate the viewer's badge payload.
+- **Unchanged:** every other `/me/badges` field, the auth, and the cache headers.
+
+### v1.236 — 2026-11-24 — behaviour change at the edges (privacy) — the hide-from-search switch reads as search applies it (F-519)
+
+Ships with bcc-trust #860. No wire change.
+
+- **`GET`/`PATCH /me/profile-prefs` `hide_from_search`:** now `true` when any stored row of the flag reads as on (`1`, `true`, `on`, `yes`), or, until the F-257 fold has completed, when the legacy opt-out does. The strictest row wins. An unreadable setting reports `true`, as `/me/privacy` does.
+- **`GET`/`PATCH /me/privacy` `discovery_optout`:** now also counts the legacy opt-out until the fold has completed, as `hide_from_search` does.
+- **Writing it `false`** through either endpoint also writes the legacy opt-out `"0"`, so the member is listed whatever the fold's state. Writing `true` is unchanged.
+- **Effect:** each switch shows what search does to the member, and switching it off lists them. The two fields always agree.
+
+### v1.235 — 2026-11-24 — clarification + behaviour change at the edges (privacy) — hide_from_search excludes on any row that reads on (F-519)
+
+Ships with bcc-trust **#859**. No deploy order beyond that PR's.
+
+- **`hide_from_search` (and its `discovery_optout` alias):** directory and member search now exclude a member when ANY stored row of the flag reads as on: `1`, `true`, `on` or `yes`. The strictest row wins. The legacy opt-out key still counts only until the F-257 fold has completed. No wire change; BCC's own writes are unchanged (`"1"`/`"0"`).
+
+### v1.234 — 2026-11-24 — behaviour change (privacy) — a review reply is reportable only where its Reviews tab shows it
+
+Ships with bcc-trust #864. Follows v1.229 (F-532).
+
+- **`POST /me/reports` with a review reply's `feed_item`:**
+  - On a review of a **member's own profile**, the reporter must be able to open that member's profile, as on the member's Reviews tab (which answers 403 otherwise).
+  - The reply's **author** must be shown to the reporter, as on the Reviews tabs: a reply whose author is hidden from them by a block either way, a suspension, a ban, or a state that cannot be read (`reply: null` on the tab) is not reportable.
+  - Either refusal gets the same 404 `bcc_not_found` "Not found." as a missing item.
+  - On a card page's review, a reply shown as the page's own response (`author_kind: "page"`, v1.226) stays reportable.
+- **Unchanged:** the report shape and error codes; the page rule (v1.229); a reply whose author no longer answers for the page (hand-over) stays reportable while it is live.
+- **Clients:** no change. A reply the tab does not show has no report control.
+
+### v1.233 — 2026-11-24 — behaviour change — a validator on a chain BCC can't reach reads status `unknown` (F-584)
+
+Ships with bcc-trust #862.
+
+- **What changed:** `onchain_signals.status` (Card), `validator_stats.status` (§4.7.4 discovery items, §4.7.5 detail, §4.7.8 items) read `unknown` when BCC has had no successful call to the validator's chain in 72 hours. Until now they showed the chain's last reported value indefinitely, so validators on an unreachable chain kept reading `active`.
+- **The directory `status` filter** (`GET /bcc/v1/cards`) matches only validators on an active chain BCC has had a successful call to in the last 72 hours.
+- **Unchanged:** the value set (`unknown` was already a status), every other field (`last_fetched_at` included), and the operator dashboard's `chain_reported_status` (`GET /bcc/v1/me/validator-pages`), which stays the raw reported value. Nothing stored changes; a chain that answers again shows its real status.
+- **Clients:** no change required; `unknown` already renders.
+
+### v1.232 — 2026-11-24 — additive + behaviour change — an announcement comment refused because the commenter's standing could not be read is a retryable `unavailable` (F-469)
+
+Ships with bcc-trust **#857** (F-469 follow-up). bcc-trust only.
+
+- **`can_comment`** (§4.32.11) gains **`unavailable`** in its CLOSED denial inventory: the commenter's standing could not be read. It carries an `unlock_hint` ("Your standing could not be checked right now. Please try again."), so a client that does not know the code still shows copy, and the composer stays closed.
+- **`POST /announcements/:id/comments`** answers **`503 bcc_unavailable`** with `reason_code: unavailable` in that case. It is retryable, and nothing is written.
+- Before this, the same case was refused as `suspended` (403), which reads as "your account is suspended". `suspended` keeps both its existing meanings: a suspended account, or a standing that WAS read and is below `neutral`.
+- **Unchanged:** every other comment refusal, every success response, and the `can_report` inventory (it has no standing rung).
 
 ### v1.231 — 2026-11-24 — behaviour change (privacy) — a card page's review-reply bell speaks as the page (F-578)
 
