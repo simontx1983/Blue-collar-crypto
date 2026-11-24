@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.247 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.248 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1416,7 +1416,7 @@ Feed items share an envelope and vary by `post_kind`.
   - `id` — group_id (matches `group_id` in §4.7.x endpoints).
   - `type` ∈ `nft` | `validator` | `hall` | `user` | `system` — matches §4.7.2 group `type`.
   - `verification` is `null` for non-NFT groups; for NFT-gated groups it carries `{kind: 'on_chain', label: 'On-Chain Verified'}`. Frontend MUST render `label` verbatim — never abbreviate to "Verified" alone.
-  - `name` (optional) — the group's display name (`post_title`). `link` (optional) — the group's canonical frontend route: `/halls/{slug}` when `type == hall`, else `/communities/{slug}` (slug = `post_name`; matches the §4.7.5 group-card `links.self`). Together they back the "Posted in {name} →" attribution line. **Secret-group privacy gate:** `name` + `link` reveal the group's *identity*, so they are emitted **only when the viewer is allowed to know the group exists** — i.e. the group is not secret, OR the viewer is an active member of it. For a secret group a non-member or anonymous viewer sees a syndicated post from, both fields are **omitted** and only the opaque `{id, type, verification}` ship (byte-compatible with the pre-`name`/`link` shape). Both are also omitted for a deleted/unresolvable group. Composed server-side via `CardUrlMap::groupUrl`; membership is one batched read scoped to the page's secret groups (no N+1, no anon query).
+  - `name` (optional) — the group's display name (`post_title`). `link` (optional) — the group's canonical frontend route: `/communities/{slug}` for every `type`, Halls included *(v1.248, F-594: Halls were `/halls/{slug}`)* (slug = `post_name`; matches the §4.7.5 group-card `links.self`). Together they back the "Posted in {name} →" attribution line. **Secret-group privacy gate:** `name` + `link` reveal the group's *identity*, so they are emitted **only when the viewer is allowed to know the group exists** — i.e. the group is not secret, OR the viewer is an active member of it. For a secret group a non-member or anonymous viewer sees a syndicated post from, both fields are **omitted** and only the opaque `{id, type, verification}` ship (byte-compatible with the pre-`name`/`link` shape). Both are also omitted for a deleted/unresolvable group. Composed server-side via `CardUrlMap::groupUrl`; membership is one batched read scoped to the page's secret groups (no N+1, no anon query).
   - **No server-side ranking is applied based on this field in v1.** The Floor feed continues to order strictly by recency. The `group` block is metadata for badge rendering and (optional) client-side prioritization. A scored ranking layer is deferred until usage telemetry exists to tune it honestly.
   - **Mapping:** `peepso_group_id` post-meta on the activity's wp_post (PeepSo writes this when a status post is created inside a group) → `GroupContextResolver::forManyGroups`. Batched per page; no N+1.
 - V1 author block is **user-only** — every post in V1 is authored by a WP user (status, review, watch_batch, page_claim, dispute_signed, blog). System-emitted signals (§3.3.5) currently ride the same shape with the system actor's user_id; their `post_kind` discriminates them, not the author block.
@@ -3355,7 +3355,7 @@ List of available Halls (PeepSo Groups in BCC clothing).
           "is_primary": true,
           "joined_at": "2026-01-12T00:00:00Z"
         },
-        "links": { "self": "/halls/cosmos-hall" }
+        "links": { "self": "/communities/cosmos-hall" }
       }
     ],
     "pagination": { "page": 1, "page_size": 20, "total": 142, "total_pages": 8 }
@@ -3452,7 +3452,7 @@ Clear the user's primary-Hall pointer. Note the path is bare `/primary`
 
 #### Hall detail page — composition note (no new REST surface)
 
-A Hall is a semantic wrapper around a PeepSo group; the slug is identical on both routes (`peepso-page.post_name`). The Next.js Hall detail page (`/halls/[slug]`) therefore composes the existing view-models in parallel rather than introducing a Halls-specific feed endpoint:
+A Hall is a semantic wrapper around a PeepSo group; the slug is identical on both routes (`peepso-page.post_name`). The Next.js Hall page (`/communities/[slug]` since structure A; `/halls/[slug]` forwards there) therefore composes the existing view-models in parallel rather than introducing a Halls-specific feed endpoint:
 
 - `GET /bcc/v1/halls/:slug` → header, membership pill, join/leave controls (this section).
 - `GET /bcc/v1/groups/:slug` → `GroupDetailResponse` with the server-authoritative `feed_visible` + `permissions.can_read_feed.unlock_hint` gate consumed by `<GroupFeedSection>` (§4.7.5).
@@ -4425,7 +4425,7 @@ Top-N search suggestions for the §G1 nav-bar autocomplete. Smaller per-item sha
         "reputation_tier_label": null,
         "trust_score": null,
         "is_claim_verified": false,
-        "href": "/halls/cosmos-hall"
+        "href": "/communities/cosmos-hall"
       },
       {
         "id": 42,
@@ -4447,7 +4447,7 @@ Top-N search suggestions for the §G1 nav-bar autocomplete. Smaller per-item sha
 - **Result cap + All-scope allocation (v1.70):** the response never exceeds **12 items** (mirrors the upstream `/bcc/v1/search` cap; previously undocumented). With no `kind`, three verticals merge deterministically: floors first — 1 page, then 1 community, then 1 member, each only when that vertical returned results and capacity remains — then communities top up to **3**, members top up to **3**, and pages absorb ALL remaining capacity (unused community/member quota flows back to pages). Display grouping is pages → communities → members; within each vertical the upstream ranking order is preserved. The count may be **fewer** than 12 (vertical shortfall, dropped rows). With `kind`, the single vertical is queried and capped at 12. A degraded/rate-limited vertical is silently absent from the merge — autocomplete never surfaces a partial-failure error.
 - **Per-kind field semantics (v1.70):**
   - Page kinds (`validator`/`project`/`creator`): unchanged — real tier/label/score, `is_verified` (owner email), `is_claim_verified` per the verified-wins slice below.
-  - `community` rows: the §3.2.4 trust placeholders — `reputation_tier: "neutral"`, `reputation_tier_label: null` (the FE tier chip is null-label-suppressed), `trust_score: null` (this shape admits null, unlike the Card shape's `0`), `is_claim_verified: false` (§3.2 — communities are not on-chain-claimed). `handle` = group slug; `href` = the groups vertical's relative `group_url` (kind-aware: `/halls/{slug}` for halls, `/communities/{slug}` otherwise), server-validated as an internal path.
+  - `community` rows: the §3.2.4 trust placeholders — `reputation_tier: "neutral"`, `reputation_tier_label: null` (the FE tier chip is null-label-suppressed), `trust_score: null` (this shape admits null, unlike the Card shape's `0`), `is_claim_verified: false` (§3.2 — communities are not on-chain-claimed). `handle` = group slug; `href` = the groups vertical's relative `group_url` (`/communities/{slug}` for every kind; *v1.248, F-594: Halls were `/halls/{slug}`*), server-validated as an internal path.
   - `member` rows: **real** `reputation_tier` / `reputation_tier_label` / `trust_score` — the same values the member Card carries, resolved in one bounded batch (no per-row queries). All tiers are searchable, including `caution` and `risky` — autocomplete is a lookup surface, not an endorsement surface. `is_claim_verified: false` (§3.2 — member self-pages cannot hold on-chain claims). `handle` = canonical `username` (§B6 `bcc_handle`); `name` = `display_name`; `href` = the users vertical's relative `profile_url` (`/u/{handle}`), server-validated as an internal path.
   - **`is_verified` presence:** present only on page-kind rows. It is **omitted** from `member` rows because `/search/users` does not provide the authoritative email-verification signal (`bcc_trust_user_info.is_verified`) and no bounded batch reader currently exists for it — omission means **unavailable, not false**; members do have a real email-verification value. It is omitted from `community` rows because no owner-email verification meaning exists for a community on this surface.
   - `trust_score` is `int | null` on ALL rows (nullable since the field's introduction — a page row whose enrichment is missing ships `null`; previously undocumented).
@@ -4556,7 +4556,7 @@ Groups vertical — separate cache + rate-limit bucket. Returns PeepSo group row
         "slug": "cosmos-hall",
         "description": "The Cosmos chain's home hall.",
         "avatar_url": "https://…",
-        "group_url": "/halls/cosmos-hall",
+        "group_url": "/communities/cosmos-hall",
         "kind": "hall",
         "kind_label": "CHAIN HALL"
       }
@@ -4566,7 +4566,7 @@ Groups vertical — separate cache + rate-limit bucket. Returns PeepSo group row
   ```
 - **`kind` (v1.70)** ∈ {`hall`, `nft`, `validator`, `system`, `user`} — the §3.2.4 community-kind vocabulary, resolved from `_bcc_group_kind` post-meta (raw values `hall` / `holders` / `delegators` / `system`; absent → `user`).
 - **`kind_label` (v1.70)** — the pre-rendered §A2 display string, exactly the §3.2.4 kicker vocabulary (`CHAIN HALL`, `HOLDER GROUP` and `DELEGATOR GROUP` as of v1.244, `SYSTEM COMMUNITY`, `COMMUNITY`). Frontend renders it verbatim, never maps `kind` → words.
-- **`group_url`** is a **relative** Next.js route (rendered verbatim by the frontend; an absolute URL would navigate off the headless app) and — as of v1.70 — **kind-aware**: `hall` → `/halls/{slug}`, every other kind → `/communities/{slug}`, matching `CardUrlMap::groupUrl`'s canonical mapping (v1.68). *(Supersedes v1.68's "not hall-aware" caveat — that release fixed the absolute-URL drift but had no kind projected; now the vertical projects `kind`, halls route to their flavored surface. Non-hall kinds still resolve on the cross-kind `/communities/[slug]` page.)*
+- **`group_url`** is a **relative** Next.js route (rendered verbatim by the frontend; an absolute URL would navigate off the headless app) and **`/communities/{slug}` for every kind**, Halls included *(v1.248, F-594; v1.70 to F-594 sent `hall` to `/halls/{slug}`)*, matching `CardUrlMap::groupUrl`'s canonical mapping (v1.68). *(Supersedes v1.68's "not hall-aware" caveat — that release fixed the absolute-URL drift but had no kind projected; now the vertical projects `kind`, halls route to their flavored surface. Non-hall kinds still resolve on the cross-kind `/communities/[slug]` page.)*
 - **Errors (legacy WP shape):**
   - `bcc_rate_limited` (HTTP 429)
   - `bcc_upstream_unavailable` (HTTP 503; `Retry-After: 5`)
@@ -4612,7 +4612,7 @@ PeepSo's `peepso_notifications` table is the storage layer (§I1 "extend, don't 
   - the other rank/finding self-notices *(v1.64)* — `bcc_rank_demoted`, `bcc_rank_recovery_started`, `bcc_rank_recovery_reminder`, `bcc_rank_decay_warning`, `bcc_rank_finding_issued`, `bcc_rank_appeal_outcome`, `bcc_rank_finding_reversed` → `/me/progression` (previously fell to the `/` default)
   - `bcc_welcome` → `/` (the floor — the user is probably already there when they see it)
   - `bcc_mention` → `/post/<act_id>` *(v1.140 — was `/?focus=<act_id>`)* (the permalink of the post containing the @-tag; for comment mentions `act_id` is the **parent post's** act_id — the FE has no comment-anchor consumer in V1)
-  - `bcc_hall_post` → `/halls/<slug>` resolved from `external_id` (the Hall's group_id). Falls back to `/halls` when the group is no longer a Hall (deleted, `_bcc_group_kind` meta cleared).
+  - `bcc_hall_post` → `/communities/<slug>` resolved from `external_id` (the Hall's group_id). Falls back to the Halls list, `/communities?tab=halls`, when the group is no longer a Hall (deleted, `_bcc_group_kind` meta cleared). *(v1.248, F-594: were `/halls/<slug>` and `/halls`.)*
   - `bcc_comment_received` → `/post/<act_id>` *(v1.140 — was `/?focus=<act_id>`)* (the permalink of the parent post that received the comment; mirrors REACTION + MENTION shape — the FE has no comment-anchor consumer in V1). Covers both the "commented on your post" and the v1.45 "replied to your comment" messages — same type, same link shape.
 - `target_available` *(bool, v1.140, always present)* — `false` only when `link` points at a post (`bcc_reaction`, `bcc_mention`, `bcc_comment_received`) that is **known to be gone**: deleted, unpublished, or moderation-hidden. `true` for every other row, **and when availability could not be read** — unknown is not gone, so the row keeps its link and the permalink makes the final call (`GET /feed/{id}` answers 404). Per-viewer visibility (a block, a gated group) is NOT folded in: the permalink's 404 still covers it. Clients SHOULD render a `false` row as "this post is no longer available" instead of navigating.
 - Push payloads for `bcc_mention` (one mention) and `bcc_comment_received` carry the same `/post/<act_id>` `url` *(v1.140)*; pushes carry no `target_available`.
@@ -7514,13 +7514,13 @@ Create a plain (non-gated, non-Hall) PeepSo group owned by the viewer. (Join/lea
 
 #### `GET /bcc/v1/halls/:slug`
 
-Single Hall detail (auth-optional). Same item shape as the `/halls` directory rows. The `/halls/[slug]` page also composes `GET /groups/:slug` + `GET /groups/:id/feed` (§4.7 composition note).
+Single Hall detail (auth-optional). Same item shape as the `/halls` directory rows. The Hall's page (`/communities/[slug]`) also composes `GET /groups/:slug` + `GET /groups/:id/feed` (§4.7 composition note).
 
 - **Auth:** Anonymous OR Bearer.
 - **Path:** `slug` — `[a-z0-9][a-z0-9-]{0,99}`, required.
 - **Response 200:**
   ```json
-  { "id": 342, "slug": "cosmos-hall", "name": "Cosmos Hall", "chain": "cosmos", "member_count": 412, "viewer_membership": { "is_member": true, "is_primary": true, "joined_at": "2026-01-12T00:00:00Z" }, "links": { "self": "/halls/cosmos-hall" } }
+  { "id": 342, "slug": "cosmos-hall", "name": "Cosmos Hall", "chain": "cosmos", "member_count": 412, "viewer_membership": { "is_member": true, "is_primary": true, "joined_at": "2026-01-12T00:00:00Z" }, "links": { "self": "/communities/cosmos-hall" } }
   ```
   `chain` comes from the `_bcc_chain_tag` meta FK (`null` when absent). `viewer_membership` carries `is_primary` (Halls own the primary pointer; unlike §4.7.5).
 - **Errors:** `bcc_invalid_request` 400 (empty slug) · `bcc_not_found` 404
@@ -9597,7 +9597,7 @@ Validator, project and creator pages, as `/v/`, `/p/` or `/c/{slug}`: published,
 
 #### `GET /bcc/v1/sitemap/groups`
 
-Open communities and Halls, as `/communities/{slug}` or `/halls/{slug}`: published, with a slug, and **explicitly** open (a privacy row reads open and none reads closed or secret). Closed and secret groups are never listed. A group the app cannot place, one with disagreeing kind rows for example, is left out, so every listed URL is one the app serves.
+Open communities and Halls, as `/communities/{slug}` *(Halls too since v1.248, F-594; they were `/halls/{slug}`)*: published, with a slug, and **explicitly** open (a privacy row reads open and none reads closed or secret). Closed and secret groups are never listed. A group the app cannot place, one with disagreeing kind rows for example, is left out, so every listed URL is one the app serves.
 
 ## 5. Encoded rules — quick reference
 
@@ -9889,6 +9889,20 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.248 — 2026-11-25 — behaviour change — server Hall links point at Communities (F-594, structure A)
+
+Ships with bcc-trust **#888** and bcc-search **#54**, after bcc-frontend #412 (Halls into Communities).
+
+- **Every server-emitted link to a Hall** is now `/communities/{slug}`, the Hall's one page since bcc-frontend #412. It was `/halls/{slug}`. That covers:
+  - `GET /halls` and `GET /halls/{slug}` `links.self`;
+  - feed `group.link`;
+  - `/search/groups` `group_url` and `/cards/search` community `href`;
+  - the `bcc_hall_post` bell row and push;
+  - `GET /sitemap/groups`.
+- **The fallback to the Halls list** (a Hall-post bell row or push whose Hall is gone) is `/communities?tab=halls`. It was `/halls`.
+- **No frontend change needed:** the old `/halls` routes already forward (308) to these, so stored or cached links keep working.
+- **Unchanged:** the `GET /halls` / `GET /halls/{slug}` / `/me/halls` REST routes and every response shape.
 
 ### v1.247 — 2026-11-25 — additive — `q` on `GET /me/watching` and `GET /me/conversations` (structure A row 14)
 
