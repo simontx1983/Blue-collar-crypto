@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.243 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.244 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1276,7 +1276,7 @@ Locked field rules:
 - **Trust placeholders (shape-stable, never rendered as trust):** communities have no trust system. `trust_score: 0`, `reputation_tier: "neutral"`, `reputation_tier_label: null`, `rank_label: null`, `is_in_good_standing: true`, `flags: []`. The community face does not render a trust dial; the values exist only to keep the envelope shape-stable.
 - **`kicker` = server-owned group-type kicker** (§L5 — supersedes the frontend `KICKER_BY_TYPE` map). Until v1.57 this rode on `tier_label`, overloading a trust field to carry a category word; it now has its own field: `nft` → `"HOLDER GROUP"`, `validator` → `"DELEGATOR GROUP"`, `hall` → `"CHAIN HALL"`, `system` → `"SYSTEM COMMUNITY"`, `user` → `"COMMUNITY"`. Unknown kinds fall back to `"COMMUNITY"`.
   *(v1.52: `HOLDERS GROUP` → `HOLDER COMMUNITY` and `SYSTEM GROUP` → `SYSTEM COMMUNITY` as part of the Communities vocabulary convergence — display-only, `type` values unchanged; `validator` added the same release.)*
-  *(v1.NEXT: `HOLDER COMMUNITY` → `HOLDER GROUP` and `DELEGATOR COMMUNITY` →
+  *(v1.244: `HOLDER COMMUNITY` → `HOLDER GROUP` and `DELEGATOR COMMUNITY` →
   `DELEGATOR GROUP`, reversing v1.52 for these TWO kinds only. `CHAIN HALL`,
   `SYSTEM COMMUNITY` and the `COMMUNITY` fallback are unchanged. Display-only;
   `kind` and `type` values are untouched.)*
@@ -4564,7 +4564,7 @@ Groups vertical — separate cache + rate-limit bucket. Returns PeepSo group row
   }
   ```
 - **`kind` (v1.70)** ∈ {`hall`, `nft`, `validator`, `system`, `user`} — the §3.2.4 community-kind vocabulary, resolved from `_bcc_group_kind` post-meta (raw values `hall` / `holders` / `delegators` / `system`; absent → `user`).
-- **`kind_label` (v1.70)** — the pre-rendered §A2 display string, exactly the §3.2.4 kicker vocabulary (`CHAIN HALL`, `HOLDER GROUP` and `DELEGATOR GROUP` as of v1.NEXT, `SYSTEM COMMUNITY`, `COMMUNITY`). Frontend renders it verbatim, never maps `kind` → words.
+- **`kind_label` (v1.70)** — the pre-rendered §A2 display string, exactly the §3.2.4 kicker vocabulary (`CHAIN HALL`, `HOLDER GROUP` and `DELEGATOR GROUP` as of v1.244, `SYSTEM COMMUNITY`, `COMMUNITY`). Frontend renders it verbatim, never maps `kind` → words.
 - **`group_url`** is a **relative** Next.js route (rendered verbatim by the frontend; an absolute URL would navigate off the headless app) and — as of v1.70 — **kind-aware**: `hall` → `/halls/{slug}`, every other kind → `/communities/{slug}`, matching `CardUrlMap::groupUrl`'s canonical mapping (v1.68). *(Supersedes v1.68's "not hall-aware" caveat — that release fixed the absolute-URL drift but had no kind projected; now the vertical projects `kind`, halls route to their flavored surface. Non-hall kinds still resolve on the cross-kind `/communities/[slug]` page.)*
 - **Errors (legacy WP shape):**
   - `bcc_rate_limited` (HTTP 429)
@@ -9836,7 +9836,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-24 — display change — holder and delegator communities read "GROUP" (F-100)
+### v1.244 — 2026-11-24 — display change — holder and delegator communities read "GROUP" (F-100)
 
 Ships with bcc-trust #883 **and** bcc-search #52. ⚠⚠ Both plugins must go out
 in the SAME release — see below.
