@@ -8314,7 +8314,8 @@ Auth **member in good standing** (§4.32.7).
   announcement is not publicly readable, or *(since v1.191)* it is on a SECRET page the
   viewer may not see) · `400 bcc_invalid_request` (absent, blank,
   oversized or non-UTF-8 body) · `400` + `reason_code: replies_not_supported` ·
-  `503 bcc_unavailable`
+  `503 bcc_unavailable` (*v1.NEXT, F-469:* also with `reason_code: unavailable` when the
+  commenter's standing could not be read; retryable, nothing written)
 
 ⚠ **`body` is NOT declared `required` in the route schema**, deliberately. A
 schema-required field is validated by WordPress BEFORE the handler runs, so a request
@@ -8331,11 +8332,15 @@ the body is refused by the handler, after the feature gate.
 | `auth_required` | Not signed in. **No anonymous comments.** |
 | `suspended` | Suspended account, **or** a reputation tier below `neutral`. See below. |
 | `fraud_locked` | The account is restricted. |
+| `unavailable` | *(v1.NEXT, F-469)* The commenter's standing could not be READ. Retryable: this POST answers **503** `bcc_unavailable`, and `can_comment` carries a hint saying so. |
 
 ⚠⚠ **STANDING AND SUSPENSION PRESENT IDENTICALLY, AND THAT IS DELIBERATE.** §4.32.11's
 reason inventory is CLOSED and has no "standing" entry, and the frontend closes the
 composer on an unrecognised reason — so a new code would produce a disabled control with
-no copy. To a member, both mean "you may not post right now".
+no copy. To a member, both mean "you may not post right now". *(v1.NEXT, F-469)* A
+standing that could not be READ is different, and has its own retryable reason,
+`unavailable`. It carries an `unlock_hint`, which the frontend's fallback renders for a
+code it does not know, so it is never shown as a suspension.
 
 ⚠ "Good standing" resolves through `UserViewService::isInGoodStanding()`, the documented
 single source of truth: tier ∈ {`neutral`, `trusted`, `elite`}. A member with **no score
@@ -8724,7 +8729,8 @@ to `false`.
 closes the composer:
 
 `auth_required` · `comments_disabled` · `announcement_archived` · `announcement_unavailable` ·
-`suspended` · `fraud_locked` · `feature_disabled`
+`suspended` · `fraud_locked` · `feature_disabled` · *(v1.NEXT, F-469)* `unavailable` (the
+commenter's standing could not be read; retryable, and it carries an `unlock_hint`)
 
 **`can_report` denial reasons** — a separate CLOSED inventory, and deliberately
 not the comment list:
@@ -9747,6 +9753,15 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-24 — additive + behaviour change — an announcement comment refused because the commenter's standing could not be read is a retryable `unavailable` (F-469)
+
+Ships with bcc-trust **#857** (F-469 follow-up). bcc-trust only.
+
+- **`can_comment`** (§4.32.11) gains **`unavailable`** in its CLOSED denial inventory: the commenter's standing could not be read. It carries an `unlock_hint` ("Your standing could not be checked right now. Please try again."), so a client that does not know the code still shows copy, and the composer stays closed.
+- **`POST /announcements/:id/comments`** answers **`503 bcc_unavailable`** with `reason_code: unavailable` in that case. It is retryable, and nothing is written.
+- Before this, the same case was refused as `suspended` (403), which reads as "your account is suspended". `suspended` keeps both its existing meanings: a suspended account, or a standing that WAS read and is below `neutral`.
+- **Unchanged:** every other comment refusal, every success response, and the `can_report` inventory (it has no standing rung).
 
 ### v1.227 — 2026-11-23 — behaviour change — the remaining standing gates refuse when the standing cannot be read (F-469, batch 2)
 
