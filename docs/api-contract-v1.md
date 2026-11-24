@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.242 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.246 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1274,8 +1274,20 @@ Communities (PeepSo groups: `nft` / `hall` / `system` / `user`) converge onto th
 Locked field rules:
 
 - **Trust placeholders (shape-stable, never rendered as trust):** communities have no trust system. `trust_score: 0`, `reputation_tier: "neutral"`, `reputation_tier_label: null`, `rank_label: null`, `is_in_good_standing: true`, `flags: []`. The community face does not render a trust dial; the values exist only to keep the envelope shape-stable.
-- **`kicker` = server-owned group-type kicker** (§L5 — supersedes the frontend `KICKER_BY_TYPE` map). Until v1.57 this rode on `tier_label`, overloading a trust field to carry a category word; it now has its own field: `nft` → `"HOLDER COMMUNITY"`, `validator` → `"DELEGATOR COMMUNITY"`, `hall` → `"CHAIN HALL"`, `system` → `"SYSTEM COMMUNITY"`, `user` → `"COMMUNITY"`. Unknown kinds fall back to `"COMMUNITY"`.
+- **`kicker` = server-owned group-type kicker** (§L5 — supersedes the frontend `KICKER_BY_TYPE` map). Until v1.57 this rode on `tier_label`, overloading a trust field to carry a category word; it now has its own field: `nft` → `"HOLDER GROUP"`, `validator` → `"DELEGATOR GROUP"`, `hall` → `"CHAIN HALL"`, `system` → `"SYSTEM COMMUNITY"`, `user` → `"COMMUNITY"`. Unknown kinds fall back to `"COMMUNITY"`.
   *(v1.52: `HOLDERS GROUP` → `HOLDER COMMUNITY` and `SYSTEM GROUP` → `SYSTEM COMMUNITY` as part of the Communities vocabulary convergence — display-only, `type` values unchanged; `validator` added the same release.)*
+  *(v1.244: `HOLDER COMMUNITY` → `HOLDER GROUP` and `DELEGATOR COMMUNITY` →
+  `DELEGATOR GROUP`, reversing v1.52 for these TWO kinds only. `CHAIN HALL`,
+  `SYSTEM COMMUNITY` and the `COMMUNITY` fallback are unchanged. Display-only;
+  `kind` and `type` values are untouched.)*
+
+  ⚠⚠ **TWO EMITTERS, DELIBERATELY.** This vocabulary is produced in both
+  bcc-trust (`CardViewService::COMMUNITY_KICKER_BY_TYPE`, the `kicker` above)
+  and bcc-search (`GroupSearchService::KIND_LABEL`, the §4.9 `kind_label`).
+  Both docblocks declare the duplication and point at each other. A change to
+  one is a change to both, and **merge order is not enough** — if one plugin
+  ships without the other, group search and the card face print different
+  words for the same group. They deploy in the SAME release.
 - **Crest band:** the chain-keyed background applies to on-chain-gated kinds with a resolved `chain_tag` — `nft` and, since v1.52, `validator`; every other kind gets the tier band at the fixed `neutral` tier (the §3.2.4 shape-stable placeholder — `common` was the retired rarity slug; doc corrected v1.70).
 - **Identity:** `id` = group id, `handle` = group slug, `bio` = group description (plain-text, ~200-char truncation — same bound as page/member bios; `""` when unset).
 - **Crest (§2.9 grammar):** `initials` from the group name (same server derivation as the other kinds), `image_url` = the group's cover (NFT collection art; `null` → FE monogram fallback). Background: NFT groups WITH a `chain_tag` → `background_kind: "chain"`, `background_value: <chain_tag>`; otherwise `background_kind: "tier"`, `background_value: "neutral"` (doc corrected v1.70 — the emitter always used the reputation placeholder, never the retired rarity slug).
@@ -4386,7 +4398,7 @@ Top-N search suggestions for the §G1 nav-bar autocomplete. Smaller per-item sha
 - **Auth:** Anonymous OR Bearer
 - **Query:**
   - `q` (search string) — required; minimum 2 chars (server returns empty list for shorter; bcc-search has the same gate)
-  - `kind` ∈ {`validator`, `project`, `creator`, `member`, `community`} — optional; restricts to one suggestion kind (`member` + `community` added v1.70). Page kinds route to the projects vertical (`GET /bcc/v1/search`); `member` routes to `GET /bcc/v1/search/users` only; `community` routes to `GET /bcc/v1/search/groups` only — a scoped request queries exactly one vertical.
+  - `kind` ∈ {`validator`, `project`, `creator`, `member`, `community`} — optional; restricts to one suggestion kind (`member` + `community` added v1.70). Page kinds route to the projects vertical (`GET /bcc/v1/search`), as its `kind` *(v1.245, F-592: previously sent as a category, which matched nothing, so page-scoped lists were empty)*; `member` routes to `GET /bcc/v1/search/users` only; `community` routes to `GET /bcc/v1/search/groups` only — a scoped request queries exactly one vertical.
 - **Response 200:**
   ```json
   {
@@ -4443,8 +4455,8 @@ Top-N search suggestions for the §G1 nav-bar autocomplete. Smaller per-item sha
 - **Cache:** `Cache-Control: private, max-age=15`; **`private, no-store` when `incomplete` is `true`** *(v1.199)*, so a browser cannot replay a degraded answer for the same query after the vertical recovers. Underlying bcc-search caches results for 60s (never its errors).
 - **Mapping:**
   - Internally calls `GET /bcc/v1/search` (pages) and — in All scope, v1.70 — additionally `GET /bcc/v1/search/groups` + `GET /bcc/v1/search/users`, all via `rest_do_request`; matching, enrichment, per-vertical caches, and rate limiting live in bcc-search
-  - Server maps the flat result shapes into `SearchSuggestion`: reputation_tier passes through verbatim for pages (v1.57 — no rarity translation), category_slug → card_kind per `PageTypeMap`, route prefix per kind (`/v/`, `/p/`, `/c/`); community/member rows (v1.70) normalize from the groups/users verticals, `href` taken from the vertical's relative URL after internal-path validation
-  - Dropped silently: rows with unrecognized `category_slug` (e.g., `dao` — not a card kind in V1), rows missing required identity fields, and community/member rows whose URL fails internal-path validation (defense against absolute/off-app hrefs). *(Doc corrected v1.70: the old "rows whose tier maps to risky are dropped" claim described pre-v1.57 behaviour — risky pages and members appear with their honest tier chip.)*
+  - Server maps the flat result shapes into `SearchSuggestion`: reputation_tier passes through verbatim for pages (v1.57 — no rarity translation), card_kind from the page's stored type per `PageTypeMap`, no stored type = `project` *(v1.245, F-592: bcc-search's `category_slug` is a PeepSo category and is not read)*, route prefix per kind (`/v/`, `/p/`, `/c/`); community/member rows (v1.70) normalize from the groups/users verticals, `href` taken from the vertical's relative URL after internal-path validation
+  - Dropped silently: page rows whose stored type is not a card kind (e.g., `dao` — not a card kind in V1) or whose page no longer exists, rows missing required identity fields, and community/member rows whose URL fails internal-path validation (defense against absolute/off-app hrefs). *(Doc corrected v1.70: the old "rows whose tier maps to risky are dropped" claim described pre-v1.57 behaviour — risky pages and members appear with their honest tier chip.)*
   - A vertical bcc-search could not answer (503 degraded, or 429) is absent from the merge, and the response says so with `incomplete: true` *(v1.199; before, it dropped out silently)*. A page-kind `kind` whose vertical failed answers an empty list. Autocomplete must never block the user mid-type with an error toast.
 
 #### `GET /bcc/v1/search` (multi-vertical: projects + trending)
@@ -4454,8 +4466,9 @@ Direct bcc-search project search and trending mode — the upstream that `cards/
 - **Auth:** Anonymous OR Bearer (token silently ignored by handler; sent only so viewer-aware ranking signals stay warm when the user is signed in)
 - **Query:**
   - `q` (string) — 2..100 chars (server returns empty for shorter; `QueryQualityGate` rejects pure-stopword / low-entropy queries to empty too). **Over 100 chars → `rest_invalid_param` 400** at the REST validation layer (v1.47) — previously undefined behaviour, now rejected before any handler work.
-  - `type` (string, optional) — reputation category slug (e.g. `validator`, `builder`, `creator`). Falls through to category routing in `SearchController`.
-  - `trending` (string, optional) — when `=1`, ignores `q` / `type` and returns top-scored projects regardless of query.
+  - `type` (string, optional) — PeepSo page-category slug, one of the `slug` values in the response's `categories`. Site data, not a fixed vocabulary, and **not a page kind** (use `kind`). An unknown slug answers with no results. *(Doc corrected v1.245, F-592: the old example listed page kinds, which match no category.)*
+  - `kind` (string, optional, v1.243) — page kind: `validator`, `project` or `creator`, the page kinds of `GET /cards/search`. Keeps only pages of that kind; a page with no stored type is a `project`, so every result links to its kind's card route (`/v/`, `/p/`, `/c/`). Combines with `type`. Anything else → `400` `bcc_invalid_request`.
+  - `trending` (string, optional) — when `=1`, ignores `q` / `type` / `kind` and returns top-scored projects regardless of query. An unknown `kind` is still a `400`.
 - **Response 200:**
   ```json
   {
@@ -4471,12 +4484,12 @@ Direct bcc-search project search and trending mode — the upstream that `cards/
         "verified": true,
         "is_claim_verified": true,
         "followers": 312,
-        "category": "Validator",
-        "category_slug": "validator"
+        "category": "Validators",
+        "category_slug": "validators"
       }
     ],
     "categories": [
-      { "slug": "validator", "name": "Validator" }
+      { "slug": "validators", "name": "Validators" }
     ]
   }
   ```
@@ -4488,6 +4501,7 @@ Direct bcc-search project search and trending mode — the upstream that `cards/
   - `bcc_upstream_unavailable` (HTTP 503; `Retry-After: 5`) — covers category fetch failure, FULLTEXT rebuild in progress ("Trending is warming up" in trending mode), and enrichment-pipeline degradation *(supersedes the fictional `categories_unavailable` / `rebuild_in_progress` / `score_enrichment_failed` codes)*
   - `bcc_internal` (HTTP 503) — internal rate-limit ceiling / unexpected failure *(supersedes `temporarily_overloaded`)*
   - `rest_invalid_param` (HTTP 400) — WP arg validation (`q` over 100 chars)
+  - `bcc_invalid_request` (HTTP 400) — `kind` is not `validator`, `project` or `creator` *(v1.243)*
 - **Cache:** server-side `60s` (per-query results) + LKG mirror for 503 fallback. Trending mode: `300s` (5 min) + LKG.
 - **Envelope note (doc corrected 2026-08-05 — the wire has been enveloped since 2026-05):** although bcc-search's handlers *emit* raw `{ results, categories }` (or `{ results, meta }` in trending mode), bcc-trust's §1.4 Envelope wraps every `/bcc/v1/*` response — so the wire carries `{ data: { results, … }, _meta }` on success and `{ error: { code, message, status } }` on failure. The shapes documented above are the **inner payload**. The bcc-frontend client (`bccSearchFetchAsClient`) is shape-tolerant: it unwraps the envelope when present and still maps a raw legacy body, so `err.code` branching per Phase γ stays uniform either way.
 
@@ -4550,7 +4564,7 @@ Groups vertical — separate cache + rate-limit bucket. Returns PeepSo group row
   }
   ```
 - **`kind` (v1.70)** ∈ {`hall`, `nft`, `validator`, `system`, `user`} — the §3.2.4 community-kind vocabulary, resolved from `_bcc_group_kind` post-meta (raw values `hall` / `holders` / `delegators` / `system`; absent → `user`).
-- **`kind_label` (v1.70)** — the pre-rendered §A2 display string, exactly the §3.2.4 kicker vocabulary (`CHAIN HALL`, `HOLDER COMMUNITY`, `DELEGATOR COMMUNITY`, `SYSTEM COMMUNITY`, `COMMUNITY`). Frontend renders it verbatim, never maps `kind` → words.
+- **`kind_label` (v1.70)** — the pre-rendered §A2 display string, exactly the §3.2.4 kicker vocabulary (`CHAIN HALL`, `HOLDER GROUP` and `DELEGATOR GROUP` as of v1.244, `SYSTEM COMMUNITY`, `COMMUNITY`). Frontend renders it verbatim, never maps `kind` → words.
 - **`group_url`** is a **relative** Next.js route (rendered verbatim by the frontend; an absolute URL would navigate off the headless app) and — as of v1.70 — **kind-aware**: `hall` → `/halls/{slug}`, every other kind → `/communities/{slug}`, matching `CardUrlMap::groupUrl`'s canonical mapping (v1.68). *(Supersedes v1.68's "not hall-aware" caveat — that release fixed the absolute-URL drift but had no kind projected; now the vertical projects `kind`, halls route to their flavored surface. Non-hall kinds still resolve on the cross-kind `/communities/[slug]` page.)*
 - **Errors (legacy WP shape):**
   - `bcc_rate_limited` (HTTP 429)
@@ -7287,6 +7301,59 @@ Stoke — the forge-fire engagement toggle (v1.33 backfill). X-"like" model: one
 - **Cache:** `no-store`.
 - **Mapping:** `StokeEndpoint::addStoke` / `removeStoke` → `StokeRepository`. FE `stoke-endpoints.ts`.
 
+#### `POST /bcc/v1/feed/:id/repost` · `DELETE /bcc/v1/feed/:id/repost` · `POST /bcc/v1/feed/:id/quote`
+
+Repost (v1.246, F-346) — **one PLAIN repost per member per post, plus UNLIMITED quote reposts** (user decision 2026-11-18, matching X). Unlike `/stoke` this is not a counter: a repost is a **real post on the member's own wall**, so it carries the REPOSTER's own audience (their stored default post audience, §F-291) while the original keeps its own. The relationship lives in PeepSo's `act_repost_id`; there is no BCC table. **Cosmetic for trust** — never writes `bcc_trust_scores`.
+
+⭐ **Everything on this route is keyed on the ROOT, not on the id the client submits.** PeepSo resolves the chain root before storing, so a repost row always holds the ROOT — never its immediate parent. Reposting a repost of X therefore reposts X. `:id` may be either, and the once-only rule, both counts and `viewer_has_reposted` are all keyed on the resolved root. ⚠ That is why an item's repost fields equal its `repost_of`'s: a card that is itself a repost shows the ROOT's numbers, because tapping repost on it affects the root. A client reposting a repost gets `root_feed_id` back pointing at the original, and should patch its cache against **that** id.
+
+⚠ **Two gates run, not one.** `:id` is gated, and then the resolved root is gated again — both through `FeedItemGate` + `GroupInteractionGate` + `NoReactionsGate`. Reposting someone else's repost would otherwise republish content from a group the caller cannot read: the submitted post sits on its author's own wall and passes every check, while the content it carries belongs to the root's audience. The second pass is skipped when `:id` IS the root.
+
+⚠ **The root must be a TOP-LEVEL POST.** A repost of a COMMENT is refused `404`. PeepSo writes an activities row for every comment and stores the *same* `act_module_id` a status post carries, so a comment act id is on the public-feed module allowlist and is NOT refused by the gates above — the feed's own candidate query excludes those rows with a separate `act_comment_object_id = 0` predicate, because they otherwise surface as if they were top-level posts. A repost keyed on a comment would make that durable, publishing someone's comment as a standalone feed item. Direct messages (PeepSo module 6) and every other non-post module are already off the allowlist and 404 on the first gate.
+
+⭐ **PLAIN vs QUOTE, and why there are two routes.** A plain repost carries no body and is capped at one per member per root; a quote carries a body and is not capped. They are **separate routes on purpose**: with different limit rules, a single route whose once-rule turned on the presence of a body would let a client sending `body: ""` instead of omitting it cross silently between "capped, 409s" and "unlimited".
+
+Both are stored the same way — a post carrying `act_repost_id` — and are told apart by **content**: empty is plain, non-empty is a quote. That is PeepSo's own rule rather than a BCC convention: `add_post()` refuses empty content *unless* a repost is set, and stores content trimmed. So whitespace-only is a plain repost, and there is no marker field to keep in sync.
+
+⭐ **ONLY PUBLIC POSTS MAY BE REPOSTED OR QUOTED** (user decision 2026-11-18, X's protected-post rule). A root that is not visible to **every member** cannot be reposted or quoted by anyone, *including its own author* — reposting republishes to an audience the original author never chose, so the test is that nobody was excluded from the original. It is a question about the POST, not about the caller.
+
+Refused when either half fails:
+
+| half | rule |
+|---|---|
+| group | a group-tagged root must be marked `public_all` **and** still pass the group-syndication gate — `public_all` alone is not a free pass, since a post made public while its group was open stops being syndicated once that group goes closed or secret |
+| §F-02 | the **effective** level must be at most `ACCESS_MEMBERS` (20), where effective is the **stricter of** the post's own `act_access` and its **author's** profile level |
+
+⚠ `members_only` **passes**: it is the default post audience (§F-291) and every member can see it. What this refuses is friends-only, only-me, and anything inside a group that is not `public_all`. Fails **closed** when the author's profile level or the non-open group list cannot be read.
+
+⚠⚠ **The refusal is a distinct `bcc_permission_denied` 403, and the ORDERING is what makes that safe.** The publicness test runs **after** the "can the caller read this root" test, so by the time it fires the caller has already been shown they can read the post — naming the real reason therefore discloses nothing they cannot already see, and a 404 would say "not found" about a post in front of them. A root the caller **cannot** read keeps the opaque `404`, and never reaches the 403. ⚠ The `can_repost` / `can_quote` fields that would let a client hide the control *before* trying are part of the read side and are **not served yet** — see the end of this section.
+
+⚠ **The caller must be able to READ the root**, judged by the same rule as `GET /feed/:id` — blocks in BOTH directions, the caution tier, the moderation hide list, §F-02 with its group carve-out, and the group's own rule for a `members_only` post. The gates above answer only "may this member *interact* here" and deliberately skip the viewer-specific presentation filters (that skip is correct for *reporting*, where nothing is republished). A root the caller cannot open by link is a root they cannot repost, and the refusal is the same `404` — it never distinguishes "blocked you" from "does not exist". ⚠ One consequence worth stating: a §F-02-exempt reader (an administrator) cannot repost a `members_only` group post, because the permalink's group-tagged recovery pass only runs when the profile gate ran. That is a pre-existing property of the permalink, and refusing is the safe direction.
+
+- **Auth:** required (in-handler). Anonymous → `bcc_unauthorized 401`.
+- **Path:** `id` (int — raw activity id, same as `GET /feed/:id`). May be the original or any repost of it.
+- **Rate limit:** `/repost` 15/min/user (key `repost`, shared across add/remove). Tighter than `/stoke`'s 60 because each call CREATES A POST — the abuse shape is wall flooding, not tap-spam on one card. ⚠ `/quote` uses the **status-post** limits instead (key `quote_<user id>`, currently **5 per 120s**), because a quote IS a status post — and because the once-only rule does not apply to quotes, that throttle is the only limit on their volume. Expect `bcc_rate_limited` sooner from `/quote` than from `/repost`; that is deliberate.
+- **Response 200 (both verbs):**
+  - `root_feed_id` (string) — `feed_<root act_id>`, the post the count belongs to
+  - `repost_count` (**int | null**) — distinct MEMBERS with a **PLAIN** repost of the root. Quotes are **not** counted here. ⚠ `null` means *could not be read*, never zero — clients show no number rather than a wrong one, and a successful write can still answer `null` (the write and the count are two reads).
+  - `quote_count` (**int | null**) — **quote** posts of the root. A RAW total, not distinct members, because quotes are unlimited per member and each is its own post. Deliberately **not** filtered to what the viewer can see — the same posture `repost_count` has; it is a number and never an identity.
+  - `viewer_has_reposted` (bool) — **PLAIN only.** ⚠ A member who has QUOTED but not plain-reposted reads `false` here while their quote still counts in `quote_count`. That is correct under the X model and is what X does, but it surprises people in testing.
+  - `quote_feed_id` (string) — **`POST /quote` only**: the new quote post's own `feed_<act_id>`, so a client can link straight to it.
+- **Errors:** `bcc_unauthorized` 401 · `bcc_rate_limited` 429 (throttle, **or** lock contention — retry) · `bcc_forbidden` 403 (suspended; §M parity, no admin bypass) · `bcc_permission_denied` **403** (the root is not public — see the rule above; only ever returned for a root the caller CAN read) · `bcc_invalid_request` 400 (non-positive id) · `bcc_not_found` 404 (unknown id, not a feed item, root unresolvable, **root is a comment rather than a top-level post**, **the caller cannot read the root**, or — DELETE only — the caller has no **plain** repost of this root) · `bcc_invalid_request` 400 (`POST /quote`: body missing, not a string, blank after trim, or over the 500-character cap — the route declares no `required`/`type` on `body`, so all four are answered by the handler in this envelope rather than by WordPress's own `rest_missing_callback_param`, which would also preempt the 401 for an anonymous caller) · `bcc_too_many_mentions` 400 (`POST /quote`, per §3.3.12) · `bcc_conflict` **409** (`POST /repost` only: already plain-reposted — a quote never 409s) · `bcc_unavailable` **503** (**both POST routes**: the root's own ACTIVITY read did not run (F-275 — `getActivityById()` throws rather than answering null), or, `POST /repost` only, the once-only check could not be read. Fail-closed, nothing was written; retry. ⚠ NARROWER THAN IT SOUNDS: this covers the ACTIVITY read. A failed **filter** read underneath it — the block probe today, announcement-page visibility shortly — fails closed as the opaque **404** instead, because `getActivityById()`'s own contract is "404 rather than leak" and `dropMutuallyBlockedAuthors()` collapses an unreadable block table to an empty result. So 503 and 404 separate "the post read failed" from "not visible OR a filter read failed", not "any read failed" from "not visible") · `bcc_internal_error` 500
+- **Side effects:** `POST /repost` creates a status post on the caller's wall with an **empty** body and `act_repost_id` = root. `POST /quote` creates one with the submitted body and the same `act_repost_id`, through the ordinary status-create path — so the §D2 **500-character** cap, mention validation, sanitising, moderation and the §A3 event all apply, and `bcc_too_many_mentions` is reachable. A quote is removed through the **ordinary owner delete**, not through `DELETE /repost`. DELETE trashes the caller's own **plain** repost(s) of that root and fires `bcc_post_deleted` per removed post (so the warmed hot-feed page is evicted and the Rank ledger reverses), exactly as owner-delete does.
+- **⚠ DELETE is NOT idempotent, and that is deliberate.** It is also NOT audience-gated: a root can stop being readable after the fact, and a gate there would strand the member with a post on their own wall they are not allowed to remove — the action only ever touches rows they own. With no audience gate, an idempotent 200 would answer "does act N exist" and hand back its repost count for ANY id, so **no repost of yours → 404**, and no count is read. This is the one place the route diverges from `/stoke`.
+- **Not notified.** A repost raises no notification for the original's author in v1.
+- **Cache:** `no-store`.
+- **Mapping:** `RepostEndpoint::addRepost` / `removeRepost` → `PeepSoActivityRepository::resolveRepostRoot` + `PostEngagementRepository::viewerReposts`/`repostCount` + `PeepSoStatusWriter::createSelfStatus`. Serialised per `(member, root)` on the `bcc_repost_<member>_<root>` advisory lock, because no database constraint can express once-per-member: `act_repost_id` is 0 on every ordinary post, so `UNIQUE (act_owner_id, act_repost_id)` would cap each member at one ordinary post ever.
+- **Mapping (`POST /quote`):** `RepostEndpoint::addQuote` → the same root ladder, then **`PostsService::createStatus`** (the ordinary status-create path, with the resolved root passed through) + `PostEngagementRepository::quoteCount`. ⭐ The quote route writes **nothing itself** — that delegation is what makes every status rule apply to a quote by construction rather than by copy. It takes **no advisory lock** (there is no "once" to protect). The readability re-gate on both POST routes is `FeedRankingService::getActivityById`, the permalink's own seam.
+
+⚠⚠ **REPOSTS ARE NOT RENDERED YET, AND NOTHING IN THIS LIST IS SERVED.** The write routes above ship first. Everything below is the following change — the read side — and **no response carries any of it today**; until it ships, no feed surface marks an item as a repost and clients should not expose a repost affordance. It is documented here because these fields were decided with the write rules and the decisions are what the read side has to honour:
+
+- the feed-side **`repost_of`** block (the nested root), and the **batched** `viewer_has_reposted` / `repost_count` / `quote_count` on feed items rather than one read per card.
+- **`can_repost` / `can_quote`** on a feed item, in the **post-local 2-key shape** `{ allowed, unlock_hint }` — the same entry `can_report` and `can_delete` use, and deliberately **not** the 3-key card/user triple. A root the publicness rule refuses comes back `allowed: false` with `unlock_hint: null`, and the client hides the control exactly as it does for every other post permission. ⚠⚠ **There is NO `reason_code` on these two**, and that is a decision rather than an omission (2026-11-24): a FeedItem's `permissions` map is homogeneous, so adding a third key here would either make it ragged or force `can_report`/`can_delete` to widen too — a bigger contract change than F-346 needs. The cost is that a client cannot tell "not public" from any other refusal; it does not need to, because the only action either way is to hide the control. ⚠ The rule is already ENFORCED by the write routes — this is only how a client learns the answer before trying, so its absence costs a wasted 403, never a wrong write.
+- the rule that **HIDES a plain repost** whose root the viewer cannot see (option 1), applied in the per-viewer filter stage.
+- **`repost_of_unavailable`** for a quote in that same situation. ⭐ **A QUOTE whose root this viewer may not see KEEPS THE QUOTE** (user decision 2026-11-18). The root's audience can narrow *after* the quote was written, and a quote carries the reposter's **own words** — so hiding the whole item would delete their writing from every feed because of someone else's setting. Such an item will come back with `repost_of: null` **and `repost_of_unavailable: true`**, a neutral marker carrying **no author, no group and no id**. A **plain** repost in the same situation is hidden whole, because it carries nothing of its own. ⚠ The root is re-gated **per viewer at read time**, not trusted from write time, for exactly this reason. ⭐ **Re-ratified 2026-11-24** (Phillip, via F-346's read-side design): asked the question again with the quote case spelled out, the answer was the same — show the quote with a neutral "original unavailable" block carrying no author, no group and no id, and keep hiding a plain repost whole. So this paragraph is CONFIRMED rather than changed, and the 2026-11-18 "hide the repost entirely" rule stands for plain reposts only. ⚠ The same neutral answer is given when readability cannot be **verified** — an unreadable gate read, not a "no" — because an unverified root is never shown.
+
 #### `POST /bcc/v1/comments/:id/stoke` · `DELETE /bcc/v1/comments/:id/stoke`
 
 Stoke on a **comment** (v1.38). A comment is itself a `peepso_activities` row, so its act_id keys `wp_bcc_trust_stokes` exactly like a post's — same `StokeRepository`, no schema change. Dedicated endpoint (not a reuse of `/feed/:id/stoke`) because the group gate MUST resolve membership off the comment's **parent post**: the comment's own wp_post carries no `peepso_group_id`, so gating on the comment's act_id would silently pass every gated thread. Plain X-"like" toggle — **no `heat_stage`** (a comment is not a velocity rail). **Cosmetic for trust** — never writes `bcc_trust_scores`.
@@ -9798,7 +9865,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
   - Bonus: `GET /me/onboarding/status` is also registered (read-side flag check; not previously listed in §8).
 - **Directory endpoints (§G1/§G2)** — both fully wired:
   - `GET /cards` — paginated list of Card view-models with `kind`/`tier`/`sort`/`q` filters. Wraps `PageDiscoveryService`; each row hydrated through `CardViewService::getCard()` so the per-item shape is identical to the single-card endpoint. (Historical note: `/bcc/v1/discover` previously shared this service for the legacy bcc-page-slider block; that endpoint was retired 2026-05-15.)
-  - `GET /cards/search` — top-N suggestions for the §G1 nav-bar autocomplete. Internally fans out via `rest_do_request` — pages always, plus the groups + users verticals in All scope (v1.70) — and merges the normalized rows (category_slug → card_kind, route prefix per kind; community/member rows from their verticals) into the `SearchSuggestion` shape per §A2 under the 12-item cap.
+  - `GET /cards/search` — top-N suggestions for the §G1 nav-bar autocomplete. Internally fans out via `rest_do_request` — pages always, plus the groups + users verticals in All scope (v1.70) — and merges the normalized rows (stored page type → card_kind, route prefix per kind; community/member rows from their verticals) into the `SearchSuggestion` shape per §A2 under the 12-item cap.
 - **Notifications endpoints (§I1)** — fully wired:
   - `GET /me/notifications` — cursor-paginated list scoped to `not_module_id = BCC_NOTIFICATION_MODULE_ID` (= 9000). Server-rendered messages + server-built `link` per type per §A2.
   - `GET /me/notifications/unread-count` — drives the bell badge; frontend polls 60s + on window focus.
@@ -9822,6 +9889,63 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
+### v1.246 — 2026-11-24 — additive — repost, once per member per post (F-346)
+
+Ships with bcc-trust #747. It needs **bcc-core #137** (in production since the 2026-11-24 release), where `resolveRepostRoot` and `createSelfStatus`'s root parameter land.
+
+- **New:** `POST`/`DELETE /feed/:id/repost` and `POST /feed/:id/quote`. A repost is a real post on the caller's own wall carrying their own audience, not a counter row; the link lives in PeepSo's `act_repost_id`. **One PLAIN repost per member per root, unlimited quotes** (user decision 2026-11-18, matching X): plain and quote are told apart by content (empty vs not), which is PeepSo's own rule since `add_post()` refuses empty content unless a repost is set. `repost_count` counts distinct members with a plain repost; `quote_count` is a raw total of quote posts; `viewer_has_reposted` is plain-only. **Only PUBLIC roots may be reposted or quoted** (not friends-only/only-me, and not a group post that is not `public_all` + still syndicated): a distinct `bcc_permission_denied` 403, ordered AFTER the readability check so an unreadable root still gets the opaque 404. ⚠ The feed-side rendering is a FOLLOWING change and none of it is served by this release: `repost_of`, the batched counts, `can_repost`/`can_quote` (the post-local 2-key `{ allowed, unlock_hint }` entry — **no `reason_code`**, decided 2026-11-24, so a refused root is `allowed: false` + `unlock_hint: null` and the control is hidden), the hide for a plain repost whose root the viewer cannot see, and `repost_of_unavailable: true` for a quote in that situation (the quote is kept — it carries the member's own words — while a plain repost is hidden whole). Both POST routes answer `bcc_unavailable` 503 when the root's own ACTIVITY read did not run, rather than reporting "not found"; a failed FILTER read beneath it still fails closed as 404, per `getActivityById()`'s contract.
+- **Keyed on the ROOT.** `:id` may be the original or any repost of it; the once-only rule, the lock and the count all resolve to the chain root, and the response says which (`root_feed_id`).
+- **Both the submitted id AND the root are gated** — otherwise reposting someone's repost republishes content from a group the caller cannot read.
+- `repost_count` is **`int | null`** — `null` is "could not read", never zero.
+- **409** on a second repost, **503** when the once-only check cannot be read (nothing written), **429** on lock contention.
+- **DELETE is not idempotent and not audience-gated:** no repost of yours → 404. Rationale in §4 — it keeps the member from being stranded with an unremovable post while closing the existence/engagement oracle an idempotent success would open.
+- **Unchanged:** every read surface. Nothing marks a feed item as a repost yet, so clients should not show a repost affordance until the read side lands.
+
+### v1.245 — 2026-11-24 — bug fix — `/cards/search` page kinds return that kind's pages; `/search`'s `type` is a category (F-592)
+
+Ships with bcc-trust **#882**, after bcc-search's `kind` (F-589). bcc-trust only.
+
+- **`GET /cards/search` with `kind=validator|project|creator`** now returns the pages of that kind. It sent the kind to `GET /search` as a category (`type`), no category is named after a page kind, and an unknown category answers with nothing, so these scoped lists were always empty. It now sends `kind`.
+- **`card_kind` on page suggestions** (and so `href`) now comes only from the page's stored type, with no stored type read as `project`, the same reading as the card routes. Untyped project pages were dropped; they now appear as `project`. A page whose stored type is not a card kind (e.g. `dao`), or that no longer exists, is still dropped.
+- **`GET /search` `type`, doc corrected:** it is a PeepSo page-category slug (one of the `categories` slugs), not a page kind. To filter by kind, use `kind`.
+- **Unchanged:** the suggestion shape, the All-scope allocation, `incomplete`, and the member and community verticals.
+
+### v1.244 — 2026-11-24 — display change — holder and delegator communities read "GROUP" (F-100)
+
+Ships with bcc-trust #883 **and** bcc-search #52. ⚠⚠ Both plugins must go out
+in the SAME release — see below.
+
+- **§3.2.4 `card.kicker`** and **§4.9 `kind_label`**: `nft` → **`HOLDER GROUP`**
+  (was `HOLDER COMMUNITY`) and `validator` → **`DELEGATOR GROUP`** (was
+  `DELEGATOR COMMUNITY`).
+- **Unchanged:** `hall` → `CHAIN HALL`, `system` → `SYSTEM COMMUNITY`, `user` →
+  `COMMUNITY`, and the unknown-kind `COMMUNITY` fallback. No field is added or
+  removed, no endpoint changes, and `kind` / `type` values are untouched — this
+  is the pre-rendered display string only.
+- **Reverses v1.52 for these two kinds only.** v1.52 moved the whole vocabulary
+  to "COMMUNITY"; the two on-chain-gated kinds read better as GROUP. Decision:
+  Phillip, 2026-11-24.
+- ⚠⚠ **Two emitters, so merge order is not enough.** bcc-trust emits `kicker`
+  and bcc-search emits `kind_label` from separate, deliberately duplicated maps.
+  Merge order is search → trust → this note, but if one plugin reaches an
+  environment without the other, group search and the card face print DIFFERENT
+  words for the same group.
+- **Clients:** no change required. §L5 already makes the kicker server-owned and
+  supersedes the frontend `KICKER_BY_TYPE` map; the frontend renders the string
+  verbatim and holds no copy of this vocabulary. (One stale example in a
+  `src/lib/api/types.ts` doc comment still cites `"HOLDER COMMUNITY"` — a
+  comment, not behaviour.)
+
+### v1.243 — 2026-11-24 — additive — `GET /search` filters by page kind (F-589)
+
+Ships with **bcc-search #53**. bcc-search only.
+
+- **`kind`** (optional) on `GET /bcc/v1/search`: `validator`, `project` or `creator`, the page kinds `GET /cards/search` uses. It keeps the pages of that kind, within the same published, non-secret set. It is for the Explore search's Validators / Projects / Creators tabs.
+- A page with no stored type counts as a `project`, as it already did for its `/p/` link. So every result under a kind links to that kind's card route (`/v/`, `/p/`, `/c/`).
+- `kind` combines with `type` (both apply).
+- **An unknown `kind` is a `400` `bcc_invalid_request`**, as on `GET /cards/search`. That includes `member` and `community`, which are not pages. It is a `400` in trending mode too; otherwise trending ignores `kind`, as it ignores `q` and `type`.
+- **Unchanged:** the response shape, the result cap, and every request without `kind`.
+
 ### v1.242 — 2026-11-24 — behaviour change (privacy) — the member profile and member cards count reviews and disputes as their viewer may see them (F-571)
 
 Ships with bcc-trust #879. Follows v1.230.
@@ -9840,7 +9964,6 @@ Ships with bcc-trust #880. Structure A (Explore's tab counts).
 - **`GET /cards` `pagination.total`:** how many cards match the filters across all pages, from the same query as the rows, so the two agree.
 - **No `kind`:** the list now covers the three card kinds only (validator, project, creator). Pages of any other type used to be counted in `total_pages` and to take a slot on a page without rendering; now they are neither counted nor listed.
 - **Unchanged:** the item shape, every filter, the page ceiling (`page` ≤ 20) and the errors.
-
 ### v1.240 — 2026-11-24 — additive — the auth responses carry `can_moderate`, the cue for the frontend's "Admin" group (structure A)
 
 Ships with bcc-trust **#876**. bcc-trust only.
