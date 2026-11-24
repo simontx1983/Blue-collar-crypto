@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.244 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.245 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -4398,7 +4398,7 @@ Top-N search suggestions for the §G1 nav-bar autocomplete. Smaller per-item sha
 - **Auth:** Anonymous OR Bearer
 - **Query:**
   - `q` (search string) — required; minimum 2 chars (server returns empty list for shorter; bcc-search has the same gate)
-  - `kind` ∈ {`validator`, `project`, `creator`, `member`, `community`} — optional; restricts to one suggestion kind (`member` + `community` added v1.70). Page kinds route to the projects vertical (`GET /bcc/v1/search`); `member` routes to `GET /bcc/v1/search/users` only; `community` routes to `GET /bcc/v1/search/groups` only — a scoped request queries exactly one vertical.
+  - `kind` ∈ {`validator`, `project`, `creator`, `member`, `community`} — optional; restricts to one suggestion kind (`member` + `community` added v1.70). Page kinds route to the projects vertical (`GET /bcc/v1/search`), as its `kind` *(v1.245, F-592: previously sent as a category, which matched nothing, so page-scoped lists were empty)*; `member` routes to `GET /bcc/v1/search/users` only; `community` routes to `GET /bcc/v1/search/groups` only — a scoped request queries exactly one vertical.
 - **Response 200:**
   ```json
   {
@@ -4455,8 +4455,8 @@ Top-N search suggestions for the §G1 nav-bar autocomplete. Smaller per-item sha
 - **Cache:** `Cache-Control: private, max-age=15`; **`private, no-store` when `incomplete` is `true`** *(v1.199)*, so a browser cannot replay a degraded answer for the same query after the vertical recovers. Underlying bcc-search caches results for 60s (never its errors).
 - **Mapping:**
   - Internally calls `GET /bcc/v1/search` (pages) and — in All scope, v1.70 — additionally `GET /bcc/v1/search/groups` + `GET /bcc/v1/search/users`, all via `rest_do_request`; matching, enrichment, per-vertical caches, and rate limiting live in bcc-search
-  - Server maps the flat result shapes into `SearchSuggestion`: reputation_tier passes through verbatim for pages (v1.57 — no rarity translation), category_slug → card_kind per `PageTypeMap`, route prefix per kind (`/v/`, `/p/`, `/c/`); community/member rows (v1.70) normalize from the groups/users verticals, `href` taken from the vertical's relative URL after internal-path validation
-  - Dropped silently: rows with unrecognized `category_slug` (e.g., `dao` — not a card kind in V1), rows missing required identity fields, and community/member rows whose URL fails internal-path validation (defense against absolute/off-app hrefs). *(Doc corrected v1.70: the old "rows whose tier maps to risky are dropped" claim described pre-v1.57 behaviour — risky pages and members appear with their honest tier chip.)*
+  - Server maps the flat result shapes into `SearchSuggestion`: reputation_tier passes through verbatim for pages (v1.57 — no rarity translation), card_kind from the page's stored type per `PageTypeMap`, no stored type = `project` *(v1.245, F-592: bcc-search's `category_slug` is a PeepSo category and is not read)*, route prefix per kind (`/v/`, `/p/`, `/c/`); community/member rows (v1.70) normalize from the groups/users verticals, `href` taken from the vertical's relative URL after internal-path validation
+  - Dropped silently: page rows whose stored type is not a card kind (e.g., `dao` — not a card kind in V1) or whose page no longer exists, rows missing required identity fields, and community/member rows whose URL fails internal-path validation (defense against absolute/off-app hrefs). *(Doc corrected v1.70: the old "rows whose tier maps to risky are dropped" claim described pre-v1.57 behaviour — risky pages and members appear with their honest tier chip.)*
   - A vertical bcc-search could not answer (503 degraded, or 429) is absent from the merge, and the response says so with `incomplete: true` *(v1.199; before, it dropped out silently)*. A page-kind `kind` whose vertical failed answers an empty list. Autocomplete must never block the user mid-type with an error toast.
 
 #### `GET /bcc/v1/search` (multi-vertical: projects + trending)
@@ -4466,7 +4466,7 @@ Direct bcc-search project search and trending mode — the upstream that `cards/
 - **Auth:** Anonymous OR Bearer (token silently ignored by handler; sent only so viewer-aware ranking signals stay warm when the user is signed in)
 - **Query:**
   - `q` (string) — 2..100 chars (server returns empty for shorter; `QueryQualityGate` rejects pure-stopword / low-entropy queries to empty too). **Over 100 chars → `rest_invalid_param` 400** at the REST validation layer (v1.47) — previously undefined behaviour, now rejected before any handler work.
-  - `type` (string, optional) — reputation category slug (e.g. `validator`, `builder`, `creator`). Falls through to category routing in `SearchController`.
+  - `type` (string, optional) — PeepSo page-category slug, one of the `slug` values in the response's `categories`. Site data, not a fixed vocabulary, and **not a page kind** (use `kind`). An unknown slug answers with no results. *(Doc corrected v1.245, F-592: the old example listed page kinds, which match no category.)*
   - `kind` (string, optional, v1.243) — page kind: `validator`, `project` or `creator`, the page kinds of `GET /cards/search`. Keeps only pages of that kind; a page with no stored type is a `project`, so every result links to its kind's card route (`/v/`, `/p/`, `/c/`). Combines with `type`. Anything else → `400` `bcc_invalid_request`.
   - `trending` (string, optional) — when `=1`, ignores `q` / `type` / `kind` and returns top-scored projects regardless of query. An unknown `kind` is still a `400`.
 - **Response 200:**
@@ -4484,12 +4484,12 @@ Direct bcc-search project search and trending mode — the upstream that `cards/
         "verified": true,
         "is_claim_verified": true,
         "followers": 312,
-        "category": "Validator",
-        "category_slug": "validator"
+        "category": "Validators",
+        "category_slug": "validators"
       }
     ],
     "categories": [
-      { "slug": "validator", "name": "Validator" }
+      { "slug": "validators", "name": "Validators" }
     ]
   }
   ```
@@ -9812,7 +9812,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
   - Bonus: `GET /me/onboarding/status` is also registered (read-side flag check; not previously listed in §8).
 - **Directory endpoints (§G1/§G2)** — both fully wired:
   - `GET /cards` — paginated list of Card view-models with `kind`/`tier`/`sort`/`q` filters. Wraps `PageDiscoveryService`; each row hydrated through `CardViewService::getCard()` so the per-item shape is identical to the single-card endpoint. (Historical note: `/bcc/v1/discover` previously shared this service for the legacy bcc-page-slider block; that endpoint was retired 2026-05-15.)
-  - `GET /cards/search` — top-N suggestions for the §G1 nav-bar autocomplete. Internally fans out via `rest_do_request` — pages always, plus the groups + users verticals in All scope (v1.70) — and merges the normalized rows (category_slug → card_kind, route prefix per kind; community/member rows from their verticals) into the `SearchSuggestion` shape per §A2 under the 12-item cap.
+  - `GET /cards/search` — top-N suggestions for the §G1 nav-bar autocomplete. Internally fans out via `rest_do_request` — pages always, plus the groups + users verticals in All scope (v1.70) — and merges the normalized rows (stored page type → card_kind, route prefix per kind; community/member rows from their verticals) into the `SearchSuggestion` shape per §A2 under the 12-item cap.
 - **Notifications endpoints (§I1)** — fully wired:
   - `GET /me/notifications` — cursor-paginated list scoped to `not_module_id = BCC_NOTIFICATION_MODULE_ID` (= 9000). Server-rendered messages + server-built `link` per type per §A2.
   - `GET /me/notifications/unread-count` — drives the bell badge; frontend polls 60s + on window focus.
@@ -9835,6 +9835,15 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.245 — 2026-11-24 — bug fix — `/cards/search` page kinds return that kind's pages; `/search`'s `type` is a category (F-592)
+
+Ships with bcc-trust **#882**, after bcc-search's `kind` (F-589). bcc-trust only.
+
+- **`GET /cards/search` with `kind=validator|project|creator`** now returns the pages of that kind. It sent the kind to `GET /search` as a category (`type`), no category is named after a page kind, and an unknown category answers with nothing, so these scoped lists were always empty. It now sends `kind`.
+- **`card_kind` on page suggestions** (and so `href`) now comes only from the page's stored type, with no stored type read as `project`, the same reading as the card routes. Untyped project pages were dropped; they now appear as `project`. A page whose stored type is not a card kind (e.g. `dao`), or that no longer exists, is still dropped.
+- **`GET /search` `type`, doc corrected:** it is a PeepSo page-category slug (one of the `categories` slugs), not a page kind. To filter by kind, use `kind`.
+- **Unchanged:** the suggestion shape, the All-scope allocation, `incomplete`, and the member and community verticals.
 
 ### v1.244 — 2026-11-24 — display change — holder and delegator communities read "GROUP" (F-100)
 
