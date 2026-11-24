@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.243 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.244 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1274,8 +1274,20 @@ Communities (PeepSo groups: `nft` / `hall` / `system` / `user`) converge onto th
 Locked field rules:
 
 - **Trust placeholders (shape-stable, never rendered as trust):** communities have no trust system. `trust_score: 0`, `reputation_tier: "neutral"`, `reputation_tier_label: null`, `rank_label: null`, `is_in_good_standing: true`, `flags: []`. The community face does not render a trust dial; the values exist only to keep the envelope shape-stable.
-- **`kicker` = server-owned group-type kicker** (§L5 — supersedes the frontend `KICKER_BY_TYPE` map). Until v1.57 this rode on `tier_label`, overloading a trust field to carry a category word; it now has its own field: `nft` → `"HOLDER COMMUNITY"`, `validator` → `"DELEGATOR COMMUNITY"`, `hall` → `"CHAIN HALL"`, `system` → `"SYSTEM COMMUNITY"`, `user` → `"COMMUNITY"`. Unknown kinds fall back to `"COMMUNITY"`.
+- **`kicker` = server-owned group-type kicker** (§L5 — supersedes the frontend `KICKER_BY_TYPE` map). Until v1.57 this rode on `tier_label`, overloading a trust field to carry a category word; it now has its own field: `nft` → `"HOLDER GROUP"`, `validator` → `"DELEGATOR GROUP"`, `hall` → `"CHAIN HALL"`, `system` → `"SYSTEM COMMUNITY"`, `user` → `"COMMUNITY"`. Unknown kinds fall back to `"COMMUNITY"`.
   *(v1.52: `HOLDERS GROUP` → `HOLDER COMMUNITY` and `SYSTEM GROUP` → `SYSTEM COMMUNITY` as part of the Communities vocabulary convergence — display-only, `type` values unchanged; `validator` added the same release.)*
+  *(v1.244: `HOLDER COMMUNITY` → `HOLDER GROUP` and `DELEGATOR COMMUNITY` →
+  `DELEGATOR GROUP`, reversing v1.52 for these TWO kinds only. `CHAIN HALL`,
+  `SYSTEM COMMUNITY` and the `COMMUNITY` fallback are unchanged. Display-only;
+  `kind` and `type` values are untouched.)*
+
+  ⚠⚠ **TWO EMITTERS, DELIBERATELY.** This vocabulary is produced in both
+  bcc-trust (`CardViewService::COMMUNITY_KICKER_BY_TYPE`, the `kicker` above)
+  and bcc-search (`GroupSearchService::KIND_LABEL`, the §4.9 `kind_label`).
+  Both docblocks declare the duplication and point at each other. A change to
+  one is a change to both, and **merge order is not enough** — if one plugin
+  ships without the other, group search and the card face print different
+  words for the same group. They deploy in the SAME release.
 - **Crest band:** the chain-keyed background applies to on-chain-gated kinds with a resolved `chain_tag` — `nft` and, since v1.52, `validator`; every other kind gets the tier band at the fixed `neutral` tier (the §3.2.4 shape-stable placeholder — `common` was the retired rarity slug; doc corrected v1.70).
 - **Identity:** `id` = group id, `handle` = group slug, `bio` = group description (plain-text, ~200-char truncation — same bound as page/member bios; `""` when unset).
 - **Crest (§2.9 grammar):** `initials` from the group name (same server derivation as the other kinds), `image_url` = the group's cover (NFT collection art; `null` → FE monogram fallback). Background: NFT groups WITH a `chain_tag` → `background_kind: "chain"`, `background_value: <chain_tag>`; otherwise `background_kind: "tier"`, `background_value: "neutral"` (doc corrected v1.70 — the emitter always used the reputation placeholder, never the retired rarity slug).
@@ -4552,7 +4564,7 @@ Groups vertical — separate cache + rate-limit bucket. Returns PeepSo group row
   }
   ```
 - **`kind` (v1.70)** ∈ {`hall`, `nft`, `validator`, `system`, `user`} — the §3.2.4 community-kind vocabulary, resolved from `_bcc_group_kind` post-meta (raw values `hall` / `holders` / `delegators` / `system`; absent → `user`).
-- **`kind_label` (v1.70)** — the pre-rendered §A2 display string, exactly the §3.2.4 kicker vocabulary (`CHAIN HALL`, `HOLDER COMMUNITY`, `DELEGATOR COMMUNITY`, `SYSTEM COMMUNITY`, `COMMUNITY`). Frontend renders it verbatim, never maps `kind` → words.
+- **`kind_label` (v1.70)** — the pre-rendered §A2 display string, exactly the §3.2.4 kicker vocabulary (`CHAIN HALL`, `HOLDER GROUP` and `DELEGATOR GROUP` as of v1.244, `SYSTEM COMMUNITY`, `COMMUNITY`). Frontend renders it verbatim, never maps `kind` → words.
 - **`group_url`** is a **relative** Next.js route (rendered verbatim by the frontend; an absolute URL would navigate off the headless app) and — as of v1.70 — **kind-aware**: `hall` → `/halls/{slug}`, every other kind → `/communities/{slug}`, matching `CardUrlMap::groupUrl`'s canonical mapping (v1.68). *(Supersedes v1.68's "not hall-aware" caveat — that release fixed the absolute-URL drift but had no kind projected; now the vertical projects `kind`, halls route to their flavored surface. Non-hall kinds still resolve on the cross-kind `/communities/[slug]` page.)*
 - **Errors (legacy WP shape):**
   - `bcc_rate_limited` (HTTP 429)
@@ -9832,6 +9844,32 @@ Ships with bcc-trust **#882**, after bcc-search's `kind` (F-589). bcc-trust only
 - **`card_kind` on page suggestions** (and so `href`) now comes only from the page's stored type, with no stored type read as `project`, the same reading as the card routes. Untyped project pages were dropped; they now appear as `project`. A page whose stored type is not a card kind (e.g. `dao`), or that no longer exists, is still dropped.
 - **`GET /search` `type`, doc corrected:** it is a PeepSo page-category slug (one of the `categories` slugs), not a page kind. To filter by kind, use `kind`.
 - **Unchanged:** the suggestion shape, the All-scope allocation, `incomplete`, and the member and community verticals.
+
+### v1.244 — 2026-11-24 — display change — holder and delegator communities read "GROUP" (F-100)
+
+Ships with bcc-trust #883 **and** bcc-search #52. ⚠⚠ Both plugins must go out
+in the SAME release — see below.
+
+- **§3.2.4 `card.kicker`** and **§4.9 `kind_label`**: `nft` → **`HOLDER GROUP`**
+  (was `HOLDER COMMUNITY`) and `validator` → **`DELEGATOR GROUP`** (was
+  `DELEGATOR COMMUNITY`).
+- **Unchanged:** `hall` → `CHAIN HALL`, `system` → `SYSTEM COMMUNITY`, `user` →
+  `COMMUNITY`, and the unknown-kind `COMMUNITY` fallback. No field is added or
+  removed, no endpoint changes, and `kind` / `type` values are untouched — this
+  is the pre-rendered display string only.
+- **Reverses v1.52 for these two kinds only.** v1.52 moved the whole vocabulary
+  to "COMMUNITY"; the two on-chain-gated kinds read better as GROUP. Decision:
+  Phillip, 2026-11-24.
+- ⚠⚠ **Two emitters, so merge order is not enough.** bcc-trust emits `kicker`
+  and bcc-search emits `kind_label` from separate, deliberately duplicated maps.
+  Merge order is search → trust → this note, but if one plugin reaches an
+  environment without the other, group search and the card face print DIFFERENT
+  words for the same group.
+- **Clients:** no change required. §L5 already makes the kicker server-owned and
+  supersedes the frontend `KICKER_BY_TYPE` map; the frontend renders the string
+  verbatim and holds no copy of this vocabulary. (One stale example in a
+  `src/lib/api/types.ts` doc comment still cites `"HOLDER COMMUNITY"` — a
+  comment, not behaviour.)
 
 ### v1.243 — 2026-11-24 — additive — `GET /search` filters by page kind (F-589)
 
