@@ -35,6 +35,8 @@ same commit. When a hook is retired (cleared via
 | ~~`bcc_trust_daily_vesting`~~ | — | RETIRED 2026-07-31 | Rank Phase 2 (audit #10): the graduation recompute erased velocity-capped `vested_weight` corrections. Handler deleted; hook moved to `cleanup_only` in cron-hooks.php. Vote-TIME vesting stays live until the Phase 6 weight cutover. |
 | `bcc_trust_process_recalculations` | `bcc_five_minutes` | CronService.php:586 | bcc-trust/bcc-trust.php:326 — `cronService()->processRecalculations()`. |
 | `bcc_trust_feed_hot_warm` | `bcc_one_minute` | CronService.php `scheduleAll()` jobs map | bcc-trust/bcc-trust.php — `cronService()->warmHotFeed()`; rebuilds the anonymous `/feed/hot` first-page payload cache (`FeedRankingService::warmHotFeed`, TTL 300s, key includes the §K1-C hidden-activity generation). Failure is benign: requests fall back to inline build. |
+| `bcc_trust_peepso_upkeep` | `bcc_five_minutes` | CronService.php `ownedJobs()` jobs map (F-581, bcc-trust #868) | bcc-trust/bcc-trust.php — `Integration\PeepSoUpkeep::runScheduled()`; the PeepSo upkeep BCC depends on, run by BCC because PeepSo's own maintenance bundle is not run: hashtags (`hashtags_build_posts(50)` + `hashtags_build_hashtags(20)`, the only writer of `peepso_hashtags`, which the trending-hashtags surface reads), expired `peepso_mayfly` rows (`PeepSo3_Mayfly::clr()`, expired only), and registration-avatar temp files (`PeepSoRegisterAvatarAjax::purge_old()`, PeepSo's 2h TTL). Each step isolated; advisory-locked. ⛔ Never the rest of the bundle (its notification purge would cut BCC's notification history; its group/page post deletes act on posts), and never PeepSo's public maintenance trigger. ⚠ Under WP-CLI, PeepSo registers no autoloader, so the mayfly and avatar steps are skipped there (the hashtag steps still run); an HTTP wp-cron request runs all three. |
+| `bcc_trust_post_reach_dedupe_sweep` | `hourly` | CronService.php `ownedJobs()` jobs map (F-324) | bcc-trust/bcc-trust.php — `PostReachRepository::sweepDedupe()`; post-view dedupe rows: the 48-hour TTL (the retention the user-facing privacy copy promises) plus a row-cap trim. Hourly, not daily, so a missed run cannot break the 48-hour promise. (Row added with F-581: the job predates it but was missing here.) |
 | `bcc_trust_daily_maintenance` | `daily` | CronService.php:587 | bcc-trust read-model sync safety net. |
 | `bcc_trust_weekly_digest` | `bcc_weekly` | CronService.php:588 until an admin saves **BCC System → Email Digest**; from then `DigestScheduler` owns it (weekday + hour in the site timezone; removed from `CronService::ownedJobs()` via `bcc_trust_owned_cron_jobs`, re-added daily at the chosen slot, never at `time()`) | bcc-trust/bcc-trust.php — `digestService()->sendWeeklyDigest('cron')`. Switched **off** on that page ⇒ unscheduled, handler is a no-op, and the hook is dropped from `bcc_expected_cron_hooks` (not reported MISSING). Each run is recorded in option `bcc_digest_runs` (last 8). |
 | `bcc_rank_confirmation_sweep` (`RankScheduler::EVENT_CONFIRMATION_SWEEP`) | `bcc_five_minutes` | [bcc-trust/app/Domain/Rank/Services/RankScheduler.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Rank/Services/RankScheduler.php) (self-heal `boot()` on every request; DisputeScheduler pattern) | `ApprenticeReadinessService::runConfirmationSweep` — Rank Phase 5 R1 24h Apprentice-confirmation resolver (awards at `due_at` iff the six R1 conditions hold). Writes `bcc_rank_confirmation_sweep_last_run`/`_last_success` heartbeat options. |
@@ -86,9 +88,10 @@ deduplication is via WordPress's `(hook, serialized args)` keying.
 single-event paths surface as `cron_dispatch` DegradationMetric events
 (canonical registry in [bcc-core/bcc-core.php](../app/public/wp-content/plugins/bcc-core/bcc-core.php),
 documented in [pattern-registry.md §observability](pattern-registry.md)).
-The instrumented sites are `EndorsementFraudAnalyzer::schedule` (event
-`endorsement_fraud_analyzer`) and `VoteJobDispatcher::enqueue` wp-cron
-fallback (event `vote_job_dispatcher`). Recoverable surfaces with a
+The instrumented site is the `VoteJobDispatcher::enqueue` wp-cron
+fallback (event `vote_job_dispatcher`). The `endorsement_fraud_analyzer`
+event went with `EndorsementFraudAnalyzer` (retired from the map
+2026-11-24, simontx1983/bcc-core#187). Recoverable surfaces with a
 reconciliation sweep (e.g. `bcc_disputes_reconcile`) intentionally
 stay out of the subsystem — see pattern-registry for the policy.
 

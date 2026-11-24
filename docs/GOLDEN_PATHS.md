@@ -820,14 +820,14 @@ foreach (($dm["degradation_metrics"]["subsystems"] ?? []) as $name => $events) {
 
 - `throttle`
 - `null_trust_read` + 9 other `null_*` NullService activations
-- `peepso_absence` (21 events)
+- `peepso_absence` (23 events — the newest two are F-542, 2026-11-24, bcc-core `OrphanedPostRepair`: `orphan_repair_unconfirmed` (a post the hijack guard destroyed, whose removal could not be CONFIRMED because the read that would confirm it is the read that had already failed, so a pinned best-effort trash ran and a bounded retry was queued) and `orphan_repair_abandoned` (that retry gave up with the post still unconfirmed). ⚠ Neither event means "the post is still there" — only that nobody could prove it is gone, so both need the §12.3 check rather than a count alone; expected steady state zero)
 - `search_lkg` (2 events)
 - `search_ft_index` (1 event — FT-eligible query served by title-prefix fallback because the FULLTEXT index is missing; added 2026-07-19)
 - `search_trust` (1 event — `enrichment_unavailable`; a search or trending result served WITHOUT trust enrichment: text-only ranking, no impersonation guard; tagged `system_degraded`, cached 10 s, never as LKG; added 2026-11-11, F-24)
 - `read_model_fallback` (1 event)
 - `audit_log_swallow` (4 events)
 - `account_security_mail` (7 events — Tier D `sessions_revoked_all_send_failed` added 2026-05-16; `password_reset_requested_send_failed` added 2026-05-30)
-- `cron_dispatch` (2 events — soft wp_schedule_single_event / AsyncDispatcher enqueue failures on the unrecoverable trust async surface)
+- `cron_dispatch` (1 event — `vote_job_dispatcher`, a soft wp_schedule_single_event / AsyncDispatcher enqueue failure of the post-vote job on the unrecoverable trust async surface; `endorsement_fraud_analyzer` retired 2026-11-24 (simontx1983/bcc-core#187): its only writer, the endorsement fraud-analysis enqueue, was removed with the Endorse→Attestation cutover, so the counter could never move)
 - `post_commit_task` (1 event — `vote_subtask_failed`; a post-commit trust step threw during execution and was swallowed; NOT a wp_options signal. `dispute_backfill_failed` retired with the §D5 backfill, Rank Phase 6)
 - `helius_dedup` (3 events — `replay_skipped` (webhook replay-protection activations; sustained = double-send or replay attempt), `ingest_failed_unmarked` (ingest threw, signatures unmarked so Helius can redeliver — recovered), `unmark_failed` (ingest threw and unmark incomplete — batch lost, resend refused, P1 manual replay))
 - `gated_group_provision` (3 events — `bcc_gated_group_provision` cron sweep failure modes; sustained = retry path not catching up)
@@ -838,8 +838,16 @@ foreach (($dm["degradation_metrics"]["subsystems"] ?? []) as $name => $events) {
 - `rank_scoring` (4 events — `tier_snapshot_failed` (the daily per-user tier-day snapshot sweep threw; the §13.1 trust-window history develops gaps — fail-safe strict, a gap can only delay a promotion, never grant one, but sustained activation means promotions will resolve conservatively) + `login_write_failed` (a RankLoginListener login-day write threw; that member's login day may be missing from the time-credit / inactivity clocks) + `evidence_ingest_failed` (a Phase 4 rank_events ledger subscriber threw; that evidence event is missing from the member's ledger — fail-safe strict, but sustained activation means the ledger is silently under-recording) + `poll_close_failed` (the hourly Phase 6 meaningful-vote poll-close sweep threw; due polls stop closing, so disputes stall open in `reviewing` — fail-safe strict, no outcome is ever applied early, recovers when the sweep next succeeds); Rank redesign Phases 1+4+6, 2026-08-04)
 - `collection_persist` (3 events — `write_failed` (a `CollectionPersistBatch::persist()` batch lost at least one collection row; partial loss, and the failed row keeps its old `expires_at` so the chain-refresh cron re-selects it — sustained activation means the retry is not catching up) + `batch_total_failure` (`failed === total` with `total > 0`: the wallet made no progress at all, which usually means the table or the connection rather than the data) + `watermark_withheld` (⚠⚠ **declared in the map but NOT WIRED** — it was specified as the gallery refresh declining to advance `markHoldingsRefreshed()` after a failed batch, and no such path exists; the only withholding is `HoldingsService:1039` on an incomplete provider walk, a holdings-read concern that never sees a persist batch, so a zero for this event is vacuous until it has a writer); two call sites — `WalletSeedService:140` and `ChainRefreshService:1112` — not the three bcc-trust #221 names; bcc-core #61 + bcc-trust #221, 2026-11-10)
 - `moderation_hidden_ids` (5 events — `exists_read_failed` (a single-row hidden check errored and was answered "hidden", failing closed) + `list_read_failed` (the full hidden-id list read errored; never cached) + `served_last_good` (the persisted last-known-good list was served instead; the paired error log carries `last_good_age_seconds`) + `no_last_good` (a failed read with no last-good list: the request fails rather than show hidden posts) + `ceiling_reached` (more than the 50,000-row read ceiling, so the OLDEST hidden posts beyond it are not excluded); bcc-trust `HiddenActivityRepository`, F-98/F-77, 2026-11-10; expected steady state zero, not yet baked)
+- `caution_list` (5 events — `list_read_failed` (the caution/risky shadow-limit list read errored; never answered as []) + `served_last_good` (the persisted last-known-good list, within its 24 h bound, was served) + `last_good_expired` (a failed read whose last-good list is past the bound, so the request answers 503) + `no_last_good` (a failed read with no last-good list, so the request answers 503 and the anonymous hot feed writes no cache) + `ceiling_reached` (more caution/risky members than the reader's row ceiling, so the list as read may be missing some of them); bcc-trust F-454, every per-viewer feed, the permalink, the hot feed and suggestions exclude this list; expected steady state zero; added 2026-11-19)
+- `caution_list_risky_ceiling` (1 event — `risky_fills_ceiling` (the caution/risky list is read risky first, and the risky members alone fill the reader's ceiling); P1 through bcc-trust's `bcc_degradation_p1_subsystems` filter, while `caution_list` is P2; bcc-trust F-454; expected steady state zero; added 2026-11-23)
 - `auth_throttle` (4 events — `wallet_login_ceiling` + `oauth_login_ceiling` (the 300/min route-wide ceiling on `/auth/wallet-login` or `/auth/oauth` tripped, so every identity on that route is refused for the rest of the minute: a flood, or the ceiling set too low for real traffic); bcc-trust `AuthSupport::allowIdentityAttempt()`, F-123/F-131, 2026-11-11 · `login_failure_spike` (a failed sign-in while more than 50 have failed site-wide in 5 min, which turns the `POST /auth/login` captcha step-up on for everyone; counted per failure, so a real wave crosses `DegradationAlerter`'s threshold) + `turnstile_unavailable` (Cloudflare Turnstile siteverify unreachable, non-200, malformed, or rejecting the secret, so the step-up failed open to the login limits); bcc-trust `LoginStepUp` / `TurnstileVerifier`, 2026-11-17; expected steady state zero for all four, any activation is worth a look)
 - `password_breach_check` (1 event — `unavailable` (the Pwned Passwords range lookup failed: a transport error, non-200, empty body or exception, so the password was accepted unchecked; the check fails open by design, and the event is counted per password set); bcc-trust `BreachedPasswordCheck` (sign-up, reset and password change), #712, 2026-11-18; expected steady state zero, sustained counts mean breached passwords are getting through)
+- `meta_cache` (2 events — `post_meta_read` (a post-meta cache read could not be trusted) and `user_meta_read` (the same for user meta); bcc-core `MetaCacheGuard`, F-459, 2026-11-19; a post- or user-meta read is verified through `ProbesReads` before its result is cached, and a read that cannot be trusted caches nothing, so the next request reads again rather than being served a remembered answer — no behaviour change on a healthy database; ⚠ containment only — the failing request still reads the meta as absent, and F-460 / F-461 close the residual by teaching gates to refuse; expected steady state zero)
+- `page_privacy` (1 event — `member_list_over_cap` (a member's Reviews or Disputes list, read by anyone else, covers more than `PageAccess::HIDDEN_LIST_CAP` secret pages, so it was refused with 503 rather than checked page by page); bcc-trust `PageAccess::refuseOverCap()`, F-528, 2026-11-23; ⚠ persistent for that member while they stay over the cap, so any count means real tabs cannot be read, and the paired error log names the member; expected steady state zero)
+- `auth_token` (1 event — `revoke_write_failed` (a token revocation write did not land: the revoke-all version bump on a password or email change, sign out everywhere or a suspension, a sign-out's denylist entry, or a refresh's retired-list entry; the caller answers 503 or logs it and claims nothing); bcc-trust `JwtToken`, the F-495 follow-up, 2026-11-23; expected steady state zero, any activation is worth a look)
+- `validator_relationships` (13 events — bcc-trust's validator owner and team relationship writers: `unknown_verification_method`, `log_lock_unavailable`, `claim_lock_unavailable`, `log_append_failed`, `followup_failed`, `page_owner_locked`, `page_owner_unknown`, `page_owner_misaligned`, `align_backlog_full`, `deletion_revoke_failed`, `log_chain_broken` (the daily log verification found a break; every administrator is emailed; any occurrence is an incident), `log_verify_incomplete`, `log_anchor_missing`; expected steady state zero, bake before alerting the rest; added 2026-11-24)
+- `validator_index` (1 event — `solana_shared_identity` (a Solana identity named more than one vote account in `getVoteAccounts`, so its row keeps no `vote_account` and it can't be self-claimed until that resolves; counted once per identity per run); bcc-trust `SolanaFetcher`, F-550, 2026-11-23; expected rare)
+- `cosmos_tx_proof` (3 events — `endpoint_disagreement` (the two proof operators returned different bytes, height, result code or block time for one transaction hash), `network_mismatch` (a proof node or a block header it served named a network other than the pinned one) and `contact_disagreement` (the operators returned different `security_contact` values, so no warning email is sent); bcc-trust `CosmosTxInclusionFetcher`, the validator memo claim's inclusion check. Each leaves the claim "not yet" or the email unsent; expected steady state zero)
 
 **Failure means:** A registered subsystem dropped out of the canonical map in `bcc-core/bcc-core.php`. New subsystems wired into `DegradationMetrics::record()` MUST register here — the map is the only place future agents discover which events are even possible.
 
@@ -852,6 +860,47 @@ curl -s "http://blue-collar-crypto-custom.local/wp-json/bcc/v1/system/health" | 
 **Expected:** Envelope-wrapped JSON `{data: {...}, _meta: {...}}`.
 
 **Failure means:** Either `/bcc/v1` namespace is broken (Envelope wrapper not loaded) or the health endpoint itself was removed.
+
+---
+
+### 12.3 Orphaned-post repair — unconfirmed lines must be chased by hand
+
+`orphan_repair_unconfirmed` and `orphan_repair_abandoned` count something no
+other subsystem does: a post the platform tried to remove and **could not
+prove it removed**. `AsyncDispatcher::scheduleSingle()` returns `void`, so a
+retry that was never queued leaves NO trace in the queue. The file log is the
+only durable record, which is why `OrphanedPostRepair` writes it **before** it
+touches the database or the scheduler.
+
+```bash
+# PROD logs live under domains/<site>/bcc-logs; STAGING under public_html/bcc-logs.
+# The filename carries a per-site secret, so glob it — never print or paste it.
+grep -h 'orphaned post repair' bcc-logs/bcc-*.log bcc-logs/bcc-*.log.*.old 2>/dev/null \
+  | grep -oE '"post_id":[0-9]+' | sort -u
+```
+
+**Expected:** no output.
+
+**Failure means:** each `post_id` printed is a **lead, not a verdict**. Check
+that post's current status and act on it:
+
+| current status | what it means | action |
+|---|---|---|
+| no such post | the repair, or the original destroy, worked after all | none |
+| `trash` | the repair worked on a later attempt | none |
+| anything else | ⛔ a live orphan — a post the guard refused to serve, still published | trash it by hand, then find out why five attempts could not |
+
+⚠⚠ **Do NOT read "no `orphan_repair_abandoned`" as "resolved."** A retry chain
+can stop without ever abandoning: if the *reschedule* fails, the chain simply
+ends with an `unconfirmed` line and no `abandoned` one. That is precisely the
+case this check exists to catch, and checking the posts is the only way to see
+it.
+
+⚠ A repair chain runs for at most `MAX_ATTEMPTS × RETRY_DELAY` ≈ **25 minutes**
+from the first unconfirmed outcome. An administrator who deliberately restores
+one of these posts inside that window should expect it to be re-trashed by a
+pending attempt; restore it after the window, or confirm the chain has ended
+first.
 
 ---
 

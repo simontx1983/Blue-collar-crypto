@@ -5,12 +5,25 @@ Three hosts. They are not interchangeable.
 | Host | Serves | Runs on |
 |---|---|---|
 | `bluecollarcrypto.io` (apex) | Public site | **Vercel** — not Hostinger |
-| `cms.bluecollarcrypto.io` | WordPress core, `wp-admin`, REST (`bcc/v1`, `bcc-trust/v1`, `peepso/v1`, `wp/v2`) | Hostinger |
+| `cms.bluecollarcrypto.io` | WordPress core, `wp-admin`, REST (`bcc/v1`, `bcc-trust/v1`; `peepso/v1`, `wp/v2` and the rest for admins only) | Hostinger |
 | `stage.bluecollarcrypto.io` | Staging WordPress (core + frontend) | Hostinger |
 
 Verified against the live hosts: the apex returns **403** on `/wp-json/` and
-**200** on pages; `cms.` returns **200** on `/wp-json/`. If you ever see the
-apex answer a REST call, something is misrouted.
+**200** on pages; `cms.` returns **200** on `/wp-json/bcc/v1/ranks`. If you
+ever see the apex answer a REST call, something is misrouted.
+
+To check `cms.`, probe a BCC route such as `/wp-json/bcc/v1/ranks`, never the
+REST index. Only BCC's namespaces answer a caller who is not an admin, so
+`/wp-json/` itself is **401** to a signed-out caller (bcc-trust
+`RestRouteAllowlist`).
+
+**Before enabling a service that calls back into `cms.` signed out:**
+enabling any third-party service that calls back into cms `/wp-json/` while
+signed out requires an `EXEMPT_ROUTES` PR in bcc-trust **first**. That covers
+Wordfence Central, QUIC.cloud image/CSS/CDN callbacks over GET, Rank Math
+headless `getHead`, WP Mail SMTP provider webhooks and Hostinger callbacks.
+Since bcc-trust #761, every signed-out non-BCC `/wp-json/` request answers
+**401**, so such a callback fails until its exact `"METHOD /route"` is exempted.
 
 ## Production is deliberately asymmetric
 
@@ -159,3 +172,27 @@ Vercel cron relay already uses. Exists on **both** production and staging.
 - Caching is refused twice — `Cache-Control: no-store` *and* the LiteSpeed
   exclusion, because LSCWP caches REST on this site and a cached identity
   response would report healthy long after the rows changed.
+
+## Repair: one member's requests all answer 503 `bcc_unavailable`
+
+bcc-trust reads a member's token state (the user-meta keys
+`bcc_token_version`, `bcc_jwt_denylist` and `bcc_jwt_retired`) in one bounded
+query of 30 rows. If a member ever has 30 or more rows across those keys, the
+read counts as unknown, every bearer request of theirs answers 503, and each
+read logs `token state read failed`. It does not heal by itself. On the host:
+
+1. List the rows: `wp user meta list <id> --keys=bcc_token_version,bcc_jwt_denylist,bcc_jwt_retired --fields=umeta_id,meta_key,meta_value`.
+2. **Note the HIGHEST `bcc_token_version` value across ALL its rows**, before
+   deleting anything. bcc-trust reads the version as the maximum over the
+   rows (and each list as the union of its rows), so deleting a row can
+   LOWER the live version, and an old token would work again.
+3. Delete the duplicate rows, so each key has one row left:
+   `wp db query "DELETE FROM <prefix>usermeta WHERE umeta_id IN (…)"`.
+4. Set `bcc_token_version` to **that highest value + 1**:
+   `wp user meta update <id> bcc_token_version <highest + 1>`. This revokes
+   every token the member holds, so dropping duplicate denylist or retired
+   rows in step 3 loses nothing. Never use the value left after step 3: it
+   may be lower, and "+ 1" on it could reuse a version a token already
+   carries.
+
+The same note sits on `TokenStateRepository::MAX_ROWS` (F-508).

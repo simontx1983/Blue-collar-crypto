@@ -68,15 +68,23 @@ session leaks in.
   Sign in / Sign up buttons (no bell, no user menu).
 - [ ] **1.2** Click any card on the Floor → entity profile loads at
   `/v/<slug>` or `/c/<slug>`. Card hero renders with stats + bio.
-- [ ] **1.3** On a validator profile, the **Wanted poster + Claim
-  CTA** renders when the page is unclaimed. The CTA is disabled with
-  a "Sign in to claim" tooltip.
-- [ ] **1.4** **VOUCH + STAND BEHIND buttons visible-but-disabled**
-  (the `AttestationActionCluster`) with a "Sign in to …" tooltip on
-  hover. (A legacy ENDORSE button may still render alongside during the
-  §J.11 cutover — also disabled anon; it is not the canonical path.)
-- [ ] **1.5** **WRITE A REVIEW button visible-but-disabled** with
-  sign-in tooltip.
+- [ ] **1.3** On an unclaimed validator profile, the **claim callout**
+  renders: the neutral "UNCLAIMED · IS THIS YOURS?" ribbon (never
+  "WANTED") and, signed out, a **SIGN IN TO CLAIM →** link to
+  `/login?callbackUrl=<this page>`, so sign-in returns to the page, plus
+  a "Create a free account" link. On a chain that can't be claimed, the
+  callout states the reason instead of offering a CTA.
+- [ ] **1.4** On a **claimed** validator (or a project / creator page):
+  **VOUCH + STAND BEHIND buttons visible-but-disabled** (the
+  `AttestationActionCluster`), each with its reason as a **visible line
+  under the button** (the server's unlock hint), not a hover tooltip.
+  On a **never-claimed** validator the cluster is not offered at all;
+  Watch and the Message CTA stay. (A legacy ENDORSE button may still
+  render alongside during the §J.11 cutover — also disabled anon, with
+  the same visible "Sign in …" line; it is not the canonical path.)
+- [ ] **1.5** **WRITE A REVIEW button visible-but-disabled**, with a
+  visible "**Sign in** to write a review." line under it ("Sign in" is
+  a link), not only a tooltip (F-321: a tooltip never shows on touch).
 - [ ] **1.6** **GlobalSearch** in the header opens a dropdown when you
   type 2+ chars; results link to `/v/<slug>` etc. Dropdown closes on
   Esc + outside click.
@@ -106,7 +114,9 @@ Brand-new account through the §B6 + §O1 onboarding wizard.
   "3-20 chars" error; `simon!` (bad chars) shows the format error;
   `admin` (reserved) shows "reserved"; a known-taken handle shows
   "already taken".
-- [ ] **2.3** Submit a valid form → routes to `/verify-email?email=...`.
+- [ ] **2.3** Submit a valid form → routes to a **bare** `/verify-email`
+  (no `?email=` — F-410; the address is held client-side for this tab, so the
+  screen still names it).
   A 6-digit code (or verification link) lands in the account's inbox —
   locally, pull it from Mailpit. Code is valid for 15 minutes; the
   account doesn't work until verified.
