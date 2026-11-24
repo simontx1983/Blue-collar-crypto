@@ -494,10 +494,13 @@ validator relationship change (link, revoke or cancel an owner; add or
 remove a team member). Each row is bound to (user_id, action, page_id,
 target_user_id, role); the consume matches EVERY binding column, inside the
 change's transaction, only while unused, unexpired and under the attempt
-cap. The emailed code is stored only as HMAC-SHA256 under an HKDF-derived
-key, bound to the id (NULL for password-only actions); attempts are counted
-atomically BEFORE a code is compared. Times are UTC computed in PHP. A daily
-cron purges expired rows in bounded batches.
+cap, and, for a step-up that carries a code, only once the right code was
+recorded (code_verified_at). The emailed code is stored only as HMAC-SHA256
+under an HKDF-derived key, bound to the id (NULL for password-only actions);
+attempts are counted atomically BEFORE a code is compared. A resend clears
+the code verification and never extends a step-up past created_at + 30
+minutes. Times are UTC computed in PHP. A daily cron
+(`bcc_validator_step_up_purge`) purges expired rows in bounded batches.
 - id · char(32) · NO · PK — an opaque 128-bit token (the client's step_up_id)
 - user_id · bigint unsigned · NO · K
 - action · varchar(32) · NO
@@ -511,6 +514,7 @@ cron purges expired rows in bounded batches.
 - expires_at · datetime · NO · K
 - resend_after · datetime · YES
 - used_at · datetime · YES
+- code_verified_at · datetime · YES — set only when the right code was entered
 - Indexes: PRIMARY (id) [uq]; idx_user_created (user_id,created_at); idx_expires (expires_at)
 
 #### wp_bcc_trust_findings
