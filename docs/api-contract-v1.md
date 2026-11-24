@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.242 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.243 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -4455,7 +4455,8 @@ Direct bcc-search project search and trending mode — the upstream that `cards/
 - **Query:**
   - `q` (string) — 2..100 chars (server returns empty for shorter; `QueryQualityGate` rejects pure-stopword / low-entropy queries to empty too). **Over 100 chars → `rest_invalid_param` 400** at the REST validation layer (v1.47) — previously undefined behaviour, now rejected before any handler work.
   - `type` (string, optional) — reputation category slug (e.g. `validator`, `builder`, `creator`). Falls through to category routing in `SearchController`.
-  - `trending` (string, optional) — when `=1`, ignores `q` / `type` and returns top-scored projects regardless of query.
+  - `kind` (string, optional, v1.243) — page kind: `validator`, `project` or `creator`, the page kinds of `GET /cards/search`. Keeps only pages of that kind; a page with no stored type is a `project`, so every result links to its kind's card route (`/v/`, `/p/`, `/c/`). Combines with `type`. Anything else → `400` `bcc_invalid_request`.
+  - `trending` (string, optional) — when `=1`, ignores `q` / `type` / `kind` and returns top-scored projects regardless of query. An unknown `kind` is still a `400`.
 - **Response 200:**
   ```json
   {
@@ -4488,6 +4489,7 @@ Direct bcc-search project search and trending mode — the upstream that `cards/
   - `bcc_upstream_unavailable` (HTTP 503; `Retry-After: 5`) — covers category fetch failure, FULLTEXT rebuild in progress ("Trending is warming up" in trending mode), and enrichment-pipeline degradation *(supersedes the fictional `categories_unavailable` / `rebuild_in_progress` / `score_enrichment_failed` codes)*
   - `bcc_internal` (HTTP 503) — internal rate-limit ceiling / unexpected failure *(supersedes `temporarily_overloaded`)*
   - `rest_invalid_param` (HTTP 400) — WP arg validation (`q` over 100 chars)
+  - `bcc_invalid_request` (HTTP 400) — `kind` is not `validator`, `project` or `creator` *(v1.243)*
 - **Cache:** server-side `60s` (per-query results) + LKG mirror for 503 fallback. Trending mode: `300s` (5 min) + LKG.
 - **Envelope note (doc corrected 2026-08-05 — the wire has been enveloped since 2026-05):** although bcc-search's handlers *emit* raw `{ results, categories }` (or `{ results, meta }` in trending mode), bcc-trust's §1.4 Envelope wraps every `/bcc/v1/*` response — so the wire carries `{ data: { results, … }, _meta }` on success and `{ error: { code, message, status } }` on failure. The shapes documented above are the **inner payload**. The bcc-frontend client (`bccSearchFetchAsClient`) is shape-tolerant: it unwraps the envelope when present and still maps a raw legacy body, so `err.code` branching per Phase γ stays uniform either way.
 
@@ -9821,6 +9823,16 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.243 — 2026-11-24 — additive — `GET /search` filters by page kind (F-589)
+
+Ships with **bcc-search #53**. bcc-search only.
+
+- **`kind`** (optional) on `GET /bcc/v1/search`: `validator`, `project` or `creator`, the page kinds `GET /cards/search` uses. It keeps the pages of that kind, within the same published, non-secret set. It is for the Explore search's Validators / Projects / Creators tabs.
+- A page with no stored type counts as a `project`, as it already did for its `/p/` link. So every result under a kind links to that kind's card route (`/v/`, `/p/`, `/c/`).
+- `kind` combines with `type` (both apply).
+- **An unknown `kind` is a `400` `bcc_invalid_request`**, as on `GET /cards/search`. That includes `member` and `community`, which are not pages. It is a `400` in trending mode too; otherwise trending ignores `kind`, as it ignores `q` and `type`.
+- **Unchanged:** the response shape, the result cap, and every request without `kind`.
 
 ### v1.242 — 2026-11-24 — behaviour change (privacy) — the member profile and member cards count reviews and disputes as their viewer may see them (F-571)
 
