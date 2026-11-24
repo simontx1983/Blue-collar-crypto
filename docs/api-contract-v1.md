@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.227 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.228 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2698,7 +2698,7 @@ Full User view-model.
   `live_shift` (recent-activity events for the hero panel), `tabs`
   (counts strip). `reviews` and `disputes` ship as empty arrays in
   V1; lazy-load list endpoints for those tabs land in V1.5.
-- **`indexable`** *(v1.NEXT, F-518)*: `true` when a search engine may index this profile page, by the same rule `GET /bcc/v1/sitemap/members` lists members with (§4.33), so a profile is in the sitemap exactly when its page is indexable. It is the anonymous answer whoever asks, the owner included, and `false` whenever a read behind it fails. Clients set the page's robots tag from it and never derive it from `flags`, `profile_visibility` or the handle.
+- **`indexable`** *(v1.228, F-518)*: `true` when a search engine may index this profile page, by the same rule `GET /bcc/v1/sitemap/members` lists members with (§4.33), so a profile is in the sitemap exactly when its page is indexable. It is the anonymous answer whoever asks, the owner included, and `false` whenever a read behind it fails. Clients set the page's robots tag from it and never derive it from `flags`, `profile_visibility` or the handle.
 
   `tabs` entries are `{key, label, count, hidden}`. **v1.49 split:**
   key `reviews` counts reviews RECEIVED (`counts.reviews_received` —
@@ -2786,7 +2786,7 @@ Paginated directory of human members. Sibling to §4.9 `/cards` (entity-card dir
   this contract sets it no maximum.
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - **Pagination envelope:** offset (`OffsetPagination` per §1.5) — `total_pages` is the canonical field; clients derive "has more" as `page < total_pages`.
-- **Mapping:** `PeepSoUserSearch`, PeepSo's privacy-aware user search, ordered by `user_registered DESC` *(corrected in v1.NEXT: this said `WP_User_Query`, which the route no longer uses)*. The privacy rules apply inside the query: profile visibility for this viewer, banned and unvalidated accounts left out, blocks in either direction, `hide_from_search` and suspension (F-182). Admins are exempt. Without PeepSo the list is empty (fail closed). Each row is composed via `CardViewService::getMemberCardForList` (one call per user). `UsersEndpoint::members` prefetches eleven batched maps — followers count, primary-Hall resolution, owned-page count, owned-page typed counts, endorsements received, solids received, reviews written, disputes signed, verified-wallet count, X connections, GitHub connections — via `MemberSummaryPrefetcher::primeFor` before the per-row loop; the card builder delegates the dossier resolution to `UserViewService::getSummary($userId, $viewerId, $prefetched)` so the total query budget stays bounded regardless of `per_page` (no parallel dossier query — same resolution as before, now wrapped in the Card shape). `reputation_tier` is the tier slug (all five bands). `reputation_tier_label` is the pre-rendered §A2 display string. Frontends should encode the tier as a color/border treatment on the rank chip rather than rendering the label as a duplicate word next to `rank_label`.
+- **Mapping:** `PeepSoUserSearch`, PeepSo's privacy-aware user search, ordered by `user_registered DESC` *(corrected in v1.228: this said `WP_User_Query`, which the route no longer uses)*. The privacy rules apply inside the query: profile visibility for this viewer, banned and unvalidated accounts left out, blocks in either direction, `hide_from_search` and suspension (F-182). Admins are exempt. Without PeepSo the list is empty (fail closed). Each row is composed via `CardViewService::getMemberCardForList` (one call per user). `UsersEndpoint::members` prefetches eleven batched maps — followers count, primary-Hall resolution, owned-page count, owned-page typed counts, endorsements received, solids received, reviews written, disputes signed, verified-wallet count, X connections, GitHub connections — via `MemberSummaryPrefetcher::primeFor` before the per-row loop; the card builder delegates the dossier resolution to `UserViewService::getSummary($userId, $viewerId, $prefetched)` so the total query budget stays bounded regardless of `per_page` (no parallel dossier query — same resolution as before, now wrapped in the Card shape). `reputation_tier` is the tier slug (all five bands). `reputation_tier_label` is the pre-rendered §A2 display string. Frontends should encode the tier as a color/border treatment on the rank chip rather than rendering the label as a duplicate word next to `rank_label`.
 - **Field rules** (the `member_dossier` sub-blocks; the rest follow the §3.2 Card rules):
     - `trust_score` ∈ [0, 100] — the reputation base, clamped at the boundary (v1.60: the §D5 read-time panel-participation bonus retired with the panel; `trust_score` no longer carries any augmentation). Clients render as a stencil number, never derive. (Top-level card field per §3.2.)
     - `stats[].watchers` (the member-card third stat per §3.2.2) is the passive side of `peepso_user_followers` (people who follow this user), sourced from `UserViewService::getSummary`'s `followers_count`. The full `/users/:handle` response carries both `followers` and `following`; the directory ships the followers count only — `following` isn't a meaningful directory signal and the second SQL isn't worth the cost.
@@ -9458,7 +9458,7 @@ enforce it: `PATCH` and pin answer `409 bcc_announcement_moderation_hidden` befo
 Unpin and archive stay allowed. Before v1.160 the notice listed with no indicator and both
 writes were accepted.
 
-### 4.33 Public index (sitemap) — v1.NEXT
+### 4.33 Public index (sitemap) — v1.228
 
 The app's `/sitemap.xml` is built from these three routes (F-518). Each lists what a signed-out visitor may open, as paths the app serves. WordPress's own sitemaps are off, so this is the only sitemap.
 
@@ -9790,7 +9790,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-23 — additive — the public index for the app sitemap, and `indexable` on profiles (F-518)
+### v1.228 — 2026-11-23 — additive — the public index for the app sitemap, and `indexable` on profiles (F-518)
 
 Ships with bcc-trust **#838**. ⛔ It needs bcc-core **#171** (merged) deployed first.
 
