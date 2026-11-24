@@ -402,6 +402,9 @@ The single most important shared type. Encodes §N7 (always visible, disabled wi
     "can_post_as_entity":   { "allowed": false, "unlock_hint": null },
     "can_edit_bio":         { "allowed": false, "unlock_hint": null },
     "can_edit_image":       { "allowed": false, "unlock_hint": null, "reason_code": "not_claimer" },
+    "can_manage_team":        { "allowed": false, "unlock_hint": null, "reason_code": "not_claimer" },
+    "can_edit_links":         { "allowed": false, "unlock_hint": null, "reason_code": "not_claimer" },
+    "can_edit_notifications": { "allowed": false, "unlock_hint": null, "reason_code": "not_claimer" },
     "can_open_dispute":     { "allowed": false, "unlock_hint": null, "reason_code": "not_page_owner" },
     "can_message":          { "allowed": false, "unlock_hint": "This member only accepts messages from friends.", "reason_code": "friends_only" }
   }
@@ -1149,6 +1152,8 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
   "flags": [],
   "is_claimed": true,
   "is_claim_verified": true,
+  "owner_verification": { "kind": "wallet", "label": "Wallet Verified", "description": "Cryptographic proof" },
+  "viewer_page_role": null,
   "claim_target": null,
   "messaging": { "destination": "operator", "operator": { "handle": "cosmosops", "name": "Cosmos Ops" } },
   "viewer_has_reviewed": false,
@@ -1173,6 +1178,9 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
 - `operator_profile` is always present. It is non-null only on a validator page with exactly one verified operator and a saved profile; other card kinds, unclaimed/ambiguous validator pages, and operators without saved profile data return `null`. Shape: `{ brand_name, bio, website_url, socials: { x, discord, telegram }, logo_url }`. Values include the page override, if any. The crest uses the shared logo after a page-specific uploaded avatar and before the chain-imported validator logo.
 - `card_kind` ∈ {`validator`, `project`, `creator`, `member`, `community`}. `community` cards (v1.27) are emitted ONLY as the additive `card` field on the §4.7.4 discovery items and the §4.7.5 group detail response — `GET /cards/:type/:id` and `GET /cards` do NOT accept `community` (route enum unchanged); see §3.2.4 for the kind's rules.
 - `is_claimed` is meaningful for `validator` / `project` / `creator`. For `member`, `is_claimed: true` always (members are their own pages).
+- `owner_verification` (v1.NEXT; always present) — how the page's owner proved it, as a public badge: `{ kind, label, description }` or `null` (no badge). `kind` is `wallet` (a wallet signature, a Solana sign-in, or a self-send from the operator account), `node_key` (the validator's identity key) or `staff` (approved by BCC staff); `label` / `description` are server copy rendered **verbatim** ("Wallet Verified" / "Node Key Verified" / "Verified by BCC"; "Cryptographic proof" / "Staff verification"), and a missing label means no badge. When the owner holds several claims on the page, the strongest proof is shown. **Never** carries the underlying method or any date: no time of verification is shown to other users. Non-null only on a `validator` card with exactly one verified operator and a known method; `null` on unclaimed or ambiguous pages, other page kinds, and `member` / `community` cards.
+- `viewer_page_role` (v1.NEXT; always present) — the viewer's role on this page: `"owner"` (they hold its verified owner claim), `"administrator"` or `"representative"` (an ACTIVE team row; a pending invite holds no role), or `null` (anonymous, no role, or `member` / `community` cards). A display flag only: every write re-checks the role server-side.
+- **Owner-control permissions (v1.NEXT; page cards only):** `can_manage_team` (the page's Team entry), `can_edit_links` and `can_edit_notifications` join the §2.1 block, and **`can_edit_bio` now covers the page's profile text — name, bio and banner** (the avatar stays `can_edit_image`). Each is `allowed: true` for the page's owner and `{ allowed: false, unlock_hint: null, reason_code: "not_claimer" }` for everyone else, **anonymous included**: signing in would not unlock them, so a signed-out viewer gets the hidden shape, not "Sign in to interact" (`can_edit_bio`'s anonymous shape changes accordingly; no client read it). When team members exist, the page role policy decides them, and a temporarily locked control arrives as `allowed: false` with a server `unlock_hint` (shown, explained) rather than hidden. Controls that already have their own flag (announcements' capabilities, `page_stream.can_post`, review `permissions.can_reply`, `can_edit_image`, the delegator group's flags) stay the single authority for their control. `member` and `community` cards do not carry the three new keys.
 - `is_claim_verified` (verified-wins slice, 2026-06-30) — `true` when the page has a **verified on-chain operator/creator claim** (`onchain_claims.status='verified' AND claim_role IN ('operator','creator')`), i.e. the real entity proved key control. Distinct from `is_claimed` (ANY claim exists) and from `is_verified`/the member email flag. Drives the "✓ Verified Operator" badge + the dominant search-ranking bonus + same-name look-alike demotion. `false` on `member`/`community` cards (not on-chain-claimed). Projected from the read model (`has_verified_claim`), refreshed whenever a claim verify/revoke re-syncs the page.
 - `claim_target` (per §N8) — non-null only when the page is unclaimed AND a claim target resolves. Drives the four-step claim modal.
   - **v1.221 (F-515), additive:** `claim_target` is `{ entity_type, entity_id, chain_slug, claimable, unclaimable_reason_code, unclaimable_hint }`. `claimable` (bool) says whether BCC can prove an operator on this validator's chain from the data it stores. When it is `false`, the block is still present (so the card can say why), `unclaimable_reason_code` is one of `operator_address_missing` (the validator has no operator address on record), `solana_unsupported` (a Solana validator needs its vote account's withdraw authority, which BCC does not record), `evm_no_validator_pages` (an EVM chain) and `operator_unprovable` (any other chain, or one whose stored operator address no wallet can match, such as THORChain's node address), and `unclaimable_hint` is server copy naming the chain by its display name, never its slug. Both are `null` when `claimable` is `true`. `POST /pages/:id/claim` refuses an unclaimable validator with the same code and hint, so the card and the write agree. Clients decide claimability from these fields, never from a chain allowlist of their own.
@@ -9835,6 +9843,15 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-24 — additive — page card owner badge, viewer role and owner-control permissions (validator approval tool, P1)
+
+Ships with the bcc-trust page-data PR (P1). Additive, plus one anonymous-shape change on a key no client read.
+
+- **`owner_verification`** on every Card (§3.2): `{ kind: wallet|node_key|staff, label, description }` or `null`. Public badge copy rendered verbatim; never a method, never a date. Non-null only on a validator card with one verified operator.
+- **`viewer_page_role`** on every Card (§3.2): `"owner"`, `"administrator"`, `"representative"` or `null`. Team roles appear once the team service ships; until then it is `"owner"` or `null`.
+- **Page-card `permissions` (§2.1):** new `can_manage_team`, `can_edit_links`, `can_edit_notifications`; `can_edit_bio` now covers the profile text (name, bio, banner). Owner-only for now, and hidden (`unlock_hint: null`, `reason_code: "not_claimer"`) for every other viewer **including anonymous** — `can_edit_bio`'s anonymous shape changes from the sign-in hint to that hidden shape.
+- **Unchanged:** every existing per-control flag stays the authority for its control; no route, request or error changes.
 
 ### v1.245 — 2026-11-24 — bug fix — `/cards/search` page kinds return that kind's pages; `/search`'s `type` is a category (F-592)
 
