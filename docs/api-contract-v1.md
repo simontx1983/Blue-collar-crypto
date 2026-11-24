@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.238 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.240 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2371,6 +2371,8 @@ Silent-refresh seam: exchanges a recently-expired (or near-expiry) Bearer JWT fo
 
 **Suspended members sign in read-only (v1.136, F-305).** A suspended member may sign in and browse; they cannot post, comment, vote, attest, claim or join (every write gate already answers `bcc_forbidden` 403 "Your account is suspended."). Every response that carries `in_good_standing` also carries **`suspended`** (bool), and so does `/auth/refresh`. The list: `/auth/wallet-login`, `/auth/wallet-signup`, `/auth/2fa/verify`, `/auth/oauth-complete`, `/auth/verify-email`, `POST /auth/login` when it mints a token directly (the 2FA-bypass path), the OAuth sign-in response of the internal `/auth/oauth` bridge, and `GET /auth/session`. `true` means a moderator suspended the account: show a persistent notice that the member cannot post, comment or vote. It is **display state**: `false` when the suspension could not be read, and never a security gate. A suspension revokes every token issued before it, so a signed-in member's next refresh answers `403` `account_suspended` (above). Show the notice and route to sign-in; the new session carries `suspended: true`.
 
+**Admin cue (v1.240, structure A).** Every response that carries `suspended` also carries **`can_moderate`** (bool): whether the user holds the capability the admin routes require (`manage_options`, the same check). The frontend shows its "Admin" avatar group only when it is `true`. It is **display state only**: the admin routes enforce on every request, so it is never a security gate, and it is `false` when the capability could not be read.
+
 **One write gate.** Every non-GET request to `bcc/v1` or `bcc-trust/v1` from a **known-suspended** member (admin bypass off) is refused before the route runs, with `403` `bcc_forbidden` "Your account is suspended." and `error.data.reason_code: "account_suspended"`. Routes are matched **case-insensitively**, as WordPress dispatches them, and each sub-request of a `/batch/v1` call is gated on its own route. Routes' own suspension checks stay as a second line.
 - **Allowed while suspended:**
   - these `/auth/` routes only: `login`, `logout`, `logout-everywhere`, `refresh`, `session`, `nonce`, `wallet-nonce`, `wallet-login`, `wallet-signup`, `signup`, `oauth`, `oauth-complete`, `2fa/verify`, `2fa/resend`, `forgot-password`, `reset-password`, `verify-email`, `resend-verification`. An `/auth/` route not on this list is gated;
@@ -3320,7 +3322,9 @@ in PeepSo's `peepso_group_members` (single graph rule, §E3); BCC stores only a
 List of available Halls (PeepSo Groups in BCC clothing).
 
 - **Auth:** Anonymous OR Bearer
-- **Query:** `page` (default 1), `page_size` (default 20, max 50), `chain` (optional filter)
+- **Query:** `page` (default 1), `page_size` (default 20, max 50), `chain` (optional filter), `q` (optional; v1.239)
+  - **`q`** *(v1.239)*: a name search, as on `GET /groups`. It matches the Hall's name anywhere in it, case-insensitively, and LIKE's wildcards in it match themselves. At most **100 characters** (longer is `400`). A search is throttled to **10 per 5 s** (`429 bcc_rate_limited`).
+    - `pagination.total` counts the Halls matching the same `chain` and `q`, so the page and its total agree.
 - **Response 200:**
   ```json
   {
@@ -3846,7 +3850,15 @@ The invitee declines. Nobody is notified. **200:** `{ "status": "none", "group_i
 Cross-kind discovery list. Sort key: `verified DESC, heat_score DESC, member_count DESC`. Verified groups rank above non-verified, but active verified beats sleepy verified — so a "verified but dead" community doesn't dominate the discovery surface.
 
 - **Auth:** Anonymous OR Bearer
-- **Query:** `verified` (0/1; default 0), `page` (default 1), `page_size` (default 20, max 50)
+- **Query:** `verified` (0/1; default 0), `q`, `kind`, `chain`, `mine` (0/1; default 0), `page` (default 1), `page_size` (default 20, max 50)
+  - **`q`** *(v1.239)*: a name search, matching the group's name anywhere in it, case-insensitively. LIKE's wildcards (`%`, `_`) in it match themselves.
+    - At most **100 characters**; a longer one is `400` (`rest_invalid_param`, or `bcc_invalid_request` "q must be at most 100 characters." from the handler), as on `GET /cards`.
+    - A request with a `q` is throttled to **10 per 5 s** (per account, or per /24 subnet signed out). Over that, it is `429 bcc_rate_limited` "Too many searches. Please wait a few seconds." Browsing without a `q` is never throttled.
+    - ⭐ **A `q` never finds a secret group**, the viewer's own secret groups included (with `mine=1` too): the name is matched only among the groups this list may show at all.
+  - **`kind`** *(v1.239)*: only groups of one `type`, using the same values as the items' `type`: `hall`, `nft` (holder groups), `validator` (delegator groups), `user` (member-made), `system`. Any other value is `400 bcc_invalid_request` "kind must be one of: …".
+  - **`chain`** *(documented in v1.239; unchanged)*: a chain slug. It keeps the groups whose chain is that chain: Halls (their chain tag), holder and delegator groups (the chain they are gated on). Member-made and system groups have no chain and drop out. An unknown slug is an empty page, not an error.
+  - **`mine=1`** *(documented in v1.239; unchanged)*: only the groups the viewer is an active member of, among the groups this list may show (a secret membership never appears here). Signed out, it is an empty page with `200`, not a `401`.
+  - The filters combine; `pagination.total` counts the filtered set.
 - **Response 200:**
   ```json
   {
@@ -9816,6 +9828,29 @@ Ships with **bcc-search #53**. bcc-search only.
 - `kind` combines with `type` (both apply).
 - **An unknown `kind` is a `400` `bcc_invalid_request`**, as on `GET /cards/search`. That includes `member` and `community`, which are not pages. It is a `400` in trending mode too; otherwise trending ignores `kind`, as it ignores `q` and `type`.
 - **Unchanged:** the response shape, the result cap, and every request without `kind`.
+
+### v1.240 — 2026-11-24 — additive — the auth responses carry `can_moderate`, the cue for the frontend's "Admin" group (structure A)
+
+Ships with bcc-trust **#876**. bcc-trust only.
+
+- **`can_moderate`** (bool, additive) is on every response that carries `suspended`: the sign-in responses, `/auth/refresh` and `GET /auth/session`.
+- It says whether that user holds the capability the admin routes require. It is the same check (`manage_options`), so the two cannot disagree.
+- The frontend shows its "Admin" avatar group only when it is `true`; when the field is present and `false`, the group is hidden.
+- **Display only.** The admin routes enforce on every request, and this is never a security gate. It is `false` when the capability could not be read.
+- Like `suspended`, it reflects a role change at the next sign-in or refresh.
+- **Unchanged:** every other auth field and every admin route.
+
+### v1.239 — 2026-11-24 — additive — name search on GET /groups and GET /halls; a `kind` filter on GET /groups
+
+Ships with bcc-trust #875, which needs bcc-core #185 deployed first. Structure A, route map rows 13 and 15.
+
+- **`GET /groups`:**
+  - New `q`, a name search: at most 100 characters, and throttled to 10 per 5 s, as on `GET /cards`.
+  - ⭐ A `q` never finds a secret group, with `mine=1` too.
+  - New `kind`, taking the items' own `type` values (`hall`, `nft`, `validator`, `user`, `system`). Any other value is a 400.
+  - `chain` and `mine` were already accepted and are now documented, unchanged. `chain` covers Halls, holder and delegator groups.
+- **`GET /halls`:** new `q`, a name search with the same rules. `pagination.total` counts the same matches as the page.
+- **Unchanged:** every response shape, the sort, and every request without the new parameters.
 
 ### v1.238 — 2026-11-24 — behaviour change (privacy) — other users no longer receive join or claim times; account creation is month only (R4, R12, R13)
 
