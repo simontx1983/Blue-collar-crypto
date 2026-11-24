@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.239 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.240 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2370,6 +2370,8 @@ Silent-refresh seam: exchanges a recently-expired (or near-expiry) Bearer JWT fo
 - **Mapping:** reads the Bearer via `BearerAuth::readBearerToken` (the same header reader authentication uses), `JwtToken::decode`, `get_userdata`, `bcc_handle` meta, `AuthSupport::resolveInGoodStanding`, `AuthSupport::resolveSuspended`. No writes beyond an `auth_session_rejected` audit-log line on a 401. Handler `SessionController::session`. Standard envelope per §1.4.
 
 **Suspended members sign in read-only (v1.136, F-305).** A suspended member may sign in and browse; they cannot post, comment, vote, attest, claim or join (every write gate already answers `bcc_forbidden` 403 "Your account is suspended."). Every response that carries `in_good_standing` also carries **`suspended`** (bool), and so does `/auth/refresh`. The list: `/auth/wallet-login`, `/auth/wallet-signup`, `/auth/2fa/verify`, `/auth/oauth-complete`, `/auth/verify-email`, `POST /auth/login` when it mints a token directly (the 2FA-bypass path), the OAuth sign-in response of the internal `/auth/oauth` bridge, and `GET /auth/session`. `true` means a moderator suspended the account: show a persistent notice that the member cannot post, comment or vote. It is **display state**: `false` when the suspension could not be read, and never a security gate. A suspension revokes every token issued before it, so a signed-in member's next refresh answers `403` `account_suspended` (above). Show the notice and route to sign-in; the new session carries `suspended: true`.
+
+**Admin cue (v1.240, structure A).** Every response that carries `suspended` also carries **`can_moderate`** (bool): whether the user holds the capability the admin routes require (`manage_options`, the same check). The frontend shows its "Admin" avatar group only when it is `true`. It is **display state only**: the admin routes enforce on every request, so it is never a security gate, and it is `false` when the capability could not be read.
 
 **One write gate.** Every non-GET request to `bcc/v1` or `bcc-trust/v1` from a **known-suspended** member (admin bypass off) is refused before the route runs, with `403` `bcc_forbidden` "Your account is suspended." and `error.data.reason_code: "account_suspended"`. Routes are matched **case-insensitively**, as WordPress dispatches them, and each sub-request of a `/batch/v1` call is gated on its own route. Routes' own suspension checks stay as a second line.
 - **Allowed while suspended:**
@@ -9814,6 +9816,17 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.240 — 2026-11-24 — additive — the auth responses carry `can_moderate`, the cue for the frontend's "Admin" group (structure A)
+
+Ships with bcc-trust **#876**. bcc-trust only.
+
+- **`can_moderate`** (bool, additive) is on every response that carries `suspended`: the sign-in responses, `/auth/refresh` and `GET /auth/session`.
+- It says whether that user holds the capability the admin routes require. It is the same check (`manage_options`), so the two cannot disagree.
+- The frontend shows its "Admin" avatar group only when it is `true`; when the field is present and `false`, the group is hidden.
+- **Display only.** The admin routes enforce on every request, and this is never a security gate. It is `false` when the capability could not be read.
+- Like `suspended`, it reflects a role change at the next sign-in or refresh.
+- **Unchanged:** every other auth field and every admin route.
 
 ### v1.239 — 2026-11-24 — additive — name search on GET /groups and GET /halls; a `kind` filter on GET /groups
 
