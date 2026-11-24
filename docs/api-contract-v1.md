@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.249 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.250 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1176,6 +1176,28 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
 **Field rules:**
 
 - `operator_profile` is always present. It is non-null only on a validator page with exactly one verified operator and a saved profile; other card kinds, unclaimed/ambiguous validator pages, and operators without saved profile data return `null`. Shape: `{ brand_name, bio, website_url, socials: { x, discord, telegram }, logo_url }`. Values include the page override, if any. The crest uses the shared logo after a page-specific uploaded avatar and before the chain-imported validator logo.
+- **`bio` (v1.250) — at most 25 WORDS, and at most 120 characters.**
+  Server-cut per §A2, so the frontend renders it verbatim; `""` when the
+  source text is empty. One rule for all five kinds — a page's excerpt, a
+  member's profile bio, a group's description — so no card kind shows a
+  longer line than another.
+  - A **word** is a whitespace-delimited token. A URL or an `@handle`
+    counts as ONE word and is never cut into: when such a token does not
+    fit, the WHOLE token is dropped. ⚠ A bio that is nothing but one
+    over-long URL therefore yields `""` — no line, rather than a broken
+    link. The full text remains on the page.
+  - The **120-character** bound is not redundant with the word bound:
+    text written without spaces (Chinese, Japanese, Korean) is one word,
+    so the word bound alone would pass a whole paragraph. Whichever
+    bound bites first wins, and the cut is grapheme-safe.
+  - A single `…` is appended when, and only when, the text was actually
+    cut; a value that already ends in one never gains a second.
+  - **Clients:** no change required. The field was already a
+    server-rendered string; it is now a shorter one. Front-face
+    rendering (line clamp) stays a client decision.
+  *(Was ~200 characters, stated only in §3.2.4. The bio moved to the
+  front of the card, where the space is a line count rather than a
+  character count.)*
 - `card_kind` ∈ {`validator`, `project`, `creator`, `member`, `community`}. `community` cards (v1.27) are emitted ONLY as the additive `card` field on the §4.7.4 discovery items and the §4.7.5 group detail response — `GET /cards/:type/:id` and `GET /cards` do NOT accept `community` (route enum unchanged); see §3.2.4 for the kind's rules.
 - `is_claimed` is meaningful for `validator` / `project` / `creator`. For `member`, `is_claimed: true` always (members are their own pages).
 - `owner_verification` (v1.249; always present) — how the page's owner proved it, as a public badge: `{ kind, label, description }` or `null` (no badge). `kind` is `wallet` (a wallet signature, a Solana sign-in, or a self-send from the operator account), `node_key` (the validator's identity key) or `staff` (approved by BCC staff); `label` / `description` are server copy rendered **verbatim** ("Wallet Verified" / "Node Key Verified" / "Verified by BCC"; "Cryptographic proof" / "Staff verification"), and a missing label means no badge. When the owner holds several claims on the page, the strongest proof is shown. **Never** carries the underlying method or any date: no time of verification is shown to other users. Non-null only on a `validator` card with exactly one verified operator and a known method; `null` on unclaimed or ambiguous pages, other page kinds, and `member` / `community` cards.
@@ -1297,7 +1319,7 @@ Locked field rules:
   ships without the other, group search and the card face print different
   words for the same group. They deploy in the SAME release.
 - **Crest band:** the chain-keyed background applies to on-chain-gated kinds with a resolved `chain_tag` — `nft` and, since v1.52, `validator`; every other kind gets the tier band at the fixed `neutral` tier (the §3.2.4 shape-stable placeholder — `common` was the retired rarity slug; doc corrected v1.70).
-- **Identity:** `id` = group id, `handle` = group slug, `bio` = group description (plain-text, ~200-char truncation — same bound as page/member bios; `""` when unset).
+- **Identity:** `id` = group id, `handle` = group slug, `bio` = group description (plain-text, cut to the shared §3.2 `bio` bound — 25 words / 120 characters as of v1.250; `""` when unset). The producers still trim the raw description to ~200 characters upstream (§4.7.4's `description`); the shared cut then applies, so a community card cannot show a longer line than any other kind.
 - **Crest (§2.9 grammar):** `initials` from the group name (same server derivation as the other kinds), `image_url` = the group's cover (NFT collection art; `null` → FE monogram fallback). Background: NFT groups WITH a `chain_tag` → `background_kind: "chain"`, `background_value: <chain_tag>`; otherwise `background_kind: "tier"`, `background_value: "neutral"` (doc corrected v1.70 — the emitter always used the reputation placeholder, never the retired rarity slug).
 - **Stats (same CardStat shape as the other kinds):**
   ```json
@@ -9898,6 +9920,32 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
+### v1.250 — 2026-11-24 — behaviour change — a card's `bio` is bounded in WORDS, not characters (F-579 row 16)
+
+Ships with bcc-trust. One plugin, no endpoint change, no new field.
+
+- **§3.2 `Card.bio`**: at most **25 words** AND at most **120
+  characters**, whichever bites first, with a single `…` when cut. It was
+  ~200 characters.
+- **A URL or an `@handle` is one word and is never cut into** — an
+  over-long one is dropped whole. ⚠ So a bio that is nothing but one
+  over-long URL now yields `""`. That is deliberate: a broken link says
+  less than no line, and the full text is on the page.
+- **The 120-character bound** exists for text written without spaces
+  (Chinese, Japanese, Korean), which is a single word and would otherwise
+  pass whole. The cut is grapheme-safe.
+- **All five card kinds**, which is a change in itself: community cards
+  previously passed the producers' ~200-character description straight
+  through and so were not subject to the page/member bound at all. They
+  now take the same cut. The producers' trim stays upstream as the cheap
+  bound.
+- **Unchanged:** `§4.7.4`'s `description` field (still ~200 characters —
+  it is the card's input, not the card's output), the profile's §3.1
+  `bio` (full text), and every other card field.
+- **Clients:** no change required; the string is simply shorter. Where it
+  renders on the card, and how many lines it may use, stay client
+  decisions.
+
 ### v1.249 — 2026-11-24 — additive — page card owner badge, viewer role and owner-control permissions (validator approval tool, P1)
 
 Ships with the bcc-trust page-data PR (P1). Additive, plus one anonymous-shape change on a key no client read.
@@ -9950,7 +9998,7 @@ Ships with bcc-trust **#882**, after bcc-search's `kind` (F-589). bcc-trust only
 - **`GET /search` `type`, doc corrected:** it is a PeepSo page-category slug (one of the `categories` slugs), not a page kind. To filter by kind, use `kind`.
 - **Unchanged:** the suggestion shape, the All-scope allocation, `incomplete`, and the member and community verticals.
 
-### v1.244 — 2026-11-24 — display change — holder and delegator communities read "GROUP" (F-100)
+### v1.244 — 2026-11-24 — display change — holder and delegator communities read "GROUP" (F-579 row 12; F-588)
 
 Ships with bcc-trust #883 **and** bcc-search #52. ⚠⚠ Both plugins must go out
 in the SAME release — see below.
