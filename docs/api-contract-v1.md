@@ -5218,7 +5218,7 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
   - `post_visibility` → `peepso_profile_post_acc` user_meta. PUBLIC is intentionally absent (matches PeepSo's `access-profile-post` UI which strips it).
   - `hide_birthday_year` → `peepso_hide_birthday_year` user_meta, "1"/"0".
   - `hide_online` *(documented v1.64 — shipped earlier)* → `peepso_hide_online_status` user_meta, "1"/"0" — PeepSo's presence indicators treat "1" as "hide the green dot".
-  - `hide_from_search` *(documented v1.64 — shipped earlier)* → `peepso_is_hide_profile_from_user_listing` user_meta, "1"/"0" — "1" excludes the user from directory + member search (direct profile links still work). **Since v1.133 (F-257) this is THE one hidden-from-search flag:** `/me/privacy`'s `discovery_optout` is an alias that reads and writes it, so the two always agree.
+  - `hide_from_search` *(documented v1.64 — shipped earlier)* → `peepso_is_hide_profile_from_user_listing` user_meta, "1"/"0" — "1" excludes the user from directory + member search (direct profile links still work). **Since v1.133 (F-257) this is THE one hidden-from-search flag:** `/me/privacy`'s `discovery_optout` is an alias that reads and writes it, so the two always agree. *(Since v1.NEXT, F-519)* Directory and member search exclude the user when ANY stored row of this key reads as on: `1`, `true`, `on` or `yes`, in any case. Duplicate rows therefore can't keep a hidden member listed. BCC itself writes only `"1"`/`"0"`. The legacy `bcc_privacy_discovery_optout` counts only until the F-257 fold has completed, as before. Its old rows stay in place, so reading them afterwards would hide again a member who has since turned visibility back on.
   - `default_post_audience` *(documented v1.64 — shipped earlier; `friends` added v1.121)* → `peepso_last_used_post_privacy` user_meta (int 10/20/30/40 ↔ public/members/friends/private) — defaults PeepSo's audience picker; PeepSo itself overwrites it on every post, so this is a default, not a lock. ⚠ The column is not a validated enum, so a value with no token at all is reported as `members`.
   - `show_groups_on_profile` *(v1.127 — F-270)* -> `bcc_show_groups_on_profile` user_meta, "1"/"0". Read/write bool. **⚠ ABSENT MEANS `true`.** The default preserves the pre-F-270 behaviour, so an account that has never touched the setting keeps listing its groups; only an explicit falsey value hides them. This is the only *permissive* default among the privacy prefs here.
   - `hidden_hall_ids` *(v1.181 — F-341 PR 3)* → `bcc_hidden_hall_ids` user_meta, a **list of group ids** (not a bool). Read/write. The individual Halls the owner has hidden from their profile while the Halls **section** stays shown. **Absent or `[]` means nothing is hidden**, the same permissive default as the rest of F-341, so no existing profile changes until its owner opts out.
@@ -9794,6 +9794,12 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-24 — clarification + behaviour change at the edges (privacy) — hide_from_search excludes on any row that reads on (F-519)
+
+Ships with bcc-trust **#859**. No deploy order beyond that PR's.
+
+- **`hide_from_search` (and its `discovery_optout` alias):** directory and member search now exclude a member when ANY stored row of the flag reads as on: `1`, `true`, `on` or `yes`. Before, a member with duplicate `"0"` and `"1"` rows, or a value stored as `"true"`, stayed listed. The legacy opt-out key still counts only until the F-257 fold has completed. No wire change; BCC's own writes are unchanged (`"1"`/`"0"`).
 
 ### v1.231 — 2026-11-24 — behaviour change (privacy) — a card page's review-reply bell speaks as the page (F-578)
 
