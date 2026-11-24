@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.240 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.245 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1122,7 +1122,7 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
 - `current_rank_label` mirrors `rank_label` exactly (e.g. `"Veteran"`, or `"New Member"` for New Members). It is a member-axis field kept for surface compatibility.
 - `flags` is an array of short slugs; if non-empty, the frontend may render moderation chips. V1 codes: `suspended`, `shadow_limited`, `hidden`, `under_review`.
 - Hidden privacy fields (per `privacy.*_hidden: true`) cause the corresponding sections in `counts`, `wallets`, etc. to either be omitted or zeroed depending on the viewer's relationship — server decides, client doesn't.
-- **Secret pages in the counts *(v1.230, F-571)*:** on a single member's view (this `User`, and that member's `MemberSummary.engagement`), `counts.reviews_written` and `counts.disputes_signed` leave out the SECRET pages this viewer may not see, by the same rule as `/users/:handle/reviews` and `/disputes`. So the secret-page part of a count agrees with its list. The member and site admins see the full count. When the pages' privacy cannot be read, or the member has more than 100 secret pages, both counts are `0` for that viewer. Member cards built in batches (the directory, feeds) still show the unfiltered count. `reviews_written` still counts every active vote, as before, so it can exceed the Reviews list's `total` by moderation-hidden reviews.
+- **Secret pages in the counts *(v1.230, F-571)*:** on a single member's view (this `User`, and that member's `MemberSummary.engagement`), `counts.reviews_written` and `counts.disputes_signed` leave out the SECRET pages this viewer may not see, by the same rule as `/users/:handle/reviews` and `/disputes`. So the secret-page part of a count agrees with its list. The member and site admins see the full count. When the pages' privacy cannot be read, or the member has more than 100 secret pages, both counts are `0` for that viewer. *(v1.242)* The member profile's own counts (`GET /users/:handle`) follow this rule, and so do member cards built in batches, for their viewer: the directory, followers and watchers, the viewer's watching list (`/me/watching`), group rosters and join requests, suggestions, the feed cold start, and review and reply authors. For a batch, the viewer's own card and site admins see the full counts. When the pages' privacy cannot be read, or the members of one batch together have more than 100 secret pages, that count is `0` on every card in the batch except the viewer's own; the list itself never fails over it. `reviews_written` still counts every active vote, as before, so it can exceed the Reviews list's `total` by moderation-hidden reviews.
 - **`joined_at` for other viewers *(since v1.238, R12)*:** the member themselves receives the exact time. Every other viewer, anonymous included, receives the **first of the month at `00:00:00Z`** (e.g. `2026-01-12T09:41:07Z` → `2026-01-01T00:00:00Z`), so neither the payload nor a page built from it carries the day or the time. The same holds for `MemberSummary.joined_at` wherever it appears (review and reply authors, group request and invite items, rosters, member cards). `""` (unknown) is unchanged. Admin routes keep the stored value.
 - `cover_photo_url` is `null` when no custom cover photo is set; the frontend renders a default treatment in that case. URL is absolute (per §1.7) and points at PeepSo's stored cover image. Self-edits go through `PATCH /me/profile/cover` (multipart upload) — see §V2 Phase 2 endpoints.
 - `cover_photo_position` is `{x, y}` percentages (0–100) for the CSS `object-position` of the cover crop. Defaults to `{x: 50, y: 50}` (center). Self-edits go through `PATCH /me/profile/cover/position`.
@@ -1274,8 +1274,20 @@ Communities (PeepSo groups: `nft` / `hall` / `system` / `user`) converge onto th
 Locked field rules:
 
 - **Trust placeholders (shape-stable, never rendered as trust):** communities have no trust system. `trust_score: 0`, `reputation_tier: "neutral"`, `reputation_tier_label: null`, `rank_label: null`, `is_in_good_standing: true`, `flags: []`. The community face does not render a trust dial; the values exist only to keep the envelope shape-stable.
-- **`kicker` = server-owned group-type kicker** (§L5 — supersedes the frontend `KICKER_BY_TYPE` map). Until v1.57 this rode on `tier_label`, overloading a trust field to carry a category word; it now has its own field: `nft` → `"HOLDER COMMUNITY"`, `validator` → `"DELEGATOR COMMUNITY"`, `hall` → `"CHAIN HALL"`, `system` → `"SYSTEM COMMUNITY"`, `user` → `"COMMUNITY"`. Unknown kinds fall back to `"COMMUNITY"`.
+- **`kicker` = server-owned group-type kicker** (§L5 — supersedes the frontend `KICKER_BY_TYPE` map). Until v1.57 this rode on `tier_label`, overloading a trust field to carry a category word; it now has its own field: `nft` → `"HOLDER GROUP"`, `validator` → `"DELEGATOR GROUP"`, `hall` → `"CHAIN HALL"`, `system` → `"SYSTEM COMMUNITY"`, `user` → `"COMMUNITY"`. Unknown kinds fall back to `"COMMUNITY"`.
   *(v1.52: `HOLDERS GROUP` → `HOLDER COMMUNITY` and `SYSTEM GROUP` → `SYSTEM COMMUNITY` as part of the Communities vocabulary convergence — display-only, `type` values unchanged; `validator` added the same release.)*
+  *(v1.244: `HOLDER COMMUNITY` → `HOLDER GROUP` and `DELEGATOR COMMUNITY` →
+  `DELEGATOR GROUP`, reversing v1.52 for these TWO kinds only. `CHAIN HALL`,
+  `SYSTEM COMMUNITY` and the `COMMUNITY` fallback are unchanged. Display-only;
+  `kind` and `type` values are untouched.)*
+
+  ⚠⚠ **TWO EMITTERS, DELIBERATELY.** This vocabulary is produced in both
+  bcc-trust (`CardViewService::COMMUNITY_KICKER_BY_TYPE`, the `kicker` above)
+  and bcc-search (`GroupSearchService::KIND_LABEL`, the §4.9 `kind_label`).
+  Both docblocks declare the duplication and point at each other. A change to
+  one is a change to both, and **merge order is not enough** — if one plugin
+  ships without the other, group search and the card face print different
+  words for the same group. They deploy in the SAME release.
 - **Crest band:** the chain-keyed background applies to on-chain-gated kinds with a resolved `chain_tag` — `nft` and, since v1.52, `validator`; every other kind gets the tier band at the fixed `neutral` tier (the §3.2.4 shape-stable placeholder — `common` was the retired rarity slug; doc corrected v1.70).
 - **Identity:** `id` = group id, `handle` = group slug, `bio` = group description (plain-text, ~200-char truncation — same bound as page/member bios; `""` when unset).
 - **Crest (§2.9 grammar):** `initials` from the group name (same server derivation as the other kinds), `image_url` = the group's cover (NFT collection art; `null` → FE monogram fallback). Background: NFT groups WITH a `chain_tag` → `background_kind: "chain"`, `background_value: <chain_tag>`; otherwise `background_kind: "tier"`, `background_value: "neutral"` (doc corrected v1.70 — the emitter always used the reputation placeholder, never the retired rarity slug).
@@ -4359,11 +4371,16 @@ Paginated list of Cards filtered + sorted server-side. Backs `/directory`.
     "pagination": {
       "page": 1,
       "per_page": 24,
+      "total": 183,
       "total_pages": 8,
       "has_more": true
     }
   }
   ```
+- **`pagination.total` (v1.241):** how many cards match the request's filters across all pages. It is the count behind `total_pages`, taken from the same query as the rows (the same filters, search and secret-page rule), so it agrees with them.
+  - With no `kind`, the list covers the three card kinds only (validator, project, creator), and so does the total. A page of any other type is neither counted nor given a slot.
+  - The page ceiling is unchanged: past `page` 20 is still a 400, even when `total` is larger than 20 pages hold.
+  - The frontend shows a count only when the server sends one.
 - **Errors:** `bcc_invalid_request` (bad `kind`, `tier`, `sort`, `chain`, `status`, negative `min_self_stake`, `page > 20`, or `q` over 100 characters) · `rest_invalid_param` 400 (`q` over 100 characters, rejected by WordPress before the handler) · `bcc_rate_limited` 429 (`q` requests over 10 per 5 s; *since v1.167*)
 - **Cache:** `Cache-Control: private, max-age=15`. Underlying `PageDiscoveryService` query is server-cached for 30s with a stampede lock; the short client TTL is courtesy for back-button nav.
 - **Mapping:**
@@ -4381,7 +4398,7 @@ Top-N search suggestions for the §G1 nav-bar autocomplete. Smaller per-item sha
 - **Auth:** Anonymous OR Bearer
 - **Query:**
   - `q` (search string) — required; minimum 2 chars (server returns empty list for shorter; bcc-search has the same gate)
-  - `kind` ∈ {`validator`, `project`, `creator`, `member`, `community`} — optional; restricts to one suggestion kind (`member` + `community` added v1.70). Page kinds route to the projects vertical (`GET /bcc/v1/search`); `member` routes to `GET /bcc/v1/search/users` only; `community` routes to `GET /bcc/v1/search/groups` only — a scoped request queries exactly one vertical.
+  - `kind` ∈ {`validator`, `project`, `creator`, `member`, `community`} — optional; restricts to one suggestion kind (`member` + `community` added v1.70). Page kinds route to the projects vertical (`GET /bcc/v1/search`), as its `kind` *(v1.245, F-592: previously sent as a category, which matched nothing, so page-scoped lists were empty)*; `member` routes to `GET /bcc/v1/search/users` only; `community` routes to `GET /bcc/v1/search/groups` only — a scoped request queries exactly one vertical.
 - **Response 200:**
   ```json
   {
@@ -4438,8 +4455,8 @@ Top-N search suggestions for the §G1 nav-bar autocomplete. Smaller per-item sha
 - **Cache:** `Cache-Control: private, max-age=15`; **`private, no-store` when `incomplete` is `true`** *(v1.199)*, so a browser cannot replay a degraded answer for the same query after the vertical recovers. Underlying bcc-search caches results for 60s (never its errors).
 - **Mapping:**
   - Internally calls `GET /bcc/v1/search` (pages) and — in All scope, v1.70 — additionally `GET /bcc/v1/search/groups` + `GET /bcc/v1/search/users`, all via `rest_do_request`; matching, enrichment, per-vertical caches, and rate limiting live in bcc-search
-  - Server maps the flat result shapes into `SearchSuggestion`: reputation_tier passes through verbatim for pages (v1.57 — no rarity translation), category_slug → card_kind per `PageTypeMap`, route prefix per kind (`/v/`, `/p/`, `/c/`); community/member rows (v1.70) normalize from the groups/users verticals, `href` taken from the vertical's relative URL after internal-path validation
-  - Dropped silently: rows with unrecognized `category_slug` (e.g., `dao` — not a card kind in V1), rows missing required identity fields, and community/member rows whose URL fails internal-path validation (defense against absolute/off-app hrefs). *(Doc corrected v1.70: the old "rows whose tier maps to risky are dropped" claim described pre-v1.57 behaviour — risky pages and members appear with their honest tier chip.)*
+  - Server maps the flat result shapes into `SearchSuggestion`: reputation_tier passes through verbatim for pages (v1.57 — no rarity translation), card_kind from the page's stored type per `PageTypeMap`, no stored type = `project` *(v1.245, F-592: bcc-search's `category_slug` is a PeepSo category and is not read)*, route prefix per kind (`/v/`, `/p/`, `/c/`); community/member rows (v1.70) normalize from the groups/users verticals, `href` taken from the vertical's relative URL after internal-path validation
+  - Dropped silently: page rows whose stored type is not a card kind (e.g., `dao` — not a card kind in V1) or whose page no longer exists, rows missing required identity fields, and community/member rows whose URL fails internal-path validation (defense against absolute/off-app hrefs). *(Doc corrected v1.70: the old "rows whose tier maps to risky are dropped" claim described pre-v1.57 behaviour — risky pages and members appear with their honest tier chip.)*
   - A vertical bcc-search could not answer (503 degraded, or 429) is absent from the merge, and the response says so with `incomplete: true` *(v1.199; before, it dropped out silently)*. A page-kind `kind` whose vertical failed answers an empty list. Autocomplete must never block the user mid-type with an error toast.
 
 #### `GET /bcc/v1/search` (multi-vertical: projects + trending)
@@ -4449,8 +4466,9 @@ Direct bcc-search project search and trending mode — the upstream that `cards/
 - **Auth:** Anonymous OR Bearer (token silently ignored by handler; sent only so viewer-aware ranking signals stay warm when the user is signed in)
 - **Query:**
   - `q` (string) — 2..100 chars (server returns empty for shorter; `QueryQualityGate` rejects pure-stopword / low-entropy queries to empty too). **Over 100 chars → `rest_invalid_param` 400** at the REST validation layer (v1.47) — previously undefined behaviour, now rejected before any handler work.
-  - `type` (string, optional) — reputation category slug (e.g. `validator`, `builder`, `creator`). Falls through to category routing in `SearchController`.
-  - `trending` (string, optional) — when `=1`, ignores `q` / `type` and returns top-scored projects regardless of query.
+  - `type` (string, optional) — PeepSo page-category slug, one of the `slug` values in the response's `categories`. Site data, not a fixed vocabulary, and **not a page kind** (use `kind`). An unknown slug answers with no results. *(Doc corrected v1.245, F-592: the old example listed page kinds, which match no category.)*
+  - `kind` (string, optional, v1.243) — page kind: `validator`, `project` or `creator`, the page kinds of `GET /cards/search`. Keeps only pages of that kind; a page with no stored type is a `project`, so every result links to its kind's card route (`/v/`, `/p/`, `/c/`). Combines with `type`. Anything else → `400` `bcc_invalid_request`.
+  - `trending` (string, optional) — when `=1`, ignores `q` / `type` / `kind` and returns top-scored projects regardless of query. An unknown `kind` is still a `400`.
 - **Response 200:**
   ```json
   {
@@ -4466,12 +4484,12 @@ Direct bcc-search project search and trending mode — the upstream that `cards/
         "verified": true,
         "is_claim_verified": true,
         "followers": 312,
-        "category": "Validator",
-        "category_slug": "validator"
+        "category": "Validators",
+        "category_slug": "validators"
       }
     ],
     "categories": [
-      { "slug": "validator", "name": "Validator" }
+      { "slug": "validators", "name": "Validators" }
     ]
   }
   ```
@@ -4483,6 +4501,7 @@ Direct bcc-search project search and trending mode — the upstream that `cards/
   - `bcc_upstream_unavailable` (HTTP 503; `Retry-After: 5`) — covers category fetch failure, FULLTEXT rebuild in progress ("Trending is warming up" in trending mode), and enrichment-pipeline degradation *(supersedes the fictional `categories_unavailable` / `rebuild_in_progress` / `score_enrichment_failed` codes)*
   - `bcc_internal` (HTTP 503) — internal rate-limit ceiling / unexpected failure *(supersedes `temporarily_overloaded`)*
   - `rest_invalid_param` (HTTP 400) — WP arg validation (`q` over 100 chars)
+  - `bcc_invalid_request` (HTTP 400) — `kind` is not `validator`, `project` or `creator` *(v1.243)*
 - **Cache:** server-side `60s` (per-query results) + LKG mirror for 503 fallback. Trending mode: `300s` (5 min) + LKG.
 - **Envelope note (doc corrected 2026-08-05 — the wire has been enveloped since 2026-05):** although bcc-search's handlers *emit* raw `{ results, categories }` (or `{ results, meta }` in trending mode), bcc-trust's §1.4 Envelope wraps every `/bcc/v1/*` response — so the wire carries `{ data: { results, … }, _meta }` on success and `{ error: { code, message, status } }` on failure. The shapes documented above are the **inner payload**. The bcc-frontend client (`bccSearchFetchAsClient`) is shape-tolerant: it unwraps the envelope when present and still maps a raw legacy body, so `err.code` branching per Phase γ stays uniform either way.
 
@@ -4545,7 +4564,7 @@ Groups vertical — separate cache + rate-limit bucket. Returns PeepSo group row
   }
   ```
 - **`kind` (v1.70)** ∈ {`hall`, `nft`, `validator`, `system`, `user`} — the §3.2.4 community-kind vocabulary, resolved from `_bcc_group_kind` post-meta (raw values `hall` / `holders` / `delegators` / `system`; absent → `user`).
-- **`kind_label` (v1.70)** — the pre-rendered §A2 display string, exactly the §3.2.4 kicker vocabulary (`CHAIN HALL`, `HOLDER COMMUNITY`, `DELEGATOR COMMUNITY`, `SYSTEM COMMUNITY`, `COMMUNITY`). Frontend renders it verbatim, never maps `kind` → words.
+- **`kind_label` (v1.70)** — the pre-rendered §A2 display string, exactly the §3.2.4 kicker vocabulary (`CHAIN HALL`, `HOLDER GROUP` and `DELEGATOR GROUP` as of v1.244, `SYSTEM COMMUNITY`, `COMMUNITY`). Frontend renders it verbatim, never maps `kind` → words.
 - **`group_url`** is a **relative** Next.js route (rendered verbatim by the frontend; an absolute URL would navigate off the headless app) and — as of v1.70 — **kind-aware**: `hall` → `/halls/{slug}`, every other kind → `/communities/{slug}`, matching `CardUrlMap::groupUrl`'s canonical mapping (v1.68). *(Supersedes v1.68's "not hall-aware" caveat — that release fixed the absolute-URL drift but had no kind projected; now the vertical projects `kind`, halls route to their flavored surface. Non-hall kinds still resolve on the cross-kind `/communities/[slug]` page.)*
 - **Errors (legacy WP shape):**
   - `bcc_rate_limited` (HTTP 429)
@@ -9846,7 +9865,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
   - Bonus: `GET /me/onboarding/status` is also registered (read-side flag check; not previously listed in §8).
 - **Directory endpoints (§G1/§G2)** — both fully wired:
   - `GET /cards` — paginated list of Card view-models with `kind`/`tier`/`sort`/`q` filters. Wraps `PageDiscoveryService`; each row hydrated through `CardViewService::getCard()` so the per-item shape is identical to the single-card endpoint. (Historical note: `/bcc/v1/discover` previously shared this service for the legacy bcc-page-slider block; that endpoint was retired 2026-05-15.)
-  - `GET /cards/search` — top-N suggestions for the §G1 nav-bar autocomplete. Internally fans out via `rest_do_request` — pages always, plus the groups + users verticals in All scope (v1.70) — and merges the normalized rows (category_slug → card_kind, route prefix per kind; community/member rows from their verticals) into the `SearchSuggestion` shape per §A2 under the 12-item cap.
+  - `GET /cards/search` — top-N suggestions for the §G1 nav-bar autocomplete. Internally fans out via `rest_do_request` — pages always, plus the groups + users verticals in All scope (v1.70) — and merges the normalized rows (stored page type → card_kind, route prefix per kind; community/member rows from their verticals) into the `SearchSuggestion` shape per §A2 under the 12-item cap.
 - **Notifications endpoints (§I1)** — fully wired:
   - `GET /me/notifications` — cursor-paginated list scoped to `not_module_id = BCC_NOTIFICATION_MODULE_ID` (= 9000). Server-rendered messages + server-built `link` per type per §A2.
   - `GET /me/notifications/unread-count` — drives the bell badge; frontend polls 60s + on window focus.
@@ -9870,9 +9889,9 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-18 — additive — repost, once per member per post (F-346)
+### v1.NEXT — 2026-11-24 — additive — repost, once per member per post (F-346)
 
-Ships with bcc-trust #747. ⛔ Needs **bcc-core #137 in production first** (`resolveRepostRoot` and `createSelfStatus`'s root parameter land there).
+Ships with bcc-trust #747. It needs **bcc-core #137** (in production since the 2026-11-24 release), where `resolveRepostRoot` and `createSelfStatus`'s root parameter land.
 
 - **New:** `POST`/`DELETE /feed/:id/repost` and `POST /feed/:id/quote`. A repost is a real post on the caller's own wall carrying their own audience, not a counter row; the link lives in PeepSo's `act_repost_id`. **One PLAIN repost per member per root, unlimited quotes** (user decision 2026-11-18, matching X): plain and quote are told apart by content (empty vs not), which is PeepSo's own rule since `add_post()` refuses empty content unless a repost is set. `repost_count` counts distinct members with a plain repost; `quote_count` is a raw total of quote posts; `viewer_has_reposted` is plain-only. **Only PUBLIC roots may be reposted or quoted** (not friends-only/only-me, and not a group post that is not `public_all` + still syndicated): a distinct `bcc_permission_denied` 403, ordered AFTER the readability check so an unreadable root still gets the opaque 404. ⚠ The feed-side rendering is a FOLLOWING change and none of it is served by this release: `repost_of`, the batched counts, `can_repost`/`can_quote` (the post-local 2-key `{ allowed, unlock_hint }` entry — **no `reason_code`**, decided 2026-11-24, so a refused root is `allowed: false` + `unlock_hint: null` and the control is hidden), the hide for a plain repost whose root the viewer cannot see, and `repost_of_unavailable: true` for a quote in that situation (the quote is kept — it carries the member's own words — while a plain repost is hidden whole). Both POST routes answer `bcc_unavailable` 503 when the root's own ACTIVITY read did not run, rather than reporting "not found"; a failed FILTER read beneath it still fails closed as 404, per `getActivityById()`'s contract.
 - **Keyed on the ROOT.** `:id` may be the original or any repost of it; the once-only rule, the lock and the count all resolve to the chain root, and the response says which (`root_feed_id`).
@@ -9882,6 +9901,69 @@ Ships with bcc-trust #747. ⛔ Needs **bcc-core #137 in production first** (`res
 - **DELETE is not idempotent and not audience-gated:** no repost of yours → 404. Rationale in §4 — it keeps the member from being stranded with an unremovable post while closing the existence/engagement oracle an idempotent success would open.
 - **Unchanged:** every read surface. Nothing marks a feed item as a repost yet, so clients should not show a repost affordance until the read side lands.
 
+### v1.245 — 2026-11-24 — bug fix — `/cards/search` page kinds return that kind's pages; `/search`'s `type` is a category (F-592)
+
+Ships with bcc-trust **#882**, after bcc-search's `kind` (F-589). bcc-trust only.
+
+- **`GET /cards/search` with `kind=validator|project|creator`** now returns the pages of that kind. It sent the kind to `GET /search` as a category (`type`), no category is named after a page kind, and an unknown category answers with nothing, so these scoped lists were always empty. It now sends `kind`.
+- **`card_kind` on page suggestions** (and so `href`) now comes only from the page's stored type, with no stored type read as `project`, the same reading as the card routes. Untyped project pages were dropped; they now appear as `project`. A page whose stored type is not a card kind (e.g. `dao`), or that no longer exists, is still dropped.
+- **`GET /search` `type`, doc corrected:** it is a PeepSo page-category slug (one of the `categories` slugs), not a page kind. To filter by kind, use `kind`.
+- **Unchanged:** the suggestion shape, the All-scope allocation, `incomplete`, and the member and community verticals.
+
+### v1.244 — 2026-11-24 — display change — holder and delegator communities read "GROUP" (F-100)
+
+Ships with bcc-trust #883 **and** bcc-search #52. ⚠⚠ Both plugins must go out
+in the SAME release — see below.
+
+- **§3.2.4 `card.kicker`** and **§4.9 `kind_label`**: `nft` → **`HOLDER GROUP`**
+  (was `HOLDER COMMUNITY`) and `validator` → **`DELEGATOR GROUP`** (was
+  `DELEGATOR COMMUNITY`).
+- **Unchanged:** `hall` → `CHAIN HALL`, `system` → `SYSTEM COMMUNITY`, `user` →
+  `COMMUNITY`, and the unknown-kind `COMMUNITY` fallback. No field is added or
+  removed, no endpoint changes, and `kind` / `type` values are untouched — this
+  is the pre-rendered display string only.
+- **Reverses v1.52 for these two kinds only.** v1.52 moved the whole vocabulary
+  to "COMMUNITY"; the two on-chain-gated kinds read better as GROUP. Decision:
+  Phillip, 2026-11-24.
+- ⚠⚠ **Two emitters, so merge order is not enough.** bcc-trust emits `kicker`
+  and bcc-search emits `kind_label` from separate, deliberately duplicated maps.
+  Merge order is search → trust → this note, but if one plugin reaches an
+  environment without the other, group search and the card face print DIFFERENT
+  words for the same group.
+- **Clients:** no change required. §L5 already makes the kicker server-owned and
+  supersedes the frontend `KICKER_BY_TYPE` map; the frontend renders the string
+  verbatim and holds no copy of this vocabulary. (One stale example in a
+  `src/lib/api/types.ts` doc comment still cites `"HOLDER COMMUNITY"` — a
+  comment, not behaviour.)
+
+### v1.243 — 2026-11-24 — additive — `GET /search` filters by page kind (F-589)
+
+Ships with **bcc-search #53**. bcc-search only.
+
+- **`kind`** (optional) on `GET /bcc/v1/search`: `validator`, `project` or `creator`, the page kinds `GET /cards/search` uses. It keeps the pages of that kind, within the same published, non-secret set. It is for the Explore search's Validators / Projects / Creators tabs.
+- A page with no stored type counts as a `project`, as it already did for its `/p/` link. So every result under a kind links to that kind's card route (`/v/`, `/p/`, `/c/`).
+- `kind` combines with `type` (both apply).
+- **An unknown `kind` is a `400` `bcc_invalid_request`**, as on `GET /cards/search`. That includes `member` and `community`, which are not pages. It is a `400` in trending mode too; otherwise trending ignores `kind`, as it ignores `q` and `type`.
+- **Unchanged:** the response shape, the result cap, and every request without `kind`.
+
+### v1.242 — 2026-11-24 — behaviour change (privacy) — the member profile and member cards count reviews and disputes as their viewer may see them (F-571)
+
+Ships with bcc-trust #879. Follows v1.230.
+
+- **The member profile** (`GET /users/:handle`): its `counts.reviews_written` and `counts.disputes_signed` now follow the v1.230 rule. They leave out the SECRET pages this viewer may not see.
+- **Member cards built in batches** (`MemberSummary.engagement`) follow the same rule for their viewer. This covers the directory, followers and watchers, the viewer's watching list (`/me/watching`), group rosters and join requests, suggestions, the feed cold start, and review and reply authors.
+- **Exempt:** the member's own profile, the viewer's own card, and site admins see the full counts.
+- **Failing closed:** when the pages' privacy cannot be read, or the members of one batch together have more than 100 secret pages, that count is `0` on every card in the batch except the viewer's own. A profile is a batch of one. The list or profile itself never answers an error over it.
+- **Unchanged:** response shapes and field names.
+- **Clients:** no change.
+
+### v1.241 — 2026-11-25 — additive — GET /cards carries pagination.total
+
+Ships with bcc-trust #880. Structure A (Explore's tab counts).
+
+- **`GET /cards` `pagination.total`:** how many cards match the filters across all pages, from the same query as the rows, so the two agree.
+- **No `kind`:** the list now covers the three card kinds only (validator, project, creator). Pages of any other type used to be counted in `total_pages` and to take a slot on a page without rendering; now they are neither counted nor listed.
+- **Unchanged:** the item shape, every filter, the page ceiling (`page` ≤ 20) and the errors.
 ### v1.240 — 2026-11-24 — additive — the auth responses carry `can_moderate`, the cue for the frontend's "Admin" group (structure A)
 
 Ships with bcc-trust **#876**. bcc-trust only.
@@ -10516,6 +10598,7 @@ Ships with bcc-trust #687 (F-294 items 4a/4b), #689 (F-294 item 8) and #695 (F-2
 - **`POST /auth/verify-email`:** new `bcc_otp_exhausted` 400 "Too many attempts. Request a new code." once the attempt cap has burned the code (until a resend).
 - **`POST /auth/resend-verification`:** also accepts `identifier` (email or handle); same silent `ok`. The handle form takes the same per-address caps, keyed on the handle, and the address it resolves to keeps its own (over those: no mail, the same `ok`).
 - **Clients:** treat `bcc_unavailable` 503 on wallet sign-up as "try again" (FE row F-252); on `bcc_otp_exhausted` offer "send a new code"; an unverified handle sign-in can call resend with `identifier`.
+
 ### v1.174 — 2026-11-18 — additive — a handed-over review reply stays visible to its author (F-345 follow-up)
 
 Ships with bcc-trust #723.
