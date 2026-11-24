@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.224 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.226 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2849,6 +2849,7 @@ The member's long-form blog posts (§D6 blog tab), newest-first, cursor-paginate
 Reviews this member has written (§V1.5 reviews-on-file tab), offset-paginated.
 
 - **Auth:** Anonymous OR Bearer (privacy-filtered — `reviews_hidden` honored for non-self viewers)
+- **Secret pages *(v1.225, F-528)*:** for any viewer but the member, a review of a SECRET page the viewer may not see is left out. The page's members and invitees, its author and site admins see it; anonymous viewers do not. Reviews of members are never affected. The reviews are left out in the query, so `pagination.total` and `total_pages` count only what this viewer is shown.
 - **Path:** `handle`
 - **Query:** `page` (1-indexed, default 1), `per_page` (default 20, max 50)
 - **Response 200:**
@@ -2874,18 +2875,20 @@ Reviews this member has written (§V1.5 reviews-on-file tab), offset-paginated.
     - `null` while it is moderation-hidden (frozen; `DELETE` answers 404 for it).
     - It can sit beside `reply` when the new party has replied too. Delete it with `DELETE /reviews/{id}/reply`; it is then `null`.
   - "Reviewed party": the member, for a review of their own profile; the **verified operator**, for a validator page (none when the claim is ambiguous or absent); otherwise the **page owner** — so an unclaimed placeholder page has nobody. Write routes: `POST|PATCH|DELETE /reviews/{id}/reply` below.
+  - `author_kind` *(v1.226)* — on `reply` and `viewer_stale_reply`, always `"member"` on this list (a reply is never shown as a page's here; see the entity Reviews list for `"page"`). Clients treat a missing `author_kind` as `"member"`.
 
   `scope_label` ∈ `PAGE|MEMBER` (v1.48). Member-target rows (reviews this user wrote **about another member**): `subject` = the member's display name, `subject_handle` = their `bcc_handle` (`""` when unset — the frontend suppresses the `ON @…` link; `user_login` is never projected), `scope_label` = `MEMBER`.
-- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer, **or the account is suspended** *(v1.112)*
+- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer, **or the account is suspended** *(v1.112)* · `bcc_unavailable` **503** *(v1.225, F-528)* — "This list is temporarily unavailable. Please try again.", `Cache-Control: private, no-store` (never the header below), no `data`. Answered in two cases. (1) The reviewed pages' privacy could not be read: transient, so a retry can succeed. (2) The member has reviewed more than 100 secret pages: **persistent** for every viewer but the member and site admins while the member stays over that cap, so a retry gets the same 503 (it is logged and counted server-side). Show an error with a retry action, not the empty state. The member's own view and site admins never get it.
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - **Pagination envelope:** offset (§1.5); `total_pages` is `0` (not 1) on empty/hidden.
-- **Mapping:** `UserReviewsService::getReviews` → `VoteRepository::countByVoter` + `findByVoterPaginated` (+ `UserMiniRepository::getRowsByIds` for member-target subjects, v1.48); `posted_at_label` server-rendered (§A2). Handler `UsersEndpoint::reviews` (route `UsersEndpoint.php:203`).
+- **Mapping:** `UserReviewsService::getReviews` → `VoteRepository::countReviewsByVoter` + `findByVoterPaginated`, both with the viewer's hidden secret pages (`findSecretPageIdsReviewedBy` → `PageAccess::hiddenAmong`, v1.225) (+ `UserMiniRepository::getRowsByIds` for member-target subjects, v1.48); `posted_at_label` server-rendered (§A2). Handler `UsersEndpoint::reviews` (route `UsersEndpoint.php:203`).
 
 #### `GET /bcc/v1/users/:handle/disputes`
 
 Disputes this member has **filed** (§V1.5 disputes tab), offset-paginated. A dispute is filed by a page owner contesting a downvote on a page they own; for a member, `reporter_id` = their user id (they own the self-page being defended).
 
 - **Auth:** Anonymous OR Bearer (privacy-filtered — `disputes_hidden` honored for non-self viewers)
+- **Secret pages *(v1.225, F-528)*:** for any viewer but the member, a dispute on a SECRET page the viewer may not see is left out, by the same rule as `/users/:handle/reviews`. It is left out in the query, so `pagination.total` and `total_pages` count only what this viewer is shown.
 - **Path:** `handle`
 - **Query:** `page` (1-indexed, default 1), `per_page` (default 20, max 50)
 - **Response 200:**
@@ -2897,10 +2900,10 @@ Disputes this member has **filed** (§V1.5 disputes tab), offset-paginated. A di
   }
   ```
   `status` ∈ `open|resolved|dismissed` (mapped from `bcc_disputes.status`: `reviewing`→`open`, `accepted`/`rejected`/`timeout_no_quorum`→`resolved`, `dismissed`→`dismissed`; unknown → `open`). `status_label` carries the richer real outcome (`OPEN`/`ACCEPTED`/`REJECTED`/`NOT DECIDED`/`DISMISSED`). `subject` is the disputed page title, falling back to `"Page removed"`; `scope_label` is `PAGE`. Hidden behaves as reviews (`items: []`, totals `0`, `hidden: true`).
-- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer, **or the account is suspended** *(v1.112)*
+- **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer, **or the account is suspended** *(v1.112)* · `bcc_unavailable` **503** *(v1.225, F-528)* — as on `/users/:handle/reviews`: the disputed pages' privacy could not be read (transient), or the member has disputes on more than 100 secret pages (**persistent** while they stay over that cap).
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - **Pagination envelope:** offset (§1.5); `total_pages` is `0` on empty/hidden.
-- **Mapping:** `UserDisputesService::getDisputes` → `DisputeRepository::countByReporter` + `getByReporterPaginated` (live `bcc_disputes`, reporter-keyed). Handler `UsersEndpoint::disputes` (route `UsersEndpoint.php:215`). *(Was `bcc_trust_flags`/FlagsRepository — a write-dead legacy table — until 2026-07-08; the shape is unchanged.)*
+- **Mapping:** `UserDisputesService::getDisputes` → `DisputeRepository::countByReporter` + `getByReporterPaginated` (live `bcc_disputes`, reporter-keyed), both with the viewer's hidden secret pages (`findSecretPageIdsDisputedBy` → `PageAccess::hiddenAmong`, v1.225; the exclusion is part of their cache key). Handler `UsersEndpoint::disputes` (route `UsersEndpoint.php:215`). *(Was `bcc_trust_flags`/FlagsRepository — a write-dead legacy table — until 2026-07-08; the shape is unchanged.)*
 
 #### `GET /bcc/v1/users/:handle/activity`
 
@@ -6207,6 +6210,7 @@ Anonymous-readable per §J trust-graph doctrine: attestation data is public-by-d
 #### `GET /bcc/v1/users/{handle}/endorsements`
 
 - **Auth:** Anonymous OR Bearer (response shape is identical; no viewer-aware fields).
+- **Secret pages *(v1.225, F-528)*:** WHICH items are returned depends on the viewer. For any viewer but the member, a vouch on a SECRET page the viewer may not see is left out, by the same rule as `/users/:handle/reviews`; vouches for members are never affected. A page whose privacy could not be read is left out too (no 503 here). `total` is still `count(items)`, so a list can hold fewer than `limit` items.
 - **Path:**
   - `handle` — required, matches `HANDLE_PATTERN` (lowercase alphanumeric + hyphens, 3–20 chars).
 - **Query:**
@@ -7454,6 +7458,18 @@ Reviews-tab data plane for entity profiles AND member profiles (v1.48) — revie
     - It can sit beside `reply` when the new party has replied too. Delete it with `DELETE /reviews/{id}/reply`; it is then `null`.
   - "Reviewed party": the member, for a review of their own profile; the **verified operator**, for a validator page (none when the claim is ambiguous or absent); otherwise the **page owner** — so an unclaimed placeholder page has nobody. Write routes: `POST|PATCH|DELETE /reviews/{id}/reply` below.
   - ⚠ `can_reply` is viewer-scoped, which is why authed responses stay `private` here; anonymous viewers always get `not_applicable`, so the anon `public` cache stays correct.
+  - **`author_kind` *(v1.226)*** — on `reply` and `viewer_stale_reply`: `"member"` or `"page"`. **Clients treat a missing `author_kind` as `"member"`** (servers before v1.226 send none).
+    - `"member"` — the object described above, with `author`.
+    - `"page"` — **card targets only** (`validator_card`, `project_card`, `creator_card`), **only in `reply`**, and only when the reply's author's **profile level** (`profile_visibility`) does not admit this viewer. The reply is then shown as the PAGE's own response (product decision 2026-11-23):
+      ```json
+      { "id": 77, "body": "…", "author_kind": "page",
+        "page": { "id": 4521, "card_kind": "validator", "name": "Acme Validator", "handle": "acme-validator", "avatar_url": "https://…" },
+        "posted_at": "…", "edited_at": null, "feed_id": "feed_123",
+        "permissions": { "can_edit": { "allowed": false, "unlock_hint": null, "reason_code": "not_author" }, "can_delete": { "allowed": false, "unlock_hint": null, "reason_code": "not_author" }, "can_report": { "…": "as for any reply" } } }
+      ```
+      There is **no `author` key**, and nothing else of the person. `page` is the reviewed page as its own Card shows it to this viewer: `id`, `card_kind`, `name` and `handle` are the Card envelope's (§3.2); `avatar_url` is the card crest's `image_url`, `""` when there is none. Link it as any card (`card_kind` + `handle`). `feed_id` is still the report target.
+    - Still **`reply: null`**, as before: a block in either direction between the viewer and the author, a suspended or banned author, or any of those states that could not be read. `user_profile` targets never carry `"page"`, nor does `/users/:handle/reviews`.
+    - Caching: the anonymous `public` body is built for the anonymous viewer, so every anonymous reader gets the same variant; signed-in bodies stay `private`.
 - **Errors:** `bcc_invalid_request` 400 (bad `target_kind` or `target_id ≤ 0`) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` (v1.168, `user_profile` only; see Path)
 - **Cache:** anon → `public, max-age=30`; authed → `private, max-age=30` + `Vary`; invalid and `profile_private` (v1.168) → `private, no-store`.
 - **Mapping:** `CardReviewsEndpoint::list` (route `CardReviewsEndpoint.php:65`) → `CardReviewsService::getReviews`. FE `card-tabs-endpoints.ts:getCardReviews`.
@@ -7465,7 +7481,7 @@ The reviewed party's ONE public response to a review (v1.159, F-345). `{id}` is 
 - **Auth:** Bearer **required**.
 - **Body (JSON):** `{ "body": string }` — trimmed, tags stripped, 1–1000 characters.
 - **Who:** the **reviewed party only** (see `permissions.can_reply` on the review rows): the member for a review of their own profile, the verified operator for a validator page, otherwise the page owner. Never the reviewer, never a third party. One reply per review per party: the party's own reply holds the slot, even when it is moderation-hidden (hand-over rule on the Reviews lists).
-- **Response 201:** `{ "reply": { "id", "body", "author": MemberSummary, "posted_at", "edited_at": null, "feed_id": "feed_<act_id>", "permissions": { "can_edit", "can_delete", "can_report" } } }`
+- **Response 201:** `{ "reply": { "id", "body", "author_kind": "member", "author": MemberSummary, "posted_at", "edited_at": null, "feed_id": "feed_<act_id>", "permissions": { "can_edit", "can_delete", "can_report" } } }` (`author_kind` *(v1.226)*: always `"member"` here; see the entity Reviews list.)
 - **Side effects:** the reviewer gets the `bcc_review_reply` bell (in-app only). A reply is never a feed item and does **not** count toward streaks or contribution score.
 - **Errors:** `bcc_unauthorized` 401 · `bcc_forbidden` 403 (not the reviewed party, or the account is suspended/banned) · `bcc_not_found` 404 (the review does not exist, was removed, or is moderation-hidden — which of these is not disclosed) · `bcc_conflict` 409 (you have already replied to this review) · `bcc_invalid_request` 422 (empty, or over 1000 characters) · `bcc_rate_limited` 429 (10 per 5 min, shared with edits) · `bcc_unavailable` 503 (retryable; also when another reply to the same review is being written at that moment)
   - Route-schema validation runs first: a missing or non-string `body`, or an `{id}` below 1, is refused by WordPress with **400** `rest_missing_callback_param` / `rest_invalid_param`, not 422.
@@ -9744,6 +9760,25 @@ Ships with bcc-trust **#836** (F-469, batch 2). bcc-trust only. Same rule as v1.
 - **`GET /me/profile-prefs`:** `mentor_eligibility_reason` gains **`unavailable`**: the standing could not be read, so the listing is paused for that read (`mentor_listed: false`), and the mentor directory leaves the member out for that read. A client that does not know the value shows its generic paused line.
 - **Announcement comments:** an unreadable standing is not good standing. `can_comment` answers as for any viewer not in good standing (`reason_code: "suspended"`, the §4.32.11 inventory's standing code), and `POST /announcements/:id/comments` answers 403.
 - **Unchanged:** every success response and every other refusal. `in_good_standing` on the auth responses is display-only and is computed as before; it is not a decision input. Display surfaces keep their neutral defaults when a read fails. No new field.
+
+### v1.226 — 2026-11-23 — additive — a card page's review reply shows as the page's own response when its author's profile is closed to the viewer
+
+Ships with bcc-trust #842. ⛔ **Deploy order: the frontend union (bcc-frontend #311) first.** A client that reads `reply.author` finds none on the new variant.
+
+- **Every review reply object** — `reply` and `viewer_stale_reply` on both Reviews lists, and the `POST` / `PATCH /reviews/{id}/reply` response — gains `author_kind`. Everywhere but the case below it is `"member"`. Clients treat a missing `author_kind` as `"member"`.
+- **`GET /entities/{validator_card|project_card|creator_card}/:id/reviews`:** a reply whose author's **profile level** does not admit this viewer was `reply: null`. It is now shown as the page's own response: `author_kind: "page"`, `page: { id, card_kind, name, handle, avatar_url }` (the reviewed page as its Card shows it), and **no `author` key**. Nothing of the person is sent. Edit and delete are `not_author`; report works as before through `feed_id`. Product decision 2026-11-23.
+- **Unchanged:** a block either way, a suspended or banned author, or a state that could not be read still gives `reply: null`. `user_profile` targets and `/users/:handle/reviews` never carry `"page"`. Caching is unchanged.
+- **Clients:** discriminate on `author_kind`. Render `"page"` with the page's name and avatar, linked as a card, and never look for a person on it.
+
+### v1.225 — 2026-11-23 — behaviour change (privacy) — a member's Reviews, Disputes and Vouches tabs leave out the SECRET pages the viewer may not see (F-528)
+
+Ships with bcc-trust #830. It uses bcc-core's page-privacy rule, already in production; bcc-core #174 only registers the new `page_privacy` health metric, and no deploy order is needed.
+
+- **`GET /users/:handle/reviews`, `/users/:handle/disputes`, `/users/:handle/endorsements`:** for anyone but the member, a row about a SECRET page the viewer may not see is left out. As on the page itself, the page's members and invitees, its author and site admins see it; anonymous viewers do not. A review of a member, or a vouch for one, is never affected.
+- **The totals agree.** On Reviews and Disputes the rows are left out in the query, so `pagination.total` and `total_pages` count only what this viewer is shown, and no page comes back short. On Vouches `total` is still `count(items)`, so a list can now hold fewer than `limit` items.
+- **New `503 bcc_unavailable` on Reviews and Disputes**, "This list is temporarily unavailable. Please try again.", `Cache-Control: private, no-store`, no `data`. It answers when the pages' privacy could not be read (transient: a retry can succeed), or when the member's list covers more than 100 secret pages (**persistent** for every other viewer while the member stays over that cap; logged and counted as `page_privacy` / `member_list_over_cap`). Show an error with a retry action, not the empty state. The member's own view and site admins never read page privacy and never get it. On Vouches a privacy read that fails hides the page instead; no new error there.
+- **Unchanged:** the member's own view, every response shape, and the cache headers on a 200.
+- **Clients:** no change. Both panels already show `bcc_unavailable` as a retryable failure.
 
 ### v1.224 — 2026-11-23 — behaviour change — a gate that cannot read a member's standing answers 503, never the neutral default (F-469)
 
