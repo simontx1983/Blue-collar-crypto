@@ -6754,7 +6754,7 @@ Coalesced per-viewer badge payload. Replaces three previously-uncached polling e
 
 File a content report against a feed item or an **announcement** (§K1 Phase B). Idempotent per (reporter, target).
 
-- **Review replies (v1.159, F-345):** a reply is reported as a `feed_item` with the number from its `reply.feed_id` (`feed_<n>` → `n`), although no feed shows it. It is reportable while the reply is published, not hidden, and its review active and not hidden; otherwise 404. That includes a reply that no longer renders after a hand-over (its author no longer answers for the page). The moderation queue shows it as `post_kind: "review_reply"` (preview = the reply body, no `post_url`), and `GET /admin/reports?post_kind=review_reply` filters to it.
+- **Review replies (v1.159, F-345):** a reply is reported as a `feed_item` with the number from its `reply.feed_id` (`feed_<n>` → `n`), although no feed shows it. It is reportable while the reply is published, not hidden, and its review active and not hidden; otherwise 404. That includes a reply that no longer renders after a hand-over (its author no longer answers for the page). *(v1.NEXT, F-532)* A reply on a PeepSo page's review also needs the reporter to be able to see that page: a SECRET page admits its members, invitees, author and site admins, and an unreadable privacy answers no. Anyone else gets the same 404, exactly as for a missing item. A review of a member's own profile has no page rule. The moderation queue shows it as `post_kind: "review_reply"` (preview = the reply body, no `post_url`), and `GET /admin/reports?post_kind=review_reply` filters to it.
 
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
 - **Body (JSON):** `target_kind` (**required**, ∈ `feed_item | announcement`) · `target_id` (**required**, int ≥ 1 — the `act_id` for `feed_item`, the **bare integer announcement id, prefix stripped** for `announcement`; see below) · `reason_code` (**required**, ∈ `spam|harassment|hate|violence|misinformation|other`) · `comment` (optional, ≤ 500 chars; **required when `reason_code = other`**)
@@ -7483,7 +7483,7 @@ The reviewed party's ONE public response to a review (v1.159, F-345). `{id}` is 
 - **Who:** the **reviewed party only** (see `permissions.can_reply` on the review rows): the member for a review of their own profile, the verified operator for a validator page, otherwise the page owner. Never the reviewer, never a third party. One reply per review per party: the party's own reply holds the slot, even when it is moderation-hidden (hand-over rule on the Reviews lists).
 - **Response 201:** `{ "reply": { "id", "body", "author_kind": "member", "author": MemberSummary, "posted_at", "edited_at": null, "feed_id": "feed_<act_id>", "permissions": { "can_edit", "can_delete", "can_report" } } }` (`author_kind` *(v1.226)*: always `"member"` here; see the entity Reviews list.)
 - **Side effects:** the reviewer gets the `bcc_review_reply` bell (in-app only). A reply is never a feed item and does **not** count toward streaks or contribution score.
-- **Errors:** `bcc_unauthorized` 401 · `bcc_forbidden` 403 (not the reviewed party, or the account is suspended/banned) · `bcc_not_found` 404 (the review does not exist, was removed, or is moderation-hidden — which of these is not disclosed) · `bcc_conflict` 409 (you have already replied to this review) · `bcc_invalid_request` 422 (empty, or over 1000 characters) · `bcc_rate_limited` 429 (10 per 5 min, shared with edits) · `bcc_unavailable` 503 (retryable; also when another reply to the same review is being written at that moment)
+- **Errors:** `bcc_unauthorized` 401 · `bcc_rate_limited` 429 (10 per 5 min, shared with edits; *(v1.NEXT, F-531)* checked FIRST, before anything about the review, so refused attempts count too) · `bcc_forbidden` 403 (the account is suspended/banned) · `bcc_invalid_request` 422 (empty, or over 1000 characters) · `bcc_not_found` 404 `"Not found."` *(v1.NEXT, F-531: one answer, identical body)* — the review does not exist, was removed or is moderation-hidden, **or you are not the reviewed party** (was 403 before v1.NEXT); which of these is never disclosed · `bcc_conflict` 409 (you have already replied to this review; only the reviewed party reaches this) · `bcc_unavailable` 503 (retryable; also when another reply to the same review is being written at that moment)
   - Route-schema validation runs first: a missing or non-string `body`, or an `{id}` below 1, is refused by WordPress with **400** `rest_missing_callback_param` / `rest_invalid_param`, not 422.
 - **Cache:** `no-store`.
 - **Mapping:** `ReviewRepliesEndpoint::create` → `ReviewReplyService::create` → `ActivityStreamWriter::publishReviewReply` (a backing `peepso-post` + ONE activity, module 206 `review_reply`, off the feed allowlist). Fires `do_action('bcc_review_reply_published', $replierId, $reviewerId, $pageId, $voteId, $actId)`.
@@ -7492,7 +7492,7 @@ The reviewed party's ONE public response to a review (v1.159, F-345). `{id}` is 
 
 Edit the reply (v1.159, F-345). **Author only, and only while the author still answers for the page.** Same body rules as `POST`. Response 200 `{ "reply": … }` with `edited_at` set.
 
-Errors: 404 when the viewer has no reply on this review, when it is moderation-hidden, or when the review is gone or hidden · 403 when the author no longer answers for the page (hand-over), or the account is suspended/banned · no 409. The other errors are as for `POST`.
+Errors: 404 `"Not found."` (the one answer, as for `POST`) when the viewer has no reply on this review, when it is moderation-hidden, when the review is gone or hidden, **or when the author no longer answers for the page** (hand-over; *(v1.NEXT, F-531)* was 403) · 403 when the account is suspended/banned · 429 checked first, as for `POST` · no 409. The other errors are as for `POST`.
 
 #### `DELETE /bcc/v1/reviews/{id}/reply`
 
@@ -7500,7 +7500,7 @@ Delete the reply (v1.159, F-345). **Author only** — the reviewer cannot remove
 - A **moderation-hidden** reply cannot be deleted. It answers 404, exactly like no reply: it keeps its slot, and the hidden act an open report points at.
 - A reply whose author no longer answers for the page (hand-over) can still be deleted by its author.
 
-Response 200 `{ "deleted": true }`. Errors: 401 · 404 (you have no reply on this review, or it is moderation-hidden) · 503.
+Response 200 `{ "deleted": true }`. Errors: 401 · 404 `"Not found."` (you have no reply on this review, or it is moderation-hidden; the same body as `POST`/`PATCH`, v1.NEXT) · 503. Not rate-limited: it only ever reads the caller's own reply.
 
 #### `GET /bcc/v1/entities/:target_kind/:target_id/watchers`
 
@@ -9747,6 +9747,17 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-24 — behaviour change (privacy) — review-reply refusals are one 404, rate-limited first; a secret page's review reply is reportable only by those who may see the page (F-531, F-532)
+
+Ships with bcc-trust #850.
+
+- **`POST /reviews/{id}/reply`:** "you are not the reviewed party" now answers the same **404 `bcc_not_found` "Not found."** as a review that is missing, removed or hidden; it was 403. The rate limit (10 per 5 min, shared with edits) is now checked **first**, before anything about the review, so refused attempts count toward it.
+- **`PATCH /reviews/{id}/reply`:** the hand-over refusal (the author no longer answers for the page) is now the same 404; it was 403. The rate limit is checked first, as for `POST`.
+- **`DELETE /reviews/{id}/reply`:** its 404 body is now the same `"Not found."`.
+- **Unchanged:** 401, 403 for a suspended or banned account, 409 for a second reply (only the reviewed party reaches it), 422, 503.
+- **`POST /me/reports` with a review reply's `feed_item`:** a reply on a PeepSo page's review is reportable only by someone who may see that page (a SECRET page admits its members, invitees, author and site admins). Anyone else, and an unreadable page privacy, get the same 404 as a missing item. A review of a member's own profile is unaffected.
+- **Clients:** treat these refusals as "not available". The reply UI is driven by `permissions`, so no change is needed.
 
 ### v1.226 — 2026-11-23 — additive — a card page's review reply shows as the page's own response when its author's profile is closed to the viewer
 
