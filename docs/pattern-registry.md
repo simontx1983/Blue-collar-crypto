@@ -150,7 +150,11 @@ should point at exactly one source-of-truth class or method per concept.
   `PageAccess::hiddenAmong($pageIds, $viewerId)` for the ones this viewer may
   not see, and leaves those out of BOTH the count and the page
   (`page_id NOT IN (…)`), so the totals agree; a failed read or more than
-  `PageAccess::HIDDEN_LIST_CAP` secret pages fails closed. Never hand-roll a
+  `PageAccess::HIDDEN_LIST_CAP` secret pages fails closed. A page-OWNERSHIP
+  count or owner list (rows of `peepso_page_members` /
+  `peepso_page_categories`) puts
+  `PeepSoPageRepository::listablePageSql('pm.pm_page_id')` in its WHERE:
+  published and not secret, for every viewer. Never hand-roll a
   `LEFT JOIN … peepso_page_privacy … <> 2`: that form lets a two-row page
   through.
   ([bcc-core/src/Repositories/PeepSoPagePrivacy.php](../app/public/wp-content/plugins/bcc-core/src/Repositories/PeepSoPagePrivacy.php),
