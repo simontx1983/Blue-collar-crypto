@@ -4347,11 +4347,16 @@ Paginated list of Cards filtered + sorted server-side. Backs `/directory`.
     "pagination": {
       "page": 1,
       "per_page": 24,
+      "total": 183,
       "total_pages": 8,
       "has_more": true
     }
   }
   ```
+- **`pagination.total` (v1.NEXT):** how many cards match the request's filters across all pages. It is the count behind `total_pages`, taken from the same query as the rows (the same filters, search and secret-page rule), so it agrees with them.
+  - With no `kind`, the list covers the three card kinds only (validator, project, creator), and so does the total. A page of any other type is neither counted nor given a slot.
+  - The page ceiling is unchanged: past `page` 20 is still a 400, even when `total` is larger than 20 pages hold.
+  - The frontend shows a count only when the server sends one.
 - **Errors:** `bcc_invalid_request` (bad `kind`, `tier`, `sort`, `chain`, `status`, negative `min_self_stake`, `page > 20`, or `q` over 100 characters) · `rest_invalid_param` 400 (`q` over 100 characters, rejected by WordPress before the handler) · `bcc_rate_limited` 429 (`q` requests over 10 per 5 s; *since v1.167*)
 - **Cache:** `Cache-Control: private, max-age=15`. Underlying `PageDiscoveryService` query is server-cached for 30s with a stampede lock; the short client TTL is courtesy for back-button nav.
 - **Mapping:**
@@ -9804,6 +9809,14 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-25 — additive — GET /cards carries pagination.total
+
+Ships with bcc-trust #880. Structure A (Explore's tab counts).
+
+- **`GET /cards` `pagination.total`:** how many cards match the filters across all pages, from the same query as the rows, so the two agree.
+- **No `kind`:** the list now covers the three card kinds only (validator, project, creator). Pages of any other type used to be counted in `total_pages` and to take a slot on a page without rendering; now they are neither counted nor listed.
+- **Unchanged:** the item shape, every filter, the page ceiling (`page` ≤ 20) and the errors.
 
 ### v1.238 — 2026-11-24 — behaviour change (privacy) — other users no longer receive join or claim times; account creation is month only (R4, R12, R13)
 
