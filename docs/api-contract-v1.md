@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.230 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.231 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -4764,6 +4764,7 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
   - **Empty name:** the wallet and validator-gone messages drop the name (*"…behind your claim…"*); the holder message uses *"this collection"*; the creator message uses *"this collection's contract"*. These are exactly `NotificationDispatcher::claimBadgeRemovedMessage()`.
   - **In-app only:** no push variant, excluded from the email digest. Sent only after a real revoke (the re-verify runs in a report-only mode until an operator enables enforcement), never for a wallet disconnect.
 - **v1.159 (F-345):** new bell key `bcc_review_reply` (default on, **in-app only**: no push variant, excluded from the email digest). To the reviewer when the reviewed party replies; `actor` = the replier; `external_id` = the reviewed page. `link` is the page (or `/u/{replier}` for a review of a member's profile). Message: *"@{replier} replied to your review of {page}."*, or *"@{replier} replied to your review."* when there is no page name (member profiles).
+  - ⚠ *(v1.231, F-578)* **On a card page** (`external_id` is a page, not a member's self-page), the bell speaks as the page, because the reply can stand as the page's own response (v1.226). Message: *"{page} replied to your review."*, or *"Your review got a reply."* when the page has no title. `actor` is the empty actor `{ "id": 0, "handle": "", "display_name": "", "avatar_url": "" }`, so no person is named or shown. Rows written before v1.231 are shown the same way. A review of a member's own profile keeps the message above, with the replier as `actor`.
 - **v1.132 (F-272):** three new bell keys, all default on, **in-app only** (no push variant, excluded from the email digest). `external_id` is the group; `link` is the group's page (`/communities/{slug}`), or `/communities` if the group no longer resolves.
   - `bcc_group_join_requested` — to each owner and manager of a closed group (never to one blocked either way with the requester); `actor` = the requester. *"@{handle} asked to join {group}."*
     - *v1.187 (bcc-trust #757, F-389):* its `link` is the Members tab's requests block, **`/communities/{slug}/members#requests`**, where the request is decided (`#requests` is the frontend's anchor, bcc-frontend #327). Same `/communities` fallback when the group no longer resolves.
@@ -9793,6 +9794,14 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.231 — 2026-11-24 — behaviour change (privacy) — a card page's review-reply bell speaks as the page (F-578)
+
+Ships with bcc-trust #855. Follows v1.226.
+
+- **`bcc_review_reply` bell on a card page** (`GET /me/notifications`): the message is *"{page} replied to your review."* (or *"Your review got a reply."* with no page title), and `actor` is the empty actor. It was *"@{replier} replied to your review of {page}."* with the replier as `actor`. Rows written before are shown the same way.
+- **Unchanged:** a reply on a member's own profile review still names the member; `link`, `type`, `external_id`; the bell stays in-app only (no push, not in the digest).
+- **Clients:** no change required. The bell panel's `Avatar` falls back to its initials treatment for an actor with no image, handle or name. Showing the page's own avatar there would be a later, client-side improvement.
 
 ### v1.230 — 2026-11-24 — behaviour change (privacy) — a member's profile counts and Vouches list follow the viewer's page access; a vouched member is named as others see them (F-571)
 
