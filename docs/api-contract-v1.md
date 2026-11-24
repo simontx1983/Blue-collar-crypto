@@ -9469,7 +9469,7 @@ Member profiles, as `/u/{handle}`. A member is listed only when **all** of these
 - a PeepSo user row exists, and the role is not `register` (email unvalidated), `verified` (awaiting approval) or `ban`;
 - the profile is visible to a signed-out visitor (`profile_visibility` `public`);
 - the account is not suspended;
-- the member has not hidden their profile from listings (`hide_from_search`, or the legacy discovery opt-out it replaced; any opted-out value counts);
+- the member has not hidden their profile from listings (`hide_from_search`; any opted-out value counts). The legacy discovery opt-out it replaced counts only until its one-time fold into `hide_from_search` has completed, as in member search. After the fold, turning `hide_from_search` off lists the member again, even if an old legacy opt-out row remains;
 - the account is not hidden, shadow-limited or under review;
 - the member has a current handle of the current shape (lowercase letters and digits, in runs joined by single hyphens) that is not the `member-{id}` fallback. Legacy handles, an email address for example, are never listed.
 
