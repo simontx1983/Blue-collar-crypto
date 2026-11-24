@@ -27,7 +27,8 @@ rows without bumping it. Rank Phase 6 itself is a net-zero swap —
 `wp_bcc_trust_community_ownership_log`, 57 → 58. Rank Phase 8 (2026-08-04) added
 `wp_bcc_trust_findings` + `wp_bcc_trust_finding_decisions`, 58 → 60.
 Rank helping emitters (2026-08-04) added `wp_bcc_trust_helpful_marks`,
-60 → 61. The
+60 → 61. Validator relationships (2026-11-23) added
+`wp_bcc_validator_relationship_log`. The
 inventory below holds 60 Active rows + 1 RETIRED marker (`wp_bcc_user_ranks`).)
 
 Row counts are exact (`SELECT COUNT(*)`) for orphan candidates and ambiguous
@@ -141,7 +142,8 @@ schema-install path in `tables.php` is itself routed through the same runner.
 | wp_bcc_cosmwasm_contracts | 36 prod · dropped on stage (was 3,762) | CosmWasm contract candidate ledger: one row per (chain, contract address) with classification, retry state, cached operator-deny flag and emit marker (CosmWasm discovery 2026-08; this durable row IS the memory that stops previously-inspected contracts being reprocessed). ⛔ **DORMANT since the 2026-09-18 scanner freeze (bcc-trust #261)** — the scanner is the only thing that discovers contracts, so **no new row can be created**. Manual Add Collection does not touch this table at all: `ManualCollectionIntakeService` uses `ChainRepository` and `CollectionRepository::addManual()` only. ⚠ Not write-inert, though: the **unfrozen** Hide/Unhide stance actions (`VerifyCollectionsPage::ACTION_HIDE` / `ACTION_UNHIDE` → `CosmwasmDiscoveryService::syncDenyFlags()` → `CosmwasmContractRepository::setDenied()`) still UPDATE the `denied` column on an EXISTING row. That path inserts nothing — `syncDenyFlags()` skips an address with no row. ⛔ **DROPPED ON STAGING 2026-10-09** by `drop_scanner_schema_v1` (bcc-trust #290, merge `04f18244`, migration COMPLETE at 13:40:19Z, marker `bcc_trust_scanner_schema_dropped`). No longer declared anywhere in `main`: its `schema-*.php` file is deleted, so dbDelta neither creates nor re-creates it. ⚠ **STILL PRESENT ON PRODUCTION**, which runs `d84c2ac1` (S1–S6, deployed 2026-10-07) — there the table is still declared, still created by dbDelta and still holds its rows, because the drop migration is not deployed there. Production cleanup is UNAUTHORIZED and pending. Not orphaned | schema-cosmwasm-contracts.php / CosmwasmContractRepository | RETIRED |
 | wp_bcc_wallet_links | 9 | User↔wallet links per chain | schema-wallets.php / WalletRepository | Active |
 | wp_bcc_onchain_signals | 3 | Unified on-chain trust signals (wallet age/tx/role boost) | schema-core.php / OnchainSignalRepository | Active |
-| wp_bcc_onchain_claims | 0 | Entity claims (incl. page claims via entity_type='page') | schema-claims.php | Active |
+| wp_bcc_onchain_claims | 0 | Entity claims (incl. page claims via entity_type='page'; page team rows: claim_role administrator/representative, status invited/active) | schema-claims.php | Active |
+| wp_bcc_validator_relationship_log | 0 | Hash-chained, append-only history of validator relationships (owner links, revokes, cancels, supersessions, team changes); rows never mutate | TableRegistry::validatorRelationshipLog / schema-validator-relationship-log.php / ValidatorRelationshipLogRepository | Active |
 | wp_bcc_operator_profiles | 0 | One shared public branding/profile record per validator operator account (brand name, bio, links, logo attachment) | schema-operator-profiles.php / OperatorProfileRepository | Active |
 | wp_bcc_operator_profile_overrides | 0 | Optional per-validator-page profile overrides; null inherits the operator's shared value | schema-operator-profiles.php / OperatorProfileRepository | Active |
 | wp_bcc_onchain_collections | 314 | NFT collection metadata cache (TTL) | schema-collections.php | Active |
@@ -1748,8 +1750,51 @@ Entity claims (incl. page claims via entity_type='page' — absorbed bcc_page_cl
 - verified_at · datetime · YES
 - created_at · datetime · NO
 - recovery_pending · tinyint(1) · NO · K
+- verification_method · varchar(32) · NO · default `wallet` — how the claim was proven: `wallet` (a linked wallet matched on-chain; every row before this column), `siws` / `solana_identity` (key proofs) or `staff` (approved by staff). Wallet-keyed paths (unlink revoke + purge, the re-verify sweep) act on `wallet` rows only.
+- verified_by · bigint unsigned · YES — the staff user who approved a `staff` claim. A `staff` claim stores no wallet: `wallet_address` '' and `chain_id` 0 (the columns stay NOT NULL).
+- invited_by · bigint unsigned · YES — page team rows: who invited the member
+- invite_expires_at · datetime · YES — page team rows: when a pending invite lapses
+- accepted_at · datetime · YES — page team rows: when the member accepted
+- added_by_staff · tinyint(1) · NO · default 0 — page team rows: staff added the member
+- reconfirmed · tinyint(1) · NO · default 0 — page team rows: added (or since re-confirmed) with a password re-confirmation; set only by that step-up
+- show_publicly · tinyint(1) · NO · default 0 — page team rows: the member's own choice to be listed publicly
 - verified_operator_slot · varchar(41) STORED generated · YES · UQ · OPTIONAL — **not part of the schema install**. **As of 2026-11-10, production has it and staging does not** (an out-of-band check of the live databases; neither environment's install created it). The CREATE TABLE never declares it. It exists only where someone has hand-run `bcc-trust/scripts/claims-verified-operator-constraint.php apply` (deliberately not wired into activation or the schema-version hook). That script adds the column, `CASE WHEN claim_role='operator' AND status='verified' THEN CONCAT(entity_type, ':', entity_id) END`, together with `uq_verified_operator (verified_operator_slot) [uq]`, a DB backstop for "at most one verified operator claim per entity". Rollback is in the script's header. Code must not assume the column exists.
-- Indexes: PRIMARY (id) [uq]; uq_user_entity (user_id,entity_type,entity_id) [uq]; idx_entity (entity_type,entity_id); idx_user; idx_status; idx_recovery_pending
+- Indexes: PRIMARY (id) [uq]; uq_user_entity (user_id,entity_type,entity_id) [uq]; idx_entity (entity_type,entity_id); idx_entity_role (entity_type,entity_id,claim_role,status); idx_user; idx_status; idx_recovery_pending
+- Page team rows (administrator, representative) use status `invited` / `active`, never `verified`, so readers of verified claims never see them; every reader of `entity_type='page'` rows names the roles it reads (PageClaimRolePolicy, D1).
+
+#### wp_bcc_validator_relationship_log
+Hash-chained, append-only history of validator relationships: owner links
+(staff-approved or proven), revokes, cancels, supersessions and team
+changes. ONE global chain: `seq` is assigned by the application
+(head.seq + 1 under the named lock `bcc_vrl_append`, taken before the
+transaction that writes the change and released after COMMIT), UNIQUE and
+hashed; `id` is a surrogate outside the hash. `row_hash` = HMAC-SHA256 over
+the canonical JSON of the hashed fields plus `prev_hash`, keyed by an HKDF
+of `BCC_ENCRYPTION_KEY` (`key_id` 1). `prev_hash` is the previous row's
+`row_hash` (a constant genesis value for seq 1). Evidence text is stored
+with its SHA-256 digests and the chain hashes the digests, so a logged
+redaction can clear the text without breaking the chain. `created_at` is
+UTC computed in PHP. Rows are NEVER updated or deleted; the only writer is
+`ValidatorRelationshipLogRepository::append()` (a guard test fails on any
+other write). `RelationshipLogVerifier` re-walks the chain and reports the
+first bad seq; it never repairs.
+- id · bigint unsigned · NO · PK auto
+- seq · bigint unsigned · NO · UQ
+- created_at · datetime · NO
+- action · varchar(40) · NO
+- page_id · bigint unsigned · NO · default 0 · K
+- subject_user_id · bigint unsigned · YES · K
+- actor_kind · varchar(10) · NO — `staff` | `member` | `system`
+- actor_user_id · bigint unsigned · YES · K
+- payload · text · NO — canonical JSON (prev/new state, reason, meta); no floats
+- evidence_note · text · YES
+- evidence_ref · varchar(2048) · YES
+- evidence_note_sha256 · char(64) · YES
+- evidence_ref_sha256 · char(64) · YES
+- key_id · tinyint unsigned · NO · default 1
+- prev_hash · char(64) · NO
+- row_hash · char(64) · NO
+- Indexes: PRIMARY (id) [uq]; uq_seq (seq) [uq]; idx_page_seq (page_id,seq); idx_subject_seq (subject_user_id,seq); idx_actor_seq (actor_user_id,seq)
 
 #### wp_bcc_onchain_collections
 NFT collection metadata cache (TTL via expires_at). Distinct from the dropped legacy bcc_collections.
