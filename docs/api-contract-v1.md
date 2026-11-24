@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.231 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.233 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1175,6 +1175,7 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
 - `is_claim_verified` (verified-wins slice, 2026-06-30) — `true` when the page has a **verified on-chain operator/creator claim** (`onchain_claims.status='verified' AND claim_role IN ('operator','creator')`), i.e. the real entity proved key control. Distinct from `is_claimed` (ANY claim exists) and from `is_verified`/the member email flag. Drives the "✓ Verified Operator" badge + the dominant search-ranking bonus + same-name look-alike demotion. `false` on `member`/`community` cards (not on-chain-claimed). Projected from the read model (`has_verified_claim`), refreshed whenever a claim verify/revoke re-syncs the page.
 - `claim_target` (per §N8) — non-null only when the page is unclaimed AND a claim target resolves. Drives the four-step claim modal.
   - **v1.221 (F-515), additive:** `claim_target` is `{ entity_type, entity_id, chain_slug, claimable, unclaimable_reason_code, unclaimable_hint }`. `claimable` (bool) says whether BCC can prove an operator on this validator's chain from the data it stores. When it is `false`, the block is still present (so the card can say why), `unclaimable_reason_code` is one of `operator_address_missing` (the validator has no operator address on record), `solana_unsupported` (a Solana validator needs its vote account's withdraw authority, which BCC does not record), `evm_no_validator_pages` (an EVM chain) and `operator_unprovable` (any other chain, or one whose stored operator address no wallet can match, such as THORChain's node address), and `unclaimable_hint` is server copy naming the chain by its display name, never its slug. Both are `null` when `claimable` is `true`. `POST /pages/:id/claim` refuses an unclaimable validator with the same code and hint, so the card and the write agree. Clients decide claimability from these fields, never from a chain allowlist of their own.
+- `onchain_signals.status` (validator cards; `onchain_signals` is `null` for other kinds) ∈ {`active`, `jailed`, `inactive`, `unknown`}: the status the validator's chain last reported. **v1.233 (F-584):** it reads `unknown` when BCC has had no successful call to the validator's chain in 72 hours (whatever the chain last reported; it shows again once the chain answers). `last_fetched_at` is unchanged.
 - `messaging` (v1.53) — **server-owned destination state** for entity-addressed messages. Always present. Shape: `{ destination: "queue" | "operator" | "unavailable" | "none", operator: { handle, name } | null }`.
   - `operator` — exactly one verified operator; `POST /me/conversations {page_id}` opens an ordinary DM with them. `operator` is non-null ONLY in this state.
   - `queue` — validator has **never** been claimed; a message is durably queued for its first verified operator (see §4.19 First-claim backlog release).
@@ -3900,7 +3901,7 @@ Cross-kind discovery list. Sort key: `verified DESC, heat_score DESC, member_cou
 - **Cache:** anon → `Cache-Control: public, max-age=60` (60s window keeps newly-warming groups discoverable quickly); authed → `private, no-store` (v1.27 — each item's `card.community_dossier.viewer_is_member` is viewer-scoped, so authed responses must never sit in a shared cache; this matches the §4.7.5 detail posture).
 - **Privacy:** `secret` groups never appear here regardless of viewer. `closed` groups appear with name + member_count visible; content stays private at PeepSo's layer.
 - **Filter `verified=1`:** restricts to groups with `_bcc_group_kind IN ('holders','delegators')`. Use this to render an "On-Chain Verified only" filter chip on the discovery page. **Widened in v1.52** — it previously meant `'holders'` alone. Both kinds emit `verification.kind = "on_chain"`, so an existing chip keeps working and simply returns delegator communities too; the same widening applies to the `verified` component of the sort key.
-- **`validator_stats` (v1.52):** stats block for `validator`-type cards only — `{ moniker, chain_name, status, commission, total_stake, delegator_count, min_stake_display, validator_page }` (`chain_name` new in v1.84). `null` for every other kind, and `null` when the underlying validator is not yet indexed. Each inner field is independently nullable (enrichment can leave any column unpopulated). `commission` and `total_stake` are numbers; `delegator_count` an integer; `min_stake_display` a server-pre-formatted string (`"1 ATOM"`, or a bare amount when the chain's native token is unknown) rendered verbatim per §A2/§S; `validator_page` is the frontend path to the backing validator page (`/v/{slug}`, composed server-side via the locked `CardUrlMap`) or `null` when no page backs the validator. This is the delegator-community analogue of `collection_stats` — the two are mutually exclusive by kind and never both non-null.
+- **`validator_stats` (v1.52):** stats block for `validator`-type cards only — `{ moniker, chain_name, status, commission, total_stake, delegator_count, min_stake_display, validator_page }` (`chain_name` new in v1.84). `null` for every other kind, and `null` when the underlying validator is not yet indexed. Each inner field is independently nullable (enrichment can leave any column unpopulated). `commission` and `total_stake` are numbers; `delegator_count` an integer; `min_stake_display` a server-pre-formatted string (`"1 ATOM"`, or a bare amount when the chain's native token is unknown) rendered verbatim per §A2/§S; `validator_page` is the frontend path to the backing validator page (`/v/{slug}`, composed server-side via the locked `CardUrlMap`) or `null` when no page backs the validator. This is the delegator-community analogue of `collection_stats` — the two are mutually exclusive by kind and never both non-null. **v1.233 (F-584):** `status` reads `unknown` when BCC has had no successful call to the validator's chain in 72 hours (whatever the chain last reported; it shows again once the chain answers).
 - **`image_url`:** cover-art URL. NFT-type cards return the underlying collection's `image_url` (joined through `wp_bcc_onchain_collections`). Non-NFT cards (`hall`/`system`/`user`) return `null` in V1 — the frontend falls back to a generated initials block. PeepSo group avatars for non-NFT kinds is V1.5.
 - **`description`:** group post body, plain-text + tag-stripped + truncated to ~200 chars (em-dash ellipsis when truncated). `null` when the group has no description on file. Applies to all kinds — `hall`/`system`/`user` cards can use the same field on a future detail surface.
 - **`collection_stats`:** market-data block for NFT-type cards only — drives the discovery card's flip-to-back UX (floor price, holder distribution, lifetime volume, listed %, royalty %). Each inner field is independently nullable since the upstream fetch can leave any column unpopulated. Currency-bearing fields (`floor_price`, `total_volume`) are returned as raw strings (full decimal precision) PLUS server-pre-formatted `*_display` strings (`floor_display`, `volume_display`, `holders_display`, `supply_display`, `listed_display`, `royalty_display`, `min_balance_display`). Frontend renders `*_display` verbatim per §A2 / §S — no client-side number-formatting decisions. `distribution_pct` is the server-computed `holders / supply * 100` (rounded), exposed as a number alongside `holders_display` for charting use. `min_balance` mirrors the gate threshold (`_bcc_gate_min_balance` post-meta). Em-dash (`"—"`) appears in `*_display` when the underlying value is missing/zero so the wire never surfaces "0.00 STARS" as a fake-low signal. Non-NFT cards return `null` for the entire block — there is no equivalent for `hall`/`system`/`user` kinds.
@@ -4332,7 +4333,7 @@ Paginated list of Cards filtered + sorted server-side. Backs `/directory`.
   - `q` (search string) — optional; passed verbatim to the underlying `PageDiscoveryService`. **At most 100 characters** *(since v1.167)*: longer is a `400` before the handler runs (`rest_invalid_param`, from WordPress's validator), and the handler re-checks (`bcc_invalid_request`). **A request carrying `q` is rate limited** *(since v1.167)*: 10 per 5 s per account, or per /24 subnet (IPv6 /48) when anonymous, the same numbers as `GET /search`. Over the limit → `429 bcc_rate_limited`. Requests without `q` are not limited.
   - `good_standing_only` (`1`|`true`|`on`|`yes` → true; anything else → false) — optional; default false. When true, restricts results to operators in good standing per §E1 (`reputation_tier ∈ {neutral, trusted, elite}`). Composes with `tier` via AND server-side, so `tier=common&good_standing_only=1` is a vacuously empty intersection rather than an error.
   - `chain` (chain slug, e.g. `cosmos`) — optional; **validator-only**. Unknown slugs → `bcc_invalid_request` 400 (rejected at the boundary so a typo never silently returns empty).
-  - `status` ∈ {`active`, `jailed`, `inactive`} — optional; **validator-only** on-chain status. `unknown` is intentionally not selectable.
+  - `status` ∈ {`active`, `jailed`, `inactive`} — optional; **validator-only** on-chain status. `unknown` is intentionally not selectable. **v1.233 (F-584):** matches only validators on an active chain BCC has had a successful call to in the last 72 hours; on any other chain the stored status is not current, so no `status` value matches.
   - `min_self_stake` (number ≥ 0) — optional; **validator-only**. Lower bound on bonded self-stake; validators below the floor (and those with no stake reading) are excluded. Negative → `bcc_invalid_request` 400.
   - `page` (1..20) — optional; default 1. The hard ceiling protects against unbounded `OFFSET` filesort
   - `per_page` (1..50) — optional; default 24
@@ -8320,7 +8321,8 @@ Auth **member in good standing** (§4.32.7).
   announcement is not publicly readable, or *(since v1.191)* it is on a SECRET page the
   viewer may not see) · `400 bcc_invalid_request` (absent, blank,
   oversized or non-UTF-8 body) · `400` + `reason_code: replies_not_supported` ·
-  `503 bcc_unavailable`
+  `503 bcc_unavailable` (*v1.232, F-469:* also with `reason_code: unavailable` when the
+  commenter's standing could not be read; retryable, nothing written)
 
 ⚠ **`body` is NOT declared `required` in the route schema**, deliberately. A
 schema-required field is validated by WordPress BEFORE the handler runs, so a request
@@ -8337,11 +8339,15 @@ the body is refused by the handler, after the feature gate.
 | `auth_required` | Not signed in. **No anonymous comments.** |
 | `suspended` | Suspended account, **or** a reputation tier below `neutral`. See below. |
 | `fraud_locked` | The account is restricted. |
+| `unavailable` | *(v1.232, F-469)* The commenter's standing could not be READ. Retryable: this POST answers **503** `bcc_unavailable`, and `can_comment` carries a hint saying so. |
 
 ⚠⚠ **STANDING AND SUSPENSION PRESENT IDENTICALLY, AND THAT IS DELIBERATE.** §4.32.11's
 reason inventory is CLOSED and has no "standing" entry, and the frontend closes the
 composer on an unrecognised reason — so a new code would produce a disabled control with
-no copy. To a member, both mean "you may not post right now".
+no copy. To a member, both mean "you may not post right now". *(v1.232, F-469)* A
+standing that could not be READ is different, and has its own retryable reason,
+`unavailable`. It carries an `unlock_hint`, which the frontend's fallback renders for a
+code it does not know, so it is never shown as a suspension.
 
 ⚠ "Good standing" resolves through `UserViewService::isInGoodStanding()`, the documented
 single source of truth: tier ∈ {`neutral`, `trusted`, `elite`}. A member with **no score
@@ -8730,7 +8736,8 @@ to `false`.
 closes the composer:
 
 `auth_required` · `comments_disabled` · `announcement_archived` · `announcement_unavailable` ·
-`suspended` · `fraud_locked` · `feature_disabled`
+`suspended` · `fraud_locked` · `feature_disabled` · *(v1.232, F-469)* `unavailable` (the
+commenter's standing could not be read; retryable, and it carries an `unlock_hint`)
 
 **`can_report` denial reasons** — a separate CLOSED inventory, and deliberately
 not the comment list:
@@ -9806,6 +9813,24 @@ Ships with bcc-trust #864. Follows v1.229 (F-532).
   - On a card page's review, a reply shown as the page's own response (`author_kind: "page"`, v1.226) stays reportable.
 - **Unchanged:** the report shape and error codes; the page rule (v1.229); a reply whose author no longer answers for the page (hand-over) stays reportable while it is live.
 - **Clients:** no change. A reply the tab does not show has no report control.
+
+### v1.233 — 2026-11-24 — behaviour change — a validator on a chain BCC can't reach reads status `unknown` (F-584)
+
+Ships with bcc-trust #862.
+
+- **What changed:** `onchain_signals.status` (Card), `validator_stats.status` (§4.7.4 discovery items, §4.7.5 detail, §4.7.8 items) read `unknown` when BCC has had no successful call to the validator's chain in 72 hours. Until now they showed the chain's last reported value indefinitely, so validators on an unreachable chain kept reading `active`.
+- **The directory `status` filter** (`GET /bcc/v1/cards`) matches only validators on an active chain BCC has had a successful call to in the last 72 hours.
+- **Unchanged:** the value set (`unknown` was already a status), every other field (`last_fetched_at` included), and the operator dashboard's `chain_reported_status` (`GET /bcc/v1/me/validator-pages`), which stays the raw reported value. Nothing stored changes; a chain that answers again shows its real status.
+- **Clients:** no change required; `unknown` already renders.
+
+### v1.232 — 2026-11-24 — additive + behaviour change — an announcement comment refused because the commenter's standing could not be read is a retryable `unavailable` (F-469)
+
+Ships with bcc-trust **#857** (F-469 follow-up). bcc-trust only.
+
+- **`can_comment`** (§4.32.11) gains **`unavailable`** in its CLOSED denial inventory: the commenter's standing could not be read. It carries an `unlock_hint` ("Your standing could not be checked right now. Please try again."), so a client that does not know the code still shows copy, and the composer stays closed.
+- **`POST /announcements/:id/comments`** answers **`503 bcc_unavailable`** with `reason_code: unavailable` in that case. It is retryable, and nothing is written.
+- Before this, the same case was refused as `suspended` (403), which reads as "your account is suspended". `suspended` keeps both its existing meanings: a suspended account, or a standing that WAS read and is below `neutral`.
+- **Unchanged:** every other comment refusal, every success response, and the `can_report` inventory (it has no standing rung).
 
 ### v1.231 — 2026-11-24 — behaviour change (privacy) — a card page's review-reply bell speaks as the page (F-578)
 
