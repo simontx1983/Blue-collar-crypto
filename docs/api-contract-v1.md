@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.227 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.231 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1122,6 +1122,7 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
 - `current_rank_label` mirrors `rank_label` exactly (e.g. `"Veteran"`, or `"New Member"` for New Members). It is a member-axis field kept for surface compatibility.
 - `flags` is an array of short slugs; if non-empty, the frontend may render moderation chips. V1 codes: `suspended`, `shadow_limited`, `hidden`, `under_review`.
 - Hidden privacy fields (per `privacy.*_hidden: true`) cause the corresponding sections in `counts`, `wallets`, etc. to either be omitted or zeroed depending on the viewer's relationship — server decides, client doesn't.
+- **Secret pages in the counts *(v1.230, F-571)*:** on a single member's view (this `User`, and that member's `MemberSummary.engagement`), `counts.reviews_written` and `counts.disputes_signed` leave out the SECRET pages this viewer may not see, by the same rule as `/users/:handle/reviews` and `/disputes`. So the secret-page part of a count agrees with its list. The member and site admins see the full count. When the pages' privacy cannot be read, or the member has more than 100 secret pages, both counts are `0` for that viewer. Member cards built in batches (the directory, feeds) still show the unfiltered count. `reviews_written` still counts every active vote, as before, so it can exceed the Reviews list's `total` by moderation-hidden reviews.
 - `cover_photo_url` is `null` when no custom cover photo is set; the frontend renders a default treatment in that case. URL is absolute (per §1.7) and points at PeepSo's stored cover image. Self-edits go through `PATCH /me/profile/cover` (multipart upload) — see §V2 Phase 2 endpoints.
 - `cover_photo_position` is `{x, y}` percentages (0–100) for the CSS `object-position` of the cover crop. Defaults to `{x: 50, y: 50}` (center). Self-edits go through `PATCH /me/profile/cover/position`.
 
@@ -2698,6 +2699,7 @@ Full User view-model.
   `live_shift` (recent-activity events for the hero panel), `tabs`
   (counts strip). `reviews` and `disputes` ship as empty arrays in
   V1; lazy-load list endpoints for those tabs land in V1.5.
+- **`indexable`** *(v1.228, F-518)*: `true` when a search engine may index this profile page, by the same rule `GET /bcc/v1/sitemap/members` lists members with (§4.33), so a profile is in the sitemap exactly when its page is indexable. It is the anonymous answer whoever asks, the owner included, and `false` whenever a read behind it fails. Clients set the page's robots tag from it and never derive it from `flags`, `profile_visibility` or the handle.
 
   `tabs` entries are `{key, label, count, hidden}`. **v1.49 split:**
   key `reviews` counts reviews RECEIVED (`counts.reviews_received` —
@@ -2785,7 +2787,7 @@ Paginated directory of human members. Sibling to §4.9 `/cards` (entity-card dir
   this contract sets it no maximum.
 - **Cache:** `Cache-Control: private, max-age=15`; `Vary: Authorization, Cookie`
 - **Pagination envelope:** offset (`OffsetPagination` per §1.5) — `total_pages` is the canonical field; clients derive "has more" as `page < total_pages`.
-- **Mapping:** `WP_User_Query` ordered by `user_registered DESC`; each row composed via `CardViewService::getMemberCardForList` (one call per user). `UsersEndpoint::members` prefetches eleven batched maps — followers count, primary-Hall resolution, owned-page count, owned-page typed counts, endorsements received, solids received, reviews written, disputes signed, verified-wallet count, X connections, GitHub connections — via `MemberSummaryPrefetcher::primeFor` before the per-row loop; the card builder delegates the dossier resolution to `UserViewService::getSummary($userId, $viewerId, $prefetched)` so the total query budget stays bounded regardless of `per_page` (no parallel dossier query — same resolution as before, now wrapped in the Card shape). `reputation_tier` is the tier slug (all five bands). `reputation_tier_label` is the pre-rendered §A2 display string. Frontends should encode the tier as a color/border treatment on the rank chip rather than rendering the label as a duplicate word next to `rank_label`.
+- **Mapping:** `PeepSoUserSearch`, PeepSo's privacy-aware user search, ordered by `user_registered DESC` *(corrected in v1.228: this said `WP_User_Query`, which the route no longer uses)*. The privacy rules apply inside the query: profile visibility for this viewer, banned and unvalidated accounts left out, blocks in either direction, `hide_from_search` and suspension (F-182). Admins are exempt. Without PeepSo the list is empty (fail closed). Each row is composed via `CardViewService::getMemberCardForList` (one call per user). `UsersEndpoint::members` prefetches eleven batched maps — followers count, primary-Hall resolution, owned-page count, owned-page typed counts, endorsements received, solids received, reviews written, disputes signed, verified-wallet count, X connections, GitHub connections — via `MemberSummaryPrefetcher::primeFor` before the per-row loop; the card builder delegates the dossier resolution to `UserViewService::getSummary($userId, $viewerId, $prefetched)` so the total query budget stays bounded regardless of `per_page` (no parallel dossier query — same resolution as before, now wrapped in the Card shape). `reputation_tier` is the tier slug (all five bands). `reputation_tier_label` is the pre-rendered §A2 display string. Frontends should encode the tier as a color/border treatment on the rank chip rather than rendering the label as a duplicate word next to `rank_label`.
 - **Field rules** (the `member_dossier` sub-blocks; the rest follow the §3.2 Card rules):
     - `trust_score` ∈ [0, 100] — the reputation base, clamped at the boundary (v1.60: the §D5 read-time panel-participation bonus retired with the panel; `trust_score` no longer carries any augmentation). Clients render as a stencil number, never derive. (Top-level card field per §3.2.)
     - `stats[].watchers` (the member-card third stat per §3.2.2) is the passive side of `peepso_user_followers` (people who follow this user), sourced from `UserViewService::getSummary`'s `followers_count`. The full `/users/:handle` response carries both `followers` and `following`; the directory ships the followers count only — `following` isn't a meaningful directory signal and the second SQL isn't worth the cost.
@@ -2798,7 +2800,7 @@ Paginated directory of human members. Sibling to §4.9 `/cards` (entity-card dir
 
 #### `GET /bcc/v1/users/mention-search` (v1.5)
 
-Slim prefix-search endpoint backing the composer's `@`-mention autocomplete (§3.3.12). Distinct from `/members` because keystroke autocomplete needs a tiny payload and tighter privacy filtering than the directory grid — the dropdown MUST NOT leak hidden / banned / blocked users that the directory might surface to peers via different code paths.
+Slim prefix-search endpoint backing the composer's `@`-mention autocomplete (§3.3.12). Distinct from `/members` because keystroke autocomplete needs a tiny payload and applies its own mention policy on top of the directory's privacy rules — the dropdown MUST NOT leak hidden / banned / blocked users.
 
 - **Auth:** Bearer required. Anonymous → `bcc_unauthorized 401`. The mention picker is composer-only and the composer is auth-gated, so the endpoint is too.
 - **Query:**
@@ -4762,6 +4764,7 @@ Two-route surface (`GET` + `PATCH /me/notification-prefs`) covering three delive
   - **Empty name:** the wallet and validator-gone messages drop the name (*"…behind your claim…"*); the holder message uses *"this collection"*; the creator message uses *"this collection's contract"*. These are exactly `NotificationDispatcher::claimBadgeRemovedMessage()`.
   - **In-app only:** no push variant, excluded from the email digest. Sent only after a real revoke (the re-verify runs in a report-only mode until an operator enables enforcement), never for a wallet disconnect.
 - **v1.159 (F-345):** new bell key `bcc_review_reply` (default on, **in-app only**: no push variant, excluded from the email digest). To the reviewer when the reviewed party replies; `actor` = the replier; `external_id` = the reviewed page. `link` is the page (or `/u/{replier}` for a review of a member's profile). Message: *"@{replier} replied to your review of {page}."*, or *"@{replier} replied to your review."* when there is no page name (member profiles).
+  - ⚠ *(v1.231, F-578)* **On a card page** (`external_id` is a page, not a member's self-page), the bell speaks as the page, because the reply can stand as the page's own response (v1.226). Message: *"{page} replied to your review."*, or *"Your review got a reply."* when the page has no title. `actor` is the empty actor `{ "id": 0, "handle": "", "display_name": "", "avatar_url": "" }`, so no person is named or shown. Rows written before v1.231 are shown the same way. A review of a member's own profile keeps the message above, with the replier as `actor`.
 - **v1.132 (F-272):** three new bell keys, all default on, **in-app only** (no push variant, excluded from the email digest). `external_id` is the group; `link` is the group's page (`/communities/{slug}`), or `/communities` if the group no longer resolves.
   - `bcc_group_join_requested` — to each owner and manager of a closed group (never to one blocked either way with the requester); `actor` = the requester. *"@{handle} asked to join {group}."*
     - *v1.187 (bcc-trust #757, F-389):* its `link` is the Members tab's requests block, **`/communities/{slug}/members#requests`**, where the request is decided (`#requests` is the frontend's anchor, bcc-frontend #327). Same `/communities` fallback when the group no longer resolves.
@@ -6210,7 +6213,10 @@ Anonymous-readable per §J trust-graph doctrine: attestation data is public-by-d
 #### `GET /bcc/v1/users/{handle}/endorsements`
 
 - **Auth:** Anonymous OR Bearer (response shape is identical; no viewer-aware fields).
-- **Secret pages *(v1.225, F-528)*:** WHICH items are returned depends on the viewer. For any viewer but the member, a vouch on a SECRET page the viewer may not see is left out, by the same rule as `/users/:handle/reviews`; vouches for members are never affected. A page whose privacy could not be read is left out too (no 503 here). `total` is still `count(items)`, so a list can hold fewer than `limit` items.
+- **Secret pages *(v1.225, F-528; v1.230, F-571)*:** WHICH items are returned depends on the viewer. For any viewer but the member, a vouch on a SECRET page the viewer may not see is left out, by the same rule as `/users/:handle/reviews`; vouches for members are never affected.
+  - *(v1.230)* The vouches are left out IN the query, so `limit` returns up to `limit` items the viewer may see, and a short list means there are no more. `total` is still `count(items)`.
+  - *(v1.230)* When the pages' privacy cannot be read, or the member has vouched for more than 100 secret pages, the route answers its `bcc_unavailable` 503 below. Over the cap this is persistent for every viewer but the member and site admins. Before v1.230, an unreadable page was left out with no 503. A single page whose member check fails is still left out.
+- **Member vouch titles *(v1.230, F-571)*:** a vouch for a member has `page_title` = the member's name as this viewer may see it. When the member has "Hide my real name" on, that is `@handle` (`@member-{id}` with no handle). It was their display name.
 - **Path:**
   - `handle` — required, matches `HANDLE_PATTERN` (lowercase alphanumeric + hyphens, 3–20 chars).
 - **Query:**
@@ -6242,7 +6248,7 @@ Anonymous-readable per §J trust-graph doctrine: attestation data is public-by-d
   - `bcc_not_found 404` — handle does not resolve to a known user.
   - `bcc_rate_limited 429` — 30/60/IP shared throttle bucket (`users_endorsements`).
   - `bcc_forbidden 403` *(v1.91)* — `error.data.reason: "profile_private"`; the owner's `profile_visibility` does not admit this viewer, **or the account is suspended** *(v1.112)*.
-  - `bcc_unavailable 503` *(v1.199, F-421)* — the vouches could not be read. *"Vouches are temporarily unavailable. Please try again."*, `private, no-store` (never the cache header below), no `data`. Before, that answered 200 with `items: []`, which the tab showed as "Hasn't vouched for any pages yet". Retryable: show an error with a retry action, not the empty state.
+  - `bcc_unavailable 503` *(v1.199, F-421)* — the vouches could not be read. *"Vouches are temporarily unavailable. Please try again."*, `private, no-store` (never the cache header below), no `data`. Before, that answered 200 with `items: []`, which the tab showed as "Hasn't vouched for any pages yet". Retryable: show an error with a retry action, not the empty state. *(v1.230, F-571)* Also answered when the vouched pages' privacy could not be read (transient), or the member has vouched for more than 100 secret pages (persistent while they stay over that cap; logged and counted as `page_privacy` / `member_list_over_cap`).
 - **Rate limit:** 30/60/IP (shared across all `/users/:handle/endorsements` callers — per-handle granularity isn't worth the bucket sprawl).
 - **Cache:** `private, max-age=15` with `Vary: Authorization, Cookie` *(changed in v1.91 — was `public, max-age=15` with `Vary: Authorization`)*. React Query `staleTime: 15_000`.
   - ⚠ The short shared cache it used to keep is no longer available: since v1.91 this route can answer 403 for one viewer and 200 for another, and a shared cache holding the 200 would replay it to refused viewers. `Vary: Authorization` alone does not help — the owner/admin/friend distinctions turn on the session.
@@ -6754,7 +6760,7 @@ Coalesced per-viewer badge payload. Replaces three previously-uncached polling e
 
 File a content report against a feed item or an **announcement** (§K1 Phase B). Idempotent per (reporter, target).
 
-- **Review replies (v1.159, F-345):** a reply is reported as a `feed_item` with the number from its `reply.feed_id` (`feed_<n>` → `n`), although no feed shows it. It is reportable while the reply is published, not hidden, and its review active and not hidden; otherwise 404. That includes a reply that no longer renders after a hand-over (its author no longer answers for the page). The moderation queue shows it as `post_kind: "review_reply"` (preview = the reply body, no `post_url`), and `GET /admin/reports?post_kind=review_reply` filters to it.
+- **Review replies (v1.159, F-345):** a reply is reported as a `feed_item` with the number from its `reply.feed_id` (`feed_<n>` → `n`), although no feed shows it. It is reportable while the reply is published, not hidden, and its review active and not hidden; otherwise 404. That includes a reply that no longer renders after a hand-over (its author no longer answers for the page). *(v1.229, F-532)* A reply on a PeepSo page's review also needs the reporter to be able to see that page: a SECRET page admits its members, invitees, author and site admins, and an unreadable privacy answers no. Anyone else gets the same 404, exactly as for a missing item. A review of a member's own profile has no page rule. The moderation queue shows it as `post_kind: "review_reply"` (preview = the reply body, no `post_url`), and `GET /admin/reports?post_kind=review_reply` filters to it.
 
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
 - **Body (JSON):** `target_kind` (**required**, ∈ `feed_item | announcement`) · `target_id` (**required**, int ≥ 1 — the `act_id` for `feed_item`, the **bare integer announcement id, prefix stripped** for `announcement`; see below) · `reason_code` (**required**, ∈ `spam|harassment|hate|violence|misinformation|other`) · `comment` (optional, ≤ 500 chars; **required when `reason_code = other`**)
@@ -7483,7 +7489,7 @@ The reviewed party's ONE public response to a review (v1.159, F-345). `{id}` is 
 - **Who:** the **reviewed party only** (see `permissions.can_reply` on the review rows): the member for a review of their own profile, the verified operator for a validator page, otherwise the page owner. Never the reviewer, never a third party. One reply per review per party: the party's own reply holds the slot, even when it is moderation-hidden (hand-over rule on the Reviews lists).
 - **Response 201:** `{ "reply": { "id", "body", "author_kind": "member", "author": MemberSummary, "posted_at", "edited_at": null, "feed_id": "feed_<act_id>", "permissions": { "can_edit", "can_delete", "can_report" } } }` (`author_kind` *(v1.226)*: always `"member"` here; see the entity Reviews list.)
 - **Side effects:** the reviewer gets the `bcc_review_reply` bell (in-app only). A reply is never a feed item and does **not** count toward streaks or contribution score.
-- **Errors:** `bcc_unauthorized` 401 · `bcc_forbidden` 403 (not the reviewed party, or the account is suspended/banned) · `bcc_not_found` 404 (the review does not exist, was removed, or is moderation-hidden — which of these is not disclosed) · `bcc_conflict` 409 (you have already replied to this review) · `bcc_invalid_request` 422 (empty, or over 1000 characters) · `bcc_rate_limited` 429 (10 per 5 min, shared with edits) · `bcc_unavailable` 503 (retryable; also when another reply to the same review is being written at that moment)
+- **Errors:** `bcc_unauthorized` 401 · `bcc_rate_limited` 429 (10 per 5 min, shared with edits; *(v1.229, F-531)* checked FIRST, before anything about the review, so refused attempts count too) · `bcc_forbidden` 403 (the account is suspended/banned) · `bcc_invalid_request` 422 (empty, or over 1000 characters) · `bcc_not_found` 404 `"Not found."` *(v1.229, F-531: one answer, identical body)* — the review does not exist, was removed or is moderation-hidden, **or you are not the reviewed party** (was 403 before v1.229); which of these is never disclosed · `bcc_conflict` 409 (you have already replied to this review; only the reviewed party reaches this) · `bcc_unavailable` 503 (retryable; also when another reply to the same review is being written at that moment)
   - Route-schema validation runs first: a missing or non-string `body`, or an `{id}` below 1, is refused by WordPress with **400** `rest_missing_callback_param` / `rest_invalid_param`, not 422.
 - **Cache:** `no-store`.
 - **Mapping:** `ReviewRepliesEndpoint::create` → `ReviewReplyService::create` → `ActivityStreamWriter::publishReviewReply` (a backing `peepso-post` + ONE activity, module 206 `review_reply`, off the feed allowlist). Fires `do_action('bcc_review_reply_published', $replierId, $reviewerId, $pageId, $voteId, $actId)`.
@@ -7492,7 +7498,7 @@ The reviewed party's ONE public response to a review (v1.159, F-345). `{id}` is 
 
 Edit the reply (v1.159, F-345). **Author only, and only while the author still answers for the page.** Same body rules as `POST`. Response 200 `{ "reply": … }` with `edited_at` set.
 
-Errors: 404 when the viewer has no reply on this review, when it is moderation-hidden, or when the review is gone or hidden · 403 when the author no longer answers for the page (hand-over), or the account is suspended/banned · no 409. The other errors are as for `POST`.
+Errors: 404 `"Not found."` (the one answer, as for `POST`) when the viewer has no reply on this review, when it is moderation-hidden, when the review is gone or hidden, **or when the author no longer answers for the page** (hand-over; *(v1.229, F-531)* was 403) · 403 when the account is suspended/banned · 429 checked first, as for `POST` · no 409. The other errors are as for `POST`.
 
 #### `DELETE /bcc/v1/reviews/{id}/reply`
 
@@ -7500,7 +7506,7 @@ Delete the reply (v1.159, F-345). **Author only** — the reviewer cannot remove
 - A **moderation-hidden** reply cannot be deleted. It answers 404, exactly like no reply: it keeps its slot, and the hidden act an open report points at.
 - A reply whose author no longer answers for the page (hand-over) can still be deleted by its author.
 
-Response 200 `{ "deleted": true }`. Errors: 401 · 404 (you have no reply on this review, or it is moderation-hidden) · 503.
+Response 200 `{ "deleted": true }`. Errors: 401 · 404 `"Not found."` (you have no reply on this review, or it is moderation-hidden; the same body as `POST`/`PATCH`, v1.229) · 503. Not rate-limited: it only ever reads the caller's own reply.
 
 #### `GET /bcc/v1/entities/:target_kind/:target_id/watchers`
 
@@ -9463,6 +9469,47 @@ enforce it: `PATCH` and pin answer `409 bcc_announcement_moderation_hidden` befo
 Unpin and archive stay allowed. Before v1.160 the notice listed with no indicator and both
 writes were accepted.
 
+### 4.33 Public index (sitemap) — v1.228
+
+The app's `/sitemap.xml` is built from these three routes (F-518). Each lists what a signed-out visitor may open, as paths the app serves. WordPress's own sitemaps are off, so this is the only sitemap.
+
+**Shared rules (all three routes):**
+
+- **Auth:** Anonymous. ⚠ **Viewer-independent:** the answer is the anonymous one whoever asks. A Bearer token, an admin's included, never widens it.
+- **Query:** `after` (optional, default 0, at least 0) · `limit` (optional, default 500, 1–1000). A value out of range, or not a whole number, is refused with `bcc_invalid_request` **400**, never clamped.
+- **Response 200:**
+  ```json
+  { "data": { "items": [ { "path": "/u/alice" } ], "next_after": 1234 },
+    "_meta": { "version": "v1" } }
+  ```
+  Items ascend by id. `path` is the page's canonical path, the one its canonical tag and `links.self` carry; the client adds its origin.
+- **Paging:** keyset. Pass `next_after` back as `after`. `next_after` is the last id **scanned**: eligibility is checked after the scan, so a page can hold fewer than `limit` items, even none, and still have a next page. It is `null` only when the scan reached the end.
+- **Errors:** `bcc_invalid_request` 400 · `bcc_rate_limited` 429 · `bcc_unavailable` **503** when any read behind the page could not be trusted. ⚠ **Never a partial list:** a 503 carries no items, and a client keeps its last good copy.
+- **Cache:** `Cache-Control: public, max-age=300` · `Vary: Authorization, Cookie`. A 503 is `no-store`.
+- **Rate limit:** 120/min per caller.
+- **Mapping:** `SitemapEndpoint` → `PublicProfileIndex`, the one owner of the rule, which `GET /users/:handle`'s `indexable` also uses → `PublicIndexRepository` (ProbesReads), and bcc-core's `UserMetaRepository` and `PeepSoGroupRepository::openGroupsAfter`, with `GroupContextResolver` for groups. Paths come from `CardUrlMap`.
+
+#### `GET /bcc/v1/sitemap/members`
+
+Member profiles, as `/u/{handle}`. A member is listed only when **all** of these hold:
+
+- a PeepSo user row exists, and the role is not `register` (email unvalidated), `verified` (awaiting approval) or `ban`;
+- the profile is visible to a signed-out visitor (`profile_visibility` `public`);
+- the account is not suspended;
+- the member has not hidden their profile from listings (`hide_from_search`; any opted-out value counts). The legacy discovery opt-out it replaced counts only until its one-time fold into `hide_from_search` has completed, as in member search. After the fold, turning `hide_from_search` off lists the member again, even if an old legacy opt-out row remains;
+- the account is not hidden, shadow-limited or under review;
+- the member has a current handle of the current shape (lowercase letters and digits, in runs joined by single hyphens) that is not the `member-{id}` fallback. Legacy handles, an email address for example, are never listed.
+
+The same rule sets `indexable` on `GET /users/:handle`.
+
+#### `GET /bcc/v1/sitemap/pages`
+
+Validator, project and creator pages, as `/v/`, `/p/` or `/c/{slug}`: published, not secret, with a slug and a page type that has a card kind (a page with no type is a project). Closed pages are listed: anyone may read them.
+
+#### `GET /bcc/v1/sitemap/groups`
+
+Open communities and Halls, as `/communities/{slug}` or `/halls/{slug}`: published, with a slug, and **explicitly** open (a privacy row reads open and none reads closed or secret). Closed and secret groups are never listed. A group the app cannot place, one with disagreeing kind rows for example, is left out, so every listed URL is one the app serves.
+
 ## 5. Encoded rules — quick reference
 
 ### 5.1 §N7 — gated actions always visible
@@ -9762,6 +9809,45 @@ Ships with bcc-trust **#857** (F-469 follow-up). bcc-trust only.
 - **`POST /announcements/:id/comments`** answers **`503 bcc_unavailable`** with `reason_code: unavailable` in that case. It is retryable, and nothing is written.
 - Before this, the same case was refused as `suspended` (403), which reads as "your account is suspended". `suspended` keeps both its existing meanings: a suspended account, or a standing that WAS read and is below `neutral`.
 - **Unchanged:** every other comment refusal, every success response, and the `can_report` inventory (it has no standing rung).
+
+### v1.231 — 2026-11-24 — behaviour change (privacy) — a card page's review-reply bell speaks as the page (F-578)
+
+Ships with bcc-trust #855. Follows v1.226.
+
+- **`bcc_review_reply` bell on a card page** (`GET /me/notifications`): the message is *"{page} replied to your review."* (or *"Your review got a reply."* with no page title), and `actor` is the empty actor. It was *"@{replier} replied to your review of {page}."* with the replier as `actor`. Rows written before are shown the same way.
+- **Unchanged:** a reply on a member's own profile review still names the member; `link`, `type`, `external_id`; the bell stays in-app only (no push, not in the digest).
+- **Clients:** no change required. The bell panel's `Avatar` falls back to its initials treatment for an actor with no image, handle or name. Showing the page's own avatar there would be a later, client-side improvement.
+
+### v1.230 — 2026-11-24 — behaviour change (privacy) — a member's profile counts and Vouches list follow the viewer's page access; a vouched member is named as others see them (F-571)
+
+Ships with bcc-trust #852. Follows v1.225 (F-528).
+
+- **A single member's counts** (`User.counts` and that member's `MemberSummary.engagement`): `reviews_written` and `disputes_signed` leave out the SECRET pages this viewer may not see, as the Reviews and Disputes lists do. The member and site admins see the full count. If the pages' privacy cannot be read, or the member has more than 100 secret pages, both are `0` for that viewer. Member cards built in batches (directory, feeds) are unchanged.
+- **`GET /users/:handle/endorsements`:**
+  - Hidden vouches are now left out in the query, so `limit` returns up to `limit` items the viewer may see.
+  - An unreadable page privacy, or more than 100 secret pages, now answers the route's existing `bcc_unavailable` 503. It was left out with no error.
+  - A vouch for a member has `page_title` = the member's name as this viewer may see it (`@handle` under "Hide my real name"). It was their display name. The same applies on `GET /endorsements/mine` and the `recent_endorsements` rows of `/endorsements/mine/stats`, where the viewer is the endorser.
+- **Unchanged:** response shapes, and which vouches the member's own view and `/endorsements/mine` list.
+- **Clients:** no change. The Vouches panel already treats `bcc_unavailable` as retryable.
+
+### v1.229 — 2026-11-24 — behaviour change (privacy) — review-reply refusals are one 404, rate-limited first; a secret page's review reply is reportable only by those who may see the page (F-531, F-532)
+
+Ships with bcc-trust #850.
+
+- **`POST /reviews/{id}/reply`:** "you are not the reviewed party" now answers the same **404 `bcc_not_found` "Not found."** as a review that is missing, removed or hidden; it was 403. The rate limit (10 per 5 min, shared with edits) is now checked **first**, before anything about the review, so refused attempts count toward it.
+- **`PATCH /reviews/{id}/reply`:** the hand-over refusal (the author no longer answers for the page) is now the same 404; it was 403. The rate limit is checked first, as for `POST`.
+- **`DELETE /reviews/{id}/reply`:** its 404 body is now the same `"Not found."`.
+- **Unchanged:** 401, 403 for a suspended or banned account, 409 for a second reply (only the reviewed party reaches it), 422, 503.
+- **`POST /me/reports` with a review reply's `feed_item`:** a reply on a PeepSo page's review is reportable only by someone who may see that page (a SECRET page admits its members, invitees, author and site admins). Anyone else, and an unreadable page privacy, get the same 404 as a missing item. A review of a member's own profile is unaffected.
+- **Clients:** treat these refusals as "not available". The reply UI is driven by `permissions`, so no change is needed.
+
+### v1.228 — 2026-11-23 — additive — the public index for the app sitemap, and `indexable` on profiles (F-518)
+
+Ships with bcc-trust **#838**. ⛔ It needs bcc-core **#171** (merged) deployed first.
+
+- **New (§4.33):** `GET /bcc/v1/sitemap/members`, `/sitemap/pages` and `/sitemap/groups` list what a signed-out visitor may open, for the app's `/sitemap.xml`. Anonymous and viewer-independent, keyset-paged, and fail-closed: a read that cannot be trusted answers `503 bcc_unavailable`, never a partial list.
+- **`GET /users/:handle`:** gains `indexable` (boolean) from the same rule the members route lists by. Additive; no other field changes.
+- **Docs fix, no behaviour change:** `GET /members`'s Mapping said `WP_User_Query`; the route uses `PeepSoUserSearch`, with its privacy rules inside the query. The mention-search entry no longer says the directory may surface hidden or banned users.
 
 ### v1.227 — 2026-11-23 — behaviour change — the remaining standing gates refuse when the standing cannot be read (F-469, batch 2)
 
