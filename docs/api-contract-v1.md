@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.229 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.230 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1122,6 +1122,7 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
 - `current_rank_label` mirrors `rank_label` exactly (e.g. `"Veteran"`, or `"New Member"` for New Members). It is a member-axis field kept for surface compatibility.
 - `flags` is an array of short slugs; if non-empty, the frontend may render moderation chips. V1 codes: `suspended`, `shadow_limited`, `hidden`, `under_review`.
 - Hidden privacy fields (per `privacy.*_hidden: true`) cause the corresponding sections in `counts`, `wallets`, etc. to either be omitted or zeroed depending on the viewer's relationship — server decides, client doesn't.
+- **Secret pages in the counts *(v1.230, F-571)*:** on a single member's view (this `User`, and that member's `MemberSummary.engagement`), `counts.reviews_written` and `counts.disputes_signed` leave out the SECRET pages this viewer may not see, by the same rule as `/users/:handle/reviews` and `/disputes`. So the secret-page part of a count agrees with its list. The member and site admins see the full count. When the pages' privacy cannot be read, or the member has more than 100 secret pages, both counts are `0` for that viewer. Member cards built in batches (the directory, feeds) still show the unfiltered count. `reviews_written` still counts every active vote, as before, so it can exceed the Reviews list's `total` by moderation-hidden reviews.
 - `cover_photo_url` is `null` when no custom cover photo is set; the frontend renders a default treatment in that case. URL is absolute (per §1.7) and points at PeepSo's stored cover image. Self-edits go through `PATCH /me/profile/cover` (multipart upload) — see §V2 Phase 2 endpoints.
 - `cover_photo_position` is `{x, y}` percentages (0–100) for the CSS `object-position` of the cover crop. Defaults to `{x: 50, y: 50}` (center). Self-edits go through `PATCH /me/profile/cover/position`.
 
@@ -6211,7 +6212,10 @@ Anonymous-readable per §J trust-graph doctrine: attestation data is public-by-d
 #### `GET /bcc/v1/users/{handle}/endorsements`
 
 - **Auth:** Anonymous OR Bearer (response shape is identical; no viewer-aware fields).
-- **Secret pages *(v1.225, F-528)*:** WHICH items are returned depends on the viewer. For any viewer but the member, a vouch on a SECRET page the viewer may not see is left out, by the same rule as `/users/:handle/reviews`; vouches for members are never affected. A page whose privacy could not be read is left out too (no 503 here). `total` is still `count(items)`, so a list can hold fewer than `limit` items.
+- **Secret pages *(v1.225, F-528; v1.230, F-571)*:** WHICH items are returned depends on the viewer. For any viewer but the member, a vouch on a SECRET page the viewer may not see is left out, by the same rule as `/users/:handle/reviews`; vouches for members are never affected.
+  - *(v1.230)* The vouches are left out IN the query, so `limit` returns up to `limit` items the viewer may see, and a short list means there are no more. `total` is still `count(items)`.
+  - *(v1.230)* When the pages' privacy cannot be read, or the member has vouched for more than 100 secret pages, the route answers its `bcc_unavailable` 503 below. Over the cap this is persistent for every viewer but the member and site admins. Before v1.230, an unreadable page was left out with no 503. A single page whose member check fails is still left out.
+- **Member vouch titles *(v1.230, F-571)*:** a vouch for a member has `page_title` = the member's name as this viewer may see it. When the member has "Hide my real name" on, that is `@handle` (`@member-{id}` with no handle). It was their display name.
 - **Path:**
   - `handle` — required, matches `HANDLE_PATTERN` (lowercase alphanumeric + hyphens, 3–20 chars).
 - **Query:**
@@ -6243,7 +6247,7 @@ Anonymous-readable per §J trust-graph doctrine: attestation data is public-by-d
   - `bcc_not_found 404` — handle does not resolve to a known user.
   - `bcc_rate_limited 429` — 30/60/IP shared throttle bucket (`users_endorsements`).
   - `bcc_forbidden 403` *(v1.91)* — `error.data.reason: "profile_private"`; the owner's `profile_visibility` does not admit this viewer, **or the account is suspended** *(v1.112)*.
-  - `bcc_unavailable 503` *(v1.199, F-421)* — the vouches could not be read. *"Vouches are temporarily unavailable. Please try again."*, `private, no-store` (never the cache header below), no `data`. Before, that answered 200 with `items: []`, which the tab showed as "Hasn't vouched for any pages yet". Retryable: show an error with a retry action, not the empty state.
+  - `bcc_unavailable 503` *(v1.199, F-421)* — the vouches could not be read. *"Vouches are temporarily unavailable. Please try again."*, `private, no-store` (never the cache header below), no `data`. Before, that answered 200 with `items: []`, which the tab showed as "Hasn't vouched for any pages yet". Retryable: show an error with a retry action, not the empty state. *(v1.230, F-571)* Also answered when the vouched pages' privacy could not be read (transient), or the member has vouched for more than 100 secret pages (persistent while they stay over that cap; logged and counted as `page_privacy` / `member_list_over_cap`).
 - **Rate limit:** 30/60/IP (shared across all `/users/:handle/endorsements` callers — per-handle granularity isn't worth the bucket sprawl).
 - **Cache:** `private, max-age=15` with `Vary: Authorization, Cookie` *(changed in v1.91 — was `public, max-age=15` with `Vary: Authorization`)*. React Query `staleTime: 15_000`.
   - ⚠ The short shared cache it used to keep is no longer available: since v1.91 this route can answer 403 for one viewer and 200 for another, and a shared cache holding the 200 would replay it to refused viewers. `Vary: Authorization` alone does not help — the owner/admin/friend distinctions turn on the session.
@@ -9789,6 +9793,18 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.230 — 2026-11-24 — behaviour change (privacy) — a member's profile counts and Vouches list follow the viewer's page access; a vouched member is named as others see them (F-571)
+
+Ships with bcc-trust #852. Follows v1.225 (F-528).
+
+- **A single member's counts** (`User.counts` and that member's `MemberSummary.engagement`): `reviews_written` and `disputes_signed` leave out the SECRET pages this viewer may not see, as the Reviews and Disputes lists do. The member and site admins see the full count. If the pages' privacy cannot be read, or the member has more than 100 secret pages, both are `0` for that viewer. Member cards built in batches (directory, feeds) are unchanged.
+- **`GET /users/:handle/endorsements`:**
+  - Hidden vouches are now left out in the query, so `limit` returns up to `limit` items the viewer may see.
+  - An unreadable page privacy, or more than 100 secret pages, now answers the route's existing `bcc_unavailable` 503. It was left out with no error.
+  - A vouch for a member has `page_title` = the member's name as this viewer may see it (`@handle` under "Hide my real name"). It was their display name. The same applies on `GET /endorsements/mine` and the `recent_endorsements` rows of `/endorsements/mine/stats`, where the viewer is the endorser.
+- **Unchanged:** response shapes, and which vouches the member's own view and `/endorsements/mine` list.
+- **Clients:** no change. The Vouches panel already treats `bcc_unavailable` as retryable.
 
 ### v1.229 — 2026-11-24 — behaviour change (privacy) — review-reply refusals are one 404, rate-limited first; a secret page's review reply is reportable only by those who may see the page (F-531, F-532)
 
