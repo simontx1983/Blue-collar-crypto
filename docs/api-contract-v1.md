@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.240 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.241 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -4365,7 +4365,7 @@ Paginated list of Cards filtered + sorted server-side. Backs `/directory`.
     }
   }
   ```
-- **`pagination.total` (v1.NEXT):** how many cards match the request's filters across all pages. It is the count behind `total_pages`, taken from the same query as the rows (the same filters, search and secret-page rule), so it agrees with them.
+- **`pagination.total` (v1.241):** how many cards match the request's filters across all pages. It is the count behind `total_pages`, taken from the same query as the rows (the same filters, search and secret-page rule), so it agrees with them.
   - With no `kind`, the list covers the three card kinds only (validator, project, creator), and so does the total. A page of any other type is neither counted nor given a slot.
   - The page ceiling is unchanged: past `page` 20 is still a 400, even when `total` is larger than 20 pages hold.
   - The frontend shows a count only when the server sends one.
@@ -9822,7 +9822,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-25 — additive — GET /cards carries pagination.total
+### v1.241 — 2026-11-25 — additive — GET /cards carries pagination.total
 
 Ships with bcc-trust #880. Structure A (Explore's tab counts).
 
