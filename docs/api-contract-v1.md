@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.249 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.250 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1176,7 +1176,7 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
 **Field rules:**
 
 - `operator_profile` is always present. It is non-null only on a validator page with exactly one verified operator and a saved profile; other card kinds, unclaimed/ambiguous validator pages, and operators without saved profile data return `null`. Shape: `{ brand_name, bio, website_url, socials: { x, discord, telegram }, logo_url }`. Values include the page override, if any. The crest uses the shared logo after a page-specific uploaded avatar and before the chain-imported validator logo.
-- **`bio` (v1.NEXT) — at most 25 WORDS, and at most 120 characters.**
+- **`bio` (v1.250) — at most 25 WORDS, and at most 120 characters.**
   Server-cut per §A2, so the frontend renders it verbatim; `""` when the
   source text is empty. One rule for all five kinds — a page's excerpt, a
   member's profile bio, a group's description — so no card kind shows a
@@ -1319,7 +1319,7 @@ Locked field rules:
   ships without the other, group search and the card face print different
   words for the same group. They deploy in the SAME release.
 - **Crest band:** the chain-keyed background applies to on-chain-gated kinds with a resolved `chain_tag` — `nft` and, since v1.52, `validator`; every other kind gets the tier band at the fixed `neutral` tier (the §3.2.4 shape-stable placeholder — `common` was the retired rarity slug; doc corrected v1.70).
-- **Identity:** `id` = group id, `handle` = group slug, `bio` = group description (plain-text, cut to the shared §3.2 `bio` bound — 25 words / 120 characters as of v1.NEXT; `""` when unset). The producers still trim the raw description to ~200 characters upstream (§4.7.4's `description`); the shared cut then applies, so a community card cannot show a longer line than any other kind.
+- **Identity:** `id` = group id, `handle` = group slug, `bio` = group description (plain-text, cut to the shared §3.2 `bio` bound — 25 words / 120 characters as of v1.250; `""` when unset). The producers still trim the raw description to ~200 characters upstream (§4.7.4's `description`); the shared cut then applies, so a community card cannot show a longer line than any other kind.
 - **Crest (§2.9 grammar):** `initials` from the group name (same server derivation as the other kinds), `image_url` = the group's cover (NFT collection art; `null` → FE monogram fallback). Background: NFT groups WITH a `chain_tag` → `background_kind: "chain"`, `background_value: <chain_tag>`; otherwise `background_kind: "tier"`, `background_value: "neutral"` (doc corrected v1.70 — the emitter always used the reputation placeholder, never the retired rarity slug).
 - **Stats (same CardStat shape as the other kinds):**
   ```json
@@ -9972,7 +9972,7 @@ Ships with bcc-trust **#882**, after bcc-search's `kind` (F-589). bcc-trust only
 - **`GET /search` `type`, doc corrected:** it is a PeepSo page-category slug (one of the `categories` slugs), not a page kind. To filter by kind, use `kind`.
 - **Unchanged:** the suggestion shape, the All-scope allocation, `incomplete`, and the member and community verticals.
 
-### v1.NEXT — 2026-11-24 — behaviour change — a card's `bio` is bounded in WORDS, not characters (F-579 row 16)
+### v1.250 — 2026-11-24 — behaviour change — a card's `bio` is bounded in WORDS, not characters (F-579 row 16)
 
 Ships with bcc-trust. One plugin, no endpoint change, no new field.
 
