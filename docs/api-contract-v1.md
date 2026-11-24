@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.234 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.237 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -5220,7 +5220,7 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
   - `post_visibility` → `peepso_profile_post_acc` user_meta. PUBLIC is intentionally absent (matches PeepSo's `access-profile-post` UI which strips it).
   - `hide_birthday_year` → `peepso_hide_birthday_year` user_meta, "1"/"0".
   - `hide_online` *(documented v1.64 — shipped earlier)* → `peepso_hide_online_status` user_meta, "1"/"0" — PeepSo's presence indicators treat "1" as "hide the green dot".
-  - `hide_from_search` *(documented v1.64 — shipped earlier)* → `peepso_is_hide_profile_from_user_listing` user_meta, "1"/"0" — "1" excludes the user from directory + member search (direct profile links still work). **Since v1.133 (F-257) this is THE one hidden-from-search flag:** `/me/privacy`'s `discovery_optout` is an alias that reads and writes it, so the two always agree.
+  - `hide_from_search` *(documented v1.64 — shipped earlier)* → `peepso_is_hide_profile_from_user_listing` user_meta, "1"/"0" — "1" excludes the user from directory + member search (direct profile links still work). **Since v1.133 (F-257) this is THE one hidden-from-search flag:** `/me/privacy`'s `discovery_optout` is an alias that reads and writes it, so the two always agree. *(Since v1.235, F-519)* Directory and member search exclude the user when ANY stored row of this key reads as on: `1`, `true`, `on` or `yes`, in any case. The strictest row wins. BCC itself writes only `"1"`/`"0"`. The legacy `bcc_privacy_discovery_optout` counts only until the F-257 fold has completed, as before. Its old rows stay in place, so reading them afterwards would hide again a member who has since turned visibility back on.
   - `default_post_audience` *(documented v1.64 — shipped earlier; `friends` added v1.121)* → `peepso_last_used_post_privacy` user_meta (int 10/20/30/40 ↔ public/members/friends/private) — defaults PeepSo's audience picker; PeepSo itself overwrites it on every post, so this is a default, not a lock. ⚠ The column is not a validated enum, so a value with no token at all is reported as `members`.
   - `show_groups_on_profile` *(v1.127 — F-270)* -> `bcc_show_groups_on_profile` user_meta, "1"/"0". Read/write bool. **⚠ ABSENT MEANS `true`.** The default preserves the pre-F-270 behaviour, so an account that has never touched the setting keeps listing its groups; only an explicit falsey value hides them. This is the only *permissive* default among the privacy prefs here.
   - `hidden_hall_ids` *(v1.181 — F-341 PR 3)* → `bcc_hidden_hall_ids` user_meta, a **list of group ids** (not a bool). Read/write. The individual Halls the owner has hidden from their profile while the Halls **section** stays shown. **Absent or `[]` means nothing is hidden**, the same permissive default as the rest of F-341, so no existing profile changes until its owner opts out.
@@ -5240,6 +5240,7 @@ Profile-wide visibility + post-on-my-wall default + birthday-year toggle.
   - `mentor_opt_in` *(v1.62 — Rank Phase 7, spec §21.4)* → `bcc_mentor_opt_in` user_meta, "1"/"0" (via `MentorListingService`). Read/write bool. Opting in requires **no** eligibility — a non-Veteran may pre-opt-in and lists automatically the day they qualify.
 - **Read-only mentor pair (v1.62, GET response only — never writable):** `mentor_listed` (bool) — whether the user is **actively listed** in the mentor directory *right now*; the listing composes **live** as opt-in AND `can('list_as_mentor')` (**Veteran** rank AND trust tier ≥ **Trusted** AND not suspended AND not in §14.2 Rank recovery). Nothing is materialized — when any condition fails the listing **pauses automatically on the next read** (no sweep, no flag to un-stick). `mentor_eligibility_reason` (string|null) — the resolver's stable deny slug ∈ `suspended|new_member|below_veteran|below_trusted|in_recovery` so the frontend can explain a paused listing; `null` while eligible (regardless of opt-in). *(v1.227, F-469)* **`unavailable`**: the trust tier could not be read, so the listing is paused for that read and the directory leaves the member out; a client that does not know the value shows its generic paused line.
 - **Read-only `handle_next_change_at` (since v1.148, F-333, GET and the PATCH echo — never writable):** when the owner may next change their handle (`PATCH /me/handle`), as ISO-8601 UTC (`"2026-06-17T14:05:00Z"`), or `null` when they can change it now. The same instant the cooldown `429` reports in `error.data.next_change_at`.
+- **`hide_from_search` reads as search applies it (since v1.236, F-519):** `GET` and the `PATCH` echo report `true` when ANY stored row of the flag reads as on (exactly `1`, `true`, `on` or `yes`, in any case, nothing trimmed, as search matches it), or, until the F-257 fold has completed, when the legacy `bcc_privacy_discovery_optout` does: exactly the members search leaves out. The strictest row wins. A setting that could not be read reports `true`, as `/me/privacy` does. It is now read the same way as its `/me/privacy` alias `discovery_optout`, so the two always agree. The `show_*` switches are unchanged. **Writing it `false`** (here or as `/me/privacy` `discovery_optout`) also writes the legacy opt-out `"0"`, so the member is listed whatever the fold's state; writing `true` writes the flag only. Here, if either write fails, the field is reported as not saved (`data.failed`) and the member stays hidden.
 - **PATCH** is partial — missing keys are untouched.
   - **Every field is validated before anything is written** (F-97): an invalid value (`bcc_invalid_request` 422; *since v1.158, F-294, that includes a boolean switch whose value is not a boolean, "`<field>` must be true or false.": it used to be read as `false` and switch the setting off with a 200. Accepted: `true`/`false`, `1`/`0`, `"yes"`/`"no"`, `"on"`/`"off"`, any case*) or PeepSo missing when `profile_visibility` is sent (`bcc_peepso_unavailable` 503) writes **nothing**.
   - **A write that fails after validation (v1.108)** stops the request: `bcc_internal_error` **500**, message "Some of your preferences could not be saved. Please try again.", with `error.data.saved` (list of the request's field names that DID persist, in write order: `profile_visibility`, then the user-meta fields, then `mentor_opt_in`) and `error.data.failed` (the field that did not). Earlier writes are **not** rolled back. A client must not report the save as successful, and may re-send the whole request (every write is idempotent).
@@ -6658,7 +6659,7 @@ Read the signed-in viewer's privacy toggles (§K2 + §G1 discovery opt-out).
   ```json
   { "data": { "watching_hidden": false, "reviews_hidden": false, "disputes_hidden": false, "delegations_hidden": false, "follower_count_hidden": false, "real_name_hidden": false, "email_hidden": false, "discovery_optout": false } }
   ```
-  - `discovery_optout` (§G1) is owner-only and appears ONLY here (the other 7 also surface inside the User view-model). **Since v1.133 (F-257) it is an alias of `/me/profile-prefs` `hide_from_search`:** both read and write the same flag (`peepso_is_hide_profile_from_user_listing`), so a change through either endpoint shows on the other. The field is kept for compatibility; new clients should use `hide_from_search`.
+  - `discovery_optout` (§G1) is owner-only and appears ONLY here (the other 7 also surface inside the User view-model). **Since v1.133 (F-257) it is an alias of `/me/profile-prefs` `hide_from_search`:** both read and write the same flag (`peepso_is_hide_profile_from_user_listing`), so a change through either endpoint shows on the other. The field is kept for compatibility; new clients should use `hide_from_search`. *(Since v1.236, F-519)* It reads as search applies it, as `hide_from_search` does (§4 `/me/profile-prefs`): `true` when any stored row of the flag reads as on, or, until the F-257 fold has completed, when the legacy opt-out does.
 - **Errors:** `bcc_unauthorized` (401)
 - **Mapping:** `MyPrivacyEndpoint::get` (route `MyPrivacyEndpoint.php:48`, READABLE) → `PrivacySettings::readAll`. FE `privacy-endpoints.ts:getMyPrivacy`.
 
@@ -6751,8 +6752,9 @@ Coalesced per-viewer badge payload. Replaces three previously-uncached polling e
 - **Query:** `open_threads` (optional) — comma-separated conversation root ids; non-numeric tokens dropped; capped at **5**. Threads the viewer isn't a participant of are silently absent.
 - **Response 200:**
   ```json
-  { "data": { "messages_unread": 3, "notifications_unread": 1, "open_thread_hints": { "12": { "latest_message_id": 9981, "posted_at": "2026-06-10T14:03:11Z" } }, "polled_at": "2026-06-10T14:05:00Z" } }
+  { "data": { "messages_unread": 3, "notifications_unread": 1, "disputes_open": 1, "open_thread_hints": { "12": { "latest_message_id": 9981, "posted_at": "2026-06-10T14:03:11Z" } }, "polled_at": "2026-06-10T14:05:00Z" } }
   ```
+  *(v1.237, structure A row 18)* `disputes_open` (`int | null`): the number of disputes the viewer filed that are still open (status `reviewing`), the same cases `/disputes` lists; `null` when the count couldn't be read (never `0` on a failure, and not cached), and the frontend then shows no dot and no number. Fresh after the viewer files a dispute or one changes status.
   `open_thread_hints` lets an open conversation refetch only when `latest_message_id` advances. `polled_at` refreshes even on a cache hit (counts may be up to 15s older than `polled_at`).
 - **Errors:** `bcc_unauthorized` 401
 - **Cache:** `Cache-Control: private, max-age=10`. Server-side: 15s payload cache via the §5 generation-counter pattern (group `bcc_badges`), bumped on bell-row create, mark-read, DM send, DM view.
@@ -9811,6 +9813,31 @@ Ships with bcc-trust #869. Merges after bcc-frontend #405, which already tolerat
 - **`GET /groups/:id/members`:** each item carries `joined_at` for **site admins only**; for every other viewer the key is absent. The roster's order is unchanged.
 - **`page_claim` feed post body:** no longer carries the claim's `verified_at`. The post's own `posted_at` stays.
 - **Unchanged, the viewer's own data:** `viewer_membership.joined_at` on groups and Halls, `User.wallets[].verified_at` (own profile only), and the member's own quest progress. Group managers keep request and invite times.
+
+### v1.237 — 2026-11-24 — additive — `GET /me/badges` carries `disputes_open`, the viewer's open filed disputes (structure A row 18)
+
+Ships with bcc-trust **#870**. bcc-trust only. Drives the avatar's "My cases · N open" dot.
+
+- **`disputes_open`** (`int | null`, additive): the number of disputes the viewer filed that are still open (status `reviewing`), the same cases `/disputes` lists (`GET /disputes/mine`). The viewer's own data only.
+- **`null`** when the count couldn't be read. It is never `0` on a failure, and it is not cached, so the next poll reads again. The frontend then shows no dot and no number.
+- The dot shows whenever the count is above 0. It is status, not a call to act: it counts no disputes against the viewer and no community votes.
+- Fresh on change: filing a dispute and any status change of one invalidate the viewer's badge payload.
+- **Unchanged:** every other `/me/badges` field, the auth, and the cache headers.
+
+### v1.236 — 2026-11-24 — behaviour change at the edges (privacy) — the hide-from-search switch reads as search applies it (F-519)
+
+Ships with bcc-trust #860. No wire change.
+
+- **`GET`/`PATCH /me/profile-prefs` `hide_from_search`:** now `true` when any stored row of the flag reads as on (`1`, `true`, `on`, `yes`), or, until the F-257 fold has completed, when the legacy opt-out does. The strictest row wins. An unreadable setting reports `true`, as `/me/privacy` does.
+- **`GET`/`PATCH /me/privacy` `discovery_optout`:** now also counts the legacy opt-out until the fold has completed, as `hide_from_search` does.
+- **Writing it `false`** through either endpoint also writes the legacy opt-out `"0"`, so the member is listed whatever the fold's state. Writing `true` is unchanged.
+- **Effect:** each switch shows what search does to the member, and switching it off lists them. The two fields always agree.
+
+### v1.235 — 2026-11-24 — clarification + behaviour change at the edges (privacy) — hide_from_search excludes on any row that reads on (F-519)
+
+Ships with bcc-trust **#859**. No deploy order beyond that PR's.
+
+- **`hide_from_search` (and its `discovery_optout` alias):** directory and member search now exclude a member when ANY stored row of the flag reads as on: `1`, `true`, `on` or `yes`. The strictest row wins. The legacy opt-out key still counts only until the F-257 fold has completed. No wire change; BCC's own writes are unchanged (`"1"`/`"0"`).
 
 ### v1.234 — 2026-11-24 — behaviour change (privacy) — a review reply is reportable only where its Reviews tab shows it
 
