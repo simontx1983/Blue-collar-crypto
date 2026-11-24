@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.238 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.239 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -3320,8 +3320,8 @@ in PeepSo's `peepso_group_members` (single graph rule, §E3); BCC stores only a
 List of available Halls (PeepSo Groups in BCC clothing).
 
 - **Auth:** Anonymous OR Bearer
-- **Query:** `page` (default 1), `page_size` (default 20, max 50), `chain` (optional filter), `q` (optional; v1.NEXT)
-  - **`q`** *(v1.NEXT)*: a name search, as on `GET /groups`. It matches the Hall's name anywhere in it, case-insensitively, and LIKE's wildcards in it match themselves. At most **100 characters** (longer is `400`). A search is throttled to **10 per 5 s** (`429 bcc_rate_limited`).
+- **Query:** `page` (default 1), `page_size` (default 20, max 50), `chain` (optional filter), `q` (optional; v1.239)
+  - **`q`** *(v1.239)*: a name search, as on `GET /groups`. It matches the Hall's name anywhere in it, case-insensitively, and LIKE's wildcards in it match themselves. At most **100 characters** (longer is `400`). A search is throttled to **10 per 5 s** (`429 bcc_rate_limited`).
     - `pagination.total` counts the Halls matching the same `chain` and `q`, so the page and its total agree.
 - **Response 200:**
   ```json
@@ -3849,13 +3849,13 @@ Cross-kind discovery list. Sort key: `verified DESC, heat_score DESC, member_cou
 
 - **Auth:** Anonymous OR Bearer
 - **Query:** `verified` (0/1; default 0), `q`, `kind`, `chain`, `mine` (0/1; default 0), `page` (default 1), `page_size` (default 20, max 50)
-  - **`q`** *(v1.NEXT)*: a name search, matching the group's name anywhere in it, case-insensitively. LIKE's wildcards (`%`, `_`) in it match themselves.
+  - **`q`** *(v1.239)*: a name search, matching the group's name anywhere in it, case-insensitively. LIKE's wildcards (`%`, `_`) in it match themselves.
     - At most **100 characters**; a longer one is `400` (`rest_invalid_param`, or `bcc_invalid_request` "q must be at most 100 characters." from the handler), as on `GET /cards`.
     - A request with a `q` is throttled to **10 per 5 s** (per account, or per /24 subnet signed out). Over that, it is `429 bcc_rate_limited` "Too many searches. Please wait a few seconds." Browsing without a `q` is never throttled.
     - ⭐ **A `q` never finds a secret group**, the viewer's own secret groups included (with `mine=1` too): the name is matched only among the groups this list may show at all.
-  - **`kind`** *(v1.NEXT)*: only groups of one `type`, using the same values as the items' `type`: `hall`, `nft` (holder groups), `validator` (delegator groups), `user` (member-made), `system`. Any other value is `400 bcc_invalid_request` "kind must be one of: …".
-  - **`chain`** *(documented in v1.NEXT; unchanged)*: a chain slug. It keeps the groups whose chain is that chain: Halls (their chain tag), holder and delegator groups (the chain they are gated on). Member-made and system groups have no chain and drop out. An unknown slug is an empty page, not an error.
-  - **`mine=1`** *(documented in v1.NEXT; unchanged)*: only the groups the viewer is an active member of, among the groups this list may show (a secret membership never appears here). Signed out, it is an empty page with `200`, not a `401`.
+  - **`kind`** *(v1.239)*: only groups of one `type`, using the same values as the items' `type`: `hall`, `nft` (holder groups), `validator` (delegator groups), `user` (member-made), `system`. Any other value is `400 bcc_invalid_request` "kind must be one of: …".
+  - **`chain`** *(documented in v1.239; unchanged)*: a chain slug. It keeps the groups whose chain is that chain: Halls (their chain tag), holder and delegator groups (the chain they are gated on). Member-made and system groups have no chain and drop out. An unknown slug is an empty page, not an error.
+  - **`mine=1`** *(documented in v1.239; unchanged)*: only the groups the viewer is an active member of, among the groups this list may show (a secret membership never appears here). Signed out, it is an empty page with `200`, not a `401`.
   - The filters combine; `pagination.total` counts the filtered set.
 - **Response 200:**
   ```json
@@ -9815,7 +9815,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-24 — additive — name search on GET /groups and GET /halls; a `kind` filter on GET /groups
+### v1.239 — 2026-11-24 — additive — name search on GET /groups and GET /halls; a `kind` filter on GET /groups
 
 Ships with bcc-trust #875, which needs bcc-core #185 deployed first. Structure A, route map rows 13 and 15.
 
