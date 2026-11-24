@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.246 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.247 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -3024,6 +3024,7 @@ Returns the viewer's watchlist (§C2 — UI projection of PeepSo follows + `bcc_
 - **Query:**
   - `page` (default 1), `page_size` (default 20, max 50; **max 24 when `include=cards`** — silently clamped, echoed in `pagination.page_size`)
   - `include` (optional; only accepted value `cards`) — attaches a full §3.2 Card view-model to every item (v1.76, additive)
+  - `q` (optional string, *since v1.247, structure A row 14*) — searches the list by what it shows. A followed member matches by @handle (or `member-{id}` when there is none), or by display name **only where others see it**: never a hidden real name (any `real_name_hidden` value that is not plainly off hides it), never the login, never a name the card replaces with the handle. A leading `@` is ignored, and LIKE wildcards in `q` match themselves. A followed member also matches by the title or slug of one of their **published, non-secret** pages; a followed placeholder page by its title or slug when it is published and not secret. **A secret page's title is never searched.** `pagination.total` counts the narrowed list. At most 100 characters (`rest_invalid_param` 400 before the handler, `bcc_invalid_request` 400 in it); a request WITH `q` takes a throttle bucket before any query work (10 per 5 s, as `GET /cards`; `bcc_rate_limited` 429). Without `q` the list is exactly as before. If the deployed bcc-core cannot search yet, a request with `q` answers `bcc_unavailable` 503, never an unfiltered list.
 - **Response 200:**
   ```json
   {
@@ -5465,7 +5466,7 @@ The same gate set runs on `POST /me/conversations/:id/messages` so that a recipi
 Paginated list of the viewer's conversations, ordered by `mpart_last_activity DESC`.
 
 - **Auth:** required. Anonymous → `bcc_unauthorized 401`.
-- **Query:** `page` (1-indexed, default 1), `per_page` (default 20, max 50).
+- **Query:** `page` (1-indexed, default 1), `per_page` (default 20, max 50); `q` (optional string, *since v1.247, structure A row 14*) — searches by the participants the viewer is SHOWN: never the viewer, never a member either side has blocked. A participant matches by @handle (or `member-{id}` when there is none), or by display name **only where others see it**: never a hidden real name (any `real_name_hidden` value that is not plainly off hides it), never the login, never a name the card replaces with the handle. A leading `@` is ignored, and LIKE wildcards in `q` match themselves. **Message text is never searched.** `pagination.total` counts the narrowed list; a failed read is `bcc_unavailable` 503. At most 100 characters (`rest_invalid_param` 400 before the handler, `bcc_invalid_request` 400 in it); a request WITH `q` takes a throttle bucket before any query work (10 per 5 s, as `GET /cards`; `bcc_rate_limited` 429). Without `q` the list is exactly as before. If the deployed bcc-core cannot search yet, a request with `q` answers `bcc_unavailable` 503, never an unfiltered list.
 - **Response 200:**
   ```json
   {
@@ -9888,6 +9889,14 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.247 — 2026-11-25 — additive — `q` on `GET /me/watching` and `GET /me/conversations` (structure A row 14)
+
+Ships with bcc-core #188 and bcc-trust #889. ⛔ Deploy bcc-core first; until it is live, a request with `q` answers 503.
+
+- **`GET /me/watching?q=`:** searches the watchlist by what it shows. A member matches by @handle or by a display name others see; a member's published, non-secret page, or a followed placeholder page, by title or slug. A secret page's title is never searched.
+- **`GET /me/conversations?q=`:** searches by the participants the viewer is shown (never the viewer, never a member either side has blocked). Message text is never searched.
+- **Both:** never a hidden real name, a login, or a name the card replaces with the handle. At most 100 characters; searches are throttled like `GET /cards`. `pagination.total` counts the narrowed list. Without `q`, both are unchanged.
 
 ### v1.246 — 2026-11-24 — additive — repost, once per member per post (F-346)
 
