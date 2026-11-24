@@ -51,6 +51,40 @@ should point at exactly one source-of-truth class or method per concept.
   always present) → `BCC\Trust\Core\Services\UserViewService::resolveWallets`
   with the egress safety net `enforceWalletPrivacyAtEgress`
   ([app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/UserViewService.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/UserViewService.php))
+- **Signature primitives, one implementation each** (bcc-core, pure PHP:
+  GMP + OpenSSL, no Composer dependency). Every wallet verifier uses
+  these; do not add a second secp256k1 or bech32 implementation.
+  - secp256k1 → `BCC\Core\Crypto\Secp256k1`: `verifySha256()` (OpenSSL),
+    `verifyDigest()` (pure GMP, for a digest the caller computed, e.g.
+    Keccak-256), `recoverPublicKey()` (Ethereum ecrecover),
+    `decompress()`, `isCanonicalLowS()` (low-S is required everywhere)
+    ([Secp256k1.php](../app/public/wp-content/plugins/bcc-core/src/Crypto/Secp256k1.php))
+  - bech32 → `BCC\Core\Crypto\Bech32`: `encode()` and a STRICT
+    `decode()` (checksum, case, charset, length, padding)
+    ([Bech32.php](../app/public/wp-content/plugins/bcc-core/src/Crypto/Bech32.php)).
+    bcc-trust's `Onchain\Support\Bech32` is a lenient older copy;
+    moving it onto core's is an open follow-up.
+  - Cosmos address from a key → `BCC\Core\Crypto\CosmosAddress::bytesFromPubKey()`
+    (RIPEMD-160(SHA-256), or Keccak-256 for the Ethermint chains in
+    `ETHERMINT_HRPS`: Injective)
+    ([CosmosAddress.php](../app/public/wp-content/plugins/bcc-core/src/Crypto/CosmosAddress.php))
+- **Cosmos transaction proof** (the validator self-send claim, design A1) →
+  `BCC\Core\Crypto\Cosmos\CosmosTxVerifier::verifySelfSend(txRaw, hash,
+  chainId, accountNumber, valoper)`, returning a `CosmosTxVerdict` (`ok`, or
+  one `REASON_*` code; on success the memo, addresses, amount, sign mode and
+  sequence from the verified bytes)
+  ([CosmosTxVerifier.php](../app/public/wp-content/plugins/bcc-core/src/Crypto/Cosmos/CosmosTxVerifier.php)).
+  Pure: no WordPress, network or database.
+  - What it checks: sha256(bytes) is the submitted hash; strict protobuf
+    decoding (`ProtoReader`: unknown or duplicate fields refused).
+  - Signature: verified LOCALLY, for `SIGN_MODE_DIRECT` and
+    `LEGACY_AMINO_JSON` only.
+  - Shape: one signer, one signature, one `MsgSend`, no extension
+    options, no fee payer or granter.
+  - Addresses: the key's address == from == to == the operator account.
+  - ⚠ An endpoint proves INCLUSION only. Who signed is proved here, over the
+    hash-matching bytes; never take messages, memo or signer from an
+    endpoint's JSON. The chain id is the caller's pinned config.
 
 ## Profile + account (V2 Phase 2 / 2.5)
 
