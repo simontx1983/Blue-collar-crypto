@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.250 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.251 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -7503,7 +7503,7 @@ Paginated group roster. Offset-paginated (stable-ordered by role + joined_at).
   { "items": [ { "...": "MemberSummary (§3.1)", "role": "owner", "role_label": "OWNER", "card": { "...": "Card (§3.2), card_kind member" } } ], "pagination": { "offset": 0, "limit": 24, "total": 87, "has_more": true } }
   ```
   Each item is the shared `MemberSummary` (§3.1, via `UserViewService::getSummary` + `MemberCardPrefetcher::primeFor`, which wraps `MemberSummaryPrefetcher`) merged with `role` ∈ `owner|moderator|member`, `role_label` (server-rendered §A2, filterable via `bcc_group_role_labels`), and, **for site admins only**, `joined_at` (ISO 8601 UTC or `null`) *(v1.238, R4: no other viewer, this group's owner and managers included, receives when a member joined; the key is absent)*. The order (role, then join time) is unchanged and server-side. Rows for deleted users are skipped (so `items.length` can trail `total`). **(v1.172, privacy)** On an **`open`** group, a member **the viewer may not see** is omitted from `items`: a profile private to the viewer (its privacy level), a suspended or banned account, or a block in either direction. This is the one list-visibility rule (`ProfileAccess::filterVisible`); the viewer always sees themselves. **Not** `hide_from_search`: that setting scopes to member search and the directory, while rosters follow profile privacy. This group's **owner and managers, and site admins**, see the whole roster, since they already decide its membership (and the transfer-ownership picker reads this roster). `total` (and the group's `member_count`) are **unchanged**, and `has_more` follows the unfiltered page, so a page can hold fewer than `limit` items, even none, mid-list. Advance by `offset + limit`, never by `items.length`. `closed`/`secret` rosters are shown only to members and are not filtered.
-- **`card`** *(v1.NEXT, additive)*: the member `Card` (§3.2, `card_kind: "member"`) that `GET /members` shows for the same member and viewer. It comes from the same builder and the same batched reads, and carries the directory's `is_mentor: true` on actively listed mentors (absent otherwise, as there).
+- **`card`** *(v1.251, additive)*: the member `Card` (§3.2, `card_kind: "member"`) that `GET /members` shows for the same member and viewer. It comes from the same builder and the same batched reads, and carries the directory's `is_mentor: true` on actively listed mentors (absent otherwise, as there).
   - The key is always present. It is `null` when the directory would not show this viewer that member: a profile private to the viewer, a suspended or banned account, or a block in either direction (`ProfileAccess::filterVisible`; `hide_from_search` does not apply, as for the roster). It is also `null` when the card could not be built; that item keeps its other fields and the rest of the page is unaffected.
   - The roster still shows every tile it showed before: to this group's owner and managers, to site admins, and on `closed`/`secret` rosters. Those tiles carry a card only where the directory would show one.
   - `role`, `role_label`, the `MemberSummary` fields and `members_visible` are unchanged. Clients that render a card fall back to the tile when `card` is `null` or absent.
@@ -9925,7 +9925,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-24 — additive — `GET /groups/:id/members` items carry the member `card` the directory shows
+### v1.251 — 2026-11-24 — additive — `GET /groups/:id/members` items carry the member `card` the directory shows
 
 Ships with bcc-trust #892. A community or Hall Members tab can show the same member card as `/members`.
 
