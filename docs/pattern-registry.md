@@ -88,11 +88,18 @@ should point at exactly one source-of-truth class or method per concept.
 - **The validator memo claim's challenge** (design A2) →
   `BCC\Core\Wallet\ValidatorMemoChallenge`
   ([ValidatorMemoChallenge.php](../app/public/wp-content/plugins/bcc-core/src/Wallet/ValidatorMemoChallenge.php)):
-  - the memo (`memo()`, `memoMatches()`: byte for byte, ASCII);
-  - the 8-symbol code;
+  - the memo (`memo()`, `memoMatches()`: byte for byte, ASCII):
+    `BCC: claim validator page <valoper> on <host>. Code <code>`. It names
+    NO member. Which member a challenge is for lives only server-side, on
+    the challenge, and only that member may reserve or consume it;
+  - the 8-symbol code, unique among live challenges (a collision is drawn
+    again);
   - the 30-minute inclusion window (`blockTimeInWindow()`);
   - `issue()`, `reserve()` (one hash per challenge), `withdraw()` and
-    `consumeInTransaction()`.
+    `consumeInTransaction()`;
+  - `findLiveByCode()`: the challenge a (valoper, code) pair names while it
+    is live and unreserved, for the operator-facing code lookup (design
+    A5). Null alike for every other case; compared with `hash_equals()`.
 
   The limits are named constants on the class:
   - per member: 3 live, 5 issued per hour, one live per (member, valoper);
