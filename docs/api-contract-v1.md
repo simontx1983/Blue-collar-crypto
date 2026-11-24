@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.240 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.243 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1122,7 +1122,7 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
 - `current_rank_label` mirrors `rank_label` exactly (e.g. `"Veteran"`, or `"New Member"` for New Members). It is a member-axis field kept for surface compatibility.
 - `flags` is an array of short slugs; if non-empty, the frontend may render moderation chips. V1 codes: `suspended`, `shadow_limited`, `hidden`, `under_review`.
 - Hidden privacy fields (per `privacy.*_hidden: true`) cause the corresponding sections in `counts`, `wallets`, etc. to either be omitted or zeroed depending on the viewer's relationship — server decides, client doesn't.
-- **Secret pages in the counts *(v1.230, F-571)*:** on a single member's view (this `User`, and that member's `MemberSummary.engagement`), `counts.reviews_written` and `counts.disputes_signed` leave out the SECRET pages this viewer may not see, by the same rule as `/users/:handle/reviews` and `/disputes`. So the secret-page part of a count agrees with its list. The member and site admins see the full count. When the pages' privacy cannot be read, or the member has more than 100 secret pages, both counts are `0` for that viewer. Member cards built in batches (the directory, feeds) still show the unfiltered count. `reviews_written` still counts every active vote, as before, so it can exceed the Reviews list's `total` by moderation-hidden reviews.
+- **Secret pages in the counts *(v1.230, F-571)*:** on a single member's view (this `User`, and that member's `MemberSummary.engagement`), `counts.reviews_written` and `counts.disputes_signed` leave out the SECRET pages this viewer may not see, by the same rule as `/users/:handle/reviews` and `/disputes`. So the secret-page part of a count agrees with its list. The member and site admins see the full count. When the pages' privacy cannot be read, or the member has more than 100 secret pages, both counts are `0` for that viewer. *(v1.242)* The member profile's own counts (`GET /users/:handle`) follow this rule, and so do member cards built in batches, for their viewer: the directory, followers and watchers, the viewer's watching list (`/me/watching`), group rosters and join requests, suggestions, the feed cold start, and review and reply authors. For a batch, the viewer's own card and site admins see the full counts. When the pages' privacy cannot be read, or the members of one batch together have more than 100 secret pages, that count is `0` on every card in the batch except the viewer's own; the list itself never fails over it. `reviews_written` still counts every active vote, as before, so it can exceed the Reviews list's `total` by moderation-hidden reviews.
 - **`joined_at` for other viewers *(since v1.238, R12)*:** the member themselves receives the exact time. Every other viewer, anonymous included, receives the **first of the month at `00:00:00Z`** (e.g. `2026-01-12T09:41:07Z` → `2026-01-01T00:00:00Z`), so neither the payload nor a page built from it carries the day or the time. The same holds for `MemberSummary.joined_at` wherever it appears (review and reply authors, group request and invite items, rosters, member cards). `""` (unknown) is unchanged. Admin routes keep the stored value.
 - `cover_photo_url` is `null` when no custom cover photo is set; the frontend renders a default treatment in that case. URL is absolute (per §1.7) and points at PeepSo's stored cover image. Self-edits go through `PATCH /me/profile/cover` (multipart upload) — see §V2 Phase 2 endpoints.
 - `cover_photo_position` is `{x, y}` percentages (0–100) for the CSS `object-position` of the cover crop. Defaults to `{x: 50, y: 50}` (center). Self-edits go through `PATCH /me/profile/cover/position`.
@@ -4359,11 +4359,16 @@ Paginated list of Cards filtered + sorted server-side. Backs `/directory`.
     "pagination": {
       "page": 1,
       "per_page": 24,
+      "total": 183,
       "total_pages": 8,
       "has_more": true
     }
   }
   ```
+- **`pagination.total` (v1.241):** how many cards match the request's filters across all pages. It is the count behind `total_pages`, taken from the same query as the rows (the same filters, search and secret-page rule), so it agrees with them.
+  - With no `kind`, the list covers the three card kinds only (validator, project, creator), and so does the total. A page of any other type is neither counted nor given a slot.
+  - The page ceiling is unchanged: past `page` 20 is still a 400, even when `total` is larger than 20 pages hold.
+  - The frontend shows a count only when the server sends one.
 - **Errors:** `bcc_invalid_request` (bad `kind`, `tier`, `sort`, `chain`, `status`, negative `min_self_stake`, `page > 20`, or `q` over 100 characters) · `rest_invalid_param` 400 (`q` over 100 characters, rejected by WordPress before the handler) · `bcc_rate_limited` 429 (`q` requests over 10 per 5 s; *since v1.167*)
 - **Cache:** `Cache-Control: private, max-age=15`. Underlying `PageDiscoveryService` query is server-cached for 30s with a stampede lock; the short client TTL is courtesy for back-button nav.
 - **Mapping:**
@@ -4450,7 +4455,7 @@ Direct bcc-search project search and trending mode — the upstream that `cards/
 - **Query:**
   - `q` (string) — 2..100 chars (server returns empty for shorter; `QueryQualityGate` rejects pure-stopword / low-entropy queries to empty too). **Over 100 chars → `rest_invalid_param` 400** at the REST validation layer (v1.47) — previously undefined behaviour, now rejected before any handler work.
   - `type` (string, optional) — PeepSo page-category slug, one of the `slug` values in the response's `categories`. Site data, not a fixed vocabulary, and **not a page kind** (use `kind`). An unknown slug answers with no results. *(Doc corrected v1.NEXT, F-592: the old example listed page kinds, which match no category.)*
-  - `kind` (string, optional, v1.NEXT) — page kind: `validator`, `project` or `creator`, the page kinds of `GET /cards/search`. Keeps only pages of that kind; a page with no stored type is a `project`, so every result links to its kind's card route (`/v/`, `/p/`, `/c/`). Combines with `type`. Anything else → `400` `bcc_invalid_request`.
+  - `kind` (string, optional, v1.243) — page kind: `validator`, `project` or `creator`, the page kinds of `GET /cards/search`. Keeps only pages of that kind; a page with no stored type is a `project`, so every result links to its kind's card route (`/v/`, `/p/`, `/c/`). Combines with `type`. Anything else → `400` `bcc_invalid_request`.
   - `trending` (string, optional) — when `=1`, ignores `q` / `type` / `kind` and returns top-scored projects regardless of query. An unknown `kind` is still a `400`.
 - **Response 200:**
   ```json
@@ -4484,7 +4489,7 @@ Direct bcc-search project search and trending mode — the upstream that `cards/
   - `bcc_upstream_unavailable` (HTTP 503; `Retry-After: 5`) — covers category fetch failure, FULLTEXT rebuild in progress ("Trending is warming up" in trending mode), and enrichment-pipeline degradation *(supersedes the fictional `categories_unavailable` / `rebuild_in_progress` / `score_enrichment_failed` codes)*
   - `bcc_internal` (HTTP 503) — internal rate-limit ceiling / unexpected failure *(supersedes `temporarily_overloaded`)*
   - `rest_invalid_param` (HTTP 400) — WP arg validation (`q` over 100 chars)
-  - `bcc_invalid_request` (HTTP 400) — `kind` is not `validator`, `project` or `creator` *(v1.NEXT)*
+  - `bcc_invalid_request` (HTTP 400) — `kind` is not `validator`, `project` or `creator` *(v1.243)*
 - **Cache:** server-side `60s` (per-query results) + LKG mirror for 503 fallback. Trending mode: `300s` (5 min) + LKG.
 - **Envelope note (doc corrected 2026-08-05 — the wire has been enveloped since 2026-05):** although bcc-search's handlers *emit* raw `{ results, categories }` (or `{ results, meta }` in trending mode), bcc-trust's §1.4 Envelope wraps every `/bcc/v1/*` response — so the wire carries `{ data: { results, … }, _meta }` on success and `{ error: { code, message, status } }` on failure. The shapes documented above are the **inner payload**. The bcc-frontend client (`bccSearchFetchAsClient`) is shape-tolerant: it unwraps the envelope when present and still maps a raw legacy body, so `err.code` branching per Phase γ stays uniform either way.
 
@@ -9828,7 +9833,7 @@ Ships with bcc-trust **#882**, after bcc-search's `kind` (F-589). bcc-trust only
 - **`GET /search` `type`, doc corrected:** it is a PeepSo page-category slug (one of the `categories` slugs), not a page kind. To filter by kind, use `kind`.
 - **Unchanged:** the suggestion shape, the All-scope allocation, `incomplete`, and the member and community verticals.
 
-### v1.NEXT — 2026-11-24 — additive — `GET /search` filters by page kind (F-589)
+### v1.243 — 2026-11-24 — additive — `GET /search` filters by page kind (F-589)
 
 Ships with **bcc-search #53**. bcc-search only.
 
@@ -9837,6 +9842,25 @@ Ships with **bcc-search #53**. bcc-search only.
 - `kind` combines with `type` (both apply).
 - **An unknown `kind` is a `400` `bcc_invalid_request`**, as on `GET /cards/search`. That includes `member` and `community`, which are not pages. It is a `400` in trending mode too; otherwise trending ignores `kind`, as it ignores `q` and `type`.
 - **Unchanged:** the response shape, the result cap, and every request without `kind`.
+
+### v1.242 — 2026-11-24 — behaviour change (privacy) — the member profile and member cards count reviews and disputes as their viewer may see them (F-571)
+
+Ships with bcc-trust #879. Follows v1.230.
+
+- **The member profile** (`GET /users/:handle`): its `counts.reviews_written` and `counts.disputes_signed` now follow the v1.230 rule. They leave out the SECRET pages this viewer may not see.
+- **Member cards built in batches** (`MemberSummary.engagement`) follow the same rule for their viewer. This covers the directory, followers and watchers, the viewer's watching list (`/me/watching`), group rosters and join requests, suggestions, the feed cold start, and review and reply authors.
+- **Exempt:** the member's own profile, the viewer's own card, and site admins see the full counts.
+- **Failing closed:** when the pages' privacy cannot be read, or the members of one batch together have more than 100 secret pages, that count is `0` on every card in the batch except the viewer's own. A profile is a batch of one. The list or profile itself never answers an error over it.
+- **Unchanged:** response shapes and field names.
+- **Clients:** no change.
+
+### v1.241 — 2026-11-25 — additive — GET /cards carries pagination.total
+
+Ships with bcc-trust #880. Structure A (Explore's tab counts).
+
+- **`GET /cards` `pagination.total`:** how many cards match the filters across all pages, from the same query as the rows, so the two agree.
+- **No `kind`:** the list now covers the three card kinds only (validator, project, creator). Pages of any other type used to be counted in `total_pages` and to take a slot on a page without rendering; now they are neither counted nor listed.
+- **Unchanged:** the item shape, every filter, the page ceiling (`page` ≤ 20) and the errors.
 
 ### v1.240 — 2026-11-24 — additive — the auth responses carry `can_moderate`, the cue for the frontend's "Admin" group (structure A)
 
