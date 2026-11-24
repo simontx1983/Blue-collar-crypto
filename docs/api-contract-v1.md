@@ -9839,7 +9839,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ### v1.NEXT — 2026-11-24 — behaviour change — a home Hall accepts only published Halls
 
-Ships with bcc-trust PR_TRUST.
+Ships with bcc-trust #893. bcc-trust only.
 
 - **`POST /me/halls/:id/primary`:**
   - Accepts only a published Hall the member belongs to. Anything else gets the same `403 bcc_forbidden` as a non-member.
