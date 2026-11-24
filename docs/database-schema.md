@@ -145,6 +145,7 @@ schema-install path in `tables.php` is itself routed through the same runner.
 | wp_bcc_operator_profiles | 0 | One shared public branding/profile record per validator operator account (brand name, bio, links, logo attachment) | schema-operator-profiles.php / OperatorProfileRepository | Active |
 | wp_bcc_operator_profile_overrides | 0 | Optional per-validator-page profile overrides; null inherits the operator's shared value | schema-operator-profiles.php / OperatorProfileRepository | Active |
 | wp_bcc_onchain_collections | 314 | NFT collection metadata cache (TTL) | schema-collections.php | Active |
+| wp_bcc_validator_step_ups | 0 | Short-lived, single-use staff re-confirmations (password + emailed code) for validator relationship changes; purged after expiry | TableRegistry::validatorStepUps / schema-validator-step-ups.php / ValidatorStepUpRepository | Active |
 | wp_bcc_collection_signals | 2 | Per-(user,collection) demand/verify stance signals (airdrop-proof demand queue) | schema-collection-signals.php / CollectionSignalRepository | Active |
 | wp_bcc_onchain_collection_pieces | 0 | Individual NFT pieces within a collection (TTL) | schema-collection-pieces.php | Active |
 | wp_bcc_onchain_validators | 3060 | Validator registry + enrichment (Cosmos/etc.) | schema-validators.php | Active |
@@ -486,6 +487,31 @@ never derived from this log. `created_at` is UTC computed in PHP
 - counterparty_user_id · bigint unsigned · YES
 - created_at · datetime · NO
 - Indexes: PRIMARY (id) [uq]; idx_user_created (user_id,created_at); idx_group (group_id)
+
+#### wp_bcc_validator_step_ups
+Short-lived, single-use re-confirmations a staff member completes before a
+validator relationship change (link, revoke or cancel an owner; add or
+remove a team member). Each row is bound to (user_id, action, page_id,
+target_user_id, role); the consume matches EVERY binding column, inside the
+change's transaction, only while unused, unexpired and under the attempt
+cap. The emailed code is stored only as HMAC-SHA256 under an HKDF-derived
+key, bound to the id (NULL for password-only actions); attempts are counted
+atomically BEFORE a code is compared. Times are UTC computed in PHP. A daily
+cron purges expired rows in bounded batches.
+- id · char(32) · NO · PK — an opaque 128-bit token (the client's step_up_id)
+- user_id · bigint unsigned · NO · K
+- action · varchar(32) · NO
+- page_id · bigint unsigned · NO · default 0
+- target_user_id · bigint unsigned · NO · default 0
+- role · varchar(20) · NO · default ''
+- code_hash · char(64) · YES
+- credential_verified · tinyint(1) · NO · default 0
+- attempts · tinyint unsigned · NO · default 0
+- created_at · datetime · NO
+- expires_at · datetime · NO · K
+- resend_after · datetime · YES
+- used_at · datetime · YES
+- Indexes: PRIMARY (id) [uq]; idx_user_created (user_id,created_at); idx_expires (expires_at)
 
 #### wp_bcc_trust_findings
 Formal misconduct findings against a member (Rank redesign Phase 8,
