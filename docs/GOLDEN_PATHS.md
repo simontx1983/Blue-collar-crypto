@@ -820,7 +820,7 @@ foreach (($dm["degradation_metrics"]["subsystems"] ?? []) as $name => $events) {
 
 - `throttle`
 - `null_trust_read` + 9 other `null_*` NullService activations
-- `peepso_absence` (21 events)
+- `peepso_absence` (23 events — the newest two are F-542, 2026-11-24, bcc-core `OrphanedPostRepair`: `orphan_repair_unconfirmed` (a post the hijack guard destroyed, whose removal could not be CONFIRMED because the read that would confirm it is the read that had already failed, so a pinned best-effort trash ran and a bounded retry was queued) and `orphan_repair_abandoned` (that retry gave up with the post still unconfirmed). ⚠ Neither event means "the post is still there" — only that nobody could prove it is gone, so both need the §12.3 check rather than a count alone; expected steady state zero)
 - `search_lkg` (2 events)
 - `search_ft_index` (1 event — FT-eligible query served by title-prefix fallback because the FULLTEXT index is missing; added 2026-07-19)
 - `search_trust` (1 event — `enrichment_unavailable`; a search or trending result served WITHOUT trust enrichment: text-only ranking, no impersonation guard; tagged `system_degraded`, cached 10 s, never as LKG; added 2026-11-11, F-24)
@@ -845,6 +845,7 @@ foreach (($dm["degradation_metrics"]["subsystems"] ?? []) as $name => $events) {
 - `meta_cache` (2 events — `post_meta_read` (a post-meta cache read could not be trusted) and `user_meta_read` (the same for user meta); bcc-core `MetaCacheGuard`, F-459, 2026-11-19; a post- or user-meta read is verified through `ProbesReads` before its result is cached, and a read that cannot be trusted caches nothing, so the next request reads again rather than being served a remembered answer — no behaviour change on a healthy database; ⚠ containment only — the failing request still reads the meta as absent, and F-460 / F-461 close the residual by teaching gates to refuse; expected steady state zero)
 - `page_privacy` (1 event — `member_list_over_cap` (a member's Reviews or Disputes list, read by anyone else, covers more than `PageAccess::HIDDEN_LIST_CAP` secret pages, so it was refused with 503 rather than checked page by page); bcc-trust `PageAccess::refuseOverCap()`, F-528, 2026-11-23; ⚠ persistent for that member while they stay over the cap, so any count means real tabs cannot be read, and the paired error log names the member; expected steady state zero)
 - `auth_token` (1 event — `revoke_write_failed` (a token revocation write did not land: the revoke-all version bump on a password or email change, sign out everywhere or a suspension, a sign-out's denylist entry, or a refresh's retired-list entry; the caller answers 503 or logs it and claims nothing); bcc-trust `JwtToken`, the F-495 follow-up, 2026-11-23; expected steady state zero, any activation is worth a look)
+- `validator_relationships` (13 events — bcc-trust's validator owner and team relationship writers: `unknown_verification_method`, `log_lock_unavailable`, `claim_lock_unavailable`, `log_append_failed`, `followup_failed`, `page_owner_locked`, `page_owner_unknown`, `page_owner_misaligned`, `align_backlog_full`, `deletion_revoke_failed`, `log_chain_broken` (the daily log verification found a break; every administrator is emailed; any occurrence is an incident), `log_verify_incomplete`, `log_anchor_missing`; expected steady state zero, bake before alerting the rest; added 2026-11-24)
 - `validator_index` (1 event — `solana_shared_identity` (a Solana identity named more than one vote account in `getVoteAccounts`, so its row keeps no `vote_account` and it can't be self-claimed until that resolves; counted once per identity per run); bcc-trust `SolanaFetcher`, F-550, 2026-11-23; expected rare)
 
 **Failure means:** A registered subsystem dropped out of the canonical map in `bcc-core/bcc-core.php`. New subsystems wired into `DegradationMetrics::record()` MUST register here — the map is the only place future agents discover which events are even possible.
@@ -858,6 +859,47 @@ curl -s "http://blue-collar-crypto-custom.local/wp-json/bcc/v1/system/health" | 
 **Expected:** Envelope-wrapped JSON `{data: {...}, _meta: {...}}`.
 
 **Failure means:** Either `/bcc/v1` namespace is broken (Envelope wrapper not loaded) or the health endpoint itself was removed.
+
+---
+
+### 12.3 Orphaned-post repair — unconfirmed lines must be chased by hand
+
+`orphan_repair_unconfirmed` and `orphan_repair_abandoned` count something no
+other subsystem does: a post the platform tried to remove and **could not
+prove it removed**. `AsyncDispatcher::scheduleSingle()` returns `void`, so a
+retry that was never queued leaves NO trace in the queue. The file log is the
+only durable record, which is why `OrphanedPostRepair` writes it **before** it
+touches the database or the scheduler.
+
+```bash
+# PROD logs live under domains/<site>/bcc-logs; STAGING under public_html/bcc-logs.
+# The filename carries a per-site secret, so glob it — never print or paste it.
+grep -h 'orphaned post repair' bcc-logs/bcc-*.log bcc-logs/bcc-*.log.*.old 2>/dev/null \
+  | grep -oE '"post_id":[0-9]+' | sort -u
+```
+
+**Expected:** no output.
+
+**Failure means:** each `post_id` printed is a **lead, not a verdict**. Check
+that post's current status and act on it:
+
+| current status | what it means | action |
+|---|---|---|
+| no such post | the repair, or the original destroy, worked after all | none |
+| `trash` | the repair worked on a later attempt | none |
+| anything else | ⛔ a live orphan — a post the guard refused to serve, still published | trash it by hand, then find out why five attempts could not |
+
+⚠⚠ **Do NOT read "no `orphan_repair_abandoned`" as "resolved."** A retry chain
+can stop without ever abandoning: if the *reschedule* fails, the chain simply
+ends with an `unconfirmed` line and no `abandoned` one. That is precisely the
+case this check exists to catch, and checking the posts is the only way to see
+it.
+
+⚠ A repair chain runs for at most `MAX_ATTEMPTS × RETRY_DELAY` ≈ **25 minutes**
+from the first unconfirmed outcome. An administrator who deliberately restores
+one of these posts inside that window should expect it to be re-trashed by a
+pending attempt; restore it after the window, or confirm the chain has ended
+first.
 
 ---
 
