@@ -88,9 +88,10 @@ deduplication is via WordPress's `(hook, serialized args)` keying.
 single-event paths surface as `cron_dispatch` DegradationMetric events
 (canonical registry in [bcc-core/bcc-core.php](../app/public/wp-content/plugins/bcc-core/bcc-core.php),
 documented in [pattern-registry.md §observability](pattern-registry.md)).
-The instrumented sites are `EndorsementFraudAnalyzer::schedule` (event
-`endorsement_fraud_analyzer`) and `VoteJobDispatcher::enqueue` wp-cron
-fallback (event `vote_job_dispatcher`). Recoverable surfaces with a
+The instrumented site is the `VoteJobDispatcher::enqueue` wp-cron
+fallback (event `vote_job_dispatcher`). The `endorsement_fraud_analyzer`
+event went with `EndorsementFraudAnalyzer` (retired from the map
+2026-11-24, simontx1983/bcc-core#187). Recoverable surfaces with a
 reconciliation sweep (e.g. `bcc_disputes_reconcile`) intentionally
 stay out of the subsystem — see pattern-registry for the policy.
 
