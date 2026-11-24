@@ -9920,6 +9920,32 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
+### v1.250 — 2026-11-24 — behaviour change — a card's `bio` is bounded in WORDS, not characters (F-579 row 16)
+
+Ships with bcc-trust. One plugin, no endpoint change, no new field.
+
+- **§3.2 `Card.bio`**: at most **25 words** AND at most **120
+  characters**, whichever bites first, with a single `…` when cut. It was
+  ~200 characters.
+- **A URL or an `@handle` is one word and is never cut into** — an
+  over-long one is dropped whole. ⚠ So a bio that is nothing but one
+  over-long URL now yields `""`. That is deliberate: a broken link says
+  less than no line, and the full text is on the page.
+- **The 120-character bound** exists for text written without spaces
+  (Chinese, Japanese, Korean), which is a single word and would otherwise
+  pass whole. The cut is grapheme-safe.
+- **All five card kinds**, which is a change in itself: community cards
+  previously passed the producers' ~200-character description straight
+  through and so were not subject to the page/member bound at all. They
+  now take the same cut. The producers' trim stays upstream as the cheap
+  bound.
+- **Unchanged:** `§4.7.4`'s `description` field (still ~200 characters —
+  it is the card's input, not the card's output), the profile's §3.1
+  `bio` (full text), and every other card field.
+- **Clients:** no change required; the string is simply shorter. Where it
+  renders on the card, and how many lines it may use, stay client
+  decisions.
+
 ### v1.249 — 2026-11-24 — additive — page card owner badge, viewer role and owner-control permissions (validator approval tool, P1)
 
 Ships with the bcc-trust page-data PR (P1). Additive, plus one anonymous-shape change on a key no client read.
@@ -9971,32 +9997,6 @@ Ships with bcc-trust **#882**, after bcc-search's `kind` (F-589). bcc-trust only
 - **`card_kind` on page suggestions** (and so `href`) now comes only from the page's stored type, with no stored type read as `project`, the same reading as the card routes. Untyped project pages were dropped; they now appear as `project`. A page whose stored type is not a card kind (e.g. `dao`), or that no longer exists, is still dropped.
 - **`GET /search` `type`, doc corrected:** it is a PeepSo page-category slug (one of the `categories` slugs), not a page kind. To filter by kind, use `kind`.
 - **Unchanged:** the suggestion shape, the All-scope allocation, `incomplete`, and the member and community verticals.
-
-### v1.250 — 2026-11-24 — behaviour change — a card's `bio` is bounded in WORDS, not characters (F-579 row 16)
-
-Ships with bcc-trust. One plugin, no endpoint change, no new field.
-
-- **§3.2 `Card.bio`**: at most **25 words** AND at most **120
-  characters**, whichever bites first, with a single `…` when cut. It was
-  ~200 characters.
-- **A URL or an `@handle` is one word and is never cut into** — an
-  over-long one is dropped whole. ⚠ So a bio that is nothing but one
-  over-long URL now yields `""`. That is deliberate: a broken link says
-  less than no line, and the full text is on the page.
-- **The 120-character bound** exists for text written without spaces
-  (Chinese, Japanese, Korean), which is a single word and would otherwise
-  pass whole. The cut is grapheme-safe.
-- **All five card kinds**, which is a change in itself: community cards
-  previously passed the producers' ~200-character description straight
-  through and so were not subject to the page/member bound at all. They
-  now take the same cut. The producers' trim stays upstream as the cheap
-  bound.
-- **Unchanged:** `§4.7.4`'s `description` field (still ~200 characters —
-  it is the card's input, not the card's output), the profile's §3.1
-  `bio` (full text), and every other card field.
-- **Clients:** no change required; the string is simply shorter. Where it
-  renders on the card, and how many lines it may use, stay client
-  decisions.
 
 ### v1.244 — 2026-11-24 — display change — holder and delegator communities read "GROUP" (F-579 row 12; F-588)
 
