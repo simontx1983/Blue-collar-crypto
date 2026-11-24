@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.233 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.234 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -6761,7 +6761,7 @@ Coalesced per-viewer badge payload. Replaces three previously-uncached polling e
 
 File a content report against a feed item or an **announcement** (§K1 Phase B). Idempotent per (reporter, target).
 
-- **Review replies (v1.159, F-345):** a reply is reported as a `feed_item` with the number from its `reply.feed_id` (`feed_<n>` → `n`), although no feed shows it. It is reportable while the reply is published, not hidden, and its review active and not hidden; otherwise 404. That includes a reply that no longer renders after a hand-over (its author no longer answers for the page). *(v1.229, F-532)* A reply on a PeepSo page's review also needs the reporter to be able to see that page: a SECRET page admits its members, invitees, author and site admins, and an unreadable privacy answers no. Anyone else gets the same 404, exactly as for a missing item. A review of a member's own profile has no page rule. The moderation queue shows it as `post_kind: "review_reply"` (preview = the reply body, no `post_url`), and `GET /admin/reports?post_kind=review_reply` filters to it.
+- **Review replies (v1.159, F-345):** a reply is reported as a `feed_item` with the number from its `reply.feed_id` (`feed_<n>` → `n`), although no feed shows it. It is reportable while the reply is published, not hidden, and its review active and not hidden; otherwise 404. That includes a reply that no longer renders after a hand-over (its author no longer answers for the page). *(v1.229, F-532)* A reply on a PeepSo page's review also needs the reporter to be able to see that page: a SECRET page admits its members, invitees, author and site admins, and an unreadable privacy answers no. Anyone else gets the same 404, exactly as for a missing item. A review of a member's own profile has no page rule. *(v1.234)* A reply is reportable only where its Reviews tab shows it to the reporter: on a review of a member's own profile, the reporter must be able to open that member's profile (that member's Reviews tab answers 403 otherwise); and the reply's author must be shown to the reporter, as on the tab (`reply` is `null` there for an author hidden by a block either way, a suspension, a ban, or a state that cannot be read). Otherwise the same 404. On a card page's review, a reply shown as the page's own response (`author_kind: "page"`, v1.226) stays reportable. This rule is about who may be seen, not who answers for the page now: a reply after a hand-over stays reportable, as above. The moderation queue shows it as `post_kind: "review_reply"` (preview = the reply body, no `post_url`), and `GET /admin/reports?post_kind=review_reply` filters to it.
 
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized` 401.
 - **Body (JSON):** `target_kind` (**required**, ∈ `feed_item | announcement`) · `target_id` (**required**, int ≥ 1 — the `act_id` for `feed_item`, the **bare integer announcement id, prefix stripped** for `announcement`; see below) · `reason_code` (**required**, ∈ `spam|harassment|hate|violence|misinformation|other`) · `comment` (optional, ≤ 500 chars; **required when `reason_code = other`**)
@@ -9801,6 +9801,18 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.234 — 2026-11-24 — behaviour change (privacy) — a review reply is reportable only where its Reviews tab shows it
+
+Ships with bcc-trust #864. Follows v1.229 (F-532).
+
+- **`POST /me/reports` with a review reply's `feed_item`:**
+  - On a review of a **member's own profile**, the reporter must be able to open that member's profile, as on the member's Reviews tab (which answers 403 otherwise).
+  - The reply's **author** must be shown to the reporter, as on the Reviews tabs: a reply whose author is hidden from them by a block either way, a suspension, a ban, or a state that cannot be read (`reply: null` on the tab) is not reportable.
+  - Either refusal gets the same 404 `bcc_not_found` "Not found." as a missing item.
+  - On a card page's review, a reply shown as the page's own response (`author_kind: "page"`, v1.226) stays reportable.
+- **Unchanged:** the report shape and error codes; the page rule (v1.229); a reply whose author no longer answers for the page (hand-over) stays reportable while it is live.
+- **Clients:** no change. A reply the tab does not show has no report control.
 
 ### v1.233 — 2026-11-24 — behaviour change — a validator on a chain BCC can't reach reads status `unknown` (F-584)
 
