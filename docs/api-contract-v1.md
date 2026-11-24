@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.240 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.241 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -4359,11 +4359,16 @@ Paginated list of Cards filtered + sorted server-side. Backs `/directory`.
     "pagination": {
       "page": 1,
       "per_page": 24,
+      "total": 183,
       "total_pages": 8,
       "has_more": true
     }
   }
   ```
+- **`pagination.total` (v1.241):** how many cards match the request's filters across all pages. It is the count behind `total_pages`, taken from the same query as the rows (the same filters, search and secret-page rule), so it agrees with them.
+  - With no `kind`, the list covers the three card kinds only (validator, project, creator), and so does the total. A page of any other type is neither counted nor given a slot.
+  - The page ceiling is unchanged: past `page` 20 is still a 400, even when `total` is larger than 20 pages hold.
+  - The frontend shows a count only when the server sends one.
 - **Errors:** `bcc_invalid_request` (bad `kind`, `tier`, `sort`, `chain`, `status`, negative `min_self_stake`, `page > 20`, or `q` over 100 characters) · `rest_invalid_param` 400 (`q` over 100 characters, rejected by WordPress before the handler) · `bcc_rate_limited` 429 (`q` requests over 10 per 5 s; *since v1.167*)
 - **Cache:** `Cache-Control: private, max-age=15`. Underlying `PageDiscoveryService` query is server-cached for 30s with a stampede lock; the short client TTL is courtesy for back-button nav.
 - **Mapping:**
@@ -9827,6 +9832,14 @@ Ships with bcc-trust #879. Follows v1.230.
 - **Failing closed:** when the pages' privacy cannot be read, or the members of one batch together have more than 100 secret pages, that count is `0` on every card in the batch except the viewer's own. A profile is a batch of one. The list or profile itself never answers an error over it.
 - **Unchanged:** response shapes and field names.
 - **Clients:** no change.
+
+### v1.241 — 2026-11-25 — additive — GET /cards carries pagination.total
+
+Ships with bcc-trust #880. Structure A (Explore's tab counts).
+
+- **`GET /cards` `pagination.total`:** how many cards match the filters across all pages, from the same query as the rows, so the two agree.
+- **No `kind`:** the list now covers the three card kinds only (validator, project, creator). Pages of any other type used to be counted in `total_pages` and to take a slot on a page without rendering; now they are neither counted nor listed.
+- **Unchanged:** the item shape, every filter, the page ceiling (`page` ≤ 20) and the errors.
 
 ### v1.240 — 2026-11-24 — additive — the auth responses carry `can_moderate`, the cue for the frontend's "Admin" group (structure A)
 
