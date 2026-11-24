@@ -1140,6 +1140,7 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
   "name": "Blacksmith Node",
   "handle": "blacksmith-node",
   "bio": "Cosmos validator. Regular in the Cosmos Hall.",
+  "cover_photo_url": "https://bluecollar.crypto/wp-content/uploads/peepso/pages/1842/cover.jpg",
   "trust_score": 98,
   "reputation_tier": "elite",
   "reputation_tier_label": "Elite",
@@ -1171,6 +1172,29 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
 **Field rules:**
 
 - `operator_profile` is always present. It is non-null only on a validator page with exactly one verified operator and a saved profile; other card kinds, unclaimed/ambiguous validator pages, and operators without saved profile data return `null`. Shape: `{ brand_name, bio, website_url, socials: { x, discord, telegram }, logo_url }`. Values include the page override, if any. The crest uses the shared logo after a page-specific uploaded avatar and before the chain-imported validator logo.
+- **`cover_photo_url` (v1.NEXT) — `string|null`, always present.** The
+  card's cover image, or `null` when there is none. `null` is the
+  DESIGNED empty state, not a missing value: the frontend keeps its dot
+  pattern behind the avatar, which is what it already does today for
+  every kind.
+  - **member** — the same stored cover the profile serves as §3.1's
+    `cover_photo_url`, read through the same cached seam, so a member's
+    card and their profile cannot show different covers.
+  - **validator / project / creator** — the page's stored cover.
+  - **community** — `null` in v1.NEXT. The key is shape-stable from this
+    release; a group's cover follows in a second change, supplied by the
+    producers rather than read inside the card composer (which is
+    contractually query-free). Until then a community card renders the
+    dot pattern.
+  - Absolute URL per §1.7, and WP-hosted media in every case — no card
+    sends a viewer's browser to a third-party host.
+  - ⚠ **No field-level visibility gate, deliberately.** It matches §3.1,
+    where the profile emits `cover_photo_url` in its header block beside
+    `avatar_url` with no §F-02 section gate — the F-341 section switches
+    cover About, Verifications, Operator and Blogs, not the cover photo.
+    A gate here would make the card contradict the profile. Whatever
+    hides a member entirely still removes the card upstream.
+  - **Clients:** additive. A client that ignores the field is unaffected.
 - `card_kind` ∈ {`validator`, `project`, `creator`, `member`, `community`}. `community` cards (v1.27) are emitted ONLY as the additive `card` field on the §4.7.4 discovery items and the §4.7.5 group detail response — `GET /cards/:type/:id` and `GET /cards` do NOT accept `community` (route enum unchanged); see §3.2.4 for the kind's rules.
 - `is_claimed` is meaningful for `validator` / `project` / `creator`. For `member`, `is_claimed: true` always (members are their own pages).
 - `is_claim_verified` (verified-wins slice, 2026-06-30) — `true` when the page has a **verified on-chain operator/creator claim** (`onchain_claims.status='verified' AND claim_role IN ('operator','creator')`), i.e. the real entity proved key control. Distinct from `is_claimed` (ANY claim exists) and from `is_verified`/the member email flag. Drives the "✓ Verified Operator" badge + the dominant search-ranking bonus + same-name look-alike demotion. `false` on `member`/`community` cards (not on-chain-claimed). Projected from the read model (`has_verified_claim`), refreshed whenever a claim verify/revoke re-syncs the page.
@@ -1273,6 +1297,10 @@ Communities (PeepSo groups: `nft` / `hall` / `system` / `user`) converge onto th
 
 Locked field rules:
 
+- **`cover_photo_url`:** present and `null` as of v1.NEXT — see the
+  §3.2 field rule. A group's own cover follows in a second change,
+  producer-supplied, because this card is composed with zero extra
+  queries.
 - **Trust placeholders (shape-stable, never rendered as trust):** communities have no trust system. `trust_score: 0`, `reputation_tier: "neutral"`, `reputation_tier_label: null`, `rank_label: null`, `is_in_good_standing: true`, `flags: []`. The community face does not render a trust dial; the values exist only to keep the envelope shape-stable.
 - **`kicker` = server-owned group-type kicker** (§L5 — supersedes the frontend `KICKER_BY_TYPE` map). Until v1.57 this rode on `tier_label`, overloading a trust field to carry a category word; it now has its own field: `nft` → `"HOLDER GROUP"`, `validator` → `"DELEGATOR GROUP"`, `hall` → `"CHAIN HALL"`, `system` → `"SYSTEM COMMUNITY"`, `user` → `"COMMUNITY"`. Unknown kinds fall back to `"COMMUNITY"`.
   *(v1.52: `HOLDERS GROUP` → `HOLDER COMMUNITY` and `SYSTEM GROUP` → `SYSTEM COMMUNITY` as part of the Communities vocabulary convergence — display-only, `type` values unchanged; `validator` added the same release.)*
@@ -9844,6 +9872,29 @@ Ships with bcc-trust **#882**, after bcc-search's `kind` (F-589). bcc-trust only
 - **`card_kind` on page suggestions** (and so `href`) now comes only from the page's stored type, with no stored type read as `project`, the same reading as the card routes. Untyped project pages were dropped; they now appear as `project`. A page whose stored type is not a card kind (e.g. `dao`), or that no longer exists, is still dropped.
 - **`GET /search` `type`, doc corrected:** it is a PeepSo page-category slug (one of the `categories` slugs), not a page kind. To filter by kind, use `kind`.
 - **Unchanged:** the suggestion shape, the All-scope allocation, `incomplete`, and the member and community verticals.
+
+### v1.NEXT — 2026-11-24 — additive — `Card.cover_photo_url` (F-579 row 17)
+
+Ships with bcc-trust. One plugin, no endpoint change.
+
+- **§3.2 `Card.cover_photo_url`** (`string|null`, always present): the
+  card's cover image, or `null` when there is none. `null` is the
+  designed empty state — the frontend keeps its dot pattern, which is
+  what every card shows today.
+- **member** reads the same stored cover the profile serves as §3.1's
+  `cover_photo_url`, through the same cached seam, so the two surfaces
+  cannot disagree. **Pages** read the page's stored cover.
+- **community** is `null` in this release. The key is shape-stable from
+  here; a group's cover follows in a second change, supplied by the
+  producers rather than read inside the card composer, which is
+  contractually query-free.
+- ⚠ **No field-level visibility gate**, matching §3.1 — the F-341
+  section switches do not cover the profile's cover photo, so adding a
+  gate on the card would make the two surfaces contradict each other.
+  Whatever hides a member entirely still removes the card upstream.
+- WP-hosted media in every case; no card sends a viewer's browser to a
+  third-party host.
+- **Clients:** additive. A client that ignores the field is unaffected.
 
 ### v1.244 — 2026-11-24 — display change — holder and delegator communities read "GROUP" (F-100)
 
