@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.225 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.226 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2875,7 +2875,7 @@ Reviews this member has written (§V1.5 reviews-on-file tab), offset-paginated.
     - `null` while it is moderation-hidden (frozen; `DELETE` answers 404 for it).
     - It can sit beside `reply` when the new party has replied too. Delete it with `DELETE /reviews/{id}/reply`; it is then `null`.
   - "Reviewed party": the member, for a review of their own profile; the **verified operator**, for a validator page (none when the claim is ambiguous or absent); otherwise the **page owner** — so an unclaimed placeholder page has nobody. Write routes: `POST|PATCH|DELETE /reviews/{id}/reply` below.
-  - `author_kind` *(v1.NEXT)* — on `reply` and `viewer_stale_reply`, always `"member"` on this list (a reply is never shown as a page's here; see the entity Reviews list for `"page"`). Clients treat a missing `author_kind` as `"member"`.
+  - `author_kind` *(v1.226)* — on `reply` and `viewer_stale_reply`, always `"member"` on this list (a reply is never shown as a page's here; see the entity Reviews list for `"page"`). Clients treat a missing `author_kind` as `"member"`.
 
   `scope_label` ∈ `PAGE|MEMBER` (v1.48). Member-target rows (reviews this user wrote **about another member**): `subject` = the member's display name, `subject_handle` = their `bcc_handle` (`""` when unset — the frontend suppresses the `ON @…` link; `user_login` is never projected), `scope_label` = `MEMBER`.
 - **Errors:** `bcc_not_found` (handle missing) · `bcc_invalid_request` **400** (an out-of-range or non-integer bound — refused, never clamped; the declared maximum does not bind in the route schema, so the handler enforces it — see the `/members` entry) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer, **or the account is suspended** *(v1.112)* · `bcc_unavailable` **503** *(v1.225, F-528)* — "This list is temporarily unavailable. Please try again.", `Cache-Control: private, no-store` (never the header below), no `data`. Answered in two cases. (1) The reviewed pages' privacy could not be read: transient, so a retry can succeed. (2) The member has reviewed more than 100 secret pages: **persistent** for every viewer but the member and site admins while the member stays over that cap, so a retry gets the same 503 (it is logged and counted server-side). Show an error with a retry action, not the empty state. The member's own view and site admins never get it.
@@ -7458,7 +7458,7 @@ Reviews-tab data plane for entity profiles AND member profiles (v1.48) — revie
     - It can sit beside `reply` when the new party has replied too. Delete it with `DELETE /reviews/{id}/reply`; it is then `null`.
   - "Reviewed party": the member, for a review of their own profile; the **verified operator**, for a validator page (none when the claim is ambiguous or absent); otherwise the **page owner** — so an unclaimed placeholder page has nobody. Write routes: `POST|PATCH|DELETE /reviews/{id}/reply` below.
   - ⚠ `can_reply` is viewer-scoped, which is why authed responses stay `private` here; anonymous viewers always get `not_applicable`, so the anon `public` cache stays correct.
-  - **`author_kind` *(v1.NEXT)*** — on `reply` and `viewer_stale_reply`: `"member"` or `"page"`. **Clients treat a missing `author_kind` as `"member"`** (servers before v1.NEXT send none).
+  - **`author_kind` *(v1.226)*** — on `reply` and `viewer_stale_reply`: `"member"` or `"page"`. **Clients treat a missing `author_kind` as `"member"`** (servers before v1.226 send none).
     - `"member"` — the object described above, with `author`.
     - `"page"` — **card targets only** (`validator_card`, `project_card`, `creator_card`), **only in `reply`**, and only when the reply's author's **profile level** (`profile_visibility`) does not admit this viewer. The reply is then shown as the PAGE's own response (product decision 2026-11-23):
       ```json
@@ -7481,7 +7481,7 @@ The reviewed party's ONE public response to a review (v1.159, F-345). `{id}` is 
 - **Auth:** Bearer **required**.
 - **Body (JSON):** `{ "body": string }` — trimmed, tags stripped, 1–1000 characters.
 - **Who:** the **reviewed party only** (see `permissions.can_reply` on the review rows): the member for a review of their own profile, the verified operator for a validator page, otherwise the page owner. Never the reviewer, never a third party. One reply per review per party: the party's own reply holds the slot, even when it is moderation-hidden (hand-over rule on the Reviews lists).
-- **Response 201:** `{ "reply": { "id", "body", "author_kind": "member", "author": MemberSummary, "posted_at", "edited_at": null, "feed_id": "feed_<act_id>", "permissions": { "can_edit", "can_delete", "can_report" } } }` (`author_kind` *(v1.NEXT)*: always `"member"` here; see the entity Reviews list.)
+- **Response 201:** `{ "reply": { "id", "body", "author_kind": "member", "author": MemberSummary, "posted_at", "edited_at": null, "feed_id": "feed_<act_id>", "permissions": { "can_edit", "can_delete", "can_report" } } }` (`author_kind` *(v1.226)*: always `"member"` here; see the entity Reviews list.)
 - **Side effects:** the reviewer gets the `bcc_review_reply` bell (in-app only). A reply is never a feed item and does **not** count toward streaks or contribution score.
 - **Errors:** `bcc_unauthorized` 401 · `bcc_forbidden` 403 (not the reviewed party, or the account is suspended/banned) · `bcc_not_found` 404 (the review does not exist, was removed, or is moderation-hidden — which of these is not disclosed) · `bcc_conflict` 409 (you have already replied to this review) · `bcc_invalid_request` 422 (empty, or over 1000 characters) · `bcc_rate_limited` 429 (10 per 5 min, shared with edits) · `bcc_unavailable` 503 (retryable; also when another reply to the same review is being written at that moment)
   - Route-schema validation runs first: a missing or non-string `body`, or an `{id}` below 1, is refused by WordPress with **400** `rest_missing_callback_param` / `rest_invalid_param`, not 422.
@@ -9748,7 +9748,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-23 — additive — a card page's review reply shows as the page's own response when its author's profile is closed to the viewer
+### v1.226 — 2026-11-23 — additive — a card page's review reply shows as the page's own response when its author's profile is closed to the viewer
 
 Ships with bcc-trust #842. ⛔ **Deploy order: the frontend union (bcc-frontend #311) first.** A client that reads `reply.author` finds none on the new variant.
 
