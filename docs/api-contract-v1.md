@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.231 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.232 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -8321,7 +8321,8 @@ Auth **member in good standing** (§4.32.7).
   announcement is not publicly readable, or *(since v1.191)* it is on a SECRET page the
   viewer may not see) · `400 bcc_invalid_request` (absent, blank,
   oversized or non-UTF-8 body) · `400` + `reason_code: replies_not_supported` ·
-  `503 bcc_unavailable`
+  `503 bcc_unavailable` (*v1.232, F-469:* also with `reason_code: unavailable` when the
+  commenter's standing could not be read; retryable, nothing written)
 
 ⚠ **`body` is NOT declared `required` in the route schema**, deliberately. A
 schema-required field is validated by WordPress BEFORE the handler runs, so a request
@@ -8338,11 +8339,15 @@ the body is refused by the handler, after the feature gate.
 | `auth_required` | Not signed in. **No anonymous comments.** |
 | `suspended` | Suspended account, **or** a reputation tier below `neutral`. See below. |
 | `fraud_locked` | The account is restricted. |
+| `unavailable` | *(v1.232, F-469)* The commenter's standing could not be READ. Retryable: this POST answers **503** `bcc_unavailable`, and `can_comment` carries a hint saying so. |
 
 ⚠⚠ **STANDING AND SUSPENSION PRESENT IDENTICALLY, AND THAT IS DELIBERATE.** §4.32.11's
 reason inventory is CLOSED and has no "standing" entry, and the frontend closes the
 composer on an unrecognised reason — so a new code would produce a disabled control with
-no copy. To a member, both mean "you may not post right now".
+no copy. To a member, both mean "you may not post right now". *(v1.232, F-469)* A
+standing that could not be READ is different, and has its own retryable reason,
+`unavailable`. It carries an `unlock_hint`, which the frontend's fallback renders for a
+code it does not know, so it is never shown as a suspension.
 
 ⚠ "Good standing" resolves through `UserViewService::isInGoodStanding()`, the documented
 single source of truth: tier ∈ {`neutral`, `trusted`, `elite`}. A member with **no score
@@ -8731,7 +8736,8 @@ to `false`.
 closes the composer:
 
 `auth_required` · `comments_disabled` · `announcement_archived` · `announcement_unavailable` ·
-`suspended` · `fraud_locked` · `feature_disabled`
+`suspended` · `fraud_locked` · `feature_disabled` · *(v1.232, F-469)* `unavailable` (the
+commenter's standing could not be read; retryable, and it carries an `unlock_hint`)
 
 **`can_report` denial reasons** — a separate CLOSED inventory, and deliberately
 not the comment list:
@@ -9804,6 +9810,15 @@ Ships with bcc-trust #862.
 - **The directory `status` filter** (`GET /bcc/v1/cards`) matches only validators on an active chain BCC has had a successful call to in the last 72 hours.
 - **Unchanged:** the value set (`unknown` was already a status), every other field (`last_fetched_at` included), and the operator dashboard's `chain_reported_status` (`GET /bcc/v1/me/validator-pages`), which stays the raw reported value. Nothing stored changes; a chain that answers again shows its real status.
 - **Clients:** no change required; `unknown` already renders.
+
+### v1.232 — 2026-11-24 — additive + behaviour change — an announcement comment refused because the commenter's standing could not be read is a retryable `unavailable` (F-469)
+
+Ships with bcc-trust **#857** (F-469 follow-up). bcc-trust only.
+
+- **`can_comment`** (§4.32.11) gains **`unavailable`** in its CLOSED denial inventory: the commenter's standing could not be read. It carries an `unlock_hint` ("Your standing could not be checked right now. Please try again."), so a client that does not know the code still shows copy, and the composer stays closed.
+- **`POST /announcements/:id/comments`** answers **`503 bcc_unavailable`** with `reason_code: unavailable` in that case. It is retryable, and nothing is written.
+- Before this, the same case was refused as `suspended` (403), which reads as "your account is suspended". `suspended` keeps both its existing meanings: a suspended account, or a standing that WAS read and is below `neutral`.
+- **Unchanged:** every other comment refusal, every success response, and the `can_report` inventory (it has no standing rung).
 
 ### v1.231 — 2026-11-24 — behaviour change (privacy) — a card page's review-reply bell speaks as the page (F-578)
 
