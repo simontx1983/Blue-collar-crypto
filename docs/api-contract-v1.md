@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.236 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.237 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -6751,8 +6751,9 @@ Coalesced per-viewer badge payload. Replaces three previously-uncached polling e
 - **Query:** `open_threads` (optional) — comma-separated conversation root ids; non-numeric tokens dropped; capped at **5**. Threads the viewer isn't a participant of are silently absent.
 - **Response 200:**
   ```json
-  { "data": { "messages_unread": 3, "notifications_unread": 1, "open_thread_hints": { "12": { "latest_message_id": 9981, "posted_at": "2026-06-10T14:03:11Z" } }, "polled_at": "2026-06-10T14:05:00Z" } }
+  { "data": { "messages_unread": 3, "notifications_unread": 1, "disputes_open": 1, "open_thread_hints": { "12": { "latest_message_id": 9981, "posted_at": "2026-06-10T14:03:11Z" } }, "polled_at": "2026-06-10T14:05:00Z" } }
   ```
+  *(v1.237, structure A row 18)* `disputes_open` (`int | null`): the number of disputes the viewer filed that are still open (status `reviewing`), the same cases `/disputes` lists; `null` when the count couldn't be read (never `0` on a failure, and not cached), and the frontend then shows no dot and no number. Fresh after the viewer files a dispute or one changes status.
   `open_thread_hints` lets an open conversation refetch only when `latest_message_id` advances. `polled_at` refreshes even on a cache hit (counts may be up to 15s older than `polled_at`).
 - **Errors:** `bcc_unauthorized` 401
 - **Cache:** `Cache-Control: private, max-age=10`. Server-side: 15s payload cache via the §5 generation-counter pattern (group `bcc_badges`), bumped on bell-row create, mark-read, DM send, DM view.
@@ -9802,6 +9803,16 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.237 — 2026-11-24 — additive — `GET /me/badges` carries `disputes_open`, the viewer's open filed disputes (structure A row 18)
+
+Ships with bcc-trust **#870**. bcc-trust only. Drives the avatar's "My cases · N open" dot.
+
+- **`disputes_open`** (`int | null`, additive): the number of disputes the viewer filed that are still open (status `reviewing`), the same cases `/disputes` lists (`GET /disputes/mine`). The viewer's own data only.
+- **`null`** when the count couldn't be read. It is never `0` on a failure, and it is not cached, so the next poll reads again. The frontend then shows no dot and no number.
+- The dot shows whenever the count is above 0. It is status, not a call to act: it counts no disputes against the viewer and no community votes.
+- Fresh on change: filing a dispute and any status change of one invalidate the viewer's badge payload.
+- **Unchanged:** every other `/me/badges` field, the auth, and the cache headers.
 
 ### v1.236 — 2026-11-24 — behaviour change at the edges (privacy) — the hide-from-search switch reads as search applies it (F-519)
 
