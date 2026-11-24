@@ -2464,6 +2464,7 @@ Validator registry + enrichment (Cosmos/etc.).
 - last_enriched_at / next_enrichment_at(K) / retry_after · datetime · YES
 - enrichment_attempts · tinyint unsigned · NO
 - identity · varchar(64) · YES
+- vote_account · varchar(64) · YES — Solana only: the validator's vote account (`votePubkey` from `getVoteAccounts`), written by the index run (`SolanaFetcher` → `ValidatorRepository::bulkUpsert`). NULL on other chains, before the first run after deploy, and for an identity that names more than one vote account. A Solana claim reads the validator's authorities from it (F-550)
 - logo_url / logo_source_ref · varchar(2048) · YES
 - logo_checked_at · datetime · YES
 - Indexes: PRIMARY (id) [uq]; uq_chain_operator (chain_id,operator_address) [uq]; wallet_link_id; operator_address; chain_id; status; voting_power_rank; expires_at; idx_enrichment_schedule (next_enrichment_at,retry_after)
