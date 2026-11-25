@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.260 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.262 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -584,6 +584,7 @@ profile shows a chip (New Member · Neutral tier), not a hole.
     "decay":   { "active": false, "points": 0 },
     "recovery": null,
     "findings": [],
+    "findings_unavailable": false,
     "quests": {
       "completed_count": 4,
       "total_count": 7,
@@ -659,6 +660,7 @@ profile shows a chip (New Member · Neutral tier), not a hole.
   server-rendered sentence (§A2); deadline-framed, never a §2.7
   schedule nudge. Recovery state is own-view only (§22.3 — nothing
   recovery-related appears on any public surface).
+- `findings_unavailable` *(v1.262, F-539)* (bool, always present beside `findings`): `true` when the member's findings could not be loaded. `findings` is then `[]` and must NOT be shown as "no findings"; show that they couldn't be loaded and offer a retry. It is all or nothing, so a partial list is never sent. `false` means `findings` is the real list, and `[]` then means genuinely none.
 - `findings` — **NEW at v1.63 (Rank Phase 8, spec §15)**: the member's
   own misconduct findings — active ones plus reversals from the last
   30 days; `[]` when clean. Own-view only (§22.3): this list exists
@@ -9662,6 +9664,91 @@ Validator, project and creator pages, as `/v/`, `/p/` or `/c/{slug}`: published,
 
 Open communities and Halls, as `/communities/{slug}` *(Halls too since v1.248, F-594; they were `/halls/{slug}`)*: published, with a slug, and **explicitly** open (a privacy row reads open and none reads closed or secret). Closed and secret groups are never listed. A group the app cannot place, one with disagreeing kind rows for example, is left out, so every listed URL is one the app serves.
 
+### 4.34 Admin Halls — topic Halls (F-597) *(v1.261)*
+
+The admin dashboard's Halls tab. Every route is **site administrators only** (`manage_options`): anonymous `401 bcc_unauthorized`, signed-in non-admin `403 bcc_forbidden`, before any work. Every response is `Cache-Control: no-store`.
+
+**Every 400 and 409 refusal carries `error.data.reason` (so does a create's 503). Clients key their copy on the code and `data`, never on the message.** The 401/403 gate and the 404/503 of `GET` / `PATCH /admin/halls/:id` carry none.
+- `400 bcc_invalid_request`:
+  - `reason` `invalid_value` with `field` and `rule`. `rule` is one of `empty`, `too_long`, `markup`, `format` (also a non-string field), `no_letter`, `ends_with_hall` or `reserved`.
+  - `reason` `not_editable` or `unknown_field`, with `field`.
+  - `reason` `nothing_to_change`.
+- `409 bcc_conflict`: `reason` `topic_exists` (with `group_id`), `address_taken` or `create_in_progress`.
+- `503 bcc_unavailable`: `reason` `unverified` (a check could not be read) or `create_failed`.
+
+`AdminHall` (the item every route returns):
+
+```json
+{
+  "id": 3012,
+  "slug": "defi",
+  "name": "DeFi Hall",
+  "description": "Lending, swaps and yield.",
+  "hall_kind": "topic",
+  "topic": { "slug": "defi", "label": "DeFi" },
+  "chain": null,
+  "member_count": 12,
+  "editable": { "name": true, "description": true, "topic_label": true },
+  "links": { "self": "/communities/defi" }
+}
+```
+
+- `hall_kind` / `topic` follow `GET /halls` (§4.7). They are `null` when the Hall has neither kind, or its kind could not be read.
+- `editable` says which fields `PATCH` accepts for this Hall:
+  - a topic Hall: all three;
+  - any other Hall: `description` only. A chain Hall's name and chain come from the chain registry, and chain Halls are still created in wp-admin ▸ Chains. A Hall not known to be a topic Hall fails closed to its description.
+- `slug` is the Hall's address, `/communities/{slug}`. It never changes.
+
+#### `GET /bcc/v1/admin/halls`
+
+Every published Hall, chain and topic alike, filtered as `GET /halls` is.
+
+- **Query:** `page` (default 1), `page_size` (default 20, max 50), `kind` (`chain` | `topic`; anything else is `400 bcc_invalid_request`), `chain` (a chain slug), `q` (a name search, at most 100 characters, else `400`).
+- **Response 200:** `{ "items": AdminHall[], "pagination": { "page", "page_size", "total", "total_pages" } }`. `total` uses the same filters as the rows.
+- **Mapping:** `AdminHallsEndpoint::list` → `AdminHallsService::list` (the `GET /halls` reads, then `findManyByIds` + `HallRepository::kindFactsForHalls`).
+
+#### `POST /bcc/v1/admin/halls`
+
+Create a **topic Hall**: an official, open Hall about a subject rather than a chain (DeFi, NFTs, …). It is created exactly as open as a chain Hall (public, joinable, auto-accept), and owned by the site's first administrator, not by whoever created it.
+
+- **Body:**
+  - `name` (1–80 characters);
+  - `topic_slug`: lowercase letters and digits in hyphen-separated runs, at most 50 characters, with at least one letter. It may not end in `hall` (kept for chain Halls) and may not be a reserved word (`peepso`, `peepsoajax`, `category`);
+  - `topic_label` (1–60 characters): the topic's display name;
+  - `description` (optional, at most 1000 characters).
+
+  Values are trimmed. **The topic slug is the Hall's address** (`/communities/{topic_slug}`), set at create and never changed.
+- **Response 201:** `{ "status": "created" | "incomplete", "message": string, "hall": AdminHall, "audit_degraded": bool }`.
+  - `incomplete`: the Hall exists, but its ownership could not be moved to the site owner. It is flagged, and resending a create with the same `topic_slug` repairs it.
+  - `audit_degraded`: the Hall is correct, but its audit row could not be written.
+- **Errors:**
+  - `400 bcc_invalid_request`: an invalid field. The message names the rule.
+  - `409 bcc_conflict`: the topic already has a Hall (with `error.data.group_id`); another group already has that address (never a silently suffixed address); or another create for the same topic is still running.
+  - `503 bcc_unavailable`: a check could not be read, or the create failed. Nothing is left behind, because a Hall that cannot be proven linked to its topic, at its address, is rolled back.
+- **Idempotent per topic.** One Hall per topic, serialized by a per-topic lock.
+- **Mapping:** `AdminHallsEndpoint::create` → `HallProvisioningService::provisionTopic` (the chain Hall pipeline: lock, existence check inside it, PeepSo create, marker plus re-read proof, deterministic owner, checked audit `admin_hall_created`).
+
+#### `GET /bcc/v1/admin/halls/:id`
+
+One Hall, in any post status, for the edit page.
+
+- **Response 200:** `{ "hall": AdminHall }`.
+- **Errors:** `404 bcc_not_found` (not a Hall), `503 bcc_unavailable`.
+- **Mapping:** `AdminHallsEndpoint::show` → `AdminHallsService::get`.
+
+#### `PATCH /bcc/v1/admin/halls/:id`
+
+Edit a Hall's `name`, `description` or `topic_label` (send only what changes), within the Hall's `editable`. A Hall in any post status can be edited.
+
+- **Body:** any of `name`, `description`, `topic_label`, with the same rules as `POST`. Values are trimmed.
+- **Response 200:** `{ "hall": AdminHall, "audit_degraded": bool }`. The edit is recorded with the checked audit `admin_hall_updated`. A correct edit whose audit row could not be written is kept and reported, never silently undone.
+- **Idempotent.** Name and description are one write; the topic label is a second. If the second fails after the first succeeded, the answer is `503` with the first part kept, and resending the same body completes the edit. Concurrent edits: the last write wins.
+- **Errors:**
+  - `400 bcc_invalid_request`, with a `data.reason` from the list above: nothing sent, an unknown field, a field this Hall does not allow (e.g. a chain Hall's `name`), or an invalid value. **Nothing is written unless every change passes.**
+  - `404 bcc_not_found`: not a Hall.
+  - `503 bcc_unavailable`: the Hall could not be read, or the write failed.
+- **Mapping:** `AdminHallsEndpoint::update` → `AdminHallsService::update` (`PeepSoGroup::update` for name and description, `HallRepository::writeTopicLabel` for the label).
+
 ## 5. Encoded rules — quick reference
 
 ### 5.1 §N7 — gated actions always visible
@@ -9960,6 +10047,24 @@ Contract only. No code or response change.
 
 - **`POST /pages/:id/claim` › Mapping and errors:** v1.258's "In order" list went from the suspension check straight to the page lookup, and its error list said a *missing* field gets `bcc_invalid_request`. Two checks sit there. A present but invalid `entity_type` (not `validator` / `collection`) or `entity_id` (not ≥ 1) gets `bcc_invalid_request` 400 from the handler, after the suspension check and before the page is read. A request that **omits** either is refused earlier by WordPress (`rest_missing_callback_param` 400), before the sign-in check (the args are declared `required`). `id` comes from the path, so it is never missing. The list and the error line now say so.
 - **Clients:** no change.
+
+### v1.262 — 2026-11-25 — additive — the progression says when a member's findings could not be loaded (F-539)
+
+Ships with bcc-trust #907. Frontend half to follow (friend).
+
+- **`GET /me/progression` → `progression.findings_unavailable`** (bool, ranked members, always present beside `findings`): `true` when the findings could not be loaded. `findings` is then `[]`, which is not "none". `false` means `findings` is the real list.
+- **Unchanged:** `findings` items and every other field. A client that does not read the flag renders as before.
+
+### v1.261 — 2026-11-25 — additive — admin Halls: list, create a topic Hall, edit (F-597)
+
+Ships with bcc-trust #904 (topic Halls step 3a), after #898. Admin-only routes: §4.34.
+
+- **`GET /admin/halls`:** every published Hall, with the fields an admin edits and which of them each Hall allows (`editable`).
+- **`POST /admin/halls`:** create a topic Hall. Its topic slug is its address, and the create is idempotent per topic.
+- **`GET /admin/halls/:id`:** one Hall, in any post status.
+- **`PATCH /admin/halls/:id`:** edit a topic Hall's name, description and topic label; any other Hall's description only.
+- Every 400/409 refusal carries `error.data.reason`, plus `field` and `rule` for a bad value.
+- **Unchanged:** every public route. A topic Hall appears in `GET /halls` with `hall_kind: "topic"` (§4.7, step 2a).
 
 ### v1.260 — 2026-11-25 — additive — topic Halls on the read side: `hall_kind`, `topic`, `GET /halls?kind=`
 
