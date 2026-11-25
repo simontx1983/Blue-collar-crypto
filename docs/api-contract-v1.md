@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.261 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.260 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -3303,7 +3303,7 @@ Claims a validator or collection page with a wallet the member has **already lin
   - There is no `card`, `celebration` or `next_steps`: refetch the card for `is_claimed`.
 - **Errors:** the complete set this route can emit, each with its HTTP status. Corrected and completed in **v1.86** against the implementation; see the changelog for what was wrong and why it mattered.
   - `bcc_unauthorized` **401** — not signed in.
-  - `bcc_invalid_request` **400** — a present but invalid `entity_type` (not `validator` / `collection`) or `entity_id` (not ≥ 1). A request that **omits** either is refused earlier by WordPress (`rest_missing_callback_param` **400**), before the sign-in check, so an anonymous caller gets that 400 rather than 401. `id` comes from the path (`\d+`), so it is never missing. *(Corrected in v1.261; this said "missing or malformed".)*
+  - `bcc_invalid_request` **400** — a present but invalid `entity_type` (not `validator` / `collection`) or `entity_id` (not ≥ 1). A request that **omits** either is refused earlier by WordPress (`rest_missing_callback_param` **400**), before the sign-in check, so an anonymous caller gets that 400 rather than 401. `id` comes from the path (`\d+`), so it is never missing. *(Corrected in v1.NEXT; this said "missing or malformed".)*
   - `bcc_forbidden` **403** — six distinct causes behind one code, each with its own message and, **since v1.137, a machine-readable `error.data.reason`** a client MUST branch on instead of the message:
     - `suspended` — the account is suspended (`Your account is suspended.`). **Final**: no wallet or retry will help.
     - `entity_not_bound` — the entity is **not bound to this page** (`That entity is not attached to this page.`).
@@ -3323,7 +3323,7 @@ Claims a validator or collection page with a wallet the member has **already lin
 - **Erratum resolved (v1.258):** the v1.86 erratum said the Body and Response blocks above described a signature flow this endpoint does not implement. They, the status code, the rate limit and the Mapping below now describe the implementation.
 - **Cache:** `Cache-Control: no-store`
 - **Mapping** *(corrected in v1.258)*: `PagesEndpoint::claim` → `ClaimService::claim`.
-  - In order: WordPress first refuses a request that omits `entity_type` or `entity_id` (`rest_missing_callback_param` 400, before any sign-in check); then the handler checks signed in, rate limit, not suspended, a present but invalid `entity_type` (not `validator` / `collection`) or `entity_id` (not ≥ 1) (else 400 `bcc_invalid_request`), a published `peepso-page` (else 404), the entity bound to this page (else 403 `entity_not_bound`). *(Both 400 steps added in v1.261; v1.258's list skipped them.)*
+  - In order: WordPress first refuses a request that omits `entity_type` or `entity_id` (`rest_missing_callback_param` 400, before any sign-in check); then the handler checks signed in, rate limit, not suspended, a present but invalid `entity_type` (not `validator` / `collection`) or `entity_id` (not ≥ 1) (else 400 `bcc_invalid_request`), a published `peepso-page` (else 404), the entity bound to this page (else 403 `entity_not_bound`). *(Both 400 steps added in v1.NEXT; v1.258's list skipped them.)*
   - If the member already holds the verified claim → `already_verified`, as above.
   - Otherwise the member's **verified** linked wallets on the entity's chain are matched. **Validator:** a wallet whose address is the validator's operator address (Cosmos: the same bytes under the account and `valoper` prefixes; delegators never match). **Collection:** the contract's owner or creator (a holder is refused, `holder_not_owner`).
   - Single claim wins: a validator claim goes through `ValidatorRelationshipService::claimByWallet`, a collection claim through `ClaimRepository::createExclusiveClaim`, and a page row mirrors either one.
@@ -9954,7 +9954,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.261 — 2026-11-25 — doc correction — the claim route's gate order includes its input check
+### v1.NEXT — 2026-11-25 — doc correction — the claim route's gate order includes its input check
 
 Contract only. No code or response change.
 
