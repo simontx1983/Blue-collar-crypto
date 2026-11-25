@@ -1,152 +1,183 @@
-# Handoff: how agents share and continue work
+# Handoff and collaboration: how agents share and continue work
 
-This is the procedure that lets any agent, Claude Code or OpenAI Codex, pick up another's work without losing context or redoing decisions. It also says where human approval is required.
+This is the protocol that lets **any** agent continue another's work without the project owner reconstructing the conversation. That covers Claude Code, OpenAI Codex, or whichever provider is available. BCC's engineering knowledge belongs to the project, not to an AI provider: it lives in GitHub and in these docs.
 
-## Principle: state lives in GitHub and in these docs, not in a session
+## Principle: state lives in GitHub and in `docs/ai/`, not in a session
 
 An agent's chat history, private memory and machine-local notes are invisible to the next agent.
-- **Claude's memory directory** and **`.claude/handoffs/`** are machine-local. The latter is also gitignored, because it can carry environment details.
-- **Codex sessions don't share history with Claude.**
+- Claude's memory directory and `.claude/handoffs/` are machine-local (the latter is gitignored).
+- Codex sessions share no history with Claude, and Claude shares none with Codex.
 
 So anything another agent needs must be in one of these places:
 
 | What | Where |
 |---|---|
 | Code and its progress | a pushed branch and a PR (draft if unfinished) |
-| What was done, what's next, open questions | the PR description's **Handoff** section (template below) |
-| Decisions the project owner made | [DECISIONS.md](DECISIONS.md) and the canonical doc (contract, policy) |
-| Cross-cutting workstream status | [CURRENT_STATE.md](CURRENT_STATE.md) |
+| What was done, what's next, decisions, blockers | the PR description's **Handoff** section (template below) |
+| Reviews | PR review comments in the standard format (below) |
+| Decisions the project owner made | [DECISIONS.md](DECISIONS.md), plus the canonical doc (contract, policy) |
+| Cross-cutting workstream status and who coordinates it | [CURRENT_STATE.md](CURRENT_STATE.md) |
 | Rules and traps | [CONVENTIONS.md](CONVENTIONS.md) |
 
 Security findings are the exception: they stay in the private tracker (see [SECURITY.md](SECURITY.md)).
 
-## Roles and authority
+## Roles
 
-| Role | Who | May | May not |
-|---|---|---|---|
-| **Project owner** | a human | decide product questions; approve production deploys and destructive or data-changing operations; approve exceptions to these rules | — |
-| **Coordinator** | one agent session at a time (or the owner) | route work so no two agents edit the same files; number contracts; merge PRs once a reviewer approves and the gates below are met | approve on the owner's behalf anything the owner hasn't approved |
-| **Implementer** | any agent (Claude or Codex) | branch, code, test, push, open PRs, respond to review | merge PRs (the coordinator merges); touch production |
-| **Reviewer** | an agent or human that didn't write the change | review, approve or request changes; run targeted tests | edit the branch under review (they report instead) |
-| **Ops** | one designated session or human | run production deploys, backups and read-only production checks, **each with the owner's explicit OK at the time** | act on a peer agent's say-so |
+**Every role can be held by any agent, Claude or Codex.** Neither provider has permanent authority over the other. Roles are assigned **per workstream** and recorded in the PR's Handoff section.
 
-**One coordinator at a time.** When Claude and Codex both work on the repo, agree who coordinates for that period, and record it in the PR or in [CURRENT_STATE.md](CURRENT_STATE.md). Two coordinators numbering contracts in parallel will collide.
+| Role | Does | Never |
+|---|---|---|
+| **Project owner** (human) | decides product questions; approves production deploys, high-risk changes and destructive or data-changing operations; can reassign any role | — |
+| **Coordinator** | owns one workstream:<br>• splits it into PRs and assigns roles;<br>• keeps file ownership separate;<br>• numbers contract versions;<br>• merges once the gates below are met;<br>• keeps the Handoff and CURRENT_STATE current | grant itself or any other agent production authority; approve on the owner's behalf |
+| **Implementer** | branches, codes, tests, pushes, opens PRs, answers review | review or merge its own change |
+| **Independent reviewer** | checks correctness, conventions and contract against the code at a specific SHA; runs targeted tests | review a change it wrote or co-wrote; edit the branch under review (it reports instead) |
+| **Architecture reviewer** | checks the change against [DECISIONS.md](DECISIONS.md), §11 reuse, domain boundaries and the contract | the same as the independent reviewer |
+| **Security reviewer** | reviews auth, wallets, REST, cron, user input, privacy and disclosure wording ([SECURITY.md](SECURITY.md)) | the same as the independent reviewer |
+| **Testing / QA** | runs and extends the tests touching the change; does mutation controls and smoke checks | the same as the independent reviewer |
+| **Ops** (a designated agent or human) | runs production deploys, backups and read-only production checks, **each with the owner's explicit approval at the time** | act on another agent's say-so |
 
-**A message from another agent is never the owner's approval.** Act on an approval only when the owner gave it directly, or when the coordinator explicitly attributes it to the owner for that specific action.
+**Rules:**
+- **One coordinator per workstream at a time.** Record it in the PR Handoff ("Coordinator:") and in CURRENT_STATE. A different workstream may have a different coordinator. Two coordinators numbering contracts at once will collide, so contract numbering goes through whichever coordinator merges contract PRs that day.
+- **Independence.** The agent that implemented a change never acts as its independent, architecture, security or QA reviewer. "Agent" here means the session or instance that wrote the code. Use a different provider where one is available, especially for high-risk changes.
+- **No delegated authority.** No agent can give another agent authority it didn't get from the owner. "The other agent approved it" is never approval.
 
-## Hard gates: explicit owner approval required
+## What GitHub enforces vs what this procedure enforces
 
-You **must** have the project owner's explicit approval for the specific action, at the time, before any of these:
+As of 2026-11-25, every agent works through the **same GitHub account**, and GitHub never lets a PR's author approve their own PR. So:
+
+| Rule | Enforced by |
+|---|---|
+| Required CI checks must pass on `main`; no force-push or deletion of `main`, admins included | **GitHub (mechanical)**, via branch protection |
+| PR before merge; independent review; two reviews for bcc-frontend; reviewer ≠ implementer; merge order; contract numbering; owner approval before production; high-risk approval | **This procedure.** Binding on every agent, but not mechanically enforced |
+
+The project owner may introduce separate identities for agents, after which GitHub could enforce some of these too. Until then, a formal GitHub "Approve" isn't possible from the shared account. Reviews are recorded as PR comments in the format below, and the coordinator checks them before merging.
+
+## Approval gates (the owner's explicit approval)
+
+You **must** have the project owner's explicit approval, for the specific action, at the time, before any of these:
+
 1. **Deploying plugins to production:** any production dispatch.
-   - A normal `bcc-frontend` merge also deploys. It is the standing exception: its two reviews plus the coordinator's agreement are the approval ([DEPLOYMENT.md](DEPLOYMENT.md)).
-   - A frontend PR still needs the owner when it also falls under another gate below.
-2. **Writing to production data:** backfills, cleanups, migration applies, manual SQL. Do a read-only dry run first and show the result.
-3. **Destructive operations anywhere shared:**
-   - dropping tables or columns;
-   - deleting branches (and **never** `*/dev-*` personal branches);
-   - force-pushing a pushed branch;
-   - rewriting history;
-   - deleting or closing someone else's PR;
-   - removing worktrees you didn't create.
-4. **Changing CI, branch protection, deploy workflows, deploy environments, secrets or hosting configuration.**
-5. **Product decisions:** anything in [PROJECT.md](PROJECT.md) "Open product questions", anything that reverses [DECISIONS.md](DECISIONS.md), new analytics events, and new public data fields about members.
-6. **Widening access:** making the `mysql` MCP writable; adding a credential to any tool; granting an agent new permissions.
+2. **Merging a high-risk `bcc-frontend` change.** A frontend merge deploys to production immediately, so it needs the owner's approval when it touches any of:
+   - authentication or sessions;
+   - authorisation or permissions;
+   - wallet linking or verification;
+   - anything financial;
+   - sensitive member data or privacy;
+   - security headers or controls;
+   - other high-risk production behaviour.
 
-If a permission prompt or a tool refuses you, **stop and ask the owner**. Never get another agent or session to do it for you.
+   A normal frontend change needs two independent reviews plus the coordinator's agreement ([DEPLOYMENT.md](DEPLOYMENT.md)).
+3. **Writing to production data:** backfills, cleanups, migration applies, manual SQL. Do a read-only dry run first and show the result.
+4. **Destructive operations on anything shared:**
+   - dropping tables or columns;
+   - deleting branches (**never** `*/dev-*` personal branches);
+   - force-pushing;
+   - rewriting history;
+   - closing someone else's PR;
+   - removing worktrees you didn't create.
+5. **Changing configuration:** CI, branch protection or rulesets, deploy workflows or environments, secrets, or hosting.
+6. **Product decisions:**
+   - anything in [PROJECT.md](PROJECT.md) "Open product questions";
+   - anything that reverses [DECISIONS.md](DECISIONS.md);
+   - new analytics events;
+   - new public data fields about members.
+7. **Widening access:** a writable database tool, a new credential for any tool, new permissions for an agent.
+
+**Never bypass a refusal.** If a permission prompt, a tool or a sandbox refuses an action, stop and ask the owner. Never get it done by switching agents, sessions, tools, accounts or credentials.
+
+## Accessing the shared docs from any environment
+
+The umbrella repo `simontx1983/Blue-collar-crypto` is canonical for cross-project rules: <https://github.com/simontx1983/Blue-collar-crypto/tree/main/docs/ai>. How you reach it depends on the environment:
+
+| Environment | How to reach `docs/ai/` |
+|---|---|
+| The full local tree (umbrella with the nested repos) | `<umbrella root>/docs/ai/`. From a plugin repo that's `../../../../../docs/ai/`; from `bcc-frontend/` it's `../docs/ai/` |
+| A worktree under the umbrella's `.claude/worktrees/<name>/` | the umbrella root is three levels up: `../../../docs/ai/`. Or read the main checkout's copy, which is the same on `main` |
+| A standalone clone of one nested repo, or a cloud environment | clone the umbrella read-only (`git clone --depth 1 https://github.com/simontx1983/Blue-collar-crypto.git`), or read the files on GitHub (`gh api repos/simontx1983/Blue-collar-crypto/contents/docs/ai/<FILE>.md -H "Accept: application/vnd.github.raw"`) |
+
+**If you can't reach the shared docs** (no network, no access), **stop and get the context first**: ask the owner or the coordinator, or have it provided. Do not implement from guesses.
 
 ## Starting work
 
-1. **Read** [`AGENTS.md`](../../AGENTS.md), then [CURRENT_STATE.md](CURRENT_STATE.md), then the docs for your area ([README.md](README.md) "Reading order").
-2. **Check nobody else owns it:**
-   - look at the open PRs in the affected repos (`gh pr list -R simontx1983/<repo>`);
-   - read the "Active workstreams" table;
-   - if a PR or workstream covers it, coordinate with its owner, or with the coordinator, before touching those files.
-3. **Isolate your work:**
-   - one branch per change, off a fresh `origin/main`, in its own worktree under the **umbrella's** `.claude/worktrees/`;
-   - for example: `git -C <repo> fetch origin && git -C <repo> worktree add <umbrella>/.claude/worktrees/<short-name> -b <type>/<topic> origin/main`;
-   - never switch branches in the shared checkouts: the live plugin directories, `bcc-frontend/` and the umbrella root;
-   - **never commit on `main`.**
-4. **Do the §11 duplicate scan** ([CONVENTIONS.md](CONVENTIONS.md) §0) before writing code. Put the report in the PR.
-5. **Open a draft PR early** with a Handoff section. Even an empty draft tells other agents the work is claimed.
+1. **Read.** [`AGENTS.md`](../../AGENTS.md) (or [`CLAUDE.md`](../../CLAUDE.md)), then [CURRENT_STATE.md](CURRENT_STATE.md), then the docs for your area ([README.md](README.md) "Reading order"). In a nested repo, also read that repo's own `AGENTS.md`.
+2. **Check nobody else owns it.**
+   - Look at open PRs in the affected repos (`gh pr list -R simontx1983/<repo>`) and at CURRENT_STATE.
+   - If a workstream covers it, work through its coordinator.
+3. **Isolate.**
+   - One branch per change, off a fresh `origin/main`, in its own worktree under the **umbrella's** `.claude/worktrees/`. For example: `git -C <repo> fetch origin && git -C <repo> worktree add <umbrella>/.claude/worktrees/<short-name> -b <type>/<topic> origin/main`.
+   - Never switch branches in the shared checkouts (the plugin directories, `bcc-frontend/`, the umbrella root). Never commit on `main`.
+4. **Scan first.** Do the §11 duplicate scan ([CONVENTIONS.md](CONVENTIONS.md) §0) and put the report in the PR.
+5. **Claim it.** Open a **draft PR early** with a filled-in Handoff section. That claims the work and tells other agents it's taken.
 
 ## While working
 
-- **Commit and push often.** Unpushed work on one machine can be lost: temp-folder cleanup has deleted agent worktrees before.
-- **Tests:** run the tests that touch your change, plus static checks (scope rules in [CONVENTIONS.md](CONVENTIONS.md) §7). Let CI run the full suites.
-- **Contract:** if you change a REST response, update the contract (`v1.NEXT`) and `bcc-frontend:src/lib/api/types.ts` in the same change set.
-- **Update the docs:** if your change makes anything in `docs/ai/` wrong, fix it in the same PR.
+- **Commit and push often.** Unpushed work on one machine can be lost.
+- **Tests:** run the tests that touch your change plus the static checks ([CONVENTIONS.md](CONVENTIONS.md) §7). CI runs the full suites.
+- **Contract:** if you change a REST response, update the contract (`v1.NEXT`) and `bcc-frontend/src/lib/api/types.ts` in the same change set.
+- **Docs:** if your change makes something in `docs/ai/` wrong, fix it in the same PR. If the owner made a decision, add it to [DECISIONS.md](DECISIONS.md).
 
-## Handing off: the Handoff section
+## The Handoff section (every PR; update it every time you stop)
 
-Put this in the PR description, and update it every time you stop. Use **printed** SHAs, never ones from memory.
+Use **printed** SHAs (`git rev-parse --short HEAD`), never ones from memory.
 
 ```markdown
 ## Handoff
 - **Goal:** <one sentence; link the issue, decision or contract §>
-- **Branch / head:** `<branch>` @ `<sha from `git rev-parse --short HEAD`>`
+- **PR / branch / head:** #<n> · `<branch>` @ `<sha>`
+- **Coordinator:** <agent + provider, e.g. "Codex session (OpenAI)" / "Claude Code session (Anthropic)" / owner>
+- **Implementer:** <agent + provider>   **Reviewers so far:** <agent + provider, verdict, sha>
 - **Done:** <bullets>
-- **Not done / next step:** <the exact next action>
-- **Tests run locally:** <commands + result>; **CI:** <green / red: which job / pending>
-- **Decisions made (and by whom):** <owner-approved items, with date; anything assumed is marked ASSUMPTION>
-- **Open questions / blockers:** <who must answer>
-- **Merge and deploy notes:** <"merge right after umbrella#N", "deploy after core#M is live", "frontend must tolerate absent field X">
-- **Coordinator:** <who is coordinating this work now>
+- **Remaining:** <bullets>
+- **Exact next action:** <one concrete step someone can start immediately>
+- **Tests run locally:** <commands + result>   **CI on head:** <green / red: job / pending>
+- **Decisions (by whom, when):** <owner-approved items with date; anything assumed is marked ASSUMPTION>
+- **Dependencies / merge & deploy order:** <"merge right after umbrella#N", "deploy after core#M is released", "frontend must tolerate absent field X">
+- **Blockers / open questions:** <what, and who must answer>
 ```
 
-**For an agent that is stopping for good** (session ending, usage limit):
+## Review format (PR comment)
+
+All agents share one GitHub account, so a review is a PR comment (`gh pr comment <n> -R simontx1983/<repo> --body-file review.md`) that starts:
+
+```markdown
+**Review: <independent | architecture | security | QA> · <agent + provider> · <APPROVE | CHANGES REQUESTED | COMMENT> @ `<full or 8-char head sha>`**
+```
+
+The comment then lists the findings (`file:line | severity | problem | fix`), what was verified and how, and what was NOT verified.
+- An APPROVE counts only for the SHA it names. A new push needs a new review of the delta.
+- The coordinator checks before merging that the required reviews exist, at the merge SHA, from agents other than the implementer.
+
+## Handing off (either direction)
+
+**When you stop for any reason** (end of task, end of session, usage limit):
 1. Commit and push every branch. Nothing may exist only on the local machine.
-2. Fill in the Handoff section on each open PR.
-3. Update [CURRENT_STATE.md](CURRENT_STATE.md) if a workstream's state changed. A small docs PR is fine.
+2. Fill in the Handoff section on each open PR, especially **Exact next action**.
+3. Update [CURRENT_STATE.md](CURRENT_STATE.md) if a workstream's state or coordinator changed. A small docs PR is fine.
 4. Stop background runs and any local containers you started.
-5. Remove the worktrees you created, after unlinking `node_modules` junctions. Leave a clean `git status`.
-6. Tell the coordinator, or the owner, what you left and where.
+5. Remove the worktrees you created (unlink `node_modules` junctions first). Leave a clean `git status`.
+6. Tell the owner, or the next coordinator, where things stand. One line plus PR links is enough.
 
-## Picking up someone else's work
+**When you pick work up** (from Claude, from Codex, or from a human):
+1. **Check the head.** `gh pr view <n> -R simontx1983/<repo> --json headRefOid,body` must match the Handoff section. If it doesn't, the Handoff is stale: read the commits since.
+2. **Read the whole PR first:** description, review comments, the linked contract PR and the decisions. Don't re-ask what's already answered.
+3. **Rebuild your local state.** Check out the branch in your own worktree, refresh sibling repos to `origin/main`, and re-run the touching tests.
+4. **Continue with new commits.** Never force-push. To update from `main`, merge `origin/main` in.
+5. **Respect what was decided.** If you disagree with an owner-approved approach, raise it; don't silently redo it.
+6. **Take ownership visibly.** Update the Handoff: Implementer or Coordinator is now you.
 
-1. **Verify the head.** Check the PR's head SHA with `gh pr view <N> -R <repo> --json headRefOid`, and compare it with the Handoff section.
-2. **Read the whole PR**: description, review comments, linked contract PR and decisions. Don't re-ask questions the PR already answers.
-3. **Rebuild your local state:**
-   - check out the branch in your own worktree;
-   - refresh sibling repos to `origin/main`;
-   - re-run the touching tests.
-4. **Continue with new commits.**
-   - Never force-push.
-   - To update from `main`, merge `origin/main` in.
-   - Rebasing someone else's pushed branch voids its review.
-5. **Respect the decisions in it.** If you disagree with an approach the owner approved, raise it; don't silently redo it.
-6. **Update the Handoff section** to name yourself as the current owner.
-
-## Review and merge (summary; full rules in [CONVENTIONS.md](CONVENTIONS.md) §6)
-
-**Every PR needs a review.**
-- At least one reviewer who did not write it.
-- **Two** for bcc-frontend.
-- A security review first for auth, wallets, REST, cron or user-input changes.
-
-**Merging** is done by the coordinator. It needs all of:
-- an approved head SHA;
-- green CI on that SHA;
-- no closing keywords;
-- the merge order respected: contract right after route; frontend only when the production backend supports it;
-- `gh pr merge --merge --match-head-commit <sha>`.
-
-**This documentation PR follows the same rule:** the project owner reviews it.
+This works the same in both directions because it relies only on GitHub and these docs. Neither agent needs the other's memory or chat.
 
 ## Claude Code ↔ Codex specifics
 
-- **Instruction files:**
-  - Codex reads [`AGENTS.md`](../../AGENTS.md); Claude Code reads [`CLAUDE.md`](../../CLAUDE.md). Both are short entry points to the same rules in `docs/ai/`.
-  - Each carries a few headline rules, so a new rule must not live *only* in one of them. Put it in `docs/ai/` and link it from both.
+- **Instruction files.**
+  - Codex reads `AGENTS.md`; Claude Code reads `CLAUDE.md`. In this umbrella repo both are short entry points to the same rules in `docs/ai/`, and each nested repo has its own `AGENTS.md`.
+  - A rule must never live only in one of these files: put it in `docs/ai/` and link it.
   - Tool-specific notes may differ between the two: Claude's skills and hooks, Codex's manual checks.
-- **Nested repos:**
-  - The plugins and `bcc-frontend` are **separate git repos** nested inside the umbrella's working tree.
-  - An agent whose session is rooted inside one of them may not see the umbrella's `AGENTS.md`. Open the umbrella's `AGENTS.md` and `docs/ai/` explicitly.
-  - `bcc-frontend` has its own tracked `CLAUDE.md` with frontend rules. Codex should read it too.
-  - bcc-trust's `CLAUDE.md` is gitignored and local-only. Its §1–§9 rules are copied into [CONVENTIONS.md](CONVENTIONS.md) §1.
-- **Claude-only tooling:**
-  - `.claude/skills/`, `.claude/agents/`, `.claude/hooks/` and the MCP servers run only in Claude Code.
-  - A Codex agent gets no automatic hooks, so it must run the same checks itself before committing: `php -l` on changed PHP, `npm run typecheck` and `npm run lint` in bcc-frontend, the colour-token rule, and the protected-files rule (don't edit `vendor/`, `node_modules/`, lock files or `.env*`).
-  - [CONVENTIONS.md](CONVENTIONS.md) §9 maps each tool to the script it wraps.
-- **Memory:**
-  - Claude sessions keep private memory on the owner's machine. It is not a shared source of truth.
-  - When a Claude session learns something another agent needs, it belongs in `docs/ai/` (through a PR) or in the relevant PR's Handoff section.
+- **Nested repos.**
+  - The plugins and `bcc-frontend` are separate git repos. An agent rooted in one of them sees that repo's `AGENTS.md`, which points back here.
+  - `bcc-frontend` also has a tracked `CLAUDE.md` with frontend rules.
+  - bcc-trust's `CLAUDE.md` is local-only; its §1–§9 rules are in [CONVENTIONS.md](CONVENTIONS.md) §1.
+- **Claude-only automation.**
+  - `.claude/skills/`, `.claude/agents/`, `.claude/hooks/` and the configured MCP servers run only in Claude Code.
+  - An agent without them must run the same checks itself before committing: [CONVENTIONS.md](CONVENTIONS.md) §9 maps each tool to its script or command.
+- **Memory.** No agent's private memory is a source of truth. Anything another agent needs goes in `docs/ai/` (by PR) or in the relevant PR's Handoff.

@@ -10,7 +10,10 @@ This page connects them and records what was verified on 2026-11-25. Where those
 
 > **Approval rule.** Nothing reaches production without the project owner's explicit approval *for that action at that time*. This covers a plugin deploy, a production data operation (backfill, cleanup, migration apply) and a production configuration change. Only the designated ops role executes them. An approval given for one action does not carry over to the next.
 >
-> **Frontend merges are a standing exception.** Merging to `bcc-frontend` `main` *is* a production deploy (Vercel). For a normal frontend PR, the approval is two reviewers plus the coordinator's agreement, and the PR must be safe against the backend currently in production ([CONVENTIONS.md](CONVENTIONS.md) §6). Per-merge owner approval is not required. A frontend PR still needs the owner when it also falls under another gate in [HANDOFF.md](HANDOFF.md), for example a new analytics event or a product decision.
+> **Frontend merges.** Merging to `bcc-frontend` `main` *is* a production deploy (Vercel).
+> - **A normal frontend PR** needs two independent reviews plus the coordinator's agreement, and must be safe against the backend currently in production ([CONVENTIONS.md](CONVENTIONS.md) §6).
+> - **A high-risk frontend PR also needs the owner's explicit approval before it merges**, because merging deploys. High-risk means it touches authentication, authorisation, wallet verification, anything financial, sensitive member data or privacy, security controls, or other high-risk production behaviour.
+> - **Other gates** in [HANDOFF.md](HANDOFF.md), such as new analytics events or product decisions, apply as well.
 
 ## Environments
 

@@ -20,6 +20,7 @@ Open PRs at the snapshot. Check `gh pr list -R simontx1983/<repo>` for the live 
 
 | Workstream | Open PRs | State |
 |---|---|---|
+| AI-provider independence: onboarding Codex alongside Claude | umbrella#429 (this knowledge base); `AGENTS.md` PRs for the four nested repos; a contract-header PR | in review. Separate agent identities and changes to GitHub protection await the owner's decision |
 | Topic Halls 2b (Hall cards, TOPIC HALL kicker, Validators stat) | trust#908 (draft), search#55 (draft) | in progress |
 | Topic Halls 3b (archive) and the `/admin/halls` screen | — | planned |
 | Card cover photo on the Card view-model | trust#897, umbrella#415 | in review |

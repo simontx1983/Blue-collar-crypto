@@ -140,8 +140,12 @@ Nothing checks `types.ts` automatically.
 
 ## 6. Review and merge
 
-- **Who must agree:** a reviewer's approval, plus agreement from whoever coordinates the merge (the coordinating agent or the project owner).
-- **Frontend PRs** need **two** reviewers, and must be safe against the **backend currently in production**, not against `main`. A frontend merge goes live on Vercel immediately; backend merges wait for the next manual deploy.
+- **Who must agree:** at least one independent reviewer's APPROVE at the head SHA, plus the coordinator's agreement. The coordinator merges.
+  - **The implementer never reviews its own change.** Roles and the independence rule are in [HANDOFF.md](HANDOFF.md).
+  - All agents share one GitHub account, so reviews are recorded as PR comments in the standard format ([HANDOFF.md](HANDOFF.md) "Review format").
+  - Only CI checks and force-push/deletion protection are enforced by GitHub itself. Everything else here is procedural, and binding.
+- **Frontend PRs** need **two** independent reviewers, and must be safe against the **backend currently in production**, not against `main`. A frontend merge goes live on Vercel immediately; backend merges wait for the next manual deploy.
+- **High-risk frontend PRs** also need the **owner's explicit approval** before merging. High-risk means auth, authorisation, wallets, anything financial, sensitive member data, security, or other high-risk production behaviour ([HANDOFF.md](HANDOFF.md) gate 2).
 - **Read the Vercel check on frontend PRs.** `next build` runs only there, and it catches server/client import errors that tsc and vitest miss.
 - **Check fixtures against the real emitter.** A hand-made test fixture can pass while production breaks; grep the server builder.
 - **Before merging:**

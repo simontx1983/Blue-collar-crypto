@@ -133,7 +133,7 @@ Any new fail-open path needs the owner's approval and a contract entry saying so
 - **Only the designated ops role touches production:** deploys, backups, read-only checks and data operations. Every step needs the project owner's **explicit** approval at the time ([HANDOFF.md](HANDOFF.md)).
 - **Production changes go only through the deploy workflow or the ops runbook**, never improvised.
 - **The local `mysql` MCP server is read-only.** Never widen it casually.
-- **A refused permission prompt goes back to the owner.** Never get the action done through another agent or session; that is permission laundering.
+- **A refused permission goes back to the owner.** Never get the action done by switching agents, sessions, tools, accounts or credentials; that is permission laundering. No agent, Claude or Codex, can grant production authority to another.
 
 ## When a security review is required
 
@@ -145,8 +145,10 @@ Before merging any change that touches:
 - cron;
 - anything handling user input.
 
-**How:**
-- Claude Code: run `/security-review`, or route the change to the security-review session.
-- Other agents: request a security review from the owner or coordinator in the PR.
+**How:** a **security reviewer** who is not the implementer reviews the PR ([HANDOFF.md](HANDOFF.md) "Roles") and records it in the standard review format.
+- Claude Code: the `/security-review` built-in command helps.
+- Codex: an equivalent review prompt.
+
+For a frontend change in these areas, the owner's approval is also required before merging, because a frontend merge deploys.
 
 Treat its findings like guardrail violations: fix them, or get explicit sign-off.

@@ -14,6 +14,8 @@ This folder is where any AI agent (Claude Code, OpenAI Codex, or another) or a n
 
 The API contract is at v1.263.
 
+**Canonical location:** <https://github.com/simontx1983/Blue-collar-crypto/tree/main/docs/ai>. Each nested repo (bcc-core, bcc-trust, bcc-search, bcc-frontend) has an `AGENTS.md` that points here. [HANDOFF.md](HANDOFF.md) "Accessing the shared docs" explains how to reach these files from a worktree, a standalone clone or a cloud environment.
+
 ## Which source wins
 
 - **What the API must do:** [`docs/api-contract-v1.md`](../api-contract-v1.md). Per its own header, when the implementation diverges, *the contract wins until a versioned contract update lands*.

@@ -99,7 +99,7 @@ Described by role, not name, because these repos are public:
   - approves every production deploy and every destructive or data-changing operation;
   - is the final reviewer of this knowledge base.
 - **`*/dev-*` branches belong to another engineer.** Never delete them.
-- **AI agents** (several Claude Code sessions to date, plus OpenAI Codex from now on) implement, review and operate under the rules in [HANDOFF.md](HANDOFF.md).
+- **AI agents** (Claude Code and OpenAI Codex) are peers under the same standards. Either can coordinate, implement or review any workstream, and neither has authority over the other ([HANDOFF.md](HANDOFF.md)). The project's knowledge lives in GitHub and these docs, so development can continue whichever provider is available.
 
 ## Open product questions
 

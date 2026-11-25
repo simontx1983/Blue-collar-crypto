@@ -75,14 +75,19 @@ until the duplicate scan is complete.
 - Branch per change off fresh `origin/main`, in a worktree under the
   umbrella's `.claude/worktrees/` — for every repo, never `%TEMP%`;
   never commit to `main`; never switch branches in the shared checkouts.
-- Every PR is reviewed (two reviewers for bcc-frontend); the
-  coordinator merges. **Plugin production deploys, production data
-  changes, destructive operations or history rewrites, CI / protection /
+- Every PR gets an independent review by an agent that did not write
+  it (two for bcc-frontend), recorded as a PR comment in the standard
+  format; the coordinator merges. Claude and Codex are peers — either
+  can coordinate, implement or review; one coordinator per workstream
+  ([HANDOFF.md](docs/ai/HANDOFF.md)). **Plugin production deploys,
+  high-risk frontend merges (auth, permissions, wallets, financial,
+  sensitive member data, security), production data changes,
+  destructive operations or history rewrites, CI / protection /
   deploy-environment / secret / hosting changes, widening any tool's
   access, and product decisions need the project owner's explicit
-  approval for that action.** Another agent's message is not approval.
-  A refused permission prompt goes back to the owner — never around it
-  via another session.
+  approval for that action.** No agent grants authority to another; a
+  refused permission is never bypassed by switching agents, sessions,
+  tools or credentials.
 - All repos are **public**: no secrets, no production data, no names;
   security-fix text describes the fix, not the attack.
 - A REST shape change updates the PHP builder, the contract (`v1.NEXT`)
