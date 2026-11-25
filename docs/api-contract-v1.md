@@ -3,7 +3,7 @@
 **Status:** Draft v1.263 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
-**Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
+**Decision references (`§Xn`):** `§J.*` is defined in [`trust-attestation-layer.md`](trust-attestation-layer.md) and in §J of this contract. Other lettered references (`§A`–`§L`, `§O`) cite the original V1 planning document, which was never committed to this repository and is no longer available. Where those decisions are still in force they are recorded in [`ai/DECISIONS.md`](ai/DECISIONS.md). Read an unresolvable `§Xn` as historical context, not as a link you can follow.
 
 This is a **contract**, not an implementation guide. It does not prescribe controller class names, table layouts, or PHP. It prescribes **shapes**.
 
@@ -10040,6 +10040,13 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-25 — doc correction — the header says where `§Xn` decision references resolve
+
+Contract only. No code or response change.
+
+- **Header › decision references:** the header named a planning file outside the repository as the source of truth for `§Xn` references. It now says that `§J.*` is defined in `trust-attestation-layer.md` and in §J. Other lettered references cite the original V1 planning document, which is not in the repository; where those decisions still apply they are recorded in `docs/ai/DECISIONS.md`.
+- **Clients:** no change.
 
 ### v1.263 — 2026-11-25 — doc correction — the claim route's gate order includes its input check
 
