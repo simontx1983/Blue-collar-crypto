@@ -3276,7 +3276,7 @@ Claims a validator or collection page with a wallet the member has **already lin
   - There is no `card`, `celebration` or `next_steps`: refetch the card for `is_claimed`.
 - **Errors:** the complete set this route can emit, each with its HTTP status. Corrected and completed in **v1.86** against the implementation; see the changelog for what was wrong and why it mattered.
   - `bcc_unauthorized` **401** — not signed in.
-  - `bcc_invalid_request` **400** — missing or malformed `page_id` or `entity_id`, or an `entity_type` outside the accepted set (`validator`, `collection`).
+  - `bcc_invalid_request` **400** — a present but invalid `entity_type` (not `validator` / `collection`) or `entity_id` (not ≥ 1). A request that **omits** either is refused earlier by WordPress (`rest_missing_callback_param` **400**), before the sign-in check, so an anonymous caller gets that 400 rather than 401. `id` comes from the path (`\d+`), so it is never missing. *(Corrected in v1.NEXT; this said "missing or malformed".)*
   - `bcc_forbidden` **403** — six distinct causes behind one code, each with its own message and, **since v1.137, a machine-readable `error.data.reason`** a client MUST branch on instead of the message:
     - `suspended` — the account is suspended (`Your account is suspended.`). **Final**: no wallet or retry will help.
     - `entity_not_bound` — the entity is **not bound to this page** (`That entity is not attached to this page.`).
@@ -3296,7 +3296,7 @@ Claims a validator or collection page with a wallet the member has **already lin
 - **Erratum resolved (v1.258):** the v1.86 erratum said the Body and Response blocks above described a signature flow this endpoint does not implement. They, the status code, the rate limit and the Mapping below now describe the implementation.
 - **Cache:** `Cache-Control: no-store`
 - **Mapping** *(corrected in v1.258)*: `PagesEndpoint::claim` → `ClaimService::claim`.
-  - In order: signed in, rate limit, not suspended, a valid `id` / `entity_type` / `entity_id` (else 400 `bcc_invalid_request`), a published `peepso-page` (else 404), the entity bound to this page (else 403 `entity_not_bound`). *(The 400 step added in v1.NEXT; v1.258's list skipped it.)*
+  - In order: WordPress first refuses a request that omits `entity_type` or `entity_id` (`rest_missing_callback_param` 400, before any sign-in check); then the handler checks signed in, rate limit, not suspended, a present but invalid `entity_type` (not `validator` / `collection`) or `entity_id` (not ≥ 1) (else 400 `bcc_invalid_request`), a published `peepso-page` (else 404), the entity bound to this page (else 403 `entity_not_bound`). *(Both 400 steps added in v1.NEXT; v1.258's list skipped them.)*
   - If the member already holds the verified claim → `already_verified`, as above.
   - Otherwise the member's **verified** linked wallets on the entity's chain are matched. **Validator:** a wallet whose address is the validator's operator address (Cosmos: the same bytes under the account and `valoper` prefixes; delegators never match). **Collection:** the contract's owner or creator (a holder is refused, `holder_not_owner`).
   - Single claim wins: a validator claim goes through `ValidatorRelationshipService::claimByWallet`, a collection claim through `ClaimRepository::createExclusiveClaim`, and a page row mirrors either one.
@@ -9920,7 +9920,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 Contract only. No code or response change.
 
-- **`POST /pages/:id/claim` › Mapping:** v1.258's "In order" list went from the suspension check straight to the page lookup. The handler checks the input between the two: a missing or malformed `id` or `entity_id`, or an `entity_type` other than `validator` / `collection`, answers `bcc_invalid_request` 400 there, before the page is read. The list now includes that step. The error list already had the 400.
+- **`POST /pages/:id/claim` › Mapping and errors:** v1.258's "In order" list went from the suspension check straight to the page lookup, and its error list said a *missing* field gets `bcc_invalid_request`. Two checks sit there. A present but invalid `entity_type` (not `validator` / `collection`) or `entity_id` (not ≥ 1) gets `bcc_invalid_request` 400 from the handler, after the suspension check and before the page is read. A request that **omits** either is refused earlier by WordPress (`rest_missing_callback_param` 400), before the sign-in check (the args are declared `required`). `id` comes from the path, so it is never missing. The list and the error line now say so.
 - **Clients:** no change.
 
 ### v1.258 — 2026-11-25 — doc correction — `POST /pages/:id/claim` describes the implementation; the v1.86 erratum is resolved (F-524 follow-up)
