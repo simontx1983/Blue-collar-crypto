@@ -281,12 +281,11 @@ Canonical sources: `bcc-frontend:docs/frontend-doctrine.md` (the reasons behind 
 
 ## 5. Known code ↔ doc mismatches (verify before relying on either)
 
+The BCC JWT lifetime, request-id headers and all three search vertical envelopes are now aligned with the API contract. The remaining rows are unresolved mismatches.
+
 | Topic | Code says | Doc says |
 |---|---|---|
-| BCC JWT lifetime | 7 days (`JwtToken::TTL_SECONDS`) | contract §1: "1h access, 30d refresh" |
-| Request-id header | `X-Request-Id` (`Envelope.php`) | contract: `X-BCC-Request-Id` |
 | `_meta` contents | `ApiResponse`: `{version, reaction_types}` on success, `{version}` on error; Envelope safety net: `{version, request_id}` (matches its docblock) | contract §1: the safety net gives `{request_id}` without `version` |
-| `/search/users`, `/search/groups` envelope | registered under `bcc/v1` | bcc-search header says "raw / no envelope" ([UNKNOWN] which applies) |
 | `DB::table` filter | removed (prevents table redirection) | stale docblock in `bcc-core:src/DB/DB.php` still mentions it |
 | Frontend auth providers | Google, X, bcc-verified, wallet | `bcc-frontend:README.md`: "Credentials + Wallet" |
 | Sentry config comment | runs on Vercel | `next.config.ts` comment: "runs on Local-by-Flywheel" (stale) |

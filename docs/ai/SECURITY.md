@@ -43,7 +43,7 @@ All five repos are **public**. Every commit, PR, comment, docblock, test name, f
 | Providers | Google (verified email only), X, a backend-minted JWT after email/OTP/2FA, and a wallet signature. There is deliberately **no** email/password NextAuth Credentials provider: it could be reached server-side and would have bypassed per-client throttles | `auth.ts` |
 | Wallet sign-in | single-use, purpose-bound nonces that expire after 5 minutes; anonymous and signed-in nonces use separate keyspaces | `bcc-core:src/Wallet/WalletIdentityService.php` |
 
-[DISCREPANCY] The JWT lifetime in code is 7 days, while the contract says "1h access, 30d refresh". See [ARCHITECTURE.md](ARCHITECTURE.md) §5.
+The BCC bearer JWT expires after 7 days and may be refreshed during a 24-hour grace period after expiry. There is no separate 30-day refresh token; see [api-contract-v1.md](../api-contract-v1.md) §1.2 and §4 `POST /auth/refresh`.
 
 ## Authorisation [VERIFIED]
 
