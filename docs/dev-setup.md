@@ -148,12 +148,13 @@ them — link them):
 
 | You want… | Read |
 |---|---|
+| Orientation for an AI agent or new engineer (system picture, decisions, conventions, handoff) | [ai/README.md](ai/README.md) |
 | Verify any subsystem / diagnose a failure | [GOLDEN_PATHS.md](GOLDEN_PATHS.md) (evergreen runbook) |
 | Architecture / which Domain owns what | [domain-seams.md](domain-seams.md) |
 | Canonical implementation patterns | [pattern-registry.md](pattern-registry.md) |
 | Domain language (trust tier, rank, vouch, …) | [glossary.md](glossary.md) |
 | REST API contract (envelope, errors, view-models) | [api-contract-v1.md](api-contract-v1.md) |
-| **Coding standards** (§1–§11 guardrails) | [root CLAUDE.md](../CLAUDE.md) + [bcc-trust CLAUDE.md](../app/public/wp-content/plugins/bcc-trust/CLAUDE.md) + the `scripts/*guard*` checks |
+| **Coding standards** (§1–§11 guardrails) | [ai/CONVENTIONS.md](ai/CONVENTIONS.md) (tracked home of §1–§9) + [root CLAUDE.md](../CLAUDE.md) (§11) + the `scripts/*guard*` checks |
 | wp-config constants / env vars | [environment.md](environment.md) |
 | CI / what blocks merge where | [ci-topology.md](ci-topology.md) |
 | Cron jobs | [cron-registry.md](cron-registry.md) |
@@ -161,6 +162,9 @@ them — link them):
 | Current debt / what's parked | [TODO.md](TODO.md) |
 | Historical audits & shipped plans | [archive/](archive/) |
 
-> There is intentionally **no** separate "architecture map" or "coding standards" doc — those
-> already live in `domain-seams.md`/`pattern-registry.md` and the two `CLAUDE.md` files
-> respectively. Per §11 (cross-codebase reuse), we link the source of truth rather than fork it.
+> [`docs/ai/`](ai/README.md) is a **map layer**, not a second source of truth: its
+> ARCHITECTURE page gives the system-wide picture and links `domain-seams.md` /
+> `pattern-registry.md` for detail, and its CONVENTIONS page is the tracked home of the
+> backend §1–§9 rules (previously only in the gitignored `bcc-trust/CLAUDE.md`, invisible to
+> fresh clones). Per §11 (cross-codebase reuse), it links the canonical docs rather than
+> forking them — when the two disagree, the canonical doc wins and `docs/ai/` gets fixed.
