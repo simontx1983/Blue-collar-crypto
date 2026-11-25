@@ -62,8 +62,9 @@ should point at exactly one source-of-truth class or method per concept.
   - bech32 → `BCC\Core\Crypto\Bech32`: `encode()` and a STRICT
     `decode()` (checksum, case, charset, length, padding)
     ([Bech32.php](../app/public/wp-content/plugins/bcc-core/src/Crypto/Bech32.php)).
-    bcc-trust's `Onchain\Support\Bech32` is a lenient older copy;
-    moving it onto core's is an open follow-up.
+    It is the only Bech32 implementation: bcc-trust's lenient
+    `Onchain\Support\Bech32` was removed (simontx1983/bcc-trust#906), and
+    every Cosmos address caller there decodes through this one.
   - Cosmos address from a key → `BCC\Core\Crypto\CosmosAddress::bytesFromPubKey()`
     (RIPEMD-160(SHA-256), or Keccak-256 for the Ethermint chains in
     `ETHERMINT_HRPS`: Injective)
