@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.245 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.256 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -402,6 +402,9 @@ The single most important shared type. Encodes §N7 (always visible, disabled wi
     "can_post_as_entity":   { "allowed": false, "unlock_hint": null },
     "can_edit_bio":         { "allowed": false, "unlock_hint": null },
     "can_edit_image":       { "allowed": false, "unlock_hint": null, "reason_code": "not_claimer" },
+    "can_manage_team":        { "allowed": false, "unlock_hint": null, "reason_code": "not_claimer" },
+    "can_edit_links":         { "allowed": false, "unlock_hint": null, "reason_code": "not_claimer" },
+    "can_edit_notifications": { "allowed": false, "unlock_hint": null, "reason_code": "not_claimer" },
     "can_open_dispute":     { "allowed": false, "unlock_hint": null, "reason_code": "not_page_owner" },
     "can_message":          { "allowed": false, "unlock_hint": "This member only accepts messages from friends.", "reason_code": "friends_only" }
   }
@@ -1149,6 +1152,8 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
   "flags": [],
   "is_claimed": true,
   "is_claim_verified": true,
+  "owner_verification": { "kind": "wallet", "label": "Wallet Verified", "description": "Cryptographic proof" },
+  "viewer_page_role": null,
   "claim_target": null,
   "messaging": { "destination": "operator", "operator": { "handle": "cosmosops", "name": "Cosmos Ops" } },
   "viewer_has_reviewed": false,
@@ -1171,8 +1176,33 @@ Cards have a shared envelope and per-`card_kind` stat arrays.
 **Field rules:**
 
 - `operator_profile` is always present. It is non-null only on a validator page with exactly one verified operator and a saved profile; other card kinds, unclaimed/ambiguous validator pages, and operators without saved profile data return `null`. Shape: `{ brand_name, bio, website_url, socials: { x, discord, telegram }, logo_url }`. Values include the page override, if any. The crest uses the shared logo after a page-specific uploaded avatar and before the chain-imported validator logo.
+- **`bio` (v1.250) — at most 25 WORDS, and at most 120 characters.**
+  Server-cut per §A2, so the frontend renders it verbatim; `""` when the
+  source text is empty. One rule for all five kinds — a page's excerpt, a
+  member's profile bio, a group's description — so no card kind shows a
+  longer line than another.
+  - A **word** is a whitespace-delimited token. A URL or an `@handle`
+    counts as ONE word and is never cut into: when such a token does not
+    fit, the WHOLE token is dropped. ⚠ A bio that is nothing but one
+    over-long URL therefore yields `""` — no line, rather than a broken
+    link. The full text remains on the page.
+  - The **120-character** bound is not redundant with the word bound:
+    text written without spaces (Chinese, Japanese, Korean) is one word,
+    so the word bound alone would pass a whole paragraph. Whichever
+    bound bites first wins, and the cut is grapheme-safe.
+  - A single `…` is appended when, and only when, the text was actually
+    cut; a value that already ends in one never gains a second.
+  - **Clients:** no change required. The field was already a
+    server-rendered string; it is now a shorter one. Front-face
+    rendering (line clamp) stays a client decision.
+  *(Was ~200 characters, stated only in §3.2.4. The bio moved to the
+  front of the card, where the space is a line count rather than a
+  character count.)*
 - `card_kind` ∈ {`validator`, `project`, `creator`, `member`, `community`}. `community` cards (v1.27) are emitted ONLY as the additive `card` field on the §4.7.4 discovery items and the §4.7.5 group detail response — `GET /cards/:type/:id` and `GET /cards` do NOT accept `community` (route enum unchanged); see §3.2.4 for the kind's rules.
 - `is_claimed` is meaningful for `validator` / `project` / `creator`. For `member`, `is_claimed: true` always (members are their own pages).
+- `owner_verification` (v1.249; always present) — how the page's owner proved it, as a public badge: `{ kind, label, description }` or `null` (no badge). `kind` is `wallet` (a wallet signature, a Solana sign-in, or a self-send from the operator account), `node_key` (the validator's identity key) or `staff` (approved by BCC staff); `label` / `description` are server copy rendered **verbatim** ("Wallet Verified" / "Node Key Verified" / "Verified by BCC"; "Cryptographic proof" / "Staff verification"), and a missing label means no badge. When the owner holds several claims on the page, the strongest proof is shown. **Never** carries the underlying method or any date: no time of verification is shown to other users. Non-null only on a `validator` card with exactly one verified operator and a known method; `null` on unclaimed or ambiguous pages, other page kinds, and `member` / `community` cards.
+- `viewer_page_role` (v1.249; always present) — the viewer's role on this page: `"owner"` (they hold its verified owner claim), `"administrator"` or `"representative"` (an ACTIVE team row; a pending invite holds no role), or `null` (anonymous, no role, or `member` / `community` cards). A display flag only: every write re-checks the role server-side.
+- **Owner-control permissions (v1.249; page cards only):** `can_manage_team` (the page's Team entry), `can_edit_links` and `can_edit_notifications` join the §2.1 block, and **`can_edit_bio` now covers the page's profile text — name, bio and banner** (the avatar stays `can_edit_image`). Each is `allowed: true` for the page's owner and `{ allowed: false, unlock_hint: null, reason_code: "not_claimer" }` for everyone else, **anonymous included**: signing in would not unlock them, so a signed-out viewer gets the hidden shape, not "Sign in to interact" (`can_edit_bio`'s anonymous shape changes accordingly; no client read it). When team members exist, the page role policy decides them, and a temporarily locked control arrives as `allowed: false` with a server `unlock_hint` (shown, explained) rather than hidden. Controls that already have their own flag (announcements' capabilities, `page_stream.can_post`, review `permissions.can_reply`, `can_edit_image`, the delegator group's flags) stay the single authority for their control. `member` and `community` cards do not carry the three new keys.
 - `is_claim_verified` (verified-wins slice, 2026-06-30) — `true` when the page has a **verified on-chain operator/creator claim** (`onchain_claims.status='verified' AND claim_role IN ('operator','creator')`), i.e. the real entity proved key control. Distinct from `is_claimed` (ANY claim exists) and from `is_verified`/the member email flag. Drives the "✓ Verified Operator" badge + the dominant search-ranking bonus + same-name look-alike demotion. `false` on `member`/`community` cards (not on-chain-claimed). Projected from the read model (`has_verified_claim`), refreshed whenever a claim verify/revoke re-syncs the page.
 - `claim_target` (per §N8) — non-null only when the page is unclaimed AND a claim target resolves. Drives the four-step claim modal.
   - **v1.221 (F-515), additive:** `claim_target` is `{ entity_type, entity_id, chain_slug, claimable, unclaimable_reason_code, unclaimable_hint }`. `claimable` (bool) says whether BCC can prove an operator on this validator's chain from the data it stores. When it is `false`, the block is still present (so the card can say why), `unclaimable_reason_code` is one of `operator_address_missing` (the validator has no operator address on record), `solana_unsupported` (a Solana validator needs its vote account's withdraw authority, which BCC does not record), `evm_no_validator_pages` (an EVM chain) and `operator_unprovable` (any other chain, or one whose stored operator address no wallet can match, such as THORChain's node address), and `unclaimable_hint` is server copy naming the chain by its display name, never its slug. Both are `null` when `claimable` is `true`. `POST /pages/:id/claim` refuses an unclaimable validator with the same code and hint, so the card and the write agree. Clients decide claimability from these fields, never from a chain allowlist of their own.
@@ -1289,7 +1319,7 @@ Locked field rules:
   ships without the other, group search and the card face print different
   words for the same group. They deploy in the SAME release.
 - **Crest band:** the chain-keyed background applies to on-chain-gated kinds with a resolved `chain_tag` — `nft` and, since v1.52, `validator`; every other kind gets the tier band at the fixed `neutral` tier (the §3.2.4 shape-stable placeholder — `common` was the retired rarity slug; doc corrected v1.70).
-- **Identity:** `id` = group id, `handle` = group slug, `bio` = group description (plain-text, ~200-char truncation — same bound as page/member bios; `""` when unset).
+- **Identity:** `id` = group id, `handle` = group slug, `bio` = group description (plain-text, cut to the shared §3.2 `bio` bound — 25 words / 120 characters as of v1.250; `""` when unset). The producers still trim the raw description to ~200 characters upstream (§4.7.4's `description`); the shared cut then applies, so a community card cannot show a longer line than any other kind.
 - **Crest (§2.9 grammar):** `initials` from the group name (same server derivation as the other kinds), `image_url` = the group's cover (NFT collection art; `null` → FE monogram fallback). Background: NFT groups WITH a `chain_tag` → `background_kind: "chain"`, `background_value: <chain_tag>`; otherwise `background_kind: "tier"`, `background_value: "neutral"` (doc corrected v1.70 — the emitter always used the reputation placeholder, never the retired rarity slug).
 - **Stats (same CardStat shape as the other kinds):**
   ```json
@@ -1416,7 +1446,7 @@ Feed items share an envelope and vary by `post_kind`.
   - `id` — group_id (matches `group_id` in §4.7.x endpoints).
   - `type` ∈ `nft` | `validator` | `hall` | `user` | `system` — matches §4.7.2 group `type`.
   - `verification` is `null` for non-NFT groups; for NFT-gated groups it carries `{kind: 'on_chain', label: 'On-Chain Verified'}`. Frontend MUST render `label` verbatim — never abbreviate to "Verified" alone.
-  - `name` (optional) — the group's display name (`post_title`). `link` (optional) — the group's canonical frontend route: `/halls/{slug}` when `type == hall`, else `/communities/{slug}` (slug = `post_name`; matches the §4.7.5 group-card `links.self`). Together they back the "Posted in {name} →" attribution line. **Secret-group privacy gate:** `name` + `link` reveal the group's *identity*, so they are emitted **only when the viewer is allowed to know the group exists** — i.e. the group is not secret, OR the viewer is an active member of it. For a secret group a non-member or anonymous viewer sees a syndicated post from, both fields are **omitted** and only the opaque `{id, type, verification}` ship (byte-compatible with the pre-`name`/`link` shape). Both are also omitted for a deleted/unresolvable group. Composed server-side via `CardUrlMap::groupUrl`; membership is one batched read scoped to the page's secret groups (no N+1, no anon query).
+  - `name` (optional) — the group's display name (`post_title`). `link` (optional) — the group's canonical frontend route: `/communities/{slug}` for every `type`, Halls included *(v1.248, F-594: Halls were `/halls/{slug}`)* (slug = `post_name`; matches the §4.7.5 group-card `links.self`). Together they back the "Posted in {name} →" attribution line. **Secret-group privacy gate:** `name` + `link` reveal the group's *identity*, so they are emitted **only when the viewer is allowed to know the group exists** — i.e. the group is not secret, OR the viewer is an active member of it. For a secret group a non-member or anonymous viewer sees a syndicated post from, both fields are **omitted** and only the opaque `{id, type, verification}` ship (byte-compatible with the pre-`name`/`link` shape). Both are also omitted for a deleted/unresolvable group. Composed server-side via `CardUrlMap::groupUrl`; membership is one batched read scoped to the page's secret groups (no N+1, no anon query).
   - **No server-side ranking is applied based on this field in v1.** The Floor feed continues to order strictly by recency. The `group` block is metadata for badge rendering and (optional) client-side prioritization. A scored ranking layer is deferred until usage telemetry exists to tune it honestly.
   - **Mapping:** `peepso_group_id` post-meta on the activity's wp_post (PeepSo writes this when a status post is created inside a group) → `GroupContextResolver::forManyGroups`. Batched per page; no N+1.
 - V1 author block is **user-only** — every post in V1 is authored by a WP user (status, review, watch_batch, page_claim, dispute_signed, blog). System-emitted signals (§3.3.5) currently ride the same shape with the system actor's user_id; their `post_kind` discriminates them, not the author block.
@@ -2017,52 +2047,44 @@ Issues a single-use challenge nonce for wallet signing, for a **signed-in** memb
 Verifies a signed nonce and links the wallet to the authenticated user.
 
 - **Auth:** Bearer (required — must already have a session via email signup)
-- **Body:**
+- **Body** *(corrected in v1.256, F-524)*:
   ```json
   {
     "wallet_address": "cosmos1abcdef…",
-    "chain": "cosmos",
-    "nonce": "8f3a7b2e9c1d4f6a",
     "signature": "<hex or base64 signature>",
-    "public_key": "<hex pubkey, optional for chains where signature includes pubkey>"
+    "wallet_type": "user",
+    "label": "",
+    "extra": { "pub_key": "<base64 pubkey, Cosmos only>" }
   }
   ```
-- **Response 201 (first-ever wallet link):**
+  `wallet_address` and `signature` are required. `wallet_type` (default `"user"`) and `label` (default `""`) are optional. There is no `chain` or `nonce` field: the chain and the signed message come from the `GET /auth/nonce` challenge stored for this member and `wallet_address`. `extra` is as for `POST /auth/wallet-login`. There is no top-level `public_key` (or `pub_key`); one sent there is ignored.
+- **Response 200** *(corrected in v1.256, F-524)*:
   ```json
   {
-    "wallet": {
-      "chain": "cosmos",
-      "address_short": "cosmos…q3kf",
-      "verified_at": "2026-04-27T14:24:00Z"
-    },
-    "user": { "...": "updated User view-model (own)" },
-    "celebration": {
-      "kind": "mid",
-      "label": "Wallet linked.",
-      "icon": "wallet-link",
-      "rarity_tint": null
-    }
+    "wallet_link_id": 7,
+    "chain_slug": "cosmos",
+    "chain_name": "Cosmos Hub",
+    "address": "cosmos1abcdef…",
+    "address_short": "cosmos…q3kf",
+    "wallet_type": "user",
+    "verified": true
   }
   ```
-- **Response 201 (subsequent wallet link):**
-  ```json
-  {
-    "wallet": {
-      "chain": "ethereum",
-      "address_short": "0xab58…ec9b",
-      "verified_at": "2026-04-27T14:24:00Z"
-    },
-    "user": { "...": "updated User view-model (own)" },
-    "celebration": null
-  }
-  ```
-- **Errors:** `bcc_invalid_request` (bad signature, expired nonce, already-linked), `bcc_unauthorized`
-- **Rate limit:** 5/hour/user
+  The same shape for every link, the first one included: no `user`, no `celebration`. `address` is the address as stored (for Polkadot, the canonical prefix-0 SS58 form). `wallet_type` echoes the request (default `"user"`).
+- **Errors** *(corrected in v1.256, F-524)*:
+  - `bcc_unauthorized` 401 — not signed in.
+  - `bcc_invalid_request` 400 — `wallet_address` or `signature` missing; no live challenge for this address (expired, never issued, or already used: request a new one from `GET /auth/nonce`); the challenge's chain no longer exists.
+  - `bcc_conflict` 409 — the wallet is already linked, to this account or to another one.
+  - `bcc_forbidden` 403 — the signature did not verify.
+  - A suspended account gets `403` `account_suspended` (`503` `bcc_unavailable` when that can't be read), as for every account-identity write (see `GET /auth/session`).
+  - `bcc_rate_limited` 429.
+- **Rate limit:** 5 per minute per member (the `wallet_verify` bucket) *(corrected in v1.256; this said 5/hour)*.
 - **Cache:** `Cache-Control: no-store`
+- **Side effects:** a `wallet_linked` audit row, and an account-security email to the member (a linked wallet can sign in).
 
-**Celebration rule:** `celebration` is non-null **only on the user's first successful wallet link**, tracked via `wp_usermeta.bcc_first_wallet_link` (set true after first emission, per §O1.2 first-occurrence pattern). All subsequent wallet links return `celebration: null` regardless of chain.
+**No celebration** *(corrected in v1.256, F-524)*: the response carries none, on the first link or any other. The first-link celebration described in §7 (decision 9) was never built; nothing writes `wp_usermeta.bcc_first_wallet_link`.
 
-**Mapping:** verifier → existing `bcc-core` `WalletVerifier`. Storage → `bcc_wallet_links` table. Nonce → `bcc-core` challenge service. First-link flag → `wp_usermeta.bcc_first_wallet_link`.
+**Mapping:** verifier → existing `bcc-core` `WalletVerifier`. Storage → `bcc_wallet_links` table. Nonce → the `GET /auth/nonce` challenge for (member, address): peeked to resolve the chain, consumed atomically when the link is made.
 
 **Supported `chain_type` values:** `evm` (MetaMask / any EIP-1193 EVM wallet), `solana` (Phantom), `cosmos` (Keplr — ADR-036 secp256k1; covers Cosmos Hub / Osmosis / Injective / Juno / THORChain — Stargaze removed v1.30 with the chain's 2026 shutdown), `polkadot` (Polkadot.js / Talisman / SubWallet / Nova — sr25519 default, ed25519 / ecdsa accepted). Polkadot signature verification is delegated to the bcc-frontend Next.js app's `@polkadot/util-crypto` via an internal authenticated route (PHP has no native schnorrkel); same trust domain, same `WalletVerifier::verify` surface to callers.
 
@@ -2099,10 +2121,10 @@ Verifies a signed nonce, looks up the BCC user the wallet is linked to, mints + 
   {
     "wallet_address": "cosmos1abcdef…",
     "signature": "<base64 or hex signature>",
-    "extra": { "public_key": "<base64 pubkey, Cosmos only>" }
+    "extra": { "pub_key": "<base64 pubkey, Cosmos only>" }
   }
   ```
-  `extra` is an optional object passed verbatim to `WalletVerifier::verify` — Cosmos requires `public_key` here; ETH/Solana ignore it.
+  `extra` is an optional object passed verbatim to `WalletVerifier::verify` — Cosmos requires `pub_key` here (the base64 public key Keplr returns with the signature); ETH, Solana and Polkadot ignore it. `chain_id` may also be sent (the frontend sends the on-chain id) and is ignored: ADR-036 signs over an empty `chain_id`. *(Corrected in v1.256, F-524: this said `public_key`, a key the server has never read.)*
 - **Response 200:**
   ```json
   {
@@ -2125,7 +2147,7 @@ Verifies a signed nonce, looks up the BCC user the wallet is linked to, mints + 
 - **Bad-signature cap (since v1.162):** at most **5 signature checks per live challenge** (`WALLET_LOGIN_CHALLENGE_MAX_FAILURES`), counted **before** the verify step so concurrent requests cannot race past it. The **5th bad signature deletes that challenge**, and a check beyond the cap deletes it without verifying; the answer is then `400` (no live challenge). Up to 4 bad signatures followed by the right one still sign in. A new challenge starts a fresh count. This is what bounds the CPU-bound verifies now: 5 per issued challenge, and challenges come from the per-network-limited `/auth/wallet-nonce`. ⚠ A stranger can still spoil one wallet's current challenge with 5 junk signatures, as they could spend its 5 / min before; the owner's next attempt gets a fresh challenge. **Clients:** none — the frontend already requests a new nonce for every sign-in attempt.
 - **Verify before consume (since v1.106, F-25):** the signature is checked against the address's live challenges (at most one per chain, each against its own stored message), and **only the challenge it verifies against is consumed** — atomically, so a replay or a concurrent duplicate gets `400`. A wrong signature consumes nothing, so a stranger can no longer burn the challenge the wallet owner is about to sign — until the 5th (see **Bad-signature cap**), which deletes it so that a fresh one can be issued.
 - **Cache:** `Cache-Control: no-store`
-- **Side effects:** sets `wp_set_auth_cookie`, emits `user_login` audit row, fires `bcc_user_login` action.
+- **Side effects:** emits `user_login` audit row, fires `bcc_user_login` action. No WordPress auth cookie *(since v1.253; it set one before, which no client ever stored)*.
 
 #### `POST /bcc/v1/auth/wallet-signup`
 
@@ -2140,10 +2162,10 @@ Verifies a signed nonce, creates a new user (placeholder email if none supplied)
     "handle": "alice",
     "display_name": "Alice",
     "email": "alice@example.com",
-    "extra": { "public_key": "<base64 pubkey, Cosmos only>" }
+    "extra": { "pub_key": "<base64 pubkey, Cosmos only>" }
   }
   ```
-  `handle` is required (§B6 rules: 3–20 chars, lowercase + digits + hyphens). `display_name` and `email` are optional. The account's email is always a deterministic placeholder at first; a supplied `email` is held **pending** until it is verified *(since v1.182, F-294; see "Email state")*.
+  `extra` is as for `POST /auth/wallet-login` (Cosmos: `pub_key`; corrected in v1.256, F-524). `handle` is required (§B6 rules: 3–20 chars, lowercase + digits + hyphens). `display_name` and `email` are optional. The account's email is always a deterministic placeholder at first; a supplied `email` is held **pending** until it is verified *(since v1.182, F-294; see "Email state")*.
 - **Response 201:**
   ```json
   {
@@ -2168,7 +2190,7 @@ Verifies a signed nonce, creates a new user (placeholder email if none supplied)
 - **Rate limit:** IP-bucketed (`WALLET_SIGNUP_RATE_LIMIT`/min/IP).
 - **Verify before consume (since v1.106, F-25):** as `/auth/wallet-login` — the signature picks the live challenge it was made for (which also fixes the chain), nothing is consumed until the handle, address, wallet-collision and (since v1.175) email-taken checks pass, and a wrong signature consumes nothing.
 - **Cache:** `Cache-Control: no-store`
-- **Side effects:** sets `wp_set_auth_cookie`, fires `bcc_wallet_verified` (seeds trust-engine + onchain-signals rows just like `verifyAndLink`), emits `user_signup` audit row, fires `bcc_user_signup` action. **Note:** does NOT emit the `bcc_first_wallet_link` celebration on the response — celebration delivery for wallet-signup is reserved for a future contract revision.
+- **Side effects:** no WordPress auth cookie *(since v1.253; it set one before)*, fires `bcc_wallet_verified` (seeds trust-engine + onchain-signals rows just like `verifyAndLink`), emits `user_signup` audit row, fires `bcc_user_signup` action. **Note:** does NOT emit the `bcc_first_wallet_link` celebration on the response — celebration delivery for wallet-signup is reserved for a future contract revision.
 - **Email state (changed in v1.88):** sets `_bcc_email_verified='0'` — a wallet signature proves control of the wallet, not of the inbox. A **caller-supplied** email gets the standard verification email (OTP + one-shot link, completed via `POST /auth/verify-email`) once the wallet link commits; a **placeholder** gets none and stays `'0'`.
 - **A supplied email is held pending, not written to the account (since v1.182, F-294):** the account's email stays the wallet placeholder, and the supplied address is recorded as its **pending** sign-up address until the code or link from that mail proves the inbox. `POST /auth/verify-email` then makes it the account's email. Before this, the unverified address went straight onto the account, and since an account email is unique, whoever typed an address first blocked its real owner from signing up with it, with nothing able to free it. Now a pending address blocks nobody: `/auth/signup`, `/auth/oauth-complete` and another wallet sign-up may all use it. If another account has taken it by the time it is verified, the verify answers `bcc_conflict` 409 and the pending address is dropped (the member can add a recovery email with `POST /me/account/recovery-email`). Accounts created before this, with an unverified supplied email, are moved into the same state once (their codes and links already mailed keep working). Previously this route set `'1'` with no inbox proof, which let a wallet signup typed with someone else's address receive that person's later Google sign-in (see `/auth/oauth-complete` → the anti-pre-registration gate). `'0'` does not affect the user's own sign-in: they sign in with the wallet.
 - **The email becomes the recovery email once verified (since v1.139, F-332):** a member who gives an `email` here confirms it with the 6-digit code from that email through **`POST /auth/verify-email`** (`{ "email", "code" }`, the same route as email sign-up; or the email's one-shot link). Until then the address is pending: `GET /wallets` → `recovery.has_recovery_email` stays `false`, and `POST /me/account/recovery-email` may replace it (a typo). Once verified, `has_recovery_email` is `true`. A wrong or expired code changes nothing (request a new one with `POST /auth/resend-verification`).
@@ -2314,7 +2336,7 @@ Second factor: exchanges the `/auth/login` challenge token + emailed 6-digit cod
 - **Attempt cap across resends (since v1.134, F-292):** the wrong-code count lives for the challenge's whole possible life (a 6 h sliding window, against a challenge that lives at most 35 min), so it is **5 per challenge however many resends** keep the challenge alive.
 - **Rate limit:** IP-bucketed, 10 / 60s (a second fence; the per-challenge attempt cap above is the primary one, the challenge lifetime — 10 min, extendable by resends to at most 35 min — the outer bound)
 - **Cache:** `Cache-Control: no-store`
-- **Mapping:** peeks `bcc_2fa_ct_<token>` (and that it is the user's current challenge), timing-safely consumes the challenge-bound `bcc_2fa_otp_<first 40 hex of sha256(token)>` (`hash_equals`), consumes the challenge token only after the OTP matches, sets the WP auth cookie, mints the JWT (`JwtToken::encode`), emits the `user_login` audit log (`via: 2fa`), fires `do_action('bcc_user_login', …)`. Handler `AuthEndpoint::twoFaVerify` (route `AuthEndpoint.php:546`). Standard envelope per §1.4.
+- **Mapping:** peeks `bcc_2fa_ct_<token>` (and that it is the user's current challenge), timing-safely consumes the challenge-bound `bcc_2fa_otp_<first 40 hex of sha256(token)>` (`hash_equals`), consumes the challenge token only after the OTP matches, mints the JWT (`JwtToken::encode`; no WordPress auth cookie since v1.253), emits the `user_login` audit log (`via: 2fa`), fires `do_action('bcc_user_login', …)`. Handler `AuthEndpoint::twoFaVerify` (route `AuthEndpoint.php:546`). Standard envelope per §1.4.
 
 #### `POST /bcc/v1/auth/2fa/resend`
 
@@ -2434,7 +2456,7 @@ Confirms email ownership and completes signup via either an OTP code or a one-sh
 - **A wallet sign-up's pending address (since v1.182, F-294):** the OTP path's `email` resolves to the account whose email it is **or**, failing that, to the wallet sign-up holding it as its pending address (see `/auth/wallet-signup` → "held pending"). A holder counts only while that address is still the one its verification would prove (#766's rule, **Address binding** above): a sign-up whose `user_email` has moved off the wallet placeholder is no holder of its leftover pending address, so it is never compared, charged or mailed for it. A single holder is answered as that account (`bcc_already_verified` 409 included).
 - **Several wallet sign-ups holding one pending address (since v1.198, F-294 follow-up; previously the address resolved to nobody):** the five oldest holders (by account id) are looked at. The code is tried against each one, under **that holder's own** attempt cap (below), so one guess counts once against every holder. Each comparison **also** counts against **one budget for the address**: 5 per 15 minutes (a code's lifetime) across all its holders, charged before the holder's own count, keyed on the address in any letter case, and **not** reset by a resend. So the guesses per inbox stay at one account's level, however many holders there are. Once the budget is spent, no further holder is tried and the answer is `bcc_otp_exhausted` until the window passes. The emailed links are not affected, so a new mail's link works at once. The **first match** proves the inbox for **that account only**; it is verified and signed in, and the others stay pending. No match is the generic `bcc_invalid_otp`, or `bcc_otp_exhausted` only when **every** holder's code is burned. A holder that is already verified is passed over, never answered with 409. A holder past the five verifies with its emailed link, which works for every holder because it names its account. Each verification mail names its account's `@handle`, so an inbox that receives several codes can tell which account each one confirms. The account whose email the address already is still wins: when one exists, only it is checked.
 - **On success** with a pending address, by code or link, the pending address becomes the account's email before verification completes (WordPress's own "email changed" notice is not sent: the old address is the placeholder). A write failure answers `bcc_internal_error` 500 and keeps the pending address; request a new code.
-- **Mapping:** token path consumes the `bcc_vt_<token>` transient (single-use); OTP path resolves by email (or a pending address, above), checks `_bcc_email_verified`, timing-safely (`hash_equals`) consumes the HMAC-hashed `bcc_otp_<userId>` transient. Both converge on `finalizeVerification` → sets `_bcc_email_verified='1'`, sets the auth cookie, **revokes every earlier bearer token for the account (JWT token-version bump, since v1.88)**, mints the JWT, emits `email_verified` audit, fires `do_action('bcc_email_verified', …)`. The revocation means a session held by whoever created the account before the address was proven does not survive the inbox owner's verification; the returned token is the caller's working session and must be stored. Handler `AuthEndpoint::verifyEmail` (route `AuthEndpoint.php:487`). Standard envelope per §1.4.
+- **Mapping:** token path consumes the `bcc_vt_<token>` transient (single-use); OTP path resolves by email (or a pending address, above), checks `_bcc_email_verified`, timing-safely (`hash_equals`) consumes the HMAC-hashed `bcc_otp_<userId>` transient. Both converge on `finalizeVerification` → sets `_bcc_email_verified='1'` (no WordPress auth cookie since v1.253), **revokes every earlier bearer token for the account (JWT token-version bump, since v1.88)**, mints the JWT, emits `email_verified` audit, fires `do_action('bcc_email_verified', …)`. The revocation means a session held by whoever created the account before the address was proven does not survive the inbox owner's verification; the returned token is the caller's working session and must be stored. Handler `AuthEndpoint::verifyEmail` (route `AuthEndpoint.php:487`). Standard envelope per §1.4.
 
 #### `POST /bcc/v1/auth/resend-verification`
 
@@ -3024,6 +3046,7 @@ Returns the viewer's watchlist (§C2 — UI projection of PeepSo follows + `bcc_
 - **Query:**
   - `page` (default 1), `page_size` (default 20, max 50; **max 24 when `include=cards`** — silently clamped, echoed in `pagination.page_size`)
   - `include` (optional; only accepted value `cards`) — attaches a full §3.2 Card view-model to every item (v1.76, additive)
+  - `q` (optional string, *since v1.247, structure A row 14*) — searches the list by what it shows. A followed member matches by @handle (or `member-{id}` when there is none), or by display name **only where others see it**: never a hidden real name (any `real_name_hidden` value that is not plainly off hides it), never the login, never a name the card replaces with the handle. A leading `@` is ignored, and LIKE wildcards in `q` match themselves. A followed member also matches by the title or slug of one of their **published, non-secret** pages; a followed placeholder page by its title or slug when it is published and not secret. **A secret page's title is never searched.** `pagination.total` counts the narrowed list. At most 100 characters (`rest_invalid_param` 400 before the handler, `bcc_invalid_request` 400 in it); a request WITH `q` takes a throttle bucket before any query work (10 per 5 s, as `GET /cards`; `bcc_rate_limited` 429). Without `q` the list is exactly as before. If the deployed bcc-core cannot search yet, a request with `q` answers `bcc_unavailable` 503, never an unfiltered list.
 - **Response 200:**
   ```json
   {
@@ -3078,8 +3101,7 @@ Returns the viewer's identity-snapshot (§N9) — pre-computed tier distribution
 - **Response 200:**
   ```json
   {
-    "handle": "simontx",
-    "watching_size": 39,
+    "total": 39,
     "tier_distribution": {
       "legendary": { "count": 2, "percent": 5 },
       "rare":      { "count": 7, "percent": 18 },
@@ -3088,12 +3110,13 @@ Returns the viewer's identity-snapshot (§N9) — pre-computed tier distribution
       "unknown":   { "count": 2, "percent": 5 }
     },
     "monthly_activity": {
-      "reviews_written":  4,
+      "reviews":          4,
       "solids_received":  12,
       "disputes_signed":  1
     }
   }
   ```
+- **Fields:** `total` is the number of watched items. `monthly_activity` counts the last 30 days. *(Doc corrected v1.254: the example showed `handle`, `watching_size` and `monthly_activity.reviews_written`, which the server has never sent. It sends `total` and `reviews`, and no `handle`. The response is unchanged.)*
 - **Errors:** `bcc_unauthorized`
 - **Rate limit:** 60/min/user
 - **Cache:** `Cache-Control: private, max-age=60`
@@ -3357,7 +3380,7 @@ List of available Halls (PeepSo Groups in BCC clothing).
           "is_primary": true,
           "joined_at": "2026-01-12T00:00:00Z"
         },
-        "links": { "self": "/halls/cosmos-hall" }
+        "links": { "self": "/communities/cosmos-hall" }
       }
     ],
     "pagination": { "page": 1, "page_size": 20, "total": 142, "total_pages": 8 }
@@ -3442,7 +3465,8 @@ Mark a Hall as the user's primary.
     "primary_hall": { "...": "Hall view-model" }
   }
   ```
-- **Errors:** `bcc_unauthorized`, `bcc_forbidden` (not a member of this Hall)
+- **Errors:** `bcc_unauthorized`, `bcc_forbidden` (not a member of this Hall; *v1.252:* also any group that is not a published, non-secret Hall, with the same message), `bcc_unavailable` 503 *(v1.252)* (the check could not be read; nothing was written; retry)
+- **A home Hall accepts only published, non-secret Halls** *(v1.252)*. A member's `primary_hall` (and a member card's home Hall) shows only while the pointer still names a published, non-secret Hall. If that check cannot be read, no home Hall is shown.
 - **Mapping:** Writes the `bcc_primary_hall_group_id` usermeta pointer (singleton — one Hall per user). Emits `bcc_hall_primary_changed`.
 
 #### `DELETE /bcc/v1/me/halls/primary`
@@ -3460,7 +3484,7 @@ Clear the user's primary-Hall pointer. Note the path is bare `/primary`
 
 #### Hall detail page — composition note (no new REST surface)
 
-A Hall is a semantic wrapper around a PeepSo group; the slug is identical on both routes (`peepso-page.post_name`). The Next.js Hall detail page (`/halls/[slug]`) therefore composes the existing view-models in parallel rather than introducing a Halls-specific feed endpoint:
+A Hall is a semantic wrapper around a PeepSo group; the slug is identical on both routes (`peepso-page.post_name`). The Next.js Hall page (`/communities/[slug]` since structure A; `/halls/[slug]` forwards there) therefore composes the existing view-models in parallel rather than introducing a Halls-specific feed endpoint:
 
 - `GET /bcc/v1/halls/:slug` → header, membership pill, join/leave controls (this section).
 - `GET /bcc/v1/groups/:slug` → `GroupDetailResponse` with the server-authoritative `feed_visible` + `permissions.can_read_feed.unlock_hint` gate consumed by `<GroupFeedSection>` (§4.7.5).
@@ -4433,7 +4457,7 @@ Top-N search suggestions for the §G1 nav-bar autocomplete. Smaller per-item sha
         "reputation_tier_label": null,
         "trust_score": null,
         "is_claim_verified": false,
-        "href": "/halls/cosmos-hall"
+        "href": "/communities/cosmos-hall"
       },
       {
         "id": 42,
@@ -4455,7 +4479,7 @@ Top-N search suggestions for the §G1 nav-bar autocomplete. Smaller per-item sha
 - **Result cap + All-scope allocation (v1.70):** the response never exceeds **12 items** (mirrors the upstream `/bcc/v1/search` cap; previously undocumented). With no `kind`, three verticals merge deterministically: floors first — 1 page, then 1 community, then 1 member, each only when that vertical returned results and capacity remains — then communities top up to **3**, members top up to **3**, and pages absorb ALL remaining capacity (unused community/member quota flows back to pages). Display grouping is pages → communities → members; within each vertical the upstream ranking order is preserved. The count may be **fewer** than 12 (vertical shortfall, dropped rows). With `kind`, the single vertical is queried and capped at 12. A degraded/rate-limited vertical is silently absent from the merge — autocomplete never surfaces a partial-failure error.
 - **Per-kind field semantics (v1.70):**
   - Page kinds (`validator`/`project`/`creator`): unchanged — real tier/label/score, `is_verified` (owner email), `is_claim_verified` per the verified-wins slice below.
-  - `community` rows: the §3.2.4 trust placeholders — `reputation_tier: "neutral"`, `reputation_tier_label: null` (the FE tier chip is null-label-suppressed), `trust_score: null` (this shape admits null, unlike the Card shape's `0`), `is_claim_verified: false` (§3.2 — communities are not on-chain-claimed). `handle` = group slug; `href` = the groups vertical's relative `group_url` (kind-aware: `/halls/{slug}` for halls, `/communities/{slug}` otherwise), server-validated as an internal path.
+  - `community` rows: the §3.2.4 trust placeholders — `reputation_tier: "neutral"`, `reputation_tier_label: null` (the FE tier chip is null-label-suppressed), `trust_score: null` (this shape admits null, unlike the Card shape's `0`), `is_claim_verified: false` (§3.2 — communities are not on-chain-claimed). `handle` = group slug; `href` = the groups vertical's relative `group_url` (`/communities/{slug}` for every kind; *v1.248, F-594: Halls were `/halls/{slug}`*), server-validated as an internal path.
   - `member` rows: **real** `reputation_tier` / `reputation_tier_label` / `trust_score` — the same values the member Card carries, resolved in one bounded batch (no per-row queries). All tiers are searchable, including `caution` and `risky` — autocomplete is a lookup surface, not an endorsement surface. `is_claim_verified: false` (§3.2 — member self-pages cannot hold on-chain claims). `handle` = canonical `username` (§B6 `bcc_handle`); `name` = `display_name`; `href` = the users vertical's relative `profile_url` (`/u/{handle}`), server-validated as an internal path.
   - **`is_verified` presence:** present only on page-kind rows. It is **omitted** from `member` rows because `/search/users` does not provide the authoritative email-verification signal (`bcc_trust_user_info.is_verified`) and no bounded batch reader currently exists for it — omission means **unavailable, not false**; members do have a real email-verification value. It is omitted from `community` rows because no owner-email verification meaning exists for a community on this surface.
   - `trust_score` is `int | null` on ALL rows (nullable since the field's introduction — a page row whose enrichment is missing ships `null`; previously undocumented).
@@ -4564,7 +4588,7 @@ Groups vertical — separate cache + rate-limit bucket. Returns PeepSo group row
         "slug": "cosmos-hall",
         "description": "The Cosmos chain's home hall.",
         "avatar_url": "https://…",
-        "group_url": "/halls/cosmos-hall",
+        "group_url": "/communities/cosmos-hall",
         "kind": "hall",
         "kind_label": "CHAIN HALL"
       }
@@ -4574,7 +4598,7 @@ Groups vertical — separate cache + rate-limit bucket. Returns PeepSo group row
   ```
 - **`kind` (v1.70)** ∈ {`hall`, `nft`, `validator`, `system`, `user`} — the §3.2.4 community-kind vocabulary, resolved from `_bcc_group_kind` post-meta (raw values `hall` / `holders` / `delegators` / `system`; absent → `user`).
 - **`kind_label` (v1.70)** — the pre-rendered §A2 display string, exactly the §3.2.4 kicker vocabulary (`CHAIN HALL`, `HOLDER GROUP` and `DELEGATOR GROUP` as of v1.244, `SYSTEM COMMUNITY`, `COMMUNITY`). Frontend renders it verbatim, never maps `kind` → words.
-- **`group_url`** is a **relative** Next.js route (rendered verbatim by the frontend; an absolute URL would navigate off the headless app) and — as of v1.70 — **kind-aware**: `hall` → `/halls/{slug}`, every other kind → `/communities/{slug}`, matching `CardUrlMap::groupUrl`'s canonical mapping (v1.68). *(Supersedes v1.68's "not hall-aware" caveat — that release fixed the absolute-URL drift but had no kind projected; now the vertical projects `kind`, halls route to their flavored surface. Non-hall kinds still resolve on the cross-kind `/communities/[slug]` page.)*
+- **`group_url`** is a **relative** Next.js route (rendered verbatim by the frontend; an absolute URL would navigate off the headless app) and **`/communities/{slug}` for every kind**, Halls included *(v1.248, F-594; v1.70 to F-594 sent `hall` to `/halls/{slug}`)*, matching `CardUrlMap::groupUrl`'s canonical mapping (v1.68). *(Supersedes v1.68's "not hall-aware" caveat — that release fixed the absolute-URL drift but had no kind projected; now the vertical projects `kind`, halls route to their flavored surface. Non-hall kinds still resolve on the cross-kind `/communities/[slug]` page.)*
 - **Errors (legacy WP shape):**
   - `bcc_rate_limited` (HTTP 429)
   - `bcc_upstream_unavailable` (HTTP 503; `Retry-After: 5`)
@@ -4620,7 +4644,7 @@ PeepSo's `peepso_notifications` table is the storage layer (§I1 "extend, don't 
   - the other rank/finding self-notices *(v1.64)* — `bcc_rank_demoted`, `bcc_rank_recovery_started`, `bcc_rank_recovery_reminder`, `bcc_rank_decay_warning`, `bcc_rank_finding_issued`, `bcc_rank_appeal_outcome`, `bcc_rank_finding_reversed` → `/me/progression` (previously fell to the `/` default)
   - `bcc_welcome` → `/` (the floor — the user is probably already there when they see it)
   - `bcc_mention` → `/post/<act_id>` *(v1.140 — was `/?focus=<act_id>`)* (the permalink of the post containing the @-tag; for comment mentions `act_id` is the **parent post's** act_id — the FE has no comment-anchor consumer in V1)
-  - `bcc_hall_post` → `/halls/<slug>` resolved from `external_id` (the Hall's group_id). Falls back to `/halls` when the group is no longer a Hall (deleted, `_bcc_group_kind` meta cleared).
+  - `bcc_hall_post` → `/communities/<slug>` resolved from `external_id` (the Hall's group_id). Falls back to the Halls list, `/communities?tab=halls`, when the group is no longer a Hall (deleted, `_bcc_group_kind` meta cleared). *(v1.248, F-594: were `/halls/<slug>` and `/halls`.)*
   - `bcc_comment_received` → `/post/<act_id>` *(v1.140 — was `/?focus=<act_id>`)* (the permalink of the parent post that received the comment; mirrors REACTION + MENTION shape — the FE has no comment-anchor consumer in V1). Covers both the "commented on your post" and the v1.45 "replied to your comment" messages — same type, same link shape.
 - `target_available` *(bool, v1.140, always present)* — `false` only when `link` points at a post (`bcc_reaction`, `bcc_mention`, `bcc_comment_received`) that is **known to be gone**: deleted, unpublished, or moderation-hidden. `true` for every other row, **and when availability could not be read** — unknown is not gone, so the row keeps its link and the permalink makes the final call (`GET /feed/{id}` answers 404). Per-viewer visibility (a block, a gated group) is NOT folded in: the permalink's 404 still covers it. Clients SHOULD render a `false` row as "this post is no longer available" instead of navigating.
 - Push payloads for `bcc_mention` (one mention) and `bcc_comment_received` carry the same `/post/<act_id>` `url` *(v1.140)*; pushes carry no `target_available`.
@@ -5317,7 +5341,7 @@ Body `{ "code": "123456" }`.
 
 #### `PATCH /bcc/v1/me/account/password` (V2 Phase 2.5)
 
-Change password. Body `{ "current_password": "...", "password": "..." }`. New password ≥ **8** chars (server-enforced; *since v1.158, F-294: was 10, now the same minimum as sign-up and reset; existing passwords are unaffected*). Server calls `wp_set_password` (which destroys all session tokens) and immediately re-issues the current session's auth cookie so the user is not kicked out mid-flow. It also bumps the per-user JWT token-version (revoking every outstanding bearer token, the bearer analogue of the session-token wipe) and mints a **fresh token** for the current session, returned below — bearer clients must swap to it. *(since v1.212, F-508)* The token version is bumped **before** the password is written: if that does not land, the answer is `bcc_unavailable` **503** (`Cache-Control: private, no-store`) and **nothing was changed**. The current password still works, the presented token still works, and the member can simply try again *(clarified in v1.220: a wallet-confirmed change signs a **new** challenge to retry, because the first one was spent before the revocation; the password path retries with the same current password)*. *(since v1.100)* It also deletes every Web Push subscription of the user — the caller's own included; the client re-registers push if it is enabled.
+Change password. Body `{ "current_password": "...", "password": "..." }`. New password ≥ **8** chars (server-enforced; *since v1.158, F-294: was 10, now the same minimum as sign-up and reset; existing passwords are unaffected*). Server calls `wp_set_password` (which destroys all WordPress cookie sessions). *(Since v1.253)* it no longer re-issues a WordPress auth cookie: the caller's session is its bearer token. It also bumps the per-user JWT token-version (revoking every outstanding bearer token, the bearer analogue of the session-token wipe) and mints a **fresh token** for the current session, returned below — bearer clients must swap to it. *(since v1.212, F-508)* The token version is bumped **before** the password is written: if that does not land, the answer is `bcc_unavailable` **503** (`Cache-Control: private, no-store`) and **nothing was changed**. The current password still works, the presented token still works, and the member can simply try again *(clarified in v1.220: a wallet-confirmed change signs a **new** challenge to retry, because the first one was spent before the revocation; the password path retries with the same current password)*. *(since v1.100)* It also deletes every Web Push subscription of the user — the caller's own included; the client re-registers push if it is enabled.
 
 - **Response 200:** `{ "ok": true, "token": "<jwt>", "expires_in": 604800, "token_type": "Bearer" }`
 - **A password known to have leaked** → `bcc_password_breached` 422 — *(since v1.171, F-294)* the password appears in a known data breach (Have I Been Pwned's Pwned Passwords): *"This password has appeared in a data breach; please choose a different one."*. Checked after the length check and before either confirmation (current password or wallet signature); fails open, as at `POST /auth/signup`.
@@ -5474,7 +5498,7 @@ The same gate set runs on `POST /me/conversations/:id/messages` so that a recipi
 Paginated list of the viewer's conversations, ordered by `mpart_last_activity DESC`.
 
 - **Auth:** required. Anonymous → `bcc_unauthorized 401`.
-- **Query:** `page` (1-indexed, default 1), `per_page` (default 20, max 50).
+- **Query:** `page` (1-indexed, default 1), `per_page` (default 20, max 50); `q` (optional string, *since v1.247, structure A row 14*) — searches by the participants the viewer is SHOWN: never the viewer, never a member either side has blocked. A participant matches by @handle (or `member-{id}` when there is none), or by display name **only where others see it**: never a hidden real name (any `real_name_hidden` value that is not plainly off hides it), never the login, never a name the card replaces with the handle. A leading `@` is ignored, and LIKE wildcards in `q` match themselves. **Message text is never searched.** `pagination.total` counts the narrowed list; a failed read is `bcc_unavailable` 503. At most 100 characters (`rest_invalid_param` 400 before the handler, `bcc_invalid_request` 400 in it); a request WITH `q` takes a throttle bucket before any query work (10 per 5 s, as `GET /cards`; `bcc_rate_limited` 429). Without `q` the list is exactly as before. If the deployed bcc-core cannot search yet, a request with `q` answers `bcc_unavailable` 503, never an unfiltered list.
 - **Response 200:**
   ```json
   {
@@ -6304,7 +6328,7 @@ Anonymous-readable per §J trust-graph doctrine: attestation data is public-by-d
 In-app counterpart to the `AccountSecurityMailer` out-of-band email channel (`project_account_security_mailer.md`). Two surfaces:
 
 - **`GET /me/account-activity`** — the user's own audit timeline, filtered server-side to the six credential-class events that AccountSecurityMailer also emails on. The 1:1 correspondence is load-bearing: the in-app timeline lets the user cross-check an email alert against an authenticated view of their own account history. A hijacked-session attacker who reads in-app rows can't suppress the email; an attacker who suppresses email can't hide the in-app row.
-- **`POST /auth/logout-everywhere`** — destructive credential mutation. Bumps the user's `bcc_token_version` user_meta via `JwtToken::revokeAllForUser`, invalidating every outstanding JWT (including the request's own bearer) on next decode. Writes a `sessions_revoked_all` audit row and fires the AccountSecurityMailer confirmation email BEFORE the response is sent.
+- **`POST /auth/logout-everywhere`** — destructive credential mutation. Bumps the user's `bcc_token_version` user_meta via `JwtToken::revokeAllForUser`, invalidating every outstanding JWT (including the request's own bearer) on next decode. *(Since v1.253)* also ends every WordPress cookie session and deletes every application password of the user. Writes a `sessions_revoked_all` audit row and fires the AccountSecurityMailer confirmation email BEFORE the response is sent.
 
 Both surfaces require Bearer JWT; suspended accounts → `bcc_forbidden 403`. Standard envelope per §1.4 / §1.5.
 
@@ -6357,13 +6381,14 @@ Both surfaces require Bearer JWT; suspended accounts → `bcc_forbidden 403`. St
 - **Errors:**
   - `bcc_unauthorized 401` — anonymous.
   - `bcc_rate_limited 429` — 5/60/user (`logout_everywhere` bucket). Tight cap because the blast radius is total session invalidation; no legitimate user fires this more than a few times per minute.
-  - `bcc_unavailable 503` *(since v1.210, F-495)* — the token-version write did not land, so **no token was revoked**: every outstanding token, this request's included, still works. Step 4 below, and the WordPress sessions and application passwords, still happened; *(since v1.212, F-508)* steps 2 and 3 did not (no "sessions revoked" audit row or email): the failure is audited as `sessions_revoke_failed` instead, which admins see and the member's §4.23 timeline does not list. `Cache-Control: private, no-store`. The client keeps its session, tells the member it did not work, and lets them try again. It does NOT sign out (that would leave every other device signed in while this one is not).
+  - `bcc_unavailable 503` *(since v1.210, F-495)* — the token-version write did not land, so **no token was revoked**: every outstanding token, this request's included, still works. Steps 4 and 5 below (the WordPress sessions and application passwords, and the push subscriptions) still happened; *(since v1.212, F-508)* steps 2 and 3 did not (no "sessions revoked" audit row or email): the failure is audited as `sessions_revoke_failed` instead, which admins see and the member's §4.23 timeline does not list. `Cache-Control: private, no-store`. The client keeps its session, tells the member it did not work, and lets them try again. It does NOT sign out (that would leave every other device signed in while this one is not).
 - **Rate limit:** 5/60/user.
 - **Side effects (in order):**
   1. Token version bumped: `JwtToken::revokeAllForUser($userId)`. Every outstanding JWT for this user (including the bearer that authenticated THIS request) fails the `tv` check on next decode and returns `ERR_REVOKED`. When that write does not land, the answer is the `503` above instead of `200`. *(Order since v1.212, F-508: this used to be step 3, after the audit row and the email.)*
   2. *Only once step 1 landed:* audit row written: `AuditLogger::log('sessions_revoked_all', $userId, [], 'user', $userId)`. Counts toward the §4.23 GET timeline + 90-day retention.
   3. *Only once step 1 landed:* out-of-band email: `AccountSecurityMailer::sessionsRevokedAll($userId)`. Track-F redundancy — if an attacker triggers this to lock the legitimate user out, the email channel still warns. Failure records `account_security_mail` / `sessions_revoked_all_send_failed` DegradationMetric per `project_account_security_mailer.md`.
-  4. *(since v1.100)* Every Web Push subscription of the user is deleted, so the signed-out devices stop receiving pushes. Each device re-registers when it next signs in and enables push.
+  4. *(since v1.253)* Every WordPress cookie session of the user is destroyed (`WP_Session_Tokens::destroy_all`: wp-admin for an admin, and any older WordPress session) and every application password is deleted. Whether or not step 1 landed.
+  5. *(since v1.100)* Every Web Push subscription of the user is deleted, so the signed-out devices stop receiving pushes. Each device re-registers when it next signs in and enables push.
 - **Client-side responsibility:** on 200 the bearer is invalidated by the time the response is read. The client MUST call `signOut({ callbackUrl: "/" })` (or equivalent) immediately on 200 — any subsequent authenticated request will 401. The hook `useLogoutEverywhere()` in `useAccount.ts` does this automatically in `onSuccess`.
 - **Self-revocation note:** the user CAN sign themselves out of their own current session. The mutation is intentionally not session-aware (no "all OTHER devices" carve-out) — this is the minimal D2 per the Tier D scope decision; the per-device listing UI is deferred to a future planning session.
 - **Cache:** `no-store`.
@@ -7310,6 +7335,59 @@ Stoke — the forge-fire engagement toggle (v1.33 backfill). X-"like" model: one
 - **Cache:** `no-store`.
 - **Mapping:** `StokeEndpoint::addStoke` / `removeStoke` → `StokeRepository`. FE `stoke-endpoints.ts`.
 
+#### `POST /bcc/v1/feed/:id/repost` · `DELETE /bcc/v1/feed/:id/repost` · `POST /bcc/v1/feed/:id/quote`
+
+Repost (v1.246, F-346) — **one PLAIN repost per member per post, plus UNLIMITED quote reposts** (user decision 2026-11-18, matching X). Unlike `/stoke` this is not a counter: a repost is a **real post on the member's own wall**, so it carries the REPOSTER's own audience (their stored default post audience, §F-291) while the original keeps its own. The relationship lives in PeepSo's `act_repost_id`; there is no BCC table. **Cosmetic for trust** — never writes `bcc_trust_scores`.
+
+⭐ **Everything on this route is keyed on the ROOT, not on the id the client submits.** PeepSo resolves the chain root before storing, so a repost row always holds the ROOT — never its immediate parent. Reposting a repost of X therefore reposts X. `:id` may be either, and the once-only rule, both counts and `viewer_has_reposted` are all keyed on the resolved root. ⚠ That is why an item's repost fields equal its `repost_of`'s: a card that is itself a repost shows the ROOT's numbers, because tapping repost on it affects the root. A client reposting a repost gets `root_feed_id` back pointing at the original, and should patch its cache against **that** id.
+
+⚠ **Two gates run, not one.** `:id` is gated, and then the resolved root is gated again — both through `FeedItemGate` + `GroupInteractionGate` + `NoReactionsGate`. Reposting someone else's repost would otherwise republish content from a group the caller cannot read: the submitted post sits on its author's own wall and passes every check, while the content it carries belongs to the root's audience. The second pass is skipped when `:id` IS the root.
+
+⚠ **The root must be a TOP-LEVEL POST.** A repost of a COMMENT is refused `404`. PeepSo writes an activities row for every comment and stores the *same* `act_module_id` a status post carries, so a comment act id is on the public-feed module allowlist and is NOT refused by the gates above — the feed's own candidate query excludes those rows with a separate `act_comment_object_id = 0` predicate, because they otherwise surface as if they were top-level posts. A repost keyed on a comment would make that durable, publishing someone's comment as a standalone feed item. Direct messages (PeepSo module 6) and every other non-post module are already off the allowlist and 404 on the first gate.
+
+⭐ **PLAIN vs QUOTE, and why there are two routes.** A plain repost carries no body and is capped at one per member per root; a quote carries a body and is not capped. They are **separate routes on purpose**: with different limit rules, a single route whose once-rule turned on the presence of a body would let a client sending `body: ""` instead of omitting it cross silently between "capped, 409s" and "unlimited".
+
+Both are stored the same way — a post carrying `act_repost_id` — and are told apart by **content**: empty is plain, non-empty is a quote. That is PeepSo's own rule rather than a BCC convention: `add_post()` refuses empty content *unless* a repost is set, and stores content trimmed. So whitespace-only is a plain repost, and there is no marker field to keep in sync.
+
+⭐ **ONLY PUBLIC POSTS MAY BE REPOSTED OR QUOTED** (user decision 2026-11-18, X's protected-post rule). A root that is not visible to **every member** cannot be reposted or quoted by anyone, *including its own author* — reposting republishes to an audience the original author never chose, so the test is that nobody was excluded from the original. It is a question about the POST, not about the caller.
+
+Refused when either half fails:
+
+| half | rule |
+|---|---|
+| group | a group-tagged root must be marked `public_all` **and** still pass the group-syndication gate — `public_all` alone is not a free pass, since a post made public while its group was open stops being syndicated once that group goes closed or secret |
+| §F-02 | the **effective** level must be at most `ACCESS_MEMBERS` (20), where effective is the **stricter of** the post's own `act_access` and its **author's** profile level |
+
+⚠ `members_only` **passes**: it is the default post audience (§F-291) and every member can see it. What this refuses is friends-only, only-me, and anything inside a group that is not `public_all`. Fails **closed** when the author's profile level or the non-open group list cannot be read.
+
+⚠⚠ **The refusal is a distinct `bcc_permission_denied` 403, and the ORDERING is what makes that safe.** The publicness test runs **after** the "can the caller read this root" test, so by the time it fires the caller has already been shown they can read the post — naming the real reason therefore discloses nothing they cannot already see, and a 404 would say "not found" about a post in front of them. A root the caller **cannot** read keeps the opaque `404`, and never reaches the 403. ⚠ The `can_repost` / `can_quote` fields that would let a client hide the control *before* trying are part of the read side and are **not served yet** — see the end of this section.
+
+⚠ **The caller must be able to READ the root**, judged by the same rule as `GET /feed/:id` — blocks in BOTH directions, the caution tier, the moderation hide list, §F-02 with its group carve-out, and the group's own rule for a `members_only` post. The gates above answer only "may this member *interact* here" and deliberately skip the viewer-specific presentation filters (that skip is correct for *reporting*, where nothing is republished). A root the caller cannot open by link is a root they cannot repost, and the refusal is the same `404` — it never distinguishes "blocked you" from "does not exist". ⚠ One consequence worth stating: a §F-02-exempt reader (an administrator) cannot repost a `members_only` group post, because the permalink's group-tagged recovery pass only runs when the profile gate ran. That is a pre-existing property of the permalink, and refusing is the safe direction.
+
+- **Auth:** required (in-handler). Anonymous → `bcc_unauthorized 401`.
+- **Path:** `id` (int — raw activity id, same as `GET /feed/:id`). May be the original or any repost of it.
+- **Rate limit:** `/repost` 15/min/user (key `repost`, shared across add/remove). Tighter than `/stoke`'s 60 because each call CREATES A POST — the abuse shape is wall flooding, not tap-spam on one card. ⚠ `/quote` uses the **status-post** limits instead (key `quote_<user id>`, currently **5 per 120s**), because a quote IS a status post — and because the once-only rule does not apply to quotes, that throttle is the only limit on their volume. Expect `bcc_rate_limited` sooner from `/quote` than from `/repost`; that is deliberate.
+- **Response 200 (both verbs):**
+  - `root_feed_id` (string) — `feed_<root act_id>`, the post the count belongs to
+  - `repost_count` (**int | null**) — distinct MEMBERS with a **PLAIN** repost of the root. Quotes are **not** counted here. ⚠ `null` means *could not be read*, never zero — clients show no number rather than a wrong one, and a successful write can still answer `null` (the write and the count are two reads).
+  - `quote_count` (**int | null**) — **quote** posts of the root. A RAW total, not distinct members, because quotes are unlimited per member and each is its own post. Deliberately **not** filtered to what the viewer can see — the same posture `repost_count` has; it is a number and never an identity.
+  - `viewer_has_reposted` (bool) — **PLAIN only.** ⚠ A member who has QUOTED but not plain-reposted reads `false` here while their quote still counts in `quote_count`. That is correct under the X model and is what X does, but it surprises people in testing.
+  - `quote_feed_id` (string) — **`POST /quote` only**: the new quote post's own `feed_<act_id>`, so a client can link straight to it.
+- **Errors:** `bcc_unauthorized` 401 · `bcc_rate_limited` 429 (throttle, **or** lock contention — retry) · `bcc_forbidden` 403 (suspended; §M parity, no admin bypass) · `bcc_permission_denied` **403** (the root is not public — see the rule above; only ever returned for a root the caller CAN read) · `bcc_invalid_request` 400 (non-positive id) · `bcc_not_found` 404 (unknown id, not a feed item, root unresolvable, **root is a comment rather than a top-level post**, **the caller cannot read the root**, or — DELETE only — the caller has no **plain** repost of this root) · `bcc_invalid_request` 400 (`POST /quote`: body missing, not a string, blank after trim, or over the 500-character cap — the route declares no `required`/`type` on `body`, so all four are answered by the handler in this envelope rather than by WordPress's own `rest_missing_callback_param`, which would also preempt the 401 for an anonymous caller) · `bcc_too_many_mentions` 400 (`POST /quote`, per §3.3.12) · `bcc_conflict` **409** (`POST /repost` only: already plain-reposted — a quote never 409s) · `bcc_unavailable` **503** (**both POST routes**: the root's own ACTIVITY read did not run (F-275 — `getActivityById()` throws rather than answering null), or, `POST /repost` only, the once-only check could not be read. Fail-closed, nothing was written; retry. ⚠ NARROWER THAN IT SOUNDS: this covers the ACTIVITY read. A failed **filter** read underneath it — the block probe today, announcement-page visibility shortly — fails closed as the opaque **404** instead, because `getActivityById()`'s own contract is "404 rather than leak" and `dropMutuallyBlockedAuthors()` collapses an unreadable block table to an empty result. So 503 and 404 separate "the post read failed" from "not visible OR a filter read failed", not "any read failed" from "not visible") · `bcc_internal_error` 500
+- **Side effects:** `POST /repost` creates a status post on the caller's wall with an **empty** body and `act_repost_id` = root. `POST /quote` creates one with the submitted body and the same `act_repost_id`, through the ordinary status-create path — so the §D2 **500-character** cap, mention validation, sanitising, moderation and the §A3 event all apply, and `bcc_too_many_mentions` is reachable. A quote is removed through the **ordinary owner delete**, not through `DELETE /repost`. DELETE trashes the caller's own **plain** repost(s) of that root and fires `bcc_post_deleted` per removed post (so the warmed hot-feed page is evicted and the Rank ledger reverses), exactly as owner-delete does.
+- **⚠ DELETE is NOT idempotent, and that is deliberate.** It is also NOT audience-gated: a root can stop being readable after the fact, and a gate there would strand the member with a post on their own wall they are not allowed to remove — the action only ever touches rows they own. With no audience gate, an idempotent 200 would answer "does act N exist" and hand back its repost count for ANY id, so **no repost of yours → 404**, and no count is read. This is the one place the route diverges from `/stoke`.
+- **Not notified.** A repost raises no notification for the original's author in v1.
+- **Cache:** `no-store`.
+- **Mapping:** `RepostEndpoint::addRepost` / `removeRepost` → `PeepSoActivityRepository::resolveRepostRoot` + `PostEngagementRepository::viewerReposts`/`repostCount` + `PeepSoStatusWriter::createSelfStatus`. Serialised per `(member, root)` on the `bcc_repost_<member>_<root>` advisory lock, because no database constraint can express once-per-member: `act_repost_id` is 0 on every ordinary post, so `UNIQUE (act_owner_id, act_repost_id)` would cap each member at one ordinary post ever.
+- **Mapping (`POST /quote`):** `RepostEndpoint::addQuote` → the same root ladder, then **`PostsService::createStatus`** (the ordinary status-create path, with the resolved root passed through) + `PostEngagementRepository::quoteCount`. ⭐ The quote route writes **nothing itself** — that delegation is what makes every status rule apply to a quote by construction rather than by copy. It takes **no advisory lock** (there is no "once" to protect). The readability re-gate on both POST routes is `FeedRankingService::getActivityById`, the permalink's own seam.
+
+⚠⚠ **REPOSTS ARE NOT RENDERED YET, AND NOTHING IN THIS LIST IS SERVED.** The write routes above ship first. Everything below is the following change — the read side — and **no response carries any of it today**; until it ships, no feed surface marks an item as a repost and clients should not expose a repost affordance. It is documented here because these fields were decided with the write rules and the decisions are what the read side has to honour:
+
+- the feed-side **`repost_of`** block (the nested root), and the **batched** `viewer_has_reposted` / `repost_count` / `quote_count` on feed items rather than one read per card.
+- **`can_repost` / `can_quote`** on a feed item, in the **post-local 2-key shape** `{ allowed, unlock_hint }` — the same entry `can_report` and `can_delete` use, and deliberately **not** the 3-key card/user triple. A root the publicness rule refuses comes back `allowed: false` with `unlock_hint: null`, and the client hides the control exactly as it does for every other post permission. ⚠⚠ **There is NO `reason_code` on these two**, and that is a decision rather than an omission (2026-11-24): a FeedItem's `permissions` map is homogeneous, so adding a third key here would either make it ragged or force `can_report`/`can_delete` to widen too — a bigger contract change than F-346 needs. The cost is that a client cannot tell "not public" from any other refusal; it does not need to, because the only action either way is to hide the control. ⚠ The rule is already ENFORCED by the write routes — this is only how a client learns the answer before trying, so its absence costs a wasted 403, never a wrong write.
+- the rule that **HIDES a plain repost** whose root the viewer cannot see (option 1), applied in the per-viewer filter stage.
+- **`repost_of_unavailable`** for a quote in that same situation. ⭐ **A QUOTE whose root this viewer may not see KEEPS THE QUOTE** (user decision 2026-11-18). The root's audience can narrow *after* the quote was written, and a quote carries the reposter's **own words** — so hiding the whole item would delete their writing from every feed because of someone else's setting. Such an item will come back with `repost_of: null` **and `repost_of_unavailable: true`**, a neutral marker carrying **no author, no group and no id**. A **plain** repost in the same situation is hidden whole, because it carries nothing of its own. ⚠ The root is re-gated **per viewer at read time**, not trusted from write time, for exactly this reason. ⭐ **Re-ratified 2026-11-24** (Phillip, via F-346's read-side design): asked the question again with the quote case spelled out, the answer was the same — show the quote with a neutral "original unavailable" block carrying no author, no group and no id, and keep hiding a plain repost whole. So this paragraph is CONFIRMED rather than changed, and the 2026-11-18 "hide the repost entirely" rule stands for plain reposts only. ⚠ The same neutral answer is given when readability cannot be **verified** — an unreadable gate read, not a "no" — because an unverified root is never shown.
+
 #### `POST /bcc/v1/comments/:id/stoke` · `DELETE /bcc/v1/comments/:id/stoke`
 
 Stoke on a **comment** (v1.38). A comment is itself a `peepso_activities` row, so its act_id keys `wp_bcc_trust_stokes` exactly like a post's — same `StokeRepository`, no schema change. Dedicated endpoint (not a reuse of `/feed/:id/stoke`) because the group gate MUST resolve membership off the comment's **parent post**: the comment's own wp_post carries no `peepso_group_id`, so gating on the comment's act_id would silently pass every gated thread. Plain X-"like" toggle — **no `heat_stage`** (a comment is not a velocity rail). **Cosmetic for trust** — never writes `bcc_trust_scores`.
@@ -7367,7 +7445,7 @@ Multipart blog cover-image upload (§D6 PR-B). Wraps `wp_handle_upload` + `wp_in
 - **Form fields:** `cover_image` (file, **required**) — allowed MIME `image/jpeg|png|webp|gif`; hard cap **8 MiB**; MIME sniffed from contents (browser Content-Type not trusted); multi-file rejected.
 - **Rate limit:** burst seatbelt 5 / 60s / author (before disk write).
 - **Response 200:** `{ "ok": true, "attachment_id": 5120, "url": "https://…/cover.webp", "width": 1600, "height": 900 }` (`attachment_id` → `cover_image_id` on blog create/update).
-- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (missing field; multi-file; PHP upload error; empty; oversized `{max_bytes: 8388608}`; disallowed `{mime}`) · `bcc_rate_limited` 429 · `bcc_unavailable` 503
+- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (missing field; multi-file; PHP upload error; empty; oversized `{max_bytes: 8388608}`; disallowed `{mime}`; unreadable image; dimensions too large `{max_pixels: 24000000}` *(v1.255)*) · `bcc_rate_limited` 429 · `bcc_unavailable` 503
 - **Cache:** `no-store`.
 - **Mapping:** `BlogCoverImageEndpoint::upload` (route `BlogCoverImageEndpoint.php:55`) → `BlogCoverImageWriter::upload`. FE `blog-endpoints.ts:uploadBlogCoverImage`.
 
@@ -7426,12 +7504,17 @@ Paginated group roster. Offset-paginated (stable-ordered by role + joined_at).
 - **Path:** `id` (int, required). **Query:** `offset` (default 0, min 0) · `limit` (default 24, min 1, max 100)
 - **Response 200:**
   ```json
-  { "items": [ { "...": "MemberSummary (§3.1)", "role": "owner", "role_label": "OWNER" } ], "pagination": { "offset": 0, "limit": 24, "total": 87, "has_more": true } }
+  { "items": [ { "...": "MemberSummary (§3.1)", "role": "owner", "role_label": "OWNER", "card": { "...": "Card (§3.2), card_kind member" } } ], "pagination": { "offset": 0, "limit": 24, "total": 87, "has_more": true } }
   ```
-  Each item is the shared `MemberSummary` (§3.1, via `UserViewService::getSummary` + `MemberSummaryPrefetcher`) merged with `role` ∈ `owner|moderator|member`, `role_label` (server-rendered §A2, filterable via `bcc_group_role_labels`), and, **for site admins only**, `joined_at` (ISO 8601 UTC or `null`) *(v1.238, R4: no other viewer, this group's owner and managers included, receives when a member joined; the key is absent)*. The order (role, then join time) is unchanged and server-side. Rows for deleted users are skipped (so `items.length` can trail `total`). **(v1.172, privacy)** On an **`open`** group, a member **the viewer may not see** is omitted from `items`: a profile private to the viewer (its privacy level), a suspended or banned account, or a block in either direction. This is the one list-visibility rule (`ProfileAccess::filterVisible`); the viewer always sees themselves. **Not** `hide_from_search`: that setting scopes to member search and the directory, while rosters follow profile privacy. This group's **owner and managers, and site admins**, see the whole roster, since they already decide its membership (and the transfer-ownership picker reads this roster). `total` (and the group's `member_count`) are **unchanged**, and `has_more` follows the unfiltered page, so a page can hold fewer than `limit` items, even none, mid-list. Advance by `offset + limit`, never by `items.length`. `closed`/`secret` rosters are shown only to members and are not filtered.
+  Each item is the shared `MemberSummary` (§3.1, via `UserViewService::getSummary` + `MemberCardPrefetcher::primeFor`, which wraps `MemberSummaryPrefetcher`) merged with `role` ∈ `owner|moderator|member`, `role_label` (server-rendered §A2, filterable via `bcc_group_role_labels`), and, **for site admins only**, `joined_at` (ISO 8601 UTC or `null`) *(v1.238, R4: no other viewer, this group's owner and managers included, receives when a member joined; the key is absent)*. The order (role, then join time) is unchanged and server-side. Rows for deleted users are skipped (so `items.length` can trail `total`). **(v1.172, privacy)** On an **`open`** group, a member **the viewer may not see** is omitted from `items`: a profile private to the viewer (its privacy level), a suspended or banned account, or a block in either direction. This is the one list-visibility rule (`ProfileAccess::filterVisible`); the viewer always sees themselves. **Not** `hide_from_search`: that setting scopes to member search and the directory, while rosters follow profile privacy. This group's **owner and managers, and site admins**, see the whole roster, since they already decide its membership (and the transfer-ownership picker reads this roster). `total` (and the group's `member_count`) are **unchanged**, and `has_more` follows the unfiltered page, so a page can hold fewer than `limit` items, even none, mid-list. Advance by `offset + limit`, never by `items.length`. `closed`/`secret` rosters are shown only to members and are not filtered.
+- **`card`** *(v1.251, additive)*: the member `Card` (§3.2, `card_kind: "member"`) that `GET /members` shows for the same member and viewer. It comes from the same builder and the same batched reads, and carries the directory's `is_mentor: true` on actively listed mentors (absent otherwise, as there).
+  - The key is always present. It is `null` when the directory would not show this viewer that member: a profile private to the viewer, a suspended or banned account, or a block in either direction (`ProfileAccess::filterVisible`; `hide_from_search` does not apply, as for the roster). It is also `null` when the card could not be built; that item keeps its other fields and the rest of the page is unaffected.
+  - The roster still shows every tile it showed before: to this group's owner and managers, to site admins, and on `closed`/`secret` rosters. Those tiles carry a card only where the directory would show one.
+  - `role`, `role_label`, the `MemberSummary` fields and `members_visible` are unchanged. Clients that render a card fall back to the tile when `card` is `null` or absent.
+  - The cards add batched reads per page, never one per member.
 - **Errors:** `bcc_invalid_request` 400 · `bcc_not_found` 404 (missing or secret-non-member) · `bcc_permission_denied` 403 (closed/secret non-member)
 - **Cache:** anon (open) → `public, max-age=300`; authed → `private, no-store` + `Vary`; denials → `private, no-store`.
-- **Mapping:** `GroupMembersEndpoint::list` (route `GroupMembersEndpoint.php:58`) → `GroupMembersService::listMembers` (shares `GroupsService::resolveGroupAccess` with §4.7.5/§4.7.6).
+- **Mapping:** `GroupMembersEndpoint::list` (route `GroupMembersEndpoint.php:58`) → `GroupMembersService::listMembers` (shares `GroupsService::resolveGroupAccess` with §4.7.5/§4.7.6). `card`: `CardViewService::getMemberCardForList` over the page's `MemberCardPrefetcher` bundle, the badge from `MentorListingService::listedAmong`, as `UsersEndpoint::members` does.
 
 #### `POST /bcc/v1/me/groups` (§4.7.3 — create, V1.6)
 
@@ -7470,13 +7553,13 @@ Create a plain (non-gated, non-Hall) PeepSo group owned by the viewer. (Join/lea
 
 #### `GET /bcc/v1/halls/:slug`
 
-Single Hall detail (auth-optional). Same item shape as the `/halls` directory rows. The `/halls/[slug]` page also composes `GET /groups/:slug` + `GET /groups/:id/feed` (§4.7 composition note).
+Single Hall detail (auth-optional). Same item shape as the `/halls` directory rows. The Hall's page (`/communities/[slug]`) also composes `GET /groups/:slug` + `GET /groups/:id/feed` (§4.7 composition note).
 
 - **Auth:** Anonymous OR Bearer.
 - **Path:** `slug` — `[a-z0-9][a-z0-9-]{0,99}`, required.
 - **Response 200:**
   ```json
-  { "id": 342, "slug": "cosmos-hall", "name": "Cosmos Hall", "chain": "cosmos", "hall_kind": "chain", "topic": null, "member_count": 412, "viewer_membership": { "is_member": true, "is_primary": true, "joined_at": "2026-01-12T00:00:00Z" }, "links": { "self": "/halls/cosmos-hall" } }
+  { "id": 342, "slug": "cosmos-hall", "name": "Cosmos Hall", "chain": "cosmos", "hall_kind": "chain", "topic": null, "member_count": 412, "viewer_membership": { "is_member": true, "is_primary": true, "joined_at": "2026-01-12T00:00:00Z" }, "links": { "self": "/communities/cosmos-hall" } }
   ```
   `chain` comes from the `_bcc_chain_tag` meta FK (`null` when absent). `viewer_membership` carries `is_primary` (Halls own the primary pointer; unlike §4.7.5). `hall_kind` and `topic` *(v1.NEXT)* follow the `GET /halls` rule; a topic Hall has `chain: null`, `chain_profile: null` and empty `validators` / `collections`.
 - **Errors:** `bcc_invalid_request` 400 (empty slug) · `bcc_not_found` 404
@@ -9553,7 +9636,7 @@ Validator, project and creator pages, as `/v/`, `/p/` or `/c/{slug}`: published,
 
 #### `GET /bcc/v1/sitemap/groups`
 
-Open communities and Halls, as `/communities/{slug}` or `/halls/{slug}`: published, with a slug, and **explicitly** open (a privacy row reads open and none reads closed or secret). Closed and secret groups are never listed. A group the app cannot place, one with disagreeing kind rows for example, is left out, so every listed URL is one the app serves.
+Open communities and Halls, as `/communities/{slug}` *(Halls too since v1.248, F-594; they were `/halls/{slug}`)*: published, with a slug, and **explicitly** open (a privacy row reads open and none reads closed or secret). Closed and secret groups are never listed. A group the app cannot place, one with disagreeing kind rows for example, is left out, so every listed URL is one the app serves.
 
 ### 4.34 Admin Halls — topic Halls (F-597) *(v1.NEXT)*
 
@@ -9771,7 +9854,7 @@ The following schema additions are **referenced but not implemented** by Phase 1
 - `wp_usermeta.bcc_handle` (§B6)
 - `wp_usermeta.bcc_primary_hall_group_id` — singleton pointer to the user's primary Hall; membership ledger itself stays in PeepSo's `peepso_group_members` per the single graph rule (§E3)
 - `wp_usermeta.bcc_ui_familiar` (§N5 — boolean for UI dual-label drop-off only)
-- `wp_usermeta.bcc_first_review`, `bcc_first_vouch`, `bcc_first_dispute`, `bcc_first_hall_join`, `bcc_first_wallet_link` (§O1.2)
+- `wp_usermeta.bcc_first_review`, `bcc_first_vouch`, `bcc_first_dispute`, `bcc_first_hall_join`, `bcc_first_wallet_link` (§O1.2; `bcc_first_wallet_link` is unused, see §7 decision 9)
 - `wp_usermeta.bcc_privacy_*` keys (§K2)
 - `wp_usermeta.bcc_highlights_dismissed_until` (§O2)
 
@@ -9799,7 +9882,7 @@ All ten open items locked **2026-04-27**. Phase 1 implementation may begin.
 6. **Cursor format** — **base64-encoded JSON of `(timestamp, id, rank_score_at_emit)`.** Preserves scroll order across re-ranks. Opaque to the client; never decode. See §1.5.
 7. **Wallet `address_short`** — **`<first-6>…<last-4>` for all chains.** Sliced from the full chain-prefixed address. Server-only writer; frontend never re-truncates. See §1.7.
 8. **Claim rate limit per page** — **30 attempts/day/page** (in addition to 3/hour/user and 10/day/IP). Prevents attempt flooding. See §4.6.
-9. **Wallet-link celebration** — **first link only**, tracked via `wp_usermeta.bcc_first_wallet_link` (§O1.2 first-occurrence pattern). All subsequent links return `celebration: null`. See §4.1.
+9. **Wallet-link celebration** — **first link only**, tracked via `wp_usermeta.bcc_first_wallet_link` (§O1.2 first-occurrence pattern). All subsequent links return `celebration: null`. See §4.1. *(v1.256, F-524: never built. `POST /auth/wallet-link` returns no `celebration` field, and nothing writes the key.)*
 10. **`Card.updated_at`** — **read-model recompute timestamp** from `bcc_page_read_model.updated_at`. Use as cache validator only; do not surface in UI as "last edited". See §3.2 field rules and §6.2.
 
 ---
@@ -9934,6 +10017,129 @@ Ships with bcc-trust #898, after bcc-core #192 (the Hall-kind filter) is in prod
 - **Unchanged:** every existing field, the error envelope, the cache headers, and every request without `kind`.
 - **Clients:** additive. A client that reads `chain_slug` must handle `null`.
 
+### v1.256 — 2026-11-25 — doc correction — wallet requests carry the Cosmos key as `extra.pub_key` (F-524)
+
+Contract only. No code or response change.
+
+- **`POST /auth/wallet-login`, `POST /auth/wallet-signup`:** the examples put the Cosmos public key at `extra.public_key`. The server reads `extra.pub_key` (bcc-core `WalletVerifier::verify`) and has never read `public_key`. The examples and the `extra` note now say so, and note that a sent `chain_id` is ignored (ADR-036 signs over an empty one).
+- **`POST /auth/wallet-link`:** the body showed `chain`, `nonce` and a top-level `public_key`. The server reads `wallet_address`, `signature`, the optional `wallet_type` and `label`, and the same `extra`; the chain and the message come from the stored `GET /auth/nonce` challenge. The body now says so.
+- **`POST /auth/wallet-link` response:** the examples showed a **201** carrying `wallet`, `user` and a first-link `celebration`. The server answers **200** with `wallet_link_id`, `chain_slug`, `chain_name`, `address`, `address_short`, `wallet_type` and `verified`, the same for every link, and the frontend's `LinkWalletResponse` already reads that. The errors now match the handler too (409 `bcc_conflict` for an already-linked wallet, 403 `bcc_forbidden` for a signature that does not verify), and so does the rate limit (5 per minute per member, not 5 per hour). §7 decision 9 and the §6.5 key list now note that the first-link celebration was never built.
+- **Unchanged:** the three account-change confirmations already said Cosmos `pub_key`, which is now what wallet linking says too.
+- **Clients:** no change. The frontend already sends `extra: { pub_key, chain_id }` (`lib/wallet/dispatch.ts`).
+- **Not changed here:** the `POST /pages/:id/claim` body, which its open erratum already flags.
+
+### v1.255 — 2026-11-25 — doc correction — `POST /blog/cover-image`'s too-large-dimensions 400 carries `max_pixels`
+
+Contract only. No code or response change.
+
+- **`POST /blog/cover-image`:** an image whose dimensions are too large already answers `bcc_invalid_request` 400 with `data: { "max_pixels": 24000000 }`, and an unreadable image a 400 with no `data`. Neither case was listed. The **Errors** line now lists both.
+- **Clients:** no change. The frontend's cover-upload copy keys on the error code.
+
+### v1.254 — 2026-11-25 — doc correction — the `GET /me/watching/summary` example matches the response
+
+Contract only. No code or response change.
+
+- **`GET /me/watching/summary`:** the example showed `handle`, `watching_size` and `monthly_activity.reviews_written`. The server has always sent `total` and `monthly_activity.reviews`, and no `handle`. The example and a new **Fields** line now say so.
+- **Clients:** no change. The frontend already reads `total` and `reviews`.
+
+### v1.253 — 2026-11-25 — behaviour change (security) — sign-out ends WordPress sessions; sign-in sets no WordPress cookie (H3)
+
+Ships with bcc-trust #745 (merged 2026-11-19 and already live; this entry documents it).
+
+- **Why:** BCC's sign-ins set a 14-day WordPress auth cookie, but sign-out revoked bearer tokens only. Each sign-in left a WordPress session behind that nothing ended.
+- **No WordPress auth cookie** from `POST /auth/2fa/verify`, `/auth/wallet-login`, `/auth/wallet-signup`, `/auth/verify-email`, or `PATCH /me/account/password`. Every caller is the NextAuth server or a `credentials: "omit"` fetch, so no client ever stored one. Responses and tokens are unchanged.
+- **`POST /auth/logout-everywhere`** also destroys every WordPress cookie session of the user (an admin's wp-admin included) and deletes every application password.
+- **`POST /auth/logout`:** unchanged. It signs out the presented bearer, and there is no WordPress cookie to clear.
+- **Clients:** no change.
+
+### v1.252 — 2026-11-24 — behaviour change — a home Hall accepts only published, non-secret Halls
+
+Ships with bcc-trust #893. bcc-trust only.
+
+- **`POST /me/halls/:id/primary`:**
+  - Accepts only a published, non-secret Hall the member belongs to. Anything else gets the same `403 bcc_forbidden` as a non-member.
+  - A check that cannot be read is `503 bcc_unavailable`, and nothing is written.
+- **Readers** (the profile's `primary_hall`, member cards, the feed's cold-start panel): a home Hall shows only while it is a published, non-secret Hall. An unreadable check shows none.
+- **Unchanged:** the route, its success shape, and clearing the home Hall.
+
+### v1.251 — 2026-11-24 — additive — `GET /groups/:id/members` items carry the member `card` the directory shows
+
+Ships with bcc-trust #892. A community or Hall Members tab can show the same member card as `/members`.
+
+- **`card`** on each roster item: the member `Card` (§3.2) that `GET /members` shows for that member and viewer, from the same builder. It includes `is_mentor: true` on actively listed mentors.
+- It is `null` where the directory would not show this viewer that member (a private profile, a suspended or banned account, a block), or when the card could not be built. Every tile the roster showed before stays, with its fields unchanged.
+- **Unchanged:** `role`, `role_label`, the `MemberSummary` fields, `members_visible`, pagination and the order.
+- **Clients:** additive. Render the card when present and fall back to the tile when it is `null` or absent.
+
+### v1.250 — 2026-11-24 — behaviour change — a card's `bio` is bounded in WORDS, not characters (F-579 row 16)
+
+Ships with bcc-trust. One plugin, no endpoint change, no new field.
+
+- **§3.2 `Card.bio`**: at most **25 words** AND at most **120
+  characters**, whichever bites first, with a single `…` when cut. It was
+  ~200 characters.
+- **A URL or an `@handle` is one word and is never cut into** — an
+  over-long one is dropped whole. ⚠ So a bio that is nothing but one
+  over-long URL now yields `""`. That is deliberate: a broken link says
+  less than no line, and the full text is on the page.
+- **The 120-character bound** exists for text written without spaces
+  (Chinese, Japanese, Korean), which is a single word and would otherwise
+  pass whole. The cut is grapheme-safe.
+- **All five card kinds**, which is a change in itself: community cards
+  previously passed the producers' ~200-character description straight
+  through and so were not subject to the page/member bound at all. They
+  now take the same cut. The producers' trim stays upstream as the cheap
+  bound.
+- **Unchanged:** `§4.7.4`'s `description` field (still ~200 characters —
+  it is the card's input, not the card's output), the profile's §3.1
+  `bio` (full text), and every other card field.
+- **Clients:** no change required; the string is simply shorter. Where it
+  renders on the card, and how many lines it may use, stay client
+  decisions.
+
+### v1.249 — 2026-11-24 — additive — page card owner badge, viewer role and owner-control permissions (validator approval tool, P1)
+
+Ships with the bcc-trust page-data PR (P1). Additive, plus one anonymous-shape change on a key no client read.
+
+- **`owner_verification`** on every Card (§3.2): `{ kind: wallet|node_key|staff, label, description }` or `null`. Public badge copy rendered verbatim; never a method, never a date. Non-null only on a validator card with one verified operator.
+- **`viewer_page_role`** on every Card (§3.2): `"owner"`, `"administrator"`, `"representative"` or `null`. Team roles appear once the team service ships; until then it is `"owner"` or `null`.
+- **Page-card `permissions` (§2.1):** new `can_manage_team`, `can_edit_links`, `can_edit_notifications`; `can_edit_bio` now covers the profile text (name, bio, banner). Owner-only for now, and hidden (`unlock_hint: null`, `reason_code: "not_claimer"`) for every other viewer **including anonymous** — `can_edit_bio`'s anonymous shape changes from the sign-in hint to that hidden shape.
+- **Unchanged:** every existing per-control flag stays the authority for its control; no route, request or error changes.
+
+### v1.248 — 2026-11-25 — behaviour change — server Hall links point at Communities (F-594, structure A)
+
+Ships with bcc-trust **#888** and bcc-search **#54**, after bcc-frontend #412 (Halls into Communities).
+
+- **Every server-emitted link to a Hall** is now `/communities/{slug}`, the Hall's one page since bcc-frontend #412. It was `/halls/{slug}`. That covers:
+  - `GET /halls` and `GET /halls/{slug}` `links.self`;
+  - feed `group.link`;
+  - `/search/groups` `group_url` and `/cards/search` community `href`;
+  - the `bcc_hall_post` bell row and push;
+  - `GET /sitemap/groups`.
+- **The fallback to the Halls list** (a Hall-post bell row or push whose Hall is gone) is `/communities?tab=halls`. It was `/halls`.
+- **No frontend change needed:** the old `/halls` routes already forward (308) to these, so stored or cached links keep working.
+- **Unchanged:** the `GET /halls` / `GET /halls/{slug}` / `/me/halls` REST routes and every response shape.
+
+### v1.247 — 2026-11-25 — additive — `q` on `GET /me/watching` and `GET /me/conversations` (structure A row 14)
+
+Ships with bcc-core #188 and bcc-trust #889. ⛔ Deploy bcc-core first; until it is live, a request with `q` answers 503.
+
+- **`GET /me/watching?q=`:** searches the watchlist by what it shows. A member matches by @handle or by a display name others see; a member's published, non-secret page, or a followed placeholder page, by title or slug. A secret page's title is never searched.
+- **`GET /me/conversations?q=`:** searches by the participants the viewer is shown (never the viewer, never a member either side has blocked). Message text is never searched.
+- **Both:** never a hidden real name, a login, or a name the card replaces with the handle. At most 100 characters; searches are throttled like `GET /cards`. `pagination.total` counts the narrowed list. Without `q`, both are unchanged.
+
+### v1.246 — 2026-11-24 — additive — repost, once per member per post (F-346)
+
+Ships with bcc-trust #747. It needs **bcc-core #137** (in production since the 2026-11-24 release), where `resolveRepostRoot` and `createSelfStatus`'s root parameter land.
+
+- **New:** `POST`/`DELETE /feed/:id/repost` and `POST /feed/:id/quote`. A repost is a real post on the caller's own wall carrying their own audience, not a counter row; the link lives in PeepSo's `act_repost_id`. **One PLAIN repost per member per root, unlimited quotes** (user decision 2026-11-18, matching X): plain and quote are told apart by content (empty vs not), which is PeepSo's own rule since `add_post()` refuses empty content unless a repost is set. `repost_count` counts distinct members with a plain repost; `quote_count` is a raw total of quote posts; `viewer_has_reposted` is plain-only. **Only PUBLIC roots may be reposted or quoted** (not friends-only/only-me, and not a group post that is not `public_all` + still syndicated): a distinct `bcc_permission_denied` 403, ordered AFTER the readability check so an unreadable root still gets the opaque 404. ⚠ The feed-side rendering is a FOLLOWING change and none of it is served by this release: `repost_of`, the batched counts, `can_repost`/`can_quote` (the post-local 2-key `{ allowed, unlock_hint }` entry — **no `reason_code`**, decided 2026-11-24, so a refused root is `allowed: false` + `unlock_hint: null` and the control is hidden), the hide for a plain repost whose root the viewer cannot see, and `repost_of_unavailable: true` for a quote in that situation (the quote is kept — it carries the member's own words — while a plain repost is hidden whole). Both POST routes answer `bcc_unavailable` 503 when the root's own ACTIVITY read did not run, rather than reporting "not found"; a failed FILTER read beneath it still fails closed as 404, per `getActivityById()`'s contract.
+- **Keyed on the ROOT.** `:id` may be the original or any repost of it; the once-only rule, the lock and the count all resolve to the chain root, and the response says which (`root_feed_id`).
+- **Both the submitted id AND the root are gated** — otherwise reposting someone's repost republishes content from a group the caller cannot read.
+- `repost_count` is **`int | null`** — `null` is "could not read", never zero.
+- **409** on a second repost, **503** when the once-only check cannot be read (nothing written), **429** on lock contention.
+- **DELETE is not idempotent and not audience-gated:** no repost of yours → 404. Rationale in §4 — it keeps the member from being stranded with an unremovable post while closing the existence/engagement oracle an idempotent success would open.
+- **Unchanged:** every read surface. Nothing marks a feed item as a repost yet, so clients should not show a repost affordance until the read side lands.
+
 ### v1.245 — 2026-11-24 — bug fix — `/cards/search` page kinds return that kind's pages; `/search`'s `type` is a category (F-592)
 
 Ships with bcc-trust **#882**, after bcc-search's `kind` (F-589). bcc-trust only.
@@ -9943,7 +10149,7 @@ Ships with bcc-trust **#882**, after bcc-search's `kind` (F-589). bcc-trust only
 - **`GET /search` `type`, doc corrected:** it is a PeepSo page-category slug (one of the `categories` slugs), not a page kind. To filter by kind, use `kind`.
 - **Unchanged:** the suggestion shape, the All-scope allocation, `incomplete`, and the member and community verticals.
 
-### v1.244 — 2026-11-24 — display change — holder and delegator communities read "GROUP" (F-100)
+### v1.244 — 2026-11-24 — display change — holder and delegator communities read "GROUP" (F-579 row 12; F-588)
 
 Ships with bcc-trust #883 **and** bcc-search #52. ⚠⚠ Both plugins must go out
 in the SAME release — see below.
@@ -9997,7 +10203,6 @@ Ships with bcc-trust #880. Structure A (Explore's tab counts).
 - **`GET /cards` `pagination.total`:** how many cards match the filters across all pages, from the same query as the rows, so the two agree.
 - **No `kind`:** the list now covers the three card kinds only (validator, project, creator). Pages of any other type used to be counted in `total_pages` and to take a slot on a page without rendering; now they are neither counted nor listed.
 - **Unchanged:** the item shape, every filter, the page ceiling (`page` ≤ 20) and the errors.
-
 ### v1.240 — 2026-11-24 — additive — the auth responses carry `can_moderate`, the cue for the frontend's "Admin" group (structure A)
 
 Ships with bcc-trust **#876**. bcc-trust only.
