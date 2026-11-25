@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.254 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.255 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -3587,7 +3587,7 @@ Server-authoritative copy. The frontend MUST render `label` verbatim — never a
   the block is built on a degraded/anon default path. Emitted in **every**
   §4.7.1 `activity` block (holder groups, discovery, communities, halls).
 - **Moderated posts** *(v1.NEXT)*: every number here excludes moderated posts. A post that moderation has hidden counts toward none of `posts_last_7d`, `active_members_7d`, `last_activity_at` or `heat`.
-- **Unknown** *(v1.NEXT)*: when the moderated posts cannot be read, `posts_last_7d`, `active_members_7d`, `heat` and `heat_label` are `null`, and so is `last_activity_at`. The values are null when unknown, never a guessed `0` or `cold`. Clients show no number and no heat label then.
+- **Unknown** *(v1.NEXT)*: when the moderated posts cannot be read, `posts_last_7d`, `active_members_7d`, `heat` and `heat_label` are `null`, and so is `last_activity_at`: when the moderated posts cannot be read, the values are null, never a guessed `0` or `cold`. Clients show no number and no heat label then.
 
 #### `GET /bcc/v1/me/holder-groups`
 
@@ -7446,7 +7446,7 @@ Multipart blog cover-image upload (§D6 PR-B). Wraps `wp_handle_upload` + `wp_in
 - **Form fields:** `cover_image` (file, **required**) — allowed MIME `image/jpeg|png|webp|gif`; hard cap **8 MiB**; MIME sniffed from contents (browser Content-Type not trusted); multi-file rejected.
 - **Rate limit:** burst seatbelt 5 / 60s / author (before disk write).
 - **Response 200:** `{ "ok": true, "attachment_id": 5120, "url": "https://…/cover.webp", "width": 1600, "height": 900 }` (`attachment_id` → `cover_image_id` on blog create/update).
-- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (missing field; multi-file; PHP upload error; empty; oversized `{max_bytes: 8388608}`; disallowed `{mime}`) · `bcc_rate_limited` 429 · `bcc_unavailable` 503
+- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (missing field; multi-file; PHP upload error; empty; oversized `{max_bytes: 8388608}`; disallowed `{mime}`; unreadable image; dimensions too large `{max_pixels: 24000000}` *(v1.255)*) · `bcc_rate_limited` 429 · `bcc_unavailable` 503
 - **Cache:** `no-store`.
 - **Mapping:** `BlogCoverImageEndpoint::upload` (route `BlogCoverImageEndpoint.php:55`) → `BlogCoverImageWriter::upload`. FE `blog-endpoints.ts:uploadBlogCoverImage`.
 
@@ -9929,7 +9929,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-24 — behaviour change — community activity counts exclude moderated posts; unknown counts are null
+### v1.NEXT — 2026-11-25 — behaviour change — community activity counts exclude moderated posts; unknown counts are null
 
 Ships with bcc-core #194 and bcc-trust #901 (core first). Clients: bcc-frontend #427, already live, treats the nulls.
 
@@ -9937,6 +9937,13 @@ Ships with bcc-core #194 and bcc-trust #901 (core first). Clients: bcc-frontend 
 - **Unknown counts are `null`:** when the moderated posts cannot be read, `posts_last_7d`, `active_members_7d`, `heat`, `heat_label` and `last_activity_at` are `null`, never a guessed `0` or `cold`.
 - **§3.2.4 community `Card`:** the `posts_7d` and `active` stats exclude moderated posts, and are left out of `stats` when the counts are unknown.
 - **Unchanged:** every other field, and the shapes when the counts are known.
+
+### v1.255 — 2026-11-25 — doc correction — `POST /blog/cover-image`'s too-large-dimensions 400 carries `max_pixels`
+
+Contract only. No code or response change.
+
+- **`POST /blog/cover-image`:** an image whose dimensions are too large already answers `bcc_invalid_request` 400 with `data: { "max_pixels": 24000000 }`, and an unreadable image a 400 with no `data`. Neither case was listed. The **Errors** line now lists both.
+- **Clients:** no change. The frontend's cover-upload copy keys on the error code.
 
 ### v1.254 — 2026-11-25 — doc correction — the `GET /me/watching/summary` example matches the response
 
