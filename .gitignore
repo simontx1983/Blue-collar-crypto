@@ -1,11 +1,12 @@
 # Repo-root umbrella .gitignore
 #
 # This umbrella repo intentionally tracks ONLY cross-cutting concerns:
-#   - CLAUDE.md          (workspace-wide guardrails)
-#   - docs/              (canonical contract, registry, prompts)
+#   - CLAUDE.md          (workspace-wide guardrails, Claude Code)
+#   - AGENTS.md          (the same entry point for other agents, e.g. Codex)
+#   - docs/              (canonical contract, registry, prompts, docs/ai/)
 #   - bcc-global-library/ (placeholder for future shared modules)
 #
-# Everything else is either its own git repo (the four bcc-* plugins
+# Everything else is either its own git repo (the three bcc-* plugins
 # under app/public/wp-content/plugins/, and bcc-frontend/) or
 # environment-specific local state (Local by Flywheel files, WordPress
 # core, logs).
@@ -21,6 +22,7 @@
 # Allow only these top-level paths
 !/.gitignore
 !/CLAUDE.md
+!/AGENTS.md
 # README.md was tracked without ever being negated (force-added, like the
 # workflows below). Harmless while it exists — ignore rules don't affect
 # already-tracked files — but it would silently fail to re-add if ever deleted

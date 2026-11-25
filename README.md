@@ -5,7 +5,8 @@ trust engine + REST API, a headless **Next.js** frontend, and on-chain signal in
 
 > **Heads-up for new contributors:** this looks like one repo but is **five separate Git
 > repos** checked out into a WordPress + Next.js layout. The umbrella repo tracks only
-> `docs/`, `.claude/`, `scripts/`, `.github/`, and `bcc-global-library/`; the three WordPress
+> `CLAUDE.md`, `AGENTS.md`, `README.md`, `.mcp.json`, `docs/`, `.claude/`, `scripts/`,
+> `.github/`, and `bcc-global-library/`; the three WordPress
 > plugins (`bcc-core`, `bcc-trust`, `bcc-search`) and `bcc-frontend` are separate, gitignored
 > sibling repos — reassembled only in CI. Start with the setup guide before cloning anything.
 
@@ -36,6 +37,9 @@ per host, and the drift story.
 
 ## Quick links
 
+- [docs/ai/](docs/ai/README.md) — shared knowledge base for AI agents and new engineers
+  (architecture, decisions, conventions, security, deployment, current state, handoff);
+  [AGENTS.md](AGENTS.md) is the entry point for non-Claude agents such as Codex
 - [docs/hosting.md](docs/hosting.md) — three-host topology & site-URL drift
 - [docs/environment.md](docs/environment.md) — `wp-config.php` constants & env vars
 - [docs/ci-topology.md](docs/ci-topology.md) — what CI runs and where
@@ -43,7 +47,8 @@ per host, and the drift story.
 - [docs/domain-seams.md](docs/domain-seams.md) — architecture / domain ownership
 - [docs/glossary.md](docs/glossary.md) — domain language
 - [docs/api-contract-v1.md](docs/api-contract-v1.md) — REST API contract
-- [CLAUDE.md](CLAUDE.md) — repo-wide engineering guardrails (§1–§11)
+- [CLAUDE.md](CLAUDE.md) — repo-wide agent guardrails (§11); the backend §1–§9 rules are in
+  [docs/ai/CONVENTIONS.md](docs/ai/CONVENTIONS.md)
 
 ## Layout (on disk)
 

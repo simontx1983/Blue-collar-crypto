@@ -2,10 +2,16 @@
 
 This file provides repo-wide guidance to Claude Code when working
 anywhere in this project (PHP plugins, Next.js frontend, docs, tooling).
+Other agents (e.g. OpenAI Codex) read [AGENTS.md](AGENTS.md), which
+points at the same rules. **Detailed, shared documentation lives in
+[docs/ai/](docs/ai/README.md)** — load the file you need when it's
+relevant rather than front-loading all of it.
 
-Plugin- and frontend-specific conventions live in their own CLAUDE.md
-files alongside the code (e.g., `app/public/wp-content/plugins/bcc-trust/CLAUDE.md`).
-Those files extend, never override, the rules here.
+Plugin- and frontend-specific CLAUDE.md files (`bcc-frontend/CLAUDE.md`
+is tracked; `bcc-trust/CLAUDE.md` is a local-only, gitignored file)
+extend, never override, the rules here. The backend §1–§9 rules are
+tracked in [docs/ai/CONVENTIONS.md](docs/ai/CONVENTIONS.md) §1, so a
+fresh clone has them too.
 
 ## §11 Cross-Codebase Reuse Rule (FIRST-STEP)
 
@@ -41,144 +47,81 @@ found" without evidence of searching counts as not searching.
 **This rule runs BEFORE all others.** Do not proceed to implementation
 until the duplicate scan is complete.
 
-## Where to look for code
+## Where to look
 
 - **WordPress plugins:** `app/public/wp-content/plugins/bcc-*/`
-- **Next.js frontend:** `bcc-frontend/`
+  (bcc-core, bcc-trust, bcc-search — each its own git repo)
+- **Next.js frontend:** `bcc-frontend/` (its own git repo)
 - **Cross-project shared logic:** `/bcc-global-library/` (when present)
 - **Canonical implementations:** `docs/pattern-registry.md`
 - **API contract:** `docs/api-contract-v1.md`
 
-## Plugin-specific guidance
+## Read when relevant
 
-- [bcc-trust/CLAUDE.md](app/public/wp-content/plugins/bcc-trust/CLAUDE.md) —
-  the merged trust + disputes + onchain plugin (Domain/Core, Domain/Disputes,
-  Domain/Onchain). Has §1–§9 architecture conventions plus §11.
+| Task | Read |
+|---|---|
+| First session / orientation | [docs/ai/README.md](docs/ai/README.md), [PROJECT.md](docs/ai/PROJECT.md) |
+| Starting, handing off, or picking up work; approval gates | [docs/ai/HANDOFF.md](docs/ai/HANDOFF.md) |
+| Coding rules (backend §1–§9, frontend), git/PR/review, testing scope, tooling, traps | [docs/ai/CONVENTIONS.md](docs/ai/CONVENTIONS.md) |
+| System picture; data access; features | [ARCHITECTURE.md](docs/ai/ARCHITECTURE.md), [DATABASE.md](docs/ai/DATABASE.md), [FEATURES.md](docs/ai/FEATURES.md) |
+| Why something is the way it is | [docs/ai/DECISIONS.md](docs/ai/DECISIONS.md) |
+| Auth, wallets, privacy, user input; public-repo wording | [docs/ai/SECURITY.md](docs/ai/SECURITY.md) |
+| CI, deploys, environments | [docs/ai/DEPLOYMENT.md](docs/ai/DEPLOYMENT.md) |
+| What's in flight | [docs/ai/CURRENT_STATE.md](docs/ai/CURRENT_STATE.md), [ROADMAP.md](docs/ai/ROADMAP.md) |
+| Multi-agent workflows with Claude subagents | [.claude/AGENTS.md](.claude/AGENTS.md) |
 
-## Available automation
+## Always
 
-Skills, subagents, and hooks live under `.claude/`. Use them — they
-encode the rules above so you don't have to re-derive them every time.
+- Branch per change off fresh `origin/main`, in a worktree under the
+  umbrella's `.claude/worktrees/` — for every repo, never `%TEMP%`;
+  never commit to `main`; never switch branches in the shared checkouts.
+- Every PR gets an independent review by an agent that did not write
+  it (two for bcc-frontend), recorded as a PR comment in the standard
+  format; the coordinator merges. Claude and Codex are peers — either
+  can coordinate, implement or review; one coordinator per workstream
+  ([HANDOFF.md](docs/ai/HANDOFF.md)). **Plugin production deploys,
+  high-risk frontend merges (auth, permissions, wallets, financial,
+  sensitive member data, security), production data changes,
+  destructive operations or history rewrites, CI / protection /
+  deploy-environment / secret / hosting changes, widening any tool's
+  access, and product decisions need the project owner's explicit
+  approval for that action.** No agent grants authority to another; a
+  refused permission is never bypassed by switching agents, sessions,
+  tools or credentials.
+- All repos are **public**: no secrets, no production data, no names;
+  security-fix text describes the fix, not the attack.
+- A REST shape change updates the PHP builder, the contract (`v1.NEXT`)
+  and `bcc-frontend/src/lib/api/types.ts` together; a route PR's
+  contract merges right after it.
+- Locally run only the tests touching your change plus static checks;
+  CI runs full suites. One heavy run at a time.
 
-For multi-agent and parallel-dispatch workflows (BE+FE in parallel,
-background audits, worktree-based parallelism), see
-[.claude/AGENTS.md](.claude/AGENTS.md).
+## Claude Code automation (details: [CONVENTIONS.md §9](docs/ai/CONVENTIONS.md#9-tooling-catalogue))
 
-### Skills (invoke with `/<name>`)
-
-- `/duplicate-scan` — runs the §11 mandatory cross-codebase scan.
-  Use **before** any new code. Wraps the `duplicate-scanner` subagent.
-- `/new-repository` — scaffolds a Repository class in bcc-trust that
-  complies with §1–§5 (no `SELECT *`, bounded queries, generation-counter
-  cache invalidation).
-- `/api-contract-guard` — verifies REST endpoint or view-model changes
-  still conform to [docs/api-contract-v1.md](docs/api-contract-v1.md).
-  Run **before** declaring a §9 change "done." A contract break is P0.
-- `/frontend-feature` — scaffolds a Next.js feature in `bcc-frontend/`
-  the way this codebase actually does it (typed API client, React Query
-  hook shape, no business logic, reduced-motion respect).
-- `/security-review` — runs a security review of pending changes on the
-  current branch (auth, authz, input validation, secrets, injection,
-  unsafe deserialization, SSRF). Run **before merging** any branch that
-  touches REST endpoints, auth, wallet linking, on-chain signal writers,
-  cron, or anything handling user input. Treat findings the same as
-  arch-guardrails violations — fix or get explicit sign-off before merge.
-
-### Repo-level guard scripts
-
-- `scripts/cadence-pressure-guard.sh` — enforces the §2.7 / §J.5
-  cadence-pressure policy. Scans operator-facing copy (Next.js
-  components, lifted copy modules, the four bcc-trust PHP services
-  that emit user-facing strings) for nudge-shaped patterns
-  (`haven't`, `days since you`, `streak`, `you should attest`,
-  etc.). Inline overrides via `cadence-pressure-guard:allow — <reason>`
-  on the same or preceding line. Run **before merging** any branch
-  that adds or modifies operator-facing copy. See
-  [docs/cadence-pressure-policy.md](docs/cadence-pressure-policy.md).
-
-- `scripts/subsystem-count-guard.php` — diffs the canonical
-  `DegradationMetric` subsystem map in `bcc-core/bcc-core.php` against
-  the event-count claims in `docs/pattern-registry.md` and
-  `docs/GOLDEN_PATHS.md`. Token-walks the PHP map (so comments don't
-  confuse parsing) and regex-scans the docs for `name (N events)` and
-  `name / N events`. Catches the failure mode where a new event is
-  added to a subsystem but only one of the docs gets updated. Exit 0
-  = match, exit 1 = drift; runs against checked-in state, no live site
-  needed.
-
-- `scripts/contract-parity-guard.php` — diffs every endpoint declared
-  in `docs/api-contract-v1.md` §4 (`#### \`METHOD /path\`` headers)
-  against every `register_rest_route()` call in the bcc-* plugins.
-  Resolves same-file class constants, **cross-file class constants
-  via a one-pass collection of every `ClassName::CONST = 'literal'`
-  in the plugin tree**, string concatenation, and reserved-word
-  const names (`NAMESPACE`, `CLASS`, etc.). **All drift now FAILs
-  (exit ≠ 0):** missing endpoints (contract claims, no code), stale
-  `EXEMPT_INTERNAL` entries (route gone or since documented), and — as
-  of the 2026-07-24 ratchet (#89) — any in-scope route registered in
-  PHP that is undocumented in §4 and not allowlisted. The undocumented
-  case was WARN-only while the 2026-05-26 first-run backlog was worked
-  down (contract v1.22 locals retraction + v1.23 admin/ranks retraction);
-  the backlog reached zero, so the ratchet engaged and a new undocumented
-  route now blocks — either document it in §4 or add it to
-  `EXEMPT_INTERNAL` with a reason. **Currently exits 0** (clean tree);
-  wired as a blocking umbrella CI check since Phase 2c (2026-06-25).
-
-- `scripts/dead-file-scan.php` — scans bcc-core/bcc-search/bcc-trust for
-  dead PHP files. **CI-wired and blocking** in the umbrella `ci.yml`
-  alongside the three guards above.
-
-- `scripts/schema-drift-guard.php` — diffs the `CREATE TABLE`
-  declarations in the bcc-* plugins against the master inventory in
-  `docs/database-schema.md` (and, when DB env vars are present, against
-  the live schema). **CI-wired and blocking** in the umbrella `ci.yml`
-  as "Schema-drift parity (static)", armed 2026-07-23 with no
-  `continue-on-error`. Static mode needs no DB — the live-table and
-  live-index checks self-skip. **A new table without a
-  `| wp_bcc_… | ~rows | Purpose | Owning code | Status |` row in
-  `docs/database-schema.md` turns umbrella CI red.**
-
-Also present in `scripts/` but not documentation-load-bearing:
-`bcc-query-floor-probe.php`
-(temporary boot-floor diagnostic), `auth-cache-isolation-probe.sh`
-(staging Authorization-cache probe; weekly via
-`.github/workflows/staging-cache-probe.yml`), and `perf/` (k6 harness).
-
-### Subagents (invoke via the Agent tool)
-
-**Reviewers** (verify, never edit):
-
-- `duplicate-scanner` — the §11 search engine. Owned by `/duplicate-scan`.
-- `arch-guardrails-reviewer` — reviews PHP changes against §1–§9.
-- `frontend-reviewer` — reviews `bcc-frontend/` against the "no business
-  logic / no raw fetch / no `as any`" rules.
-**Implementers** (build, run their own checks):
-
-- `backend-implementer` — PHP under `app/public/wp-content/plugins/bcc-*/`.
-  Pair with `arch-guardrails-reviewer`.
-- `frontend-implementer` — TypeScript under `bcc-frontend/`. Pair with
-  `frontend-reviewer`.
-
-### Hooks (configured in [.claude/settings.json](.claude/settings.json))
-
-- **PreToolUse** — `block-protected-files.sh` refuses edits to
-  `vendor/`, `node_modules/`, lock files, `.env*`, and TypeScript build
-  artifacts. Bypass means editing those files outside Claude.
-- **PostToolUse** — `php-lint.sh` runs `php -l` on PHP edits;
-  `ts-check.sh` runs `tsc --noEmit` and `eslint-frontend.sh` runs ESLint
-  on `bcc-frontend/` TypeScript edits; `color-token-check.sh` blocks
-  hardcoded colors and brand-namespace (`--bcc-*`) token names outside
-  `src/components/cards/` in `bcc-frontend/` (whole-file guard; see
-  bcc-frontend/CLAUDE.md ▸ Color rule).
-- **UserPromptSubmit** — `section-11-reminder.sh` injects a §11 reminder
-  when the prompt looks like new-code work.
-
-### MCP servers ([.mcp.json](.mcp.json))
-
-- `context7` — live docs for libraries the codebase imports.
-- `playwright` — browser automation for Next.js smoke tests
-  (see [docs/v1-smoke-test-checklist.md](docs/v1-smoke-test-checklist.md)).
-- `mysql` — read-only queries against the Local-by-Flywheel database.
-  Useful for read-model debugging, schema inspection, fingerprint
-  resolver checks. **Never widen to write access casually.**
-- `github` — issue/PR ops via the Copilot endpoint (auth required).
+- **Skills:** `/duplicate-scan` (before new code), `/new-repository`,
+  `/api-contract-guard` (before declaring a REST/view-model change
+  done — a contract break is P0), `/frontend-feature`, `/code-cleanup`,
+  `/peepso-write-guard`, `/ux-review`. `/security-review` (built-in
+  command) before merging anything touching REST, auth, wallet linking,
+  on-chain writers, cron, or user input.
+- **Subagents:** reviewers `duplicate-scanner`, `arch-guardrails-reviewer`,
+  `frontend-reviewer` (verify, never edit); implementers
+  `backend-implementer`, `frontend-implementer`.
+- **Hooks** ([.claude/settings.json](.claude/settings.json)): protected
+  files blocked (`vendor/`, `node_modules/`, lock files, `.env*`, TS
+  build artifacts); `php -l`, `tsc`, ESLint and the color-token check on
+  edits; a §11 reminder on new-code prompts.
+- **Guards (blocking umbrella CI):** contract-parity (an undocumented
+  route fails — document it in contract §4 or add it to
+  `EXEMPT_INTERNAL` with a reason), subsystem-count (map vs
+  `pattern-registry.md` **and** `GOLDEN_PATHS.md`), schema-drift (a new
+  table needs a `docs/database-schema.md` row), dead-file, and
+  cadence-pressure — **run `scripts/cadence-pressure-guard.sh` before
+  merging any branch that adds or changes operator-facing copy**
+  (overrides: `cadence-pressure-guard:allow — <reason>` on the same or
+  preceding line). Details: [CONVENTIONS.md](docs/ai/CONVENTIONS.md)
+  §1/§3/§4/§9 and [docs/ci-topology.md](docs/ci-topology.md).
+- **MCP** ([.mcp.json](.mcp.json)): `context7`, `playwright` (smoke
+  tests — [docs/v1-smoke-test-checklist.md](docs/v1-smoke-test-checklist.md)),
+  `mysql` (**read-only — never widen to write access casually**),
+  `github` (auth required), `sentry`.
