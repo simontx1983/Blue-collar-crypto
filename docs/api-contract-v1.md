@@ -7444,7 +7444,7 @@ Multipart blog cover-image upload (§D6 PR-B). Wraps `wp_handle_upload` + `wp_in
 - **Form fields:** `cover_image` (file, **required**) — allowed MIME `image/jpeg|png|webp|gif`; hard cap **8 MiB**; MIME sniffed from contents (browser Content-Type not trusted); multi-file rejected.
 - **Rate limit:** burst seatbelt 5 / 60s / author (before disk write).
 - **Response 200:** `{ "ok": true, "attachment_id": 5120, "url": "https://…/cover.webp", "width": 1600, "height": 900 }` (`attachment_id` → `cover_image_id` on blog create/update).
-- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (missing field; multi-file; PHP upload error; empty; oversized `{max_bytes: 8388608}`; disallowed `{mime}`) · `bcc_rate_limited` 429 · `bcc_unavailable` 503
+- **Errors:** `bcc_unauthorized` 401 · `bcc_invalid_request` 400 (missing field; multi-file; PHP upload error; empty; oversized `{max_bytes: 8388608}`; disallowed `{mime}`; unreadable image; dimensions too large `{max_pixels: 24000000}` *(v1.NEXT)*) · `bcc_rate_limited` 429 · `bcc_unavailable` 503
 - **Cache:** `no-store`.
 - **Mapping:** `BlogCoverImageEndpoint::upload` (route `BlogCoverImageEndpoint.php:55`) → `BlogCoverImageWriter::upload`. FE `blog-endpoints.ts:uploadBlogCoverImage`.
 
@@ -9926,6 +9926,13 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-25 — doc correction — `POST /blog/cover-image`'s too-large-dimensions 400 carries `max_pixels`
+
+Contract only. No code or response change.
+
+- **`POST /blog/cover-image`:** an image whose dimensions are too large already answers `bcc_invalid_request` 400 with `data: { "max_pixels": 24000000 }`, and an unreadable image a 400 with no `data`. Neither case was listed. The **Errors** line now lists both.
+- **Clients:** no change. The frontend's cover-upload copy keys on the error code.
 
 ### v1.254 — 2026-11-25 — doc correction — the `GET /me/watching/summary` example matches the response
 
