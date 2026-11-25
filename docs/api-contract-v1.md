@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.255 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.258 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1356,7 +1356,7 @@ Locked field rules:
     { "key": "access",   "label": "Access",     "value": "Public",         "format": "text" }
   ]
   ```
-  `posts_7d` is the §4.7.1 activity-heat `posts_last_7d` number (already resolved by both producers — no extra query). *(v1.65)* `active` is the count of **distinct authors** who posted in that same 7-day window (`getActivityHeat` `actives`, riding free on the heat aggregate); `members` rides in the nameplate slot other kinds use for watchers, and `access` is a **server-rendered** text word (`Public` / `Private` — precedence matches the front-face standing strip; §A2 — the client never derives the gate). Communities have no trust axis, so Trust/Reviews/Vouches never appear here.
+  `posts_7d` is the §4.7.1 activity-heat `posts_last_7d` number (already resolved by both producers — no extra query). *(v1.65)* `active` is the count of **distinct authors** who posted in that same 7-day window (`getActivityHeat` `actives`, riding free on the heat aggregate); `members` rides in the nameplate slot other kinds use for watchers, and `access` is a **server-rendered** text word (`Public` / `Private` — precedence matches the front-face standing strip; §A2 — the client never derives the gate). Communities have no trust axis, so Trust/Reviews/Vouches never appear here. *(v1.257)* Both counts exclude moderated posts. When those cannot be read (the §4.7.1 block's values are `null`), the `posts_7d` and `active` stats are left out of `stats`; `members` and `access` stay.
 - **Permissions:** the full §3.2 key set (`can_watch`, `can_review`, `can_open_dispute`, `can_endorse`, `can_post_as_entity`, `can_edit_bio`, `can_edit_image`, `can_vouch`, `can_stand_behind`, `can_report`), every entry `{ allowed: false, unlock_hint: null, reason_code: "not_applicable" }` for ALL viewers — anon and authed alike. Communities use JOIN (gated on the group detail's own `permissions.can_join`), never the card verbs; signing in unlocks nothing on the card itself, so no `signin_required` copy is emitted.
 - **Always-null/constant envelope fields:** `member_dossier: null`, `chains: null`, `claim_target: null`, `onchain_signals: null`, `social_proof: null`, `viewer_attestation: null`, `viewer_has_reviewed: false`, `viewer_has_endorsed: false`, `endorse_unlock_hint: null`, `is_claimed: true`.
 - **`community_dossier`** — the community-only block, mirror of how `member_dossier` works: ALWAYS present on the wire, non-null on community cards, `null` on every other kind (and `member_dossier` is `null` here). Powers the community back face (`collection_stats` replaces FlippableNftCard's bespoke stats display):
@@ -2073,52 +2073,44 @@ Issues a single-use challenge nonce for wallet signing, for a **signed-in** memb
 Verifies a signed nonce and links the wallet to the authenticated user.
 
 - **Auth:** Bearer (required — must already have a session via email signup)
-- **Body:**
+- **Body** *(corrected in v1.256, F-524)*:
   ```json
   {
     "wallet_address": "cosmos1abcdef…",
-    "chain": "cosmos",
-    "nonce": "8f3a7b2e9c1d4f6a",
     "signature": "<hex or base64 signature>",
-    "public_key": "<hex pubkey, optional for chains where signature includes pubkey>"
+    "wallet_type": "user",
+    "label": "",
+    "extra": { "pub_key": "<base64 pubkey, Cosmos only>" }
   }
   ```
-- **Response 201 (first-ever wallet link):**
+  `wallet_address` and `signature` are required. `wallet_type` (default `"user"`) and `label` (default `""`) are optional. There is no `chain` or `nonce` field: the chain and the signed message come from the `GET /auth/nonce` challenge stored for this member and `wallet_address`. `extra` is as for `POST /auth/wallet-login`. There is no top-level `public_key` (or `pub_key`); one sent there is ignored.
+- **Response 200** *(corrected in v1.256, F-524)*:
   ```json
   {
-    "wallet": {
-      "chain": "cosmos",
-      "address_short": "cosmos…q3kf",
-      "verified_at": "2026-04-27T14:24:00Z"
-    },
-    "user": { "...": "updated User view-model (own)" },
-    "celebration": {
-      "kind": "mid",
-      "label": "Wallet linked.",
-      "icon": "wallet-link",
-      "rarity_tint": null
-    }
+    "wallet_link_id": 7,
+    "chain_slug": "cosmos",
+    "chain_name": "Cosmos Hub",
+    "address": "cosmos1abcdef…",
+    "address_short": "cosmos…q3kf",
+    "wallet_type": "user",
+    "verified": true
   }
   ```
-- **Response 201 (subsequent wallet link):**
-  ```json
-  {
-    "wallet": {
-      "chain": "ethereum",
-      "address_short": "0xab58…ec9b",
-      "verified_at": "2026-04-27T14:24:00Z"
-    },
-    "user": { "...": "updated User view-model (own)" },
-    "celebration": null
-  }
-  ```
-- **Errors:** `bcc_invalid_request` (bad signature, expired nonce, already-linked), `bcc_unauthorized`
-- **Rate limit:** 5/hour/user
+  The same shape for every link, the first one included: no `user`, no `celebration`. `address` is the address as stored (for Polkadot, the canonical prefix-0 SS58 form). `wallet_type` echoes the request (default `"user"`).
+- **Errors** *(corrected in v1.256, F-524)*:
+  - `bcc_unauthorized` 401 — not signed in.
+  - `bcc_invalid_request` 400 — `wallet_address` or `signature` missing; no live challenge for this address (expired, never issued, or already used: request a new one from `GET /auth/nonce`); the challenge's chain no longer exists.
+  - `bcc_conflict` 409 — the wallet is already linked, to this account or to another one.
+  - `bcc_forbidden` 403 — the signature did not verify.
+  - A suspended account gets `403` `account_suspended` (`503` `bcc_unavailable` when that can't be read), as for every account-identity write (see `GET /auth/session`).
+  - `bcc_rate_limited` 429.
+- **Rate limit:** 5 per minute per member (the `wallet_verify` bucket) *(corrected in v1.256; this said 5/hour)*.
 - **Cache:** `Cache-Control: no-store`
+- **Side effects:** a `wallet_linked` audit row, and an account-security email to the member (a linked wallet can sign in).
 
-**Celebration rule:** `celebration` is non-null **only on the user's first successful wallet link**, tracked via `wp_usermeta.bcc_first_wallet_link` (set true after first emission, per §O1.2 first-occurrence pattern). All subsequent wallet links return `celebration: null` regardless of chain.
+**No celebration** *(corrected in v1.256, F-524)*: the response carries none, on the first link or any other. The first-link celebration described in §7 (decision 9) was never built; nothing writes `wp_usermeta.bcc_first_wallet_link`.
 
-**Mapping:** verifier → existing `bcc-core` `WalletVerifier`. Storage → `bcc_wallet_links` table. Nonce → `bcc-core` challenge service. First-link flag → `wp_usermeta.bcc_first_wallet_link`.
+**Mapping:** verifier → existing `bcc-core` `WalletVerifier`. Storage → `bcc_wallet_links` table. Nonce → the `GET /auth/nonce` challenge for (member, address): peeked to resolve the chain, consumed atomically when the link is made.
 
 **Supported `chain_type` values:** `evm` (MetaMask / any EIP-1193 EVM wallet), `solana` (Phantom), `cosmos` (Keplr — ADR-036 secp256k1; covers Cosmos Hub / Osmosis / Injective / Juno / THORChain — Stargaze removed v1.30 with the chain's 2026 shutdown), `polkadot` (Polkadot.js / Talisman / SubWallet / Nova — sr25519 default, ed25519 / ecdsa accepted). Polkadot signature verification is delegated to the bcc-frontend Next.js app's `@polkadot/util-crypto` via an internal authenticated route (PHP has no native schnorrkel); same trust domain, same `WalletVerifier::verify` surface to callers.
 
@@ -2155,10 +2147,10 @@ Verifies a signed nonce, looks up the BCC user the wallet is linked to, mints + 
   {
     "wallet_address": "cosmos1abcdef…",
     "signature": "<base64 or hex signature>",
-    "extra": { "public_key": "<base64 pubkey, Cosmos only>" }
+    "extra": { "pub_key": "<base64 pubkey, Cosmos only>" }
   }
   ```
-  `extra` is an optional object passed verbatim to `WalletVerifier::verify` — Cosmos requires `public_key` here; ETH/Solana ignore it.
+  `extra` is an optional object passed verbatim to `WalletVerifier::verify` — Cosmos requires `pub_key` here (the base64 public key Keplr returns with the signature); ETH, Solana and Polkadot ignore it. `chain_id` may also be sent (the frontend sends the on-chain id) and is ignored: ADR-036 signs over an empty `chain_id`. *(Corrected in v1.256, F-524: this said `public_key`, a key the server has never read.)*
 - **Response 200:**
   ```json
   {
@@ -2196,10 +2188,10 @@ Verifies a signed nonce, creates a new user (placeholder email if none supplied)
     "handle": "alice",
     "display_name": "Alice",
     "email": "alice@example.com",
-    "extra": { "public_key": "<base64 pubkey, Cosmos only>" }
+    "extra": { "pub_key": "<base64 pubkey, Cosmos only>" }
   }
   ```
-  `handle` is required (§B6 rules: 3–20 chars, lowercase + digits + hyphens). `display_name` and `email` are optional. The account's email is always a deterministic placeholder at first; a supplied `email` is held **pending** until it is verified *(since v1.182, F-294; see "Email state")*.
+  `extra` is as for `POST /auth/wallet-login` (Cosmos: `pub_key`; corrected in v1.256, F-524). `handle` is required (§B6 rules: 3–20 chars, lowercase + digits + hyphens). `display_name` and `email` are optional. The account's email is always a deterministic placeholder at first; a supplied `email` is held **pending** until it is verified *(since v1.182, F-294; see "Email state")*.
 - **Response 201:**
   ```json
   {
@@ -3282,47 +3274,41 @@ columns→`*_at_watch`) via a data-preserving migration. Canonical celebration c
 
 #### `POST /bcc/v1/pages/:id/claim`
 
-Claims a validator/creator/project page using a wallet signature (§B5, §N8).
+Claims a validator or collection page with a wallet the member has **already linked and verified** (§B5, §N8). This route takes no signature: the wallet was proven when it was linked (`POST /auth/wallet-link`). *(Body, response and mapping corrected in v1.258; they described a signature flow this route never implemented.)*
 
-- **Auth:** Bearer (the user must be signed in; the wallet does the proving)
+- **Auth:** Bearer (the member must be signed in)
 - **Path:** `id` (the `peepso_pages` ID)
-- **Body:**
+- **Body** (the shape §1's card action descriptor already gives):
   ```json
-  {
-    "wallet_address": "cosmosvaloper1abc…",
-    "chain": "cosmos",
-    "nonce": "8f3a7b2e9c1d4f6a",
-    "signature": "<hex>",
-    "public_key": "<hex, optional>"
-  }
+  { "entity_type": "validator", "entity_id": 47 }
   ```
-- **Response 201 (success):**
+  `entity_type` is `validator` or `collection`; `entity_id` is that entity's id, which must be the one bound to this page. There are no wallet, chain, nonce, signature or key fields.
+- **Response 200:**
   ```json
   {
-    "claimed": true,
+    "claim_id": 311,
     "page_id": 1842,
-    "claimed_by_user_id": 42,
-    "card": { "...": "updated Card view-model with is_claimed: true" },
-    "celebration": {
-      "kind": "heavy",
-      "label": "Page claimed. The stream is yours.",
-      "icon": "claim-stamp",
-      "rarity_tint": null
-    },
-    "next_steps": [
-      { "kind": "edit_bio",      "label": "Write your bio",       "href": "/v/blacksmith-node?compose=bio" },
-      { "kind": "first_post",    "label": "Post your first update", "href": "/v/blacksmith-node?compose=status" }
-    ]
+    "entity_type": "validator",
+    "entity_id": 47,
+    "role": "operator",
+    "is_primary": true,
+    "status": "verified",
+    "message": "Verified as operator.",
+    "claimed_by": { "user_id": 42, "handle": "alice" }
   }
   ```
+  - `status`: `verified` (this request made the claim) or `already_verified` (the member already held the verified claim; nothing new is written, and `message` says *"You are already the verified operator."*).
+  - `role`: `operator` (validator) or `creator` (collection).
+  - `claimed_by`: the claimer's public identity.
+  - There is no `card`, `celebration` or `next_steps`: refetch the card for `is_claimed`.
 - **Errors:** the complete set this route can emit, each with its HTTP status. Corrected and completed in **v1.86** against the implementation; see the changelog for what was wrong and why it mattered.
   - `bcc_unauthorized` **401** — not signed in.
-  - `bcc_invalid_request` **400** — missing or malformed `page_id` or `entity_id`, or an `entity_type` outside the accepted set.
-  - `bcc_forbidden` **403** — four distinct causes behind one code, each with its own message and, **since v1.137, a machine-readable `error.data.reason`** a client MUST branch on instead of the message:
+  - `bcc_invalid_request` **400** — missing or malformed `page_id` or `entity_id`, or an `entity_type` outside the accepted set (`validator`, `collection`).
+  - `bcc_forbidden` **403** — six distinct causes behind one code, each with its own message and, **since v1.137, a machine-readable `error.data.reason`** a client MUST branch on instead of the message:
     - `suspended` — the account is suspended (`Your account is suspended.`). **Final**: no wallet or retry will help.
     - `entity_not_bound` — the entity is **not bound to this page** (`That entity is not attached to this page.`).
     - `not_claimable` *(v1.221, F-515)* — the validator **cannot be claimed at all**: BCC cannot prove an operator on its chain from the data it stores. `error.message` is the card's `claim_target.unclaimable_hint`, and `error.data.unclaimable_reason_code` is its `unclaimable_reason_code`. **Final**: no wallet or retry will help. Decided before any wallet check, and records nothing.
-    - `not_operator` — the caller's connected wallet **does not match the entity's operator** (§B5 — operator address + consensus pubkey only; delegators excluded). The one cause where connecting a different wallet can help.
+    - `not_operator` — the caller's connected wallet **does not match the entity's operator** (§B5 — the operator address only; delegators excluded; corrected in v1.258, it said "+ consensus pubkey"). The one cause where connecting a different wallet can help.
     - `holder_not_owner` *(new in v1.137)* — the wallet only **holds** the collection (`Holding an NFT doesn't make you this collection's creator.`). Only an **operator** or **creator** can claim a page; a holder result records nothing.
     - `creator_unverifiable` *(v1.173, F-339)* — a **Solana** collection whose creator the chain cannot prove (`We can't confirm this collection's creator on-chain.`): its update authority is renounced (none listed, or handed to the System Program or the incinerator), only a delegated (non-`full`) scope is listed, or the collection mint is not found. **Final**: retrying or another wallet won't help. Records nothing.
     ⚠ **This replaces `bcc_permission_denied`, which this route has never emitted.** Measured against the implementation: the endpoint produces zero `bcc_permission_denied`, and its 403 is `bcc_forbidden`. Same defect class as the `/members` `bcc_validation` line corrected in v1.80 — a documented code no producer emits is a code a client would wait forever to see.
@@ -3333,15 +3319,16 @@ Claims a validator/creator/project page using a wallet signature (§B5, §N8).
   - `bcc_unavailable` **503 (new in v1.86)** — the claim could not be completed for a **server-side, transient** reason: an advisory-lock timeout (two submissions in quick succession), a failed write, or a database error. **Retryable** — a client may re-submit the same claim unchanged, and should offer that rather than suggesting the wallet is wrong.
     - **(v1.173, F-339)** with `error.data.reason: "verification_unavailable"` — a **Solana** collection whose creator could not be read this time (the on-chain provider failed, or answered something unreadable): `We couldn't verify this collection's creator on-chain right now. Try again in a few minutes.` **Retryable**, and never a statement about the wallet. The other 503 causes carry no `reason`.
   - ⚠⚠ **Why the last two are a behaviour change and not just new documentation.** Both causes previously fell through to the **403** above, so a server fault and a missing entity both told a legitimate operator that *their wallet does not match the validator*. The plausible reaction to that message is to unlink a correct wallet or give up, and it left support with nothing to diagnose. A client that treats 403 as "wallet is wrong" MUST now distinguish these: 503 is retryable, 404 is not, and neither says anything about the wallet.
-- **Rate limit:** 3/hour/user, 10/day/IP, **30 attempts/day/page** (caps total claim attempts on a single page across all users to prevent attempt flooding per §B5)
-- ⚠⚠ **ERRATUM, OPEN (noted v1.86, NOT fixed here): the Body and Response blocks above do not describe this endpoint.** They show a signature-bearing body (`wallet_address`, `chain`, `nonce`, `signature`, `public_key`) and a **201**. The implementation reads **`entity_type` + `entity_id`** and proves ownership from the caller's **already-linked, already-verified** wallet — it takes no signature on this route — and the success path returns **200**. The accurate request shape is the one this contract already gives in §1's card action descriptor: `{ "entity_type": "validator", "entity_id": 47 }`. So the two halves of this document disagree, and §1 is the half that matches the code. **Send the §1 shape.** Only the error list above was brought in line with the implementation in v1.86; correcting the Body, the status code and the Mapping bullets is a larger, separate change, deliberately not bundled with an error-code correction.
+- **Rate limit:** **10 per minute per member** (the `claim_entity` bucket). *(Corrected in v1.258: this listed 3/hour/user, 10/day/IP and 30 attempts/day/page, none of which the route enforces; see §7 decision 8.)*
+- **Erratum resolved (v1.258):** the v1.86 erratum said the Body and Response blocks above described a signature flow this endpoint does not implement. They, the status code, the rate limit and the Mapping below now describe the implementation.
 - **Cache:** `Cache-Control: no-store`
-- **Mapping:**
-  - Verifies signature via `bcc-core` `WalletVerifier`
-  - Checks wallet against the page's claim key set: **operator address + consensus pubkey ONLY** (§B5 — delegators excluded)
-  - Single-claim-wins via unique index on `peepso_pages.claimed_by` (§B5 race rule)
-  - Emits `bcc_page_claimed` (§A3 async)
-  - Lost-wallet edge case (§B5): if the page is in `claim_recovery_pending` state, this endpoint returns 409 with a recovery hint — the user must use the admin recovery flow.
+- **Mapping** *(corrected in v1.258)*: `PagesEndpoint::claim` → `ClaimService::claim`.
+  - In order: signed in, rate limit, not suspended, a published `peepso-page` (else 404), the entity bound to this page (else 403 `entity_not_bound`).
+  - If the member already holds the verified claim → `already_verified`, as above.
+  - Otherwise the member's **verified** linked wallets on the entity's chain are matched. **Validator:** a wallet whose address is the validator's operator address (Cosmos: the same bytes under the account and `valoper` prefixes; delegators never match). **Collection:** the contract's owner or creator (a holder is refused, `holder_not_owner`).
+  - Single claim wins: a validator claim goes through `ValidatorRelationshipService::claimByWallet`, a collection claim through `ClaimRepository::createExclusiveClaim`, and a page row mirrors either one.
+  - Emits `bcc_page_claimed` under a per-page advisory lock, and writes a `page_claimed` audit row.
+  - This route checks no recovery-pending state.
 
 #### `POST /bcc/v1/pages/:id/avatar`
 
@@ -3613,6 +3600,8 @@ Server-authoritative copy. The frontend MUST render `label` verbatim — never a
   riding the heat aggregate — no extra query). `0` when the window is empty or
   the block is built on a degraded/anon default path. Emitted in **every**
   §4.7.1 `activity` block (holder groups, discovery, communities, halls).
+- **Moderated posts** *(v1.257)*: every number here excludes moderated posts. A post that moderation has hidden counts toward none of `posts_last_7d`, `active_members_7d`, `last_activity_at` or `heat`.
+- **Unknown** *(v1.257)*: when the moderated posts cannot be read, `posts_last_7d`, `active_members_7d`, `heat` and `heat_label` are `null`, and so is `last_activity_at`: when the moderated posts cannot be read, the values are null, never a guessed `0` or `cold`. Clients show no number and no heat label then.
 
 #### `GET /bcc/v1/me/holder-groups`
 
@@ -9811,7 +9800,7 @@ The following schema additions are **referenced but not implemented** by Phase 1
 - `wp_usermeta.bcc_handle` (§B6)
 - `wp_usermeta.bcc_primary_hall_group_id` — singleton pointer to the user's primary Hall; membership ledger itself stays in PeepSo's `peepso_group_members` per the single graph rule (§E3)
 - `wp_usermeta.bcc_ui_familiar` (§N5 — boolean for UI dual-label drop-off only)
-- `wp_usermeta.bcc_first_review`, `bcc_first_vouch`, `bcc_first_dispute`, `bcc_first_hall_join`, `bcc_first_wallet_link` (§O1.2)
+- `wp_usermeta.bcc_first_review`, `bcc_first_vouch`, `bcc_first_dispute`, `bcc_first_hall_join`, `bcc_first_wallet_link` (§O1.2; `bcc_first_wallet_link` is unused, see §7 decision 9)
 - `wp_usermeta.bcc_privacy_*` keys (§K2)
 - `wp_usermeta.bcc_highlights_dismissed_until` (§O2)
 
@@ -9838,8 +9827,8 @@ All ten open items locked **2026-04-27**. Phase 1 implementation may begin.
 5. **Anonymous `GET /me/highlights`** — **401 `bcc_unauthorized`.** Frontend hides the entire HighlightStrip for unauthenticated viewers. See §3.4.
 6. **Cursor format** — **base64-encoded JSON of `(timestamp, id, rank_score_at_emit)`.** Preserves scroll order across re-ranks. Opaque to the client; never decode. See §1.5.
 7. **Wallet `address_short`** — **`<first-6>…<last-4>` for all chains.** Sliced from the full chain-prefixed address. Server-only writer; frontend never re-truncates. See §1.7.
-8. **Claim rate limit per page** — **30 attempts/day/page** (in addition to 3/hour/user and 10/day/IP). Prevents attempt flooding. See §4.6.
-9. **Wallet-link celebration** — **first link only**, tracked via `wp_usermeta.bcc_first_wallet_link` (§O1.2 first-occurrence pattern). All subsequent links return `celebration: null`. See §4.1.
+8. **Claim rate limit per page** — **30 attempts/day/page** (in addition to 3/hour/user and 10/day/IP). Prevents attempt flooding. See §4.6. *(v1.258: never built. `POST /pages/:id/claim` enforces 10 per minute per member only.)*
+9. **Wallet-link celebration** — **first link only**, tracked via `wp_usermeta.bcc_first_wallet_link` (§O1.2 first-occurrence pattern). All subsequent links return `celebration: null`. See §4.1. *(v1.256, F-524: never built. `POST /auth/wallet-link` returns no `celebration` field, and nothing writes the key.)*
 10. **`Card.updated_at`** — **read-model recompute timestamp** from `bcc_page_read_model.updated_at`. Use as cache validator only; do not surface in UI as "last edited". See §3.2 field rules and §6.2.
 
 ---
@@ -9965,6 +9954,37 @@ Ships with bcc-trust #902.
 - **New `standing.reach_limited`** — whether a Caution or Risky tier is limiting the member's reach. ⚠ Wider than "feeds": their posts are withheld from other viewers on every feed-backed surface, including their own profile wall and the permalink, with one documented room exception — while the member themselves is never excluded from their own view, which is why the limit was invisible. ⛔ **Tri-state, and `null` is not `false`:** `true`/`false` to the member, `null` (not disclosed) to anyone else. Clients MUST treat `null` as "no answer". ⚠ MEMBER ONLY, not member-or-admin, unlike `flags` (user decision 2026-11-24).
 - ⚠ **Two documentation corrections, no code change:** page-card `flags` come from the page OWNER's suspension through the viewer-gated reader, NOT from `bcc_page_read_model` as §4 and §9 said; and `is_in_good_standing` is derived from the TIER ALONE (`neutral`/`trusted`/`elite`), never from moderation flags — so it is the same for every viewer and is unaffected by this change.
 - **Unchanged:** suspension enforcement, the public index and sitemap (a suspended member is excluded by the listing clause, which never used the three removed keys), `indexable` (already the anonymous answer whoever asks, and already documented as never derived from `flags`), and every write gate.
+### v1.258 — 2026-11-25 — doc correction — `POST /pages/:id/claim` describes the implementation; the v1.86 erratum is resolved (F-524 follow-up)
+
+Contract only. No code or response change.
+
+- **Body:** the block showed a signature flow (`wallet_address`, `chain`, `nonce`, `signature`, `public_key`). The route reads `entity_type` (`validator` or `collection`) and `entity_id`, the shape §1's card action descriptor gives, and proves ownership from the member's already-linked, verified wallets. It takes no signature.
+- **Response:** the block showed a **201** with `claimed`, `card`, `celebration` and `next_steps`. The route answers **200** with `claim_id`, `page_id`, `entity_type`, `entity_id`, `role`, `is_primary`, `status` (`verified` or `already_verified`), `message` and `claimed_by`.
+- **Rate limit:** 10 per minute per member. The 3/hour/user, 10/day/IP and 30/day/page caps were never built, and §7 decision 8 now says so.
+- **Mapping:** no signature check, no consensus-pubkey match and no recovery-pending 409. The bullets now describe the gates, the wallet match, the single-claim-wins writes and the event.
+- **Clients:** no change. The frontend already sends `{ id, entity_type, entity_id }` (`claimPage`) and reads `status`, `role`, `claim_id`, `is_primary` and `message`.
+- **The v1.86 erratum** is resolved and replaced by a one-line note. The error list, already corrected in v1.86, keeps its codes. It now names the two accepted `entity_type` values, counts its six 403 causes (it said four), and drops "+ consensus pubkey" from `not_operator`, because the match is on the operator address only.
+
+### v1.257 — 2026-11-25 — behaviour change — community activity counts exclude moderated posts; unknown counts are null
+
+Ships with bcc-core #194 and bcc-trust #901 (core first). Clients: bcc-frontend #427, already live, treats the nulls.
+
+- **§4.7.1 `activity` block** (holder groups, discovery, the group detail, Halls): `posts_last_7d`, `active_members_7d`, `last_activity_at` and `heat` now exclude moderated posts.
+- **Unknown counts are `null`:** when the moderated posts cannot be read, `posts_last_7d`, `active_members_7d`, `heat`, `heat_label` and `last_activity_at` are `null`, never a guessed `0` or `cold`.
+- **§3.2.4 community `Card`:** the `posts_7d` and `active` stats exclude moderated posts, and are left out of `stats` when the counts are unknown.
+- **Unchanged:** every other field, and the shapes when the counts are known.
+
+### v1.256 — 2026-11-25 — doc correction — wallet requests carry the Cosmos key as `extra.pub_key` (F-524)
+
+Contract only. No code or response change.
+
+- **`POST /auth/wallet-login`, `POST /auth/wallet-signup`:** the examples put the Cosmos public key at `extra.public_key`. The server reads `extra.pub_key` (bcc-core `WalletVerifier::verify`) and has never read `public_key`. The examples and the `extra` note now say so, and note that a sent `chain_id` is ignored (ADR-036 signs over an empty one).
+- **`POST /auth/wallet-link`:** the body showed `chain`, `nonce` and a top-level `public_key`. The server reads `wallet_address`, `signature`, the optional `wallet_type` and `label`, and the same `extra`; the chain and the message come from the stored `GET /auth/nonce` challenge. The body now says so.
+- **`POST /auth/wallet-link` response:** the examples showed a **201** carrying `wallet`, `user` and a first-link `celebration`. The server answers **200** with `wallet_link_id`, `chain_slug`, `chain_name`, `address`, `address_short`, `wallet_type` and `verified`, the same for every link, and the frontend's `LinkWalletResponse` already reads that. The errors now match the handler too (409 `bcc_conflict` for an already-linked wallet, 403 `bcc_forbidden` for a signature that does not verify), and so does the rate limit (5 per minute per member, not 5 per hour). §7 decision 9 and the §6.5 key list now note that the first-link celebration was never built.
+- **Unchanged:** the three account-change confirmations already said Cosmos `pub_key`, which is now what wallet linking says too.
+- **Clients:** no change. The frontend already sends `extra: { pub_key, chain_id }` (`lib/wallet/dispatch.ts`).
+- **Not changed here:** the `POST /pages/:id/claim` body, which its open erratum already flags.
+
 ### v1.255 — 2026-11-25 — doc correction — `POST /blog/cover-image`'s too-large-dimensions 400 carries `max_pixels`
 
 Contract only. No code or response change.
