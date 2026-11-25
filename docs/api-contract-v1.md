@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.255 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.256 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -2047,7 +2047,7 @@ Issues a single-use challenge nonce for wallet signing, for a **signed-in** memb
 Verifies a signed nonce and links the wallet to the authenticated user.
 
 - **Auth:** Bearer (required — must already have a session via email signup)
-- **Body** *(corrected in v1.NEXT, F-524)*:
+- **Body** *(corrected in v1.256, F-524)*:
   ```json
   {
     "wallet_address": "cosmos1abcdef…",
@@ -2058,7 +2058,7 @@ Verifies a signed nonce and links the wallet to the authenticated user.
   }
   ```
   `wallet_address` and `signature` are required. `wallet_type` (default `"user"`) and `label` (default `""`) are optional. There is no `chain` or `nonce` field: the chain and the signed message come from the `GET /auth/nonce` challenge stored for this member and `wallet_address`. `extra` is as for `POST /auth/wallet-login`. There is no top-level `public_key` (or `pub_key`); one sent there is ignored.
-- **Response 200** *(corrected in v1.NEXT, F-524)*:
+- **Response 200** *(corrected in v1.256, F-524)*:
   ```json
   {
     "wallet_link_id": 7,
@@ -2071,18 +2071,18 @@ Verifies a signed nonce and links the wallet to the authenticated user.
   }
   ```
   The same shape for every link, the first one included: no `user`, no `celebration`. `address` is the address as stored (for Polkadot, the canonical prefix-0 SS58 form). `wallet_type` echoes the request (default `"user"`).
-- **Errors** *(corrected in v1.NEXT, F-524)*:
+- **Errors** *(corrected in v1.256, F-524)*:
   - `bcc_unauthorized` 401 — not signed in.
   - `bcc_invalid_request` 400 — `wallet_address` or `signature` missing; no live challenge for this address (expired, never issued, or already used: request a new one from `GET /auth/nonce`); the challenge's chain no longer exists.
   - `bcc_conflict` 409 — the wallet is already linked, to this account or to another one.
   - `bcc_forbidden` 403 — the signature did not verify.
   - A suspended account gets `403` `account_suspended` (`503` `bcc_unavailable` when that can't be read), as for every account-identity write (see `GET /auth/session`).
   - `bcc_rate_limited` 429.
-- **Rate limit:** 5 per minute per member (the `wallet_verify` bucket) *(corrected in v1.NEXT; this said 5/hour)*.
+- **Rate limit:** 5 per minute per member (the `wallet_verify` bucket) *(corrected in v1.256; this said 5/hour)*.
 - **Cache:** `Cache-Control: no-store`
 - **Side effects:** a `wallet_linked` audit row, and an account-security email to the member (a linked wallet can sign in).
 
-**No celebration** *(corrected in v1.NEXT, F-524)*: the response carries none, on the first link or any other. The first-link celebration described in §7 (decision 9) was never built; nothing writes `wp_usermeta.bcc_first_wallet_link`.
+**No celebration** *(corrected in v1.256, F-524)*: the response carries none, on the first link or any other. The first-link celebration described in §7 (decision 9) was never built; nothing writes `wp_usermeta.bcc_first_wallet_link`.
 
 **Mapping:** verifier → existing `bcc-core` `WalletVerifier`. Storage → `bcc_wallet_links` table. Nonce → the `GET /auth/nonce` challenge for (member, address): peeked to resolve the chain, consumed atomically when the link is made.
 
@@ -2124,7 +2124,7 @@ Verifies a signed nonce, looks up the BCC user the wallet is linked to, mints + 
     "extra": { "pub_key": "<base64 pubkey, Cosmos only>" }
   }
   ```
-  `extra` is an optional object passed verbatim to `WalletVerifier::verify` — Cosmos requires `pub_key` here (the base64 public key Keplr returns with the signature); ETH, Solana and Polkadot ignore it. `chain_id` may also be sent (the frontend sends the on-chain id) and is ignored: ADR-036 signs over an empty `chain_id`. *(Corrected in v1.NEXT, F-524: this said `public_key`, a key the server has never read.)*
+  `extra` is an optional object passed verbatim to `WalletVerifier::verify` — Cosmos requires `pub_key` here (the base64 public key Keplr returns with the signature); ETH, Solana and Polkadot ignore it. `chain_id` may also be sent (the frontend sends the on-chain id) and is ignored: ADR-036 signs over an empty `chain_id`. *(Corrected in v1.256, F-524: this said `public_key`, a key the server has never read.)*
 - **Response 200:**
   ```json
   {
@@ -2165,7 +2165,7 @@ Verifies a signed nonce, creates a new user (placeholder email if none supplied)
     "extra": { "pub_key": "<base64 pubkey, Cosmos only>" }
   }
   ```
-  `extra` is as for `POST /auth/wallet-login` (Cosmos: `pub_key`; corrected in v1.NEXT, F-524). `handle` is required (§B6 rules: 3–20 chars, lowercase + digits + hyphens). `display_name` and `email` are optional. The account's email is always a deterministic placeholder at first; a supplied `email` is held **pending** until it is verified *(since v1.182, F-294; see "Email state")*.
+  `extra` is as for `POST /auth/wallet-login` (Cosmos: `pub_key`; corrected in v1.256, F-524). `handle` is required (§B6 rules: 3–20 chars, lowercase + digits + hyphens). `display_name` and `email` are optional. The account's email is always a deterministic placeholder at first; a supplied `email` is held **pending** until it is verified *(since v1.182, F-294; see "Email state")*.
 - **Response 201:**
   ```json
   {
@@ -9803,7 +9803,7 @@ All ten open items locked **2026-04-27**. Phase 1 implementation may begin.
 6. **Cursor format** — **base64-encoded JSON of `(timestamp, id, rank_score_at_emit)`.** Preserves scroll order across re-ranks. Opaque to the client; never decode. See §1.5.
 7. **Wallet `address_short`** — **`<first-6>…<last-4>` for all chains.** Sliced from the full chain-prefixed address. Server-only writer; frontend never re-truncates. See §1.7.
 8. **Claim rate limit per page** — **30 attempts/day/page** (in addition to 3/hour/user and 10/day/IP). Prevents attempt flooding. See §4.6.
-9. **Wallet-link celebration** — **first link only**, tracked via `wp_usermeta.bcc_first_wallet_link` (§O1.2 first-occurrence pattern). All subsequent links return `celebration: null`. See §4.1. *(v1.NEXT, F-524: never built. `POST /auth/wallet-link` returns no `celebration` field, and nothing writes the key.)*
+9. **Wallet-link celebration** — **first link only**, tracked via `wp_usermeta.bcc_first_wallet_link` (§O1.2 first-occurrence pattern). All subsequent links return `celebration: null`. See §4.1. *(v1.256, F-524: never built. `POST /auth/wallet-link` returns no `celebration` field, and nothing writes the key.)*
 10. **`Card.updated_at`** — **read-model recompute timestamp** from `bcc_page_read_model.updated_at`. Use as cache validator only; do not surface in UI as "last edited". See §3.2 field rules and §6.2.
 
 ---
@@ -9919,7 +9919,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-25 — doc correction — wallet requests carry the Cosmos key as `extra.pub_key` (F-524)
+### v1.256 — 2026-11-25 — doc correction — wallet requests carry the Cosmos key as `extra.pub_key` (F-524)
 
 Contract only. No code or response change.
 
