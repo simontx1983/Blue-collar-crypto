@@ -9642,6 +9642,14 @@ Open communities and Halls, as `/communities/{slug}` *(Halls too since v1.248, F
 
 The admin dashboard's Halls tab. Every route is **site administrators only** (`manage_options`): anonymous `401 bcc_unauthorized`, signed-in non-admin `403 bcc_forbidden`, before any work. Every response is `Cache-Control: no-store`.
 
+**Every refusal carries `error.data.reason`. Clients key their copy on the code and `data`, never on the message.**
+- `400 bcc_invalid_request`:
+  - `reason` `invalid_value` with `field` and `rule`. `rule` is one of `empty`, `too_long`, `markup`, `format` (also a non-string field), `no_letter`, `ends_with_hall` or `reserved`.
+  - `reason` `not_editable` or `unknown_field`, with `field`.
+  - `reason` `nothing_to_change`.
+- `409 bcc_conflict`: `reason` `topic_exists` (with `group_id`), `address_taken` or `create_in_progress`.
+- `503 bcc_unavailable`: `reason` `unverified` (a check could not be read) or `create_failed`.
+
 `AdminHall` (the item every route returns):
 
 ```json
@@ -9659,11 +9667,10 @@ The admin dashboard's Halls tab. Every route is **site administrators only** (`m
 }
 ```
 
-- `hall_kind` / `topic` follow `GET /halls` (§4.7). `null` when the Hall has neither or its kind could not be read; then only `description` is editable.
+- `hall_kind` / `topic` follow `GET /halls` (§4.7). They are `null` when the Hall has neither kind, or its kind could not be read.
 - `editable` says which fields `PATCH` accepts for this Hall:
   - a topic Hall: all three;
-  - a chain Hall: `description` only, because its name and chain come from the chain registry (chain Halls are still created in wp-admin ▸ Chains);
-  - a Hall with neither: `name` and `description`.
+  - any other Hall: `description` only. A chain Hall's name and chain come from the chain registry, and chain Halls are still created in wp-admin ▸ Chains. A Hall not known to be a topic Hall fails closed to its description.
 - `slug` is the Hall's address, `/communities/{slug}`. It never changes.
 
 #### `GET /bcc/v1/admin/halls`
@@ -9686,7 +9693,7 @@ Create a **topic Hall**: an official, open Hall about a subject rather than a ch
 
   Values are trimmed. **The topic slug is the Hall's address** (`/communities/{topic_slug}`), set at create and never changed.
 - **Response 201:** `{ "status": "created" | "incomplete", "message": string, "hall": AdminHall, "audit_degraded": bool }`.
-  - `incomplete`: the Hall exists, but its ownership could not be moved to the site owner. It is flagged, and creating the same topic Hall again repairs it.
+  - `incomplete`: the Hall exists, but its ownership could not be moved to the site owner. It is flagged, and resending a create with the same `topic_slug` repairs it.
   - `audit_degraded`: the Hall is correct, but its audit row could not be written.
 - **Errors:**
   - `400 bcc_invalid_request`: an invalid field. The message names the rule.
@@ -9695,14 +9702,23 @@ Create a **topic Hall**: an official, open Hall about a subject rather than a ch
 - **Idempotent per topic.** One Hall per topic, serialized by a per-topic lock.
 - **Mapping:** `AdminHallsEndpoint::create` → `HallProvisioningService::provisionTopic` (the chain Hall pipeline: lock, existence check inside it, PeepSo create, marker plus re-read proof, deterministic owner, checked audit `admin_hall_created`).
 
+#### `GET /bcc/v1/admin/halls/:id`
+
+One Hall, in any post status, for the edit page.
+
+- **Response 200:** `{ "hall": AdminHall }`.
+- **Errors:** `404 bcc_not_found` (not a Hall), `503 bcc_unavailable`.
+- **Mapping:** `AdminHallsEndpoint::show` → `AdminHallsService::get`.
+
 #### `PATCH /bcc/v1/admin/halls/:id`
 
 Edit a Hall's `name`, `description` or `topic_label` (send only what changes), within the Hall's `editable`. A Hall in any post status can be edited.
 
 - **Body:** any of `name`, `description`, `topic_label`, with the same rules as `POST`. Values are trimmed.
 - **Response 200:** `{ "hall": AdminHall, "audit_degraded": bool }`. The edit is recorded with the checked audit `admin_hall_updated`. A correct edit whose audit row could not be written is kept and reported, never silently undone.
+- **Idempotent.** Name and description are one write; the topic label is a second. If the second fails after the first succeeded, the answer is `503` with the first part kept, and resending the same body completes the edit. Concurrent edits: the last write wins.
 - **Errors:**
-  - `400 bcc_invalid_request`: nothing sent, an unknown field, a field this Hall does not allow (e.g. a chain Hall's `name`), or an invalid value. **Nothing is written unless every change passes.**
+  - `400 bcc_invalid_request`, with a `data.reason` from the list above: nothing sent, an unknown field, a field this Hall does not allow (e.g. a chain Hall's `name`), or an invalid value. **Nothing is written unless every change passes.**
   - `404 bcc_not_found`: not a Hall.
   - `503 bcc_unavailable`: the Hall could not be read, or the write failed.
 - **Mapping:** `AdminHallsEndpoint::update` → `AdminHallsService::update` (`PeepSoGroup::update` for name and description, `HallRepository::writeTopicLabel` for the label).
@@ -10004,7 +10020,9 @@ Ships with bcc-trust #904 (topic Halls step 3a), after #898. Admin-only routes: 
 
 - **`GET /admin/halls`:** every published Hall, with the fields an admin edits and which of them each Hall allows (`editable`).
 - **`POST /admin/halls`:** create a topic Hall. Its topic slug is its address, and the create is idempotent per topic.
-- **`PATCH /admin/halls/:id`:** edit a topic Hall's name, description and topic label; a chain Hall's description only.
+- **`GET /admin/halls/:id`:** one Hall, in any post status.
+- **`PATCH /admin/halls/:id`:** edit a topic Hall's name, description and topic label; any other Hall's description only.
+- Every refusal carries `error.data.reason`, plus `field` and `rule` for a bad value.
 - **Unchanged:** every public route. A topic Hall appears in `GET /halls` with `hall_kind: "topic"` (§4.7, step 2a).
 
 ### v1.NEXT — 2026-11-25 — additive — topic Halls on the read side: `hall_kind`, `topic`, `GET /halls?kind=`
