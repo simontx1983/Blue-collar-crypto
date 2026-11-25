@@ -129,8 +129,8 @@ CI is **two-tier**, because the repos are separate. Full detail: [ci-topology.md
 
 - **Per-repo "real" gates live in each code repo's own CI:** `bcc-trust` runs PHPStan L8 +
   PHPUnit + arch-guardrails + a MySQL-backed integration job; `bcc-core` runs PHPStan L8 +
-  PHPUnit; `bcc-frontend` runs `tsc` + `next lint` + Vitest; `bcc-search` has **no** test/type
-  CI of its own (only the notify shim).
+  PHPUnit; `bcc-frontend` runs `tsc` + `next lint` + Vitest; `bcc-search` runs PHP syntax,
+  PHPStan L8 and PHPUnit in its own CI (plus a deploy-workflow guard).
 - **The umbrella repo owns the cross-repo static guards** (contract-parity, subsystem-count,
   cadence-pressure, dead-file). It reassembles the WP layout in the runner so these
   path-spanning scripts work.

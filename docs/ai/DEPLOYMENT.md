@@ -20,7 +20,7 @@ This page connects them and records what was verified on 2026-11-25. Where those
 | Environment | Frontend | WordPress / REST | How code arrives |
 |---|---|---|---|
 | Local | `next dev` on `localhost:3000` | Local by Flywheel site (nginx, MySQL 8.0, Mailpit) | your working tree |
-| Staging | `app.stage.bluecollarcrypto.io` on Vercel [UNKNOWN: which branch it serves today] | `stage.bluecollarcrypto.io` (Hostinger, LiteSpeed). **Not split**: one host | plugins deploy automatically when CI on `main` is green |
+| Staging | `app.stage.bluecollarcrypto.io` on Vercel [no staging branch is known or confirmed] | `stage.bluecollarcrypto.io` (Hostinger, LiteSpeed). **Not split**: one host | plugins deploy automatically when CI on `main` is green |
 | Production | `bluecollarcrypto.io` on Vercel | `cms.bluecollarcrypto.io` (Hostinger, LiteSpeed, MariaDB 11.8) | plugins: manual dispatch. Frontend: every merge to `main` |
 
 **Runtime.** Production and staging run PHP 8.3. CI pins PHP 8.3 for all three plugins. The umbrella guards run on PHP 8.2.

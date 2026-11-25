@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.263 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.NEXT · 2026-11-25 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Decision references (`§Xn`):** `§J.*` is defined in [`trust-attestation-layer.md`](trust-attestation-layer.md) and in §J of this contract. Other lettered references (`§A`–`§L`, `§O`) cite the original V1 planning document, which was never committed to this repository and is no longer available. Where those decisions are still in force they are recorded in [`ai/DECISIONS.md`](ai/DECISIONS.md). Read an unresolvable `§Xn` as historical context, not as a link you can follow.
@@ -74,21 +74,23 @@ Three modes:
 | **Bearer** | Authenticated reads + writes | `Authorization: Bearer <jwt>` minted by the JWT plugin via NextAuth |
 | **Wallet-signed** | One-time challenge-response (claim flow, wallet linking) | `POST` with `{ wallet, signature, nonce }` payload |
 
-JWT lifetime: 1h access, 30d refresh. Refresh handled by NextAuth.
+BCC bearer JWT lifetime: 7 days (`expires_in: 604800`). The same JWT may be refreshed during the 24-hour grace period after expiry; there is no separate 30-day refresh token. Refresh is handled by NextAuth.
 Anonymous endpoints **must still respect privacy** (per K2): if a user's watchlist is hidden, anonymous reads see "Watchlist is private," not the contents.
 
 *(since v1.186)* **Members authenticate with the bearer token only.** On every `bcc` route (`bcc/v1`, `bcc-trust/v1`), a non-admin whose request was authenticated by anything else (a WordPress cookie plus `X-WP-Nonce`, an application password) gets `401 bcc_unauthorized` with the message "Sign in at the app.". Members also cannot sign in through WordPress itself: `wp-login.php`, XML-RPC and other `wp_signon()` callers refuse a member account, with the one answer every failed sign-in gets too, whatever the role, so it reveals neither the password nor which logins are admins. A signed-in member is sent from wp-admin to the app, and admin-ajax answers 403. Admins (`manage_options`) are otherwise unaffected. `POST /auth/forgot-password` is the only way to reset a password, for every role: WordPress's own lost-password form and PeepSo's recover-password page get no reset key. The frontend sends WordPress no cookies (`credentials: "omit"`), so clients need no change.
 
 ### 1.3 Headers
 
-**Request (always):**
+**Request:**
 - `Accept: application/json`
 - `Content-Type: application/json` (writes only)
 - `Authorization: Bearer <jwt>` (authed only)
+- `X-Request-Id: <uuid>` (optional; canonical request-id header)
+- `X-BCC-Request-Id: <uuid>` (optional inbound alias for `X-Request-Id`)
 
 **Response (always):**
 - `Content-Type: application/json; charset=utf-8`
-- `X-BCC-Request-Id: <uuid>` — for log correlation
+- `X-Request-Id: <uuid>` — canonical response header for log correlation
 - `X-BCC-Cache: HIT|MISS|STALE` — see §1.6
 - `Cache-Control: ...` per endpoint
 - `X-RateLimit-Limit: <n>` / `X-RateLimit-Remaining: <n>` / `X-RateLimit-Reset: <unix>` — on rate-limited endpoints
@@ -3367,14 +3369,15 @@ viewers, `signin_required` when anonymous, and `not_applicable` on member cards
 
 ### 4.7 Halls
 
-Halls are **auto-provisioned, one per active chain** — system-created, `open`,
-first-admin-owned. They are **not** member-created and **not** numbered. A group
-is a Hall iff it carries `_bcc_group_kind = 'hall'` meta; its chain is read from a
-`_bcc_chain_tag` meta FK (there is no `Local NNN` title-prefix convention any
-more). A daily `bcc_hall_provision` cron reconciles exactly one Hall per active
-chain, and admins can force a pass via **Provision Halls now**. Membership lives
-in PeepSo's `peepso_group_members` (single graph rule, §E3); BCC stores only a
-`bcc_primary_hall_group_id` usermeta pointer for the viewer's primary Hall.
+Exactly one canonical chain Hall is created for each successful chain
+registration. There is no periodic Hall provisioning. Additional Halls,
+including topic Halls, are admin-created. Chain Halls are system-created,
+`open`, and first-admin-owned; they are not member-created or numbered. A group
+is a Hall iff it carries `_bcc_group_kind = 'hall'` meta; its chain is read from
+a `_bcc_chain_tag` meta FK (there is no `Local NNN` title-prefix convention any
+more). Membership lives in PeepSo's `peepso_group_members` (single graph rule,
+§E3); BCC stores only a `bcc_primary_hall_group_id` usermeta pointer for the
+viewer's primary Hall.
 
 #### `GET /bcc/v1/halls`
 
@@ -3734,7 +3737,7 @@ Cross-kind list of all PeepSo groups a target user is an active member of: holde
 - **Errors:** `bcc_not_found` **404** (invalid or unknown handle) · `bcc_forbidden` **403** with `error.data.reason: "profile_private"` *(v1.91)* — the owner's `profile_visibility` does not admit this viewer, **or the account is suspended** *(v1.112)*. *(This block carried no `Errors:` line before v1.91; the 404 above was documented in prose only.)*
 - **Privacy filtering (server-authoritative):**
   - ⚠ *v1.91:* the per-group filtering below is **unchanged and still applies**, but it is now reached only after the profile gate admits the viewer. The two are separate: the gate asks "may this viewer see this person", the filtering asks "which of their groups may this viewer see". Previously only the second question was asked, so a stranger could confirm an "only me" profile's open-group memberships.
-  - ⚠ *v1.127 (F-270):* the member's own **`show_groups_on_profile`** preference is applied FIRST. When it is off, a viewer other than the owner (and other than an admin) sees **only Halls** — every other group is omitted. Halls are auto-provisioned one-per-chain with open membership, so they disclose nothing, and keeping them preserves the home-Hall chip. The owner always sees all of their own groups.
+  - ⚠ *v1.127 (F-270):* the member's own **`show_groups_on_profile`** preference is applied FIRST. When it is off, a viewer other than the owner (and other than an admin) sees **only Halls** — every other group is omitted. Chain Halls have open membership, and keeping them preserves the home-Hall chip. The owner always sees all of their own groups.
   - ⚠ *v1.181 (F-341 PR 3):* individual **Halls** the owner has hidden (`hidden_hall_ids` on `/me/profile-prefs`) are omitted for every viewer but the owner and a §F-02-exempt admin — **even while the Halls section itself is shown**, and **in both states of `show_groups_on_profile`**. That last part is the opposite of what a reader tends to assume: with the toggle OFF a non-owner sees *only* Halls, so the hidden ones are the only choice still doing any work. Scoped to Halls; every other group type follows the section switch. An absent list hides nothing.
   - ⚠ *v1.183 (F-401):* the same hide list also withholds the **home-Hall chip** (`primary_hall` on the user view-model and `member_dossier.primary_hall` on the member card) when the hidden Hall is the member's primary. v1.127 keeps Halls visible through the groups toggle specifically so the chip survives it; per-Hall hiding is the one control that does blank it, and leaving the chip rendered would have defeated the choice in the most prominent place that Hall appears.
   - ⚠ *v1.127 (F-270):* **NFT-holder (`type: "nft"`) and delegator (`type: "validator"`) groups are returned only to a SIGNED-IN viewer**, even when `show_groups_on_profile` is on. Membership of either discloses an on-chain financial position — that the member holds a qualifying NFT on a named chain, or delegates to a named validator — and the rows carry `chain_slug`. Anonymous callers receive neither kind.
@@ -4522,6 +4525,12 @@ Top-N search suggestions for the §G1 nav-bar autocomplete. Smaller per-item sha
 
 Direct bcc-search project search and trending mode — the upstream that `cards/search` wraps. The frontend uses this **directly** on the `/search` results page so the Projects tab gets the full project shape (tier badge text, verified, endorsements, category) — fields the §A2 cards wrapper trims away. The autocomplete dropdown still goes through `cards/search`.
 
+**Wire envelope (all three search verticals):** `GET /bcc/v1/search`,
+`GET /bcc/v1/search/users` and `GET /bcc/v1/search/groups` return successful
+responses in the standard `{ "data": ..., "_meta": ... }` envelope. Examples
+below show each endpoint's inner payload. Errors use the canonical `error`
+envelope; the listed codes describe the inner error.
+
 - **Auth:** Anonymous OR Bearer (token silently ignored by handler; sent only so viewer-aware ranking signals stay warm when the user is signed in)
 - **Query:**
   - `q` (string) — 2..100 chars (server returns empty for shorter; `QueryQualityGate` rejects pure-stopword / low-entropy queries to empty too). **Over 100 chars → `rest_invalid_param` 400** at the REST validation layer (v1.47) — previously undefined behaviour, now rejected before any handler work.
@@ -4554,7 +4563,7 @@ Direct bcc-search project search and trending mode — the upstream that `cards/
   ```
 - **Optional degradation fields (v1.98):** `stale: true` marks a response served from the last-known-good mirror while the upstream is unavailable; `system_degraded: true` marks one served from that mirror, or (F-24) built WITHOUT trust enrichment — text-only ranking, no impersonation guard — because the trust engine is unbound. Both are absent on a normal response; a client may show a "results may be incomplete" hint but must not treat either as an error. A trust-less response is cached only 10 s and never mirrored to LKG.
 - **`categories` scope (v1.46):** the full category list ships only on result-bearing responses. Empty-result short-circuits (query under 2 / over 100 chars, junk-gate rejection, unknown `type`) return `categories: []` — autocomplete fires these per keystroke and nothing reads categories off an empty response.
-- **Errors (legacy WP shape — not §L5 envelope):**
+- **Inner error codes:**
   - `bcc_rate_limited` (HTTP 429) — `10 req / 5s` per subnet *(doc corrected 2026-08-05: the previously listed `rate_limit_exceeded` never existed in code)*
   - `dependency_unavailable` (HTTP 503) — PeepSo plugin not loaded
   - `bcc_upstream_unavailable` (HTTP 503; `Retry-After: 5`) — covers category fetch failure, FULLTEXT rebuild in progress ("Trending is warming up" in trending mode), and enrichment-pipeline degradation *(supersedes the fictional `categories_unavailable` / `rebuild_in_progress` / `score_enrichment_failed` codes)*
@@ -4562,7 +4571,7 @@ Direct bcc-search project search and trending mode — the upstream that `cards/
   - `rest_invalid_param` (HTTP 400) — WP arg validation (`q` over 100 chars)
   - `bcc_invalid_request` (HTTP 400) — `kind` is not `validator`, `project` or `creator` *(v1.243)*
 - **Cache:** server-side `60s` (per-query results) + LKG mirror for 503 fallback. Trending mode: `300s` (5 min) + LKG.
-- **Envelope note (doc corrected 2026-08-05 — the wire has been enveloped since 2026-05):** although bcc-search's handlers *emit* raw `{ results, categories }` (or `{ results, meta }` in trending mode), bcc-trust's §1.4 Envelope wraps every `/bcc/v1/*` response — so the wire carries `{ data: { results, … }, _meta }` on success and `{ error: { code, message, status } }` on failure. The shapes documented above are the **inner payload**. The bcc-frontend client (`bccSearchFetchAsClient`) is shape-tolerant: it unwraps the envelope when present and still maps a raw legacy body, so `err.code` branching per Phase γ stays uniform either way.
+- **Envelope note:** bcc-search's handlers emit raw inner payloads; bcc-trust's §1.4 Envelope wraps every `/bcc/v1/*` response. The bcc-frontend client (`bccSearchFetchAsClient`) unwraps the canonical envelope.
 
 #### `GET /bcc/v1/search/users`
 
@@ -4588,12 +4597,12 @@ Users vertical — separate cache + rate-limit bucket from project search so the
     "meta": { "count": 1, "query": "simon" }
   }
   ```
-- **Errors (legacy WP shape):**
+- **Inner error codes:**
   - `bcc_rate_limited` (HTTP 429)
   - `bcc_upstream_unavailable` (HTTP 503; `Retry-After: 5`): the search could not run. Retryable. *(v1.202, F-432)* This now includes a member-matching read or PeepSo's privacy read that did not run. Before, those answered **200 with no results**, the same as a search that matched nobody.
   *(doc corrected 2026-08-05: the previously listed `rate_limit_exceeded` / `user_search_unavailable` codes never existed in code)*
 - **Cache:** server-side `45s` per-query. A 503 is never cached.
-- **Envelope note (doc corrected 2026-08-05):** §1.4-enveloped on the wire like every `/bcc/v1` route — the shape above is the inner payload; same client routing as `GET /bcc/v1/search` above.
+- **Envelope note:** the response shape above is the inner payload; the wire uses the standard envelope described above.
 
 #### `GET /bcc/v1/search/groups`
 
@@ -4625,12 +4634,12 @@ Groups vertical — separate cache + rate-limit bucket. Returns PeepSo group row
 - **`kind` (v1.70)** ∈ {`hall`, `nft`, `validator`, `system`, `user`} — the §3.2.4 community-kind vocabulary, resolved from `_bcc_group_kind` post-meta (raw values `hall` / `holders` / `delegators` / `system`; absent → `user`).
 - **`kind_label` (v1.70)** — the pre-rendered §A2 display string, exactly the §3.2.4 kicker vocabulary (`CHAIN HALL`, `HOLDER GROUP` and `DELEGATOR GROUP` as of v1.244, `SYSTEM COMMUNITY`, `COMMUNITY`). Frontend renders it verbatim, never maps `kind` → words.
 - **`group_url`** is a **relative** Next.js route (rendered verbatim by the frontend; an absolute URL would navigate off the headless app) and **`/communities/{slug}` for every kind**, Halls included *(v1.248, F-594; v1.70 to F-594 sent `hall` to `/halls/{slug}`)*, matching `CardUrlMap::groupUrl`'s canonical mapping (v1.68). *(Supersedes v1.68's "not hall-aware" caveat — that release fixed the absolute-URL drift but had no kind projected; now the vertical projects `kind`, halls route to their flavored surface. Non-hall kinds still resolve on the cross-kind `/communities/[slug]` page.)*
-- **Errors (legacy WP shape):**
+- **Inner error codes:**
   - `bcc_rate_limited` (HTTP 429)
   - `bcc_upstream_unavailable` (HTTP 503; `Retry-After: 5`)
   *(doc corrected 2026-08-05: the previously listed `rate_limit_exceeded` / `group_search_unavailable` codes never existed in code)*
 - **Cache:** server-side `45s` per-query.
-- **Envelope note (doc corrected 2026-08-05):** §1.4-enveloped on the wire like every `/bcc/v1` route — the shape above is the inner payload; same client routing as `GET /bcc/v1/search` above.
+- **Envelope note:** the response shape above is the inner payload; the wire uses the standard envelope described above.
 
 ### 4.10 Notifications (§I1)
 
@@ -6746,7 +6755,7 @@ Set the cover-photo crop position (drag-to-position). Registered as `WP_REST_Ser
 Read the signed-in viewer's privacy toggles (§K2 + §G1 discovery opt-out).
 
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized 401`.
-- **Response 200:** `data` is a flat map of **9 boolean** keys (`PrivacySettings::ALL_KEYS`), missing meta defaults to `false`:
+- **Response 200:** `data` is a flat map of **8 boolean** keys (`PrivacySettings::ALL_KEYS`), missing meta defaults to `false`:
   ```json
   { "data": { "watching_hidden": false, "reviews_hidden": false, "disputes_hidden": false, "delegations_hidden": false, "follower_count_hidden": false, "real_name_hidden": false, "email_hidden": false, "discovery_optout": false } }
   ```
@@ -6759,8 +6768,8 @@ Read the signed-in viewer's privacy toggles (§K2 + §G1 discovery opt-out).
 Partial-update privacy toggles. Registered as `WP_REST_Server::EDITABLE` (also POST/PUT). Only keys present in the body change.
 
 - **Auth:** Bearer **required**. Anonymous → `bcc_unauthorized 401`.
-- **Body (JSON):** a partial bag — every key optional, each a boolean. Accepted keys = `PrivacySettings::ALL_KEYS` (the 9 above). Unknown keys silently dropped.
-- **Response 200:** the full post-write state — identical shape to `GET /me/privacy` (all 9 keys).
+- **Body (JSON):** a partial bag — every key optional, each a boolean. Accepted keys = `PrivacySettings::ALL_KEYS` (the 8 above). Unknown keys silently dropped.
+- **Response 200:** the full post-write state — identical shape to `GET /me/privacy` (all 8 keys).
 - **Errors:** `bcc_unauthorized` (401) · `bcc_invalid_request` (422, no recognized keys) · **`rest_invalid_param` (400)** for a key whose value is not a boolean *(documented v1.158, F-294; long-standing behaviour)*. The route declares each key `type: boolean`, so **WordPress's** REST validation refuses it before the handler runs; the envelope (§1.4) reshapes it into the usual `{ error: { code: "rest_invalid_param", message, status: 400, data: { params, … } } }`. Clients should treat it like a 422.
 - **Mapping:** `MyPrivacyEndpoint::patch` (route `MyPrivacyEndpoint.php:61`, EDITABLE) → `PrivacySettings::writePartial` then `readAll`. FE `privacy-endpoints.ts:updateMyPrivacy`.
 
@@ -10041,11 +10050,15 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-25 — doc correction — the header says where `§Xn` decision references resolve
+### v1.NEXT — 2026-11-25 — documentation reconciliation
 
-Contract only. No code or response change.
+Contract only. No code or response change. Numeric contract version deliberately unassigned.
 
 - **Header › decision references:** the header named a planning file outside the repository as the source of truth for `§Xn` references. It now says that `§J.*` is defined in `trust-attestation-layer.md` and in §J. Other lettered references cite the original V1 planning document, which is not in the repository; where those decisions still apply they are recorded in `docs/ai/DECISIONS.md`.
+- **§1.2 / §1.3:** the bearer JWT lasts 7 days, the same JWT can be refreshed during the 24-hour post-expiry grace, no separate 30-day refresh token exists, and `X-Request-Id` is canonical with `X-BCC-Request-Id` accepted inbound as an alias.
+- **§4.7:** exactly one canonical chain Hall is created for each successful chain registration; there is no periodic provisioning, and additional/topic Halls are admin-created.
+- **Search verticals:** all three use the canonical success `{data, _meta}` wire envelope; route examples show inner payloads.
+- **`GET/PATCH /me/privacy`:** eight boolean keys.
 - **Clients:** no change.
 
 ### v1.263 — 2026-11-25 — doc correction — the claim route's gate order includes its input check

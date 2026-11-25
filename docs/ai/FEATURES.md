@@ -265,12 +265,12 @@ Re-joining:
 - A moderator removal still blocks.
 
 **Halls** (see [PROJECT.md](PROJECT.md) "Halls thesis"):
-- **What a Hall is:** an admin-created, official, open group marked with `_bcc_group_kind = 'hall'`.
+- **What a Hall is:** an official, open group marked with `_bcc_group_kind = 'hall'`.
 - **Two kinds** (`hall_kind`, v1.260):
-  - **chain**: at most one per chain. Created in wp-admin (Chains page).
+  - **chain**: exactly one canonical Hall is created when each chain is successfully registered.
   - **topic**: e.g. DeFi. Managed by `/bcc/v1/admin/halls` (`AdminHallsEndpoint`, `manage_options`; contract v1.261).
 - **Primary Hall:** a member may set one (`bcc_primary_hall_group_id`). Posts in it notify that Hall's members, up to a cap.
-- **Not automatic.** [HISTORICAL] The daily automatic Hall provisioning sweep was retired, because a public group must exist only when someone decided it should. [DISCREPANCY] One contract passage (around the §4.7 Halls intro) still says "auto-provisioned".
+- **Provisioning:** chain registration creates its canonical Hall. Reads never provision Halls. The periodic scanner and provisioning cron are retired. Admins may create additional Halls, including topic Halls.
 - **Onboarding:** shows only the BCC Hall. Entering it writes no membership; the explicit Join lives on the Hall page.
 - **Frontend:** Halls live under `/communities` (`/halls` redirects). One card component shows per-kind stats; for a Hall these are Members · Posts 7d · Validators.
 
