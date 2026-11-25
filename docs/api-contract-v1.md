@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.251 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.252 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -3464,7 +3464,8 @@ Mark a Hall as the user's primary.
     "primary_hall": { "...": "Hall view-model" }
   }
   ```
-- **Errors:** `bcc_unauthorized`, `bcc_forbidden` (not a member of this Hall)
+- **Errors:** `bcc_unauthorized`, `bcc_forbidden` (not a member of this Hall; *v1.252:* also any group that is not a published, non-secret Hall, with the same message), `bcc_unavailable` 503 *(v1.252)* (the check could not be read; nothing was written; retry)
+- **A home Hall accepts only published, non-secret Halls** *(v1.252)*. A member's `primary_hall` (and a member card's home Hall) shows only while the pointer still names a published, non-secret Hall. If that check cannot be read, no home Hall is shown.
 - **Mapping:** Writes the `bcc_primary_hall_group_id` usermeta pointer (singleton — one Hall per user). Emits `bcc_hall_primary_changed`.
 
 #### `DELETE /bcc/v1/me/halls/primary`
@@ -9935,6 +9936,16 @@ Ships with bcc-trust #745 (merged 2026-11-19 and already live; this entry docume
 - **`POST /auth/logout-everywhere`** also destroys every WordPress cookie session of the user (an admin's wp-admin included) and deletes every application password.
 - **`POST /auth/logout`:** unchanged. It signs out the presented bearer, and there is no WordPress cookie to clear.
 - **Clients:** no change.
+
+### v1.252 — 2026-11-24 — behaviour change — a home Hall accepts only published, non-secret Halls
+
+Ships with bcc-trust #893. bcc-trust only.
+
+- **`POST /me/halls/:id/primary`:**
+  - Accepts only a published, non-secret Hall the member belongs to. Anything else gets the same `403 bcc_forbidden` as a non-member.
+  - A check that cannot be read is `503 bcc_unavailable`, and nothing is written.
+- **Readers** (the profile's `primary_hall`, member cards, the feed's cold-start panel): a home Hall shows only while it is a published, non-secret Hall. An unreadable check shows none.
+- **Unchanged:** the route, its success shape, and clearing the home Hall.
 
 ### v1.251 — 2026-11-24 — additive — `GET /groups/:id/members` items carry the member `card` the directory shows
 
