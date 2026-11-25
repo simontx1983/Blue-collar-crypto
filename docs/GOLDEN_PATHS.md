@@ -818,8 +818,8 @@ foreach (($dm["degradation_metrics"]["subsystems"] ?? []) as $name => $events) {
 
 **Expected (verified 2026-05-13):** at minimum these subsystems registered:
 
-- `throttle`
-- `null_trust_read` + 9 other `null_*` NullService activations
+- `throttle` (1 event — `activation`; every switch into rate-limit fail-closed mode)
+- `null_trust_read` (3 events — `activation`, plus the fail-closed `is_suspended` and `lock_active_vote_for_dispute`) + 9 other `null_*` NullService activations (each a single `activation` event; listed by name in `scripts/subsystem-count-allowlist.php`)
 - `peepso_absence` (23 events — the newest two are F-542, 2026-11-24, bcc-core `OrphanedPostRepair`: `orphan_repair_unconfirmed` (a post the hijack guard destroyed, whose removal could not be CONFIRMED because the read that would confirm it is the read that had already failed, so a pinned best-effort trash ran and a bounded retry was queued) and `orphan_repair_abandoned` (that retry gave up with the post still unconfirmed). ⚠ Neither event means "the post is still there" — only that nobody could prove it is gone, so both need the §12.3 check rather than a count alone; expected steady state zero)
 - `search_lkg` (2 events)
 - `search_ft_index` (1 event — FT-eligible query served by title-prefix fallback because the FULLTEXT index is missing; added 2026-07-19)
@@ -851,6 +851,9 @@ foreach (($dm["degradation_metrics"]["subsystems"] ?? []) as $name => $events) {
 - `validator_memo_claim` (2 events — `crowded_valoper` (a challenge was issued while 5 or more members hold live challenges on the same validator, which looks like a phishing campaign against that operator; the paired warning names the validator; flag for staff) and `valoper_backstop` (a new member was refused because 50 challenges are already live on one validator, the denial-of-service backstop); bcc-core `ValidatorMemoChallenge::issue()`, design A2, 2026-11-24; expected steady state zero for both)
 - `db_transaction` (3 events — `probe_unknown` (the probe could not tell whether a transaction is open, so the write was refused), `nested_start_refused` (code that starts its own transaction was called while one was open, and refused) and `required_missing` (code that must run inside a transaction was called outside one, and refused); for bcc-trust's transaction guard, which will ask bcc-core `DB\TransactionState::current()` (F-599 P3/P4; registered ahead of it). Steady state zero)
 - `wallet_challenge` (1 event — `tx_probe_unknown` (`ChallengeRepository::transactionState()`, the SAVEPOINT / RELEASE probe `consume()` and `consumeInTransaction()` ask first, could not tell whether a transaction is open: any error other than 1305, read by number, so the consume was refused); bcc-core, design A2, 2026-11-24; expected steady state zero; a sustained count means wallet sign-in and linking are failing, a P1)
+- `nft_indexer` (1 event — `dense_block_stall`; bcc-trust's `NftEthIndexerWorker` could not make forward progress over a block range, see pattern-registry.md)
+- `auth_mail` (4 events — `verify_email_send_failed` (`/auth/signup`, `/auth/resend-verification`), `welcome_email_send_failed` (`/auth/verify-email`, after confirmation), `step_up_email_send_failed` (bcc-trust's validator staff step-up code, so the admin cannot confirm the change) and `validator_log_mail_failed` (bcc-trust's relationship-log health alert to administrators); a send failed and nothing else changed)
+- `polkadot_verify` (5 events — `secret_missing` (`BCC_INTERNAL_VERIFY_SECRET` not defined), `frontend_url_missing` (`BCC_FRONTEND_ORIGIN` not defined), `route_unreachable`, `route_error_status` and `route_malformed_body`; bcc-core's `PolkadotSignatureVerifier` delegates sr25519 checks to the frontend's internal route, and any of these refuses the signature (fails closed), so Polkadot wallets cannot link or sign in)
 
 **Failure means:** A registered subsystem dropped out of the canonical map in `bcc-core/bcc-core.php`. New subsystems wired into `DegradationMetrics::record()` MUST register here — the map is the only place future agents discover which events are even possible.
 

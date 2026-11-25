@@ -13,7 +13,9 @@
 #     matched every documented verb, ignored unresolved register_rest_route()
 #     sites, and never checked that it parsed anything at all;
 #   - dead-file-scan silently skipped a missing source root;
-#   - subsystem-count passed when its doc-claim regex matched no line.
+#   - subsystem-count passed when its doc-claim regex matched no line, and
+#     (F-601) checked only what the docs claimed, so a mapped subsystem
+#     with no doc line passed silently.
 # A bare umbrella checkout (no plugin trees) turned all three green.
 #
 # ── HOW THE CASES AVOID READING GREEN BY ACCIDENT ────────────────────────
@@ -241,13 +243,18 @@ check "an existing but empty source root FAILS" \
 # ── subsystem-count-guard ────────────────────────────────────────────────
 echo "subsystem-count-guard"
 
-# subsys_root <name> <map-body> <pattern-registry> <golden-paths>
+# subsys_root <name> <map-body> <pattern-registry> <golden-paths> [allowlist-entries]
+# No 5th argument → no allowlist file, which the guard reads as an EMPTY
+# list (so the real allowlist never leaks into a fixture).
 subsys_root() {
   local root; root="$(new_root "$1")"
   printf '<?php\nDegradationMetrics::healthSnapshot([\n%s\n]);\n' "$2" \
     > "$root/$PLUGINS_REL/bcc-core/bcc-core.php"
   printf '%s\n' "$3" > "$root/docs/pattern-registry.md"
   printf '%s\n' "$4" > "$root/docs/GOLDEN_PATHS.md"
+  if [ "$#" -ge 5 ]; then
+    printf '<?php\nreturn [%s];\n' "$5" > "$root/scripts/subsystem-count-allowlist.php"
+  fi
   printf '%s' "$root"
 }
 MAP="    'demo_sub' => ['a.one', 'a.two'],"
@@ -276,6 +283,40 @@ R="$(subsys_root ssc-empty-map "" '`demo_sub` (2 events)' 'demo_sub / 2 events')
 run "$R" subsystem-count-guard
 check "an empty canonical map FAILS" \
   '[ "$RC" -ne 0 ] && has "canonical subsystem map parsed as EMPTY"'
+
+# Map → docs (F-601): every mapped subsystem needs a claim or an allowlist entry.
+MAP2="$MAP
+    'quiet_sub' => ['q.one'],"
+
+R="$(subsys_root ssc-unclaimed "$MAP2" '`demo_sub` (2 events)' 'demo_sub / 2 events')"
+run "$R" subsystem-count-guard
+check "a mapped subsystem neither doc claims FAILS" \
+  '[ "$RC" -ne 0 ] && has "canonical map has '"'"'quiet_sub'"'"' (1 event) but neither doc claims it"'
+
+R="$(subsys_root ssc-one-doc "$MAP2" '`demo_sub` (2 events), `quiet_sub` (1 event)' 'demo_sub / 2 events')"
+run "$R" subsystem-count-guard
+check "a claim in ONE of the two docs is enough" \
+  '[ "$RC" -eq 0 ] && has "2 claimed, 0 allowlisted"'
+
+R="$(subsys_root ssc-allowlisted "$MAP2" '`demo_sub` (2 events)' 'demo_sub / 2 events' "'quiet_sub' => 'documented as a family'")"
+run "$R" subsystem-count-guard
+check "an allowlisted unclaimed subsystem PASSES and is counted" \
+  '[ "$RC" -eq 0 ] && has "1 claimed, 1 allowlisted"'
+
+R="$(subsys_root ssc-stale-gone "$MAP" '`demo_sub` (2 events)' 'demo_sub / 2 events' "'gone_sub' => 'retired'")"
+run "$R" subsystem-count-guard
+check "an allowlist entry not in the map FAILS (stale)" \
+  '[ "$RC" -ne 0 ] && has "'"'"'gone_sub'"'"' is allowlisted but not in the bcc-core.php canonical map"'
+
+R="$(subsys_root ssc-stale-claimed "$MAP" '`demo_sub` (2 events)' 'demo_sub / 2 events' "'demo_sub' => 'old reason'")"
+run "$R" subsystem-count-guard
+check "an allowlist entry a doc now claims FAILS (stale)" \
+  '[ "$RC" -ne 0 ] && has "'"'"'demo_sub'"'"' is allowlisted but a doc now claims it"'
+
+R="$(subsys_root ssc-no-reason "$MAP2" '`demo_sub` (2 events)' 'demo_sub / 2 events' "'quiet_sub' => '  '")"
+run "$R" subsystem-count-guard
+check "an allowlist entry without a reason FAILS" \
+  '[ "$RC" -ne 0 ] && has "'"'"'quiet_sub'"'"' needs a non-empty reason"'
 
 echo
 echo "passed=$PASSED failed=$FAILED"
