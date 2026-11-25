@@ -1330,7 +1330,7 @@ Locked field rules:
     { "key": "access",   "label": "Access",     "value": "Public",         "format": "text" }
   ]
   ```
-  `posts_7d` is the §4.7.1 activity-heat `posts_last_7d` number (already resolved by both producers — no extra query). *(v1.65)* `active` is the count of **distinct authors** who posted in that same 7-day window (`getActivityHeat` `actives`, riding free on the heat aggregate); `members` rides in the nameplate slot other kinds use for watchers, and `access` is a **server-rendered** text word (`Public` / `Private` — precedence matches the front-face standing strip; §A2 — the client never derives the gate). Communities have no trust axis, so Trust/Reviews/Vouches never appear here.
+  `posts_7d` is the §4.7.1 activity-heat `posts_last_7d` number (already resolved by both producers — no extra query). *(v1.65)* `active` is the count of **distinct authors** who posted in that same 7-day window (`getActivityHeat` `actives`, riding free on the heat aggregate); `members` rides in the nameplate slot other kinds use for watchers, and `access` is a **server-rendered** text word (`Public` / `Private` — precedence matches the front-face standing strip; §A2 — the client never derives the gate). Communities have no trust axis, so Trust/Reviews/Vouches never appear here. *(v1.NEXT)* Both counts exclude moderated posts. When those cannot be read (the §4.7.1 block's values are `null`), the `posts_7d` and `active` stats are left out of `stats`; `members` and `access` stay.
 - **Permissions:** the full §3.2 key set (`can_watch`, `can_review`, `can_open_dispute`, `can_endorse`, `can_post_as_entity`, `can_edit_bio`, `can_edit_image`, `can_vouch`, `can_stand_behind`, `can_report`), every entry `{ allowed: false, unlock_hint: null, reason_code: "not_applicable" }` for ALL viewers — anon and authed alike. Communities use JOIN (gated on the group detail's own `permissions.can_join`), never the card verbs; signing in unlocks nothing on the card itself, so no `signin_required` copy is emitted.
 - **Always-null/constant envelope fields:** `member_dossier: null`, `chains: null`, `claim_target: null`, `onchain_signals: null`, `social_proof: null`, `viewer_attestation: null`, `viewer_has_reviewed: false`, `viewer_has_endorsed: false`, `endorse_unlock_hint: null`, `is_claimed: true`.
 - **`community_dossier`** — the community-only block, mirror of how `member_dossier` works: ALWAYS present on the wire, non-null on community cards, `null` on every other kind (and `member_dossier` is `null` here). Powers the community back face (`collection_stats` replaces FlippableNftCard's bespoke stats display):
@@ -3586,6 +3586,8 @@ Server-authoritative copy. The frontend MUST render `label` verbatim — never a
   riding the heat aggregate — no extra query). `0` when the window is empty or
   the block is built on a degraded/anon default path. Emitted in **every**
   §4.7.1 `activity` block (holder groups, discovery, communities, halls).
+- **Moderated posts** *(v1.NEXT)*: every number here excludes moderated posts. A post that moderation has hidden counts toward none of `posts_last_7d`, `active_members_7d`, `last_activity_at` or `heat`.
+- **Unknown** *(v1.NEXT)*: when the moderated posts cannot be read, `posts_last_7d`, `active_members_7d`, `heat` and `heat_label` are `null`, and so is `last_activity_at`. The values are null when unknown, never a guessed `0` or `cold`. Clients show no number and no heat label then.
 
 #### `GET /bcc/v1/me/holder-groups`
 
@@ -9926,6 +9928,15 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-24 — behaviour change — community activity counts exclude moderated posts; unknown counts are null
+
+Ships with bcc-core #194 and bcc-trust #901 (core first). Clients: bcc-frontend #427, already live, treats the nulls.
+
+- **§4.7.1 `activity` block** (holder groups, discovery, the group detail, Halls): `posts_last_7d`, `active_members_7d`, `last_activity_at` and `heat` now exclude moderated posts.
+- **Unknown counts are `null`:** when the moderated posts cannot be read, `posts_last_7d`, `active_members_7d`, `heat`, `heat_label` and `last_activity_at` are `null`, never a guessed `0` or `cold`.
+- **§3.2.4 community `Card`:** the `posts_7d` and `active` stats exclude moderated posts, and are left out of `stats` when the counts are unknown.
+- **Unchanged:** every other field, and the shapes when the counts are known.
 
 ### v1.254 — 2026-11-25 — doc correction — the `GET /me/watching/summary` example matches the response
 
