@@ -9555,6 +9555,75 @@ Validator, project and creator pages, as `/v/`, `/p/` or `/c/{slug}`: published,
 
 Open communities and Halls, as `/communities/{slug}` or `/halls/{slug}`: published, with a slug, and **explicitly** open (a privacy row reads open and none reads closed or secret). Closed and secret groups are never listed. A group the app cannot place, one with disagreeing kind rows for example, is left out, so every listed URL is one the app serves.
 
+### 4.34 Admin Halls — topic Halls (F-597) *(v1.NEXT)*
+
+The admin dashboard's Halls tab. Every route is **site administrators only** (`manage_options`): anonymous `401 bcc_unauthorized`, signed-in non-admin `403 bcc_forbidden`, before any work. Every response is `Cache-Control: no-store`.
+
+`AdminHall` (the item every route returns):
+
+```json
+{
+  "id": 3012,
+  "slug": "defi",
+  "name": "DeFi Hall",
+  "description": "Lending, swaps and yield.",
+  "hall_kind": "topic",
+  "topic": { "slug": "defi", "label": "DeFi" },
+  "chain": null,
+  "member_count": 12,
+  "editable": { "name": true, "description": true, "topic_label": true },
+  "links": { "self": "/communities/defi" }
+}
+```
+
+- `hall_kind` / `topic` follow `GET /halls` (§4.7). `null` when the Hall has neither or its kind could not be read; then only `description` is editable.
+- `editable` says which fields `PATCH` accepts for this Hall:
+  - a topic Hall: all three;
+  - a chain Hall: `description` only, because its name and chain come from the chain registry (chain Halls are still created in wp-admin ▸ Chains);
+  - a Hall with neither: `name` and `description`.
+- `slug` is the Hall's address, `/communities/{slug}`. It never changes.
+
+#### `GET /bcc/v1/admin/halls`
+
+Every published Hall, chain and topic alike, filtered as `GET /halls` is.
+
+- **Query:** `page` (default 1), `page_size` (default 20, max 50), `kind` (`chain` | `topic`; anything else is `400 bcc_invalid_request`), `chain` (a chain slug), `q` (a name search, at most 100 characters, else `400`).
+- **Response 200:** `{ "items": AdminHall[], "pagination": { "page", "page_size", "total", "total_pages" } }`. `total` uses the same filters as the rows.
+- **Mapping:** `AdminHallsEndpoint::list` → `AdminHallsService::list` (the `GET /halls` reads, then `findManyByIds` + `HallRepository::kindFactsForHalls`).
+
+#### `POST /bcc/v1/admin/halls`
+
+Create a **topic Hall**: an official, open Hall about a subject rather than a chain (DeFi, NFTs, …). It is created exactly as open as a chain Hall (public, joinable, auto-accept), and owned by the site's first administrator, not by whoever created it.
+
+- **Body:**
+  - `name` (1–80 characters);
+  - `topic_slug`: lowercase letters and digits in hyphen-separated runs, at most 50 characters, with at least one letter. It may not end in `hall` (kept for chain Halls) and may not be a reserved word (`peepso`, `peepsoajax`, `category`);
+  - `topic_label` (1–60 characters): the topic's display name;
+  - `description` (optional, at most 1000 characters).
+
+  Values are trimmed. **The topic slug is the Hall's address** (`/communities/{topic_slug}`), set at create and never changed.
+- **Response 201:** `{ "status": "created" | "incomplete", "message": string, "hall": AdminHall, "audit_degraded": bool }`.
+  - `incomplete`: the Hall exists, but its ownership could not be moved to the site owner. It is flagged, and creating the same topic Hall again repairs it.
+  - `audit_degraded`: the Hall is correct, but its audit row could not be written.
+- **Errors:**
+  - `400 bcc_invalid_request`: an invalid field. The message names the rule.
+  - `409 bcc_conflict`: the topic already has a Hall (with `error.data.group_id`); another group already has that address (never a silently suffixed address); or another create for the same topic is still running.
+  - `503 bcc_unavailable`: a check could not be read, or the create failed. Nothing is left behind, because a Hall that cannot be proven linked to its topic, at its address, is rolled back.
+- **Idempotent per topic.** One Hall per topic, serialized by a per-topic lock.
+- **Mapping:** `AdminHallsEndpoint::create` → `HallProvisioningService::provisionTopic` (the chain Hall pipeline: lock, existence check inside it, PeepSo create, marker plus re-read proof, deterministic owner, checked audit `admin_hall_created`).
+
+#### `PATCH /bcc/v1/admin/halls/:id`
+
+Edit a Hall's `name`, `description` or `topic_label` (send only what changes), within the Hall's `editable`. A Hall in any post status can be edited.
+
+- **Body:** any of `name`, `description`, `topic_label`, with the same rules as `POST`. Values are trimmed.
+- **Response 200:** `{ "hall": AdminHall, "audit_degraded": bool }`. The edit is recorded with the checked audit `admin_hall_updated`. A correct edit whose audit row could not be written is kept and reported, never silently undone.
+- **Errors:**
+  - `400 bcc_invalid_request`: nothing sent, an unknown field, a field this Hall does not allow (e.g. a chain Hall's `name`), or an invalid value. **Nothing is written unless every change passes.**
+  - `404 bcc_not_found`: not a Hall.
+  - `503 bcc_unavailable`: the Hall could not be read, or the write failed.
+- **Mapping:** `AdminHallsEndpoint::update` → `AdminHallsService::update` (`PeepSoGroup::update` for name and description, `HallRepository::writeTopicLabel` for the label).
+
 ## 5. Encoded rules — quick reference
 
 ### 5.1 §N7 — gated actions always visible
@@ -9845,6 +9914,15 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-25 — additive — admin Halls: list, create a topic Hall, edit (F-597)
+
+Ships with bcc-trust PR_TRUST (topic Halls step 3a). Admin-only routes: §4.34.
+
+- **`GET /admin/halls`:** every published Hall, with the fields an admin edits and which of them each Hall allows (`editable`).
+- **`POST /admin/halls`:** create a topic Hall. Its topic slug is its address, and the create is idempotent per topic.
+- **`PATCH /admin/halls/:id`:** edit a topic Hall's name, description and topic label; a chain Hall's description only.
+- **Unchanged:** every public route. A topic Hall appears in `GET /halls` with `hall_kind: "topic"` (§4.7, step 2a).
 
 ### v1.NEXT — 2026-11-25 — additive — topic Halls on the read side: `hall_kind`, `topic`, `GET /halls?kind=`
 
