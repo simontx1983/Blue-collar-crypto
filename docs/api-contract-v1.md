@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.261 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.262 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -584,6 +584,7 @@ profile shows a chip (New Member · Neutral tier), not a hole.
     "decay":   { "active": false, "points": 0 },
     "recovery": null,
     "findings": [],
+    "findings_unavailable": false,
     "quests": {
       "completed_count": 4,
       "total_count": 7,
@@ -659,6 +660,7 @@ profile shows a chip (New Member · Neutral tier), not a hole.
   server-rendered sentence (§A2); deadline-framed, never a §2.7
   schedule nudge. Recovery state is own-view only (§22.3 — nothing
   recovery-related appears on any public surface).
+- `findings_unavailable` *(v1.262, F-539)* (bool, always present beside `findings`): `true` when the member's findings could not be loaded. `findings` is then `[]` and must NOT be shown as "no findings"; show that they couldn't be loaded and offer a retry. It is all or nothing, so a partial list is never sent. `false` means `findings` is the real list, and `[]` then means genuinely none.
 - `findings` — **NEW at v1.63 (Rank Phase 8, spec §15)**: the member's
   own misconduct findings — active ones plus reversals from the last
   30 days; `[]` when clean. Own-view only (§22.3): this list exists
@@ -10038,6 +10040,13 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.262 — 2026-11-25 — additive — the progression says when a member's findings could not be loaded (F-539)
+
+Ships with bcc-trust #907. Frontend half to follow (friend).
+
+- **`GET /me/progression` → `progression.findings_unavailable`** (bool, ranked members, always present beside `findings`): `true` when the findings could not be loaded. `findings` is then `[]`, which is not "none". `false` means `findings` is the real list.
+- **Unchanged:** `findings` items and every other field. A client that does not read the flag renders as before.
 
 ### v1.261 — 2026-11-25 — additive — admin Halls: list, create a topic Hall, edit (F-597)
 
