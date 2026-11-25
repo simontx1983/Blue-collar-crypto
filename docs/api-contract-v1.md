@@ -1123,7 +1123,33 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
 - `reputation_tier_label` is the trust-tier name (the chip a human reads): `risky → "Risky"`, `caution → "Caution"`, `neutral → "Neutral"`, `trusted → "Trusted"`, `elite → "Elite"`. Always present on member and entity surfaces; `null` only on `community` cards, which have no trust system.
 - **`card_tier` / `tier_label` are RETIRED (v1.57).** The collectible-rarity vocabulary is gone — see §10 changelog for the full rationale. Do not reintroduce a rarity mapping anywhere; there is one tier axis and it is `reputation_tier`.
 - `current_rank_label` mirrors `rank_label` exactly (e.g. `"Veteran"`, or `"New Member"` for New Members). It is a member-axis field kept for surface compatibility.
-- `flags` is an array of short slugs; if non-empty, the frontend may render moderation chips. V1 codes: `suspended`, `shadow_limited`, `hidden`, `under_review`.
+- **`flags`** is an array of short slugs. **V1 code: `suspended`** — the only one.
+
+  ⛔ **WHO SEES IT (v1.NEXT, F-582): the member themselves and administrators, nobody else.** For every other viewer — another member, and a signed-out visitor — the array is **empty**, whatever is true of the member.
+
+  ⚠⚠ **AN EMPTY ARRAY IS NOT A STATEMENT ABOUT THE MEMBER.** It means EITHER "no flags" OR "not yours to see", and a client cannot tell which. So a client MUST NOT render "no moderation flags", "in good standing" or any equivalent from an empty `flags`; it may only render chips for slugs it actually receives. The server follows the same rule: the member-profile standing block OMITS its "No active moderation flags" fact for a viewer who may not see the list, rather than stating it from an empty array.
+
+  ⚠ `shadow_limited`, `hidden` and `under_review` were **removed** in v1.NEXT. Nothing in the codebase ever wrote them. They are not dormant: reintroducing one needs a contract amendment and a writer. ⭐ The real reach limit is the Caution/Risky reputation tier, a different mechanism — see `standing.reach_limited` below.
+
+- **`standing.reach_limited`** *(v1.NEXT, F-582)*: whether a Caution or Risky reputation tier is currently limiting this member's reach.
+
+  ⚠ **WIDER THAN "FEEDS".** Their posts are withheld from other viewers on every surface that reads the feed: the anonymous hot feed, every per-viewer feed, **their own profile wall**, and **the permalink** (a direct link answers not-found). The one documented exception is a room that lifts the §O4.1 shadow limit, for an active member of that room.
+
+  ⚠⚠ **THE MEMBER IS NEVER EXCLUDED FROM THEIR OWN VIEW**, which is why the limit is invisible without this field: they see their posts on their own wall and in their own feed exactly as before, while other viewers see none of them. That asymmetry is the reason this field exists.
+
+  ⛔ **TRI-STATE, AND `null` IS NOT `false`:**
+
+  | value | meaning |
+  |---|---|
+  | `true` | you are this member, and your reach IS limited |
+  | `false` | you are this member, and it is not |
+  | `null` | **not disclosed** — you are not this member |
+
+  A client MUST treat `null` as "no answer" and render nothing. `false` is a claim and is only ever sent to the member themselves; sending it to anyone else would assert something about another member's standing.
+
+  ⚠ **MEMBER ONLY — not member-or-admin**, unlike `flags`. It is the member's own Standing tab answer (user decision 2026-11-24).
+
+  It is keyed on the member's displayed `reputation_tier`, which they already see on their own byline, rather than on a separate read of the list the feed consults — the two derive from the same score, and telling a member something that contradicts their own profile would be worse than telling them nothing.
 - Hidden privacy fields (per `privacy.*_hidden: true`) cause the corresponding sections in `counts`, `wallets`, etc. to either be omitted or zeroed depending on the viewer's relationship — server decides, client doesn't.
 - **Secret pages in the counts *(v1.230, F-571)*:** on a single member's view (this `User`, and that member's `MemberSummary.engagement`), `counts.reviews_written` and `counts.disputes_signed` leave out the SECRET pages this viewer may not see, by the same rule as `/users/:handle/reviews` and `/disputes`. So the secret-page part of a count agrees with its list. The member and site admins see the full count. When the pages' privacy cannot be read, or the member has more than 100 secret pages, both counts are `0` for that viewer. *(v1.242)* The member profile's own counts (`GET /users/:handle`) follow this rule, and so do member cards built in batches, for their viewer: the directory, followers and watchers, the viewer's watching list (`/me/watching`), group rosters and join requests, suggestions, the feed cold start, and review and reply authors. For a batch, the viewer's own card and site admins see the full counts. When the pages' privacy cannot be read, or the members of one batch together have more than 100 secret pages, that count is `0` on every card in the batch except the viewer's own; the list itself never fails over it. `reviews_written` still counts every active vote, as before, so it can exceed the Reviews list's `total` by moderation-hidden reviews.
 - **`joined_at` for other viewers *(since v1.238, R12)*:** the member themselves receives the exact time. Every other viewer, anonymous included, receives the **first of the month at `00:00:00Z`** (e.g. `2026-01-12T09:41:07Z` → `2026-01-01T00:00:00Z`), so neither the payload nor a page built from it carries the day or the time. The same holds for `MemberSummary.joined_at` wherever it appears (review and reply authors, group request and invite items, rosters, member cards). `""` (unknown) is unchanged. Admin routes keep the stored value.
@@ -2495,7 +2521,8 @@ Returns a full Card view-model.
 - **Rate limit:** 60/min/user (anonymous: 60/min/IP)
 - **Cache:** `Cache-Control: max-age=30, stale-while-revalidate=60`; React Query `staleTime: 30s`
 - **Mapping:**
-  - `trust_score`, `reputation_tier`, `reputation_tier_label`, `is_in_good_standing`, `flags` ← `bcc_page_read_model` (§A4)
+  - `trust_score`, `reputation_tier`, `reputation_tier_label`, `is_in_good_standing` ← `bcc_page_read_model` (§A4)
+  - `flags` ← the page OWNER's suspension state, through the viewer-gated reader (`UserViewService::flagsForViewer`), **not** the read model — corrected in v1.NEXT, F-582
   - `is_claimed`, `claimed_by_handle` ← `peepso_pages.claimed_by` (§B5)
   - `chain` ← `peepso_page` meta (existing AbstractPageType)
   - `operator_profile` ← shared operator profile + page override, exposed only after the verified operator resolver returns one unambiguous owner (operator-profile routes below)
@@ -9712,8 +9739,8 @@ For each view-model field, the table below names the existing BCC system that ow
 | `reputation_tier_label` | Server-side mapping `reputation_tier → label` (`ReputationTierMap::TIER_LABEL`; elite → "Elite") — the sole tier vocabulary since v1.57 |
 | ~~`card_tier`, `tier_label`~~ | **RETIRED v1.57** — the rarity vocabulary is gone; use `reputation_tier` / `reputation_tier_label` |
 | `member_state`, `rank`, `rank_label`, `current_rank_label` | `RankStateService::memberState` over `wp_bcc_trust_rank_state` (v1.59 — earned Rank, written by the promotion engine / §5.2 readiness path). Missing row = New Member: `member_state: "new_member"`, nullable rank fields. No conferred-Role rows (§4.8) |
-| `is_in_good_standing` | `bcc-trust` derived from tier ≥ neutral AND no moderation flags (§E1) |
-| `flags` | suspension state + `wp_usermeta` moderation flags (`bcc_shadow_limited`/`bcc_hidden`/`bcc_under_review`) via `UserViewService::resolveFlags` — NOT the retired `bcc_trust_flags` vote-flag table |
+| `is_in_good_standing` | `bcc-trust`, from the TIER ALONE: `neutral`, `trusted` or `elite`. ⚠ Corrected in v1.NEXT (F-582) — it never consulted moderation flags, so it is the SAME for every viewer and is unaffected by `flags` being viewer-gated |
+| `flags` | suspension state via `UserViewService::flagsForViewer`, which gates `resolveFlags` to the member and administrators (F-582). The three `wp_usermeta` flags it also read were retired in v1.NEXT. Never the retired `bcc_trust_flags` vote-flag table |
 | `bio` | PeepSo profile description |
 | `primary_hall`, `halls` | `peepso_group_members` (PeepSo's membership ledger — single graph rule) joined with `wp_usermeta.bcc_primary_hall_group_id` for the primary pointer; no dedicated BCC table |
 | `wallets` | `bcc_wallet_links` (existing) |
@@ -9738,7 +9765,8 @@ For each view-model field, the table below names the existing BCC system that ow
 | `card_kind` | `peepso_pages.peepso_page_type` mapped via `AbstractPageType` |
 | `name`, `handle` | `peepso_pages.name` + slug |
 | `chain` | `peepso_page` meta (existing AbstractPageType) |
-| `trust_score`, `reputation_tier`, `reputation_tier_label`, `is_in_good_standing`, `flags` | `bcc_page_read_model` (denormalized read model, §A4) |
+| `trust_score`, `reputation_tier`, `reputation_tier_label`, `is_in_good_standing` | `bcc_page_read_model` (denormalized read model, §A4) |
+| `flags` | the page OWNER's suspension state via `UserViewService::flagsForViewer` (viewer-gated, F-582) — **not** the read model, corrected in v1.NEXT |
 | `rank_label` | `null` for V1 entity cards (members only have ranks); for member cards, the earned-Rank label via `UserViewService::getSummary`'s member-state resolution over `wp_bcc_trust_rank_state` (v1.59; `null` for New Members; §4.8) |
 | `is_claimed` | `peepso_pages.claimed_by IS NOT NULL` (new V1 column, per §B5) |
 | `claimed_by_handle` | JOIN to `wp_usermeta.bcc_handle` |
@@ -9927,6 +9955,16 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
+### v1.NEXT — 2026-11-25 — behaviour change (privacy) — moderation flags are the member's and administrators' to see (F-582)
+
+Ships with bcc-trust #902.
+
+- **`flags` is viewer-scoped.** The member themselves and administrators receive it; every other viewer, signed-out included, receives an **empty array** whatever is true of the member. No server behaviour depends on the list, and no cache changes: every shared cache holds signed-out responses, which now carry an empty array.
+- ⚠⚠ **An empty `flags` is NOT a statement about the member** — it means either "no flags" or "not yours to see", and a client cannot tell which. Clients MUST NOT render "no moderation flags", "in good standing" or any equivalent from an empty array; render chips only for slugs actually received. The member-profile standing block follows the same rule and OMITS its "No active moderation flags" fact for a viewer who may not see the list, rather than asserting it from an empty array.
+- **Three slugs removed:** `shadow_limited`, `hidden` and `under_review`. Nothing in the codebase ever wrote them. `suspended` is the only V1 code. Reintroducing one needs a contract amendment and a writer.
+- **New `standing.reach_limited`** — whether a Caution or Risky tier is limiting the member's reach. ⚠ Wider than "feeds": their posts are withheld from other viewers on every feed-backed surface, including their own profile wall and the permalink, with one documented room exception — while the member themselves is never excluded from their own view, which is why the limit was invisible. ⛔ **Tri-state, and `null` is not `false`:** `true`/`false` to the member, `null` (not disclosed) to anyone else. Clients MUST treat `null` as "no answer". ⚠ MEMBER ONLY, not member-or-admin, unlike `flags` (user decision 2026-11-24).
+- ⚠ **Two documentation corrections, no code change:** page-card `flags` come from the page OWNER's suspension through the viewer-gated reader, NOT from `bcc_page_read_model` as §4 and §9 said; and `is_in_good_standing` is derived from the TIER ALONE (`neutral`/`trusted`/`elite`), never from moderation flags — so it is the same for every viewer and is unaffected by this change.
+- **Unchanged:** suspension enforcement, the public index and sitemap (a suspended member is excluded by the listing clause, which never used the three removed keys), `indexable` (already the anonymous answer whoever asks, and already documented as never derived from `flags`), and every write gate.
 ### v1.255 — 2026-11-25 — doc correction — `POST /blog/cover-image`'s too-large-dimensions 400 carries `max_pixels`
 
 Contract only. No code or response change.
