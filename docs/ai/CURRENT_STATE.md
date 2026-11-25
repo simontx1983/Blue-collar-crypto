@@ -6,7 +6,7 @@
 
 | Repo | main tip | Notes |
 |---|---|---|
-| umbrella | `e826bf83` | contract **v1.263**. This documentation reconciliation is `v1.NEXT`; no numeric contract version is assigned |
+| umbrella | `bccc9585` | contract draft `v1.NEXT`; numeric version unassigned |
 | bcc-core | `9e1e19b8` | |
 | bcc-search | `ccab45cf` | |
 | bcc-trust | `f789f5be` | |
@@ -22,21 +22,20 @@ Open PRs at the snapshot. Check `gh pr list -R simontx1983/<repo>` for the live 
 
 | Workstream | Open PRs | State |
 |---|---|---|
-| AI-provider independence: onboarding Codex alongside Claude | umbrella#429 (this knowledge base); `AGENTS.md` PRs for the four nested repos; a contract-header PR | in review. Separate agent identities and changes to GitHub protection await the owner's decision |
 | Topic Halls 2b (Hall cards, TOPIC HALL kicker, Validators stat) | trust#908 (draft), search#55 (draft) | in progress |
-| Topic Halls 3b (archive) and the `/admin/halls` screen | — | planned |
-| Card cover photo on the Card view-model | trust#897, umbrella#415 | in review |
-| Validator admin: public verification badge | FE#424 | approved. Merges once its backend is released |
-| Validator admin: team, permissions and invites screens | FE#395 | waits for the backend team routes |
-| Shared detail layout for validator, project and creator pages ("D2") | FE#435 (draft) | in progress. Includes the chain-label follow-up from FE#430 |
-| Reposts frontend | FE#326 (draft) | merges once its backend is released |
-| "Show on profile" switches and Edit About (profile redesign PR4) | FE#295 | merges once its backend is released |
-| My Groups home tab | FE#330 (draft) | its title says "until backend", but the backend it waited for has shipped. Needs a refresh |
-| Mobile "open in wallet app", stage 0 | FE#401 | waits for a human to smoke-test on a phone |
-| Wallet sign-up keeps a typed email | FE#354 (draft) | the hold reason in its title is obsolete |
-| Frontend "findings unavailable" state (contract v1.262) | — | planned |
-| Subsystem-count guard: map-to-docs direction | umbrella#428 | in review |
-| Dependency updates | FE#303–#306, FE#376 | FE#376 and FE#308 both bump `next`, so one of them is a duplicate |
+| Card cover photo on the Card view-model | trust#897, umbrella#415 | open |
+| Validator admin: public verification badge | FE#424 | open |
+| Validator admin: team, permissions and invites screens | FE#395 | open |
+| Shared detail layout for validator, project and creator pages ("D2") | FE#435 (draft) | in progress |
+| Reposts frontend | FE#326 (draft) | in progress |
+| "Show on profile" switches and Edit About (profile redesign PR4) | FE#295 | open |
+| My Groups home tab | FE#330 (draft) | backend has shipped; PR title hold is stale |
+| Mobile "open in wallet app", stage 0 | FE#401 | open |
+| Wallet sign-up keeps a typed email | FE#354 (draft) | PR title hold is stale |
+| Subsystem-count guard: map-to-docs direction | umbrella#428 | open |
+| Dependency updates | FE#303–#306, FE#308, FE#376 | FE#308 and FE#376 both bump `next` to 15.5.29 |
+
+**Merged on 2026-11-25:** umbrella#429 (shared AI-agent knowledge base) and umbrella#430 (contract decision-reference clarification).
 
 ## Recently shipped (2026-11-04 → 11-25, merged to `main`)
 
@@ -57,6 +56,7 @@ Fix these opportunistically in small, separate PRs. The PR that added this page 
 
 **API contract** (`docs/api-contract-v1.md`):
 - The safety-net `_meta` contents still differ; see [ARCHITECTURE.md](ARCHITECTURE.md) §5.
+- §1.3 names `X-Request-Id` as canonical and `X-BCC-Request-Id` as an inbound compatibility alias. The current implementation still reads the alias; implementation precedence, including requests carrying both headers, is pending the follow-up implementation PR.
 - §4.20 (attestations) and §4.32 (announcements) still carry "planned / not shipped" banners, but the code exists.
 
 **Glossary** (`docs/glossary.md`):
