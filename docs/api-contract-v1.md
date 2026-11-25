@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.258 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.259 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1125,13 +1125,13 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
 - `current_rank_label` mirrors `rank_label` exactly (e.g. `"Veteran"`, or `"New Member"` for New Members). It is a member-axis field kept for surface compatibility.
 - **`flags`** is an array of short slugs. **V1 code: `suspended`** — the only one.
 
-  ⛔ **WHO SEES IT (v1.NEXT, F-582): the member themselves and administrators, nobody else.** For every other viewer — another member, and a signed-out visitor — the array is **empty**, whatever is true of the member.
+  ⛔ **WHO SEES IT (v1.259, F-582): the member themselves and administrators, nobody else.** For every other viewer — another member, and a signed-out visitor — the array is **empty**, whatever is true of the member.
 
   ⚠⚠ **AN EMPTY ARRAY IS NOT A STATEMENT ABOUT THE MEMBER.** It means EITHER "no flags" OR "not yours to see", and a client cannot tell which. So a client MUST NOT render "no moderation flags", "in good standing" or any equivalent from an empty `flags`; it may only render chips for slugs it actually receives. The server follows the same rule: the member-profile standing block OMITS its "No active moderation flags" fact for a viewer who may not see the list, rather than stating it from an empty array.
 
-  ⚠ `shadow_limited`, `hidden` and `under_review` were **removed** in v1.NEXT. Nothing in the codebase ever wrote them. They are not dormant: reintroducing one needs a contract amendment and a writer. ⭐ The real reach limit is the Caution/Risky reputation tier, a different mechanism — see `standing.reach_limited` below.
+  ⚠ `shadow_limited`, `hidden` and `under_review` were **removed** in v1.259. Nothing in the codebase ever wrote them. They are not dormant: reintroducing one needs a contract amendment and a writer. ⭐ The real reach limit is the Caution/Risky reputation tier, a different mechanism — see `standing.reach_limited` below.
 
-- **`standing.reach_limited`** *(v1.NEXT, F-582)*: whether a Caution or Risky reputation tier is currently limiting this member's reach.
+- **`standing.reach_limited`** *(v1.259, F-582)*: whether a Caution or Risky reputation tier is currently limiting this member's reach.
 
   ⚠ **WIDER THAN "FEEDS".** Their posts are withheld from other viewers on every surface that reads the feed: the anonymous hot feed, every per-viewer feed, **their own profile wall**, and **the permalink** (a direct link answers not-found). The one documented exception is a room that lifts the §O4.1 shadow limit, for an active member of that room.
 
@@ -2514,7 +2514,7 @@ Returns a full Card view-model.
 - **Cache:** `Cache-Control: max-age=30, stale-while-revalidate=60`; React Query `staleTime: 30s`
 - **Mapping:**
   - `trust_score`, `reputation_tier`, `reputation_tier_label`, `is_in_good_standing` ← `bcc_page_read_model` (§A4)
-  - `flags` ← the page OWNER's suspension state, through the viewer-gated reader (`UserViewService::flagsForViewer`), **not** the read model — corrected in v1.NEXT, F-582
+  - `flags` ← the page OWNER's suspension state, through the viewer-gated reader (`UserViewService::flagsForViewer`), **not** the read model — corrected in v1.259, F-582
   - `is_claimed`, `claimed_by_handle` ← `peepso_pages.claimed_by` (§B5)
   - `chain` ← `peepso_page` meta (existing AbstractPageType)
   - `operator_profile` ← shared operator profile + page override, exposed only after the verified operator resolver returns one unambiguous owner (operator-profile routes below)
@@ -9728,8 +9728,8 @@ For each view-model field, the table below names the existing BCC system that ow
 | `reputation_tier_label` | Server-side mapping `reputation_tier → label` (`ReputationTierMap::TIER_LABEL`; elite → "Elite") — the sole tier vocabulary since v1.57 |
 | ~~`card_tier`, `tier_label`~~ | **RETIRED v1.57** — the rarity vocabulary is gone; use `reputation_tier` / `reputation_tier_label` |
 | `member_state`, `rank`, `rank_label`, `current_rank_label` | `RankStateService::memberState` over `wp_bcc_trust_rank_state` (v1.59 — earned Rank, written by the promotion engine / §5.2 readiness path). Missing row = New Member: `member_state: "new_member"`, nullable rank fields. No conferred-Role rows (§4.8) |
-| `is_in_good_standing` | `bcc-trust`, from the TIER ALONE: `neutral`, `trusted` or `elite`. ⚠ Corrected in v1.NEXT (F-582) — it never consulted moderation flags, so it is the SAME for every viewer and is unaffected by `flags` being viewer-gated |
-| `flags` | suspension state via `UserViewService::flagsForViewer`, which gates `resolveFlags` to the member and administrators (F-582). The three `wp_usermeta` flags it also read were retired in v1.NEXT. Never the retired `bcc_trust_flags` vote-flag table |
+| `is_in_good_standing` | `bcc-trust`, from the TIER ALONE: `neutral`, `trusted` or `elite`. ⚠ Corrected in v1.259 (F-582) — it never consulted moderation flags, so it is the SAME for every viewer and is unaffected by `flags` being viewer-gated |
+| `flags` | suspension state via `UserViewService::flagsForViewer`, which gates `resolveFlags` to the member and administrators (F-582). The three `wp_usermeta` flags it also read were retired in v1.259. Never the retired `bcc_trust_flags` vote-flag table |
 | `bio` | PeepSo profile description |
 | `primary_hall`, `halls` | `peepso_group_members` (PeepSo's membership ledger — single graph rule) joined with `wp_usermeta.bcc_primary_hall_group_id` for the primary pointer; no dedicated BCC table |
 | `wallets` | `bcc_wallet_links` (existing) |
@@ -9755,7 +9755,7 @@ For each view-model field, the table below names the existing BCC system that ow
 | `name`, `handle` | `peepso_pages.name` + slug |
 | `chain` | `peepso_page` meta (existing AbstractPageType) |
 | `trust_score`, `reputation_tier`, `reputation_tier_label`, `is_in_good_standing` | `bcc_page_read_model` (denormalized read model, §A4) |
-| `flags` | the page OWNER's suspension state via `UserViewService::flagsForViewer` (viewer-gated, F-582) — **not** the read model, corrected in v1.NEXT |
+| `flags` | the page OWNER's suspension state via `UserViewService::flagsForViewer` (viewer-gated, F-582) — **not** the read model, corrected in v1.259 |
 | `rank_label` | `null` for V1 entity cards (members only have ranks); for member cards, the earned-Rank label via `UserViewService::getSummary`'s member-state resolution over `wp_bcc_trust_rank_state` (v1.59; `null` for New Members; §4.8) |
 | `is_claimed` | `peepso_pages.claimed_by IS NOT NULL` (new V1 column, per §B5) |
 | `claimed_by_handle` | JOIN to `wp_usermeta.bcc_handle` |
@@ -9944,7 +9944,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-25 — behaviour change (privacy) — moderation flags are the member's and administrators' to see (F-582)
+### v1.259 — 2026-11-25 — behaviour change (privacy) — moderation flags are the member's and administrators' to see (F-582)
 
 Ships with bcc-trust #902.
 
