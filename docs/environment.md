@@ -187,10 +187,18 @@ It gets a column here for that reason.
 | Concern | local | **CI** | staging | production |
 |---|---|---|---|---|
 | Stack | Local by Flywheel — nginx 1.26.1, MySQL 8.0.35 | `ubuntu-latest` + `shivammathur/setup-php` | LiteSpeed on Hostinger | LiteSpeed on Hostinger |
-| PHP | **8.3.29** | **8.2** (latest 8.2.x) | **8.3.30** | **8.3.30** |
+| PHP | site **8.3.29**; ⚠ the `php` on PATH is **8.2.30** | **varies by repo** — `bcc-core` 8.3, `bcc-trust` + `bcc-search` 8.2 | **8.3.30** | **8.3.30** |
 | Object cache | Redis drop-in present | none | — | — |
 | Redis | optional | none | recommended; mind the `WP_REDIS_TIMEOUT` gotcha | recommended; same gotcha |
 
+> ⚠ **"local" is two PHPs, and the one that gates your work is the older.** The
+> *site* runs 8.3.29, but the `php` on PATH — which runs PHPUnit, PHPStan and the
+> guard scripts — is **8.2.30**. So a local green bar is an 8.2 result even though
+> the site next to it is 8.3. Local by Flywheel ships an 8.3.29 CLI at
+> `lightning-services/php-8.3.29+1/bin/win64/php.exe`; it loads no `php.ini`, so it
+> needs `PHPRC` pointing at one that enables `gmp`, `mbstring`, `intl` and `mysqli`
+> before it can run the suite.
+>
 > **Local's PHP minor version now matches the remotes** (local was 8.2.30 until the
 > 2026-08 parity audit; the 8.2-vs-8.3 gap meant 8.3-only behaviour could not
 > reproduce locally at all). A patch gap remains — 8.3.29 local vs 8.3.30 remote —
@@ -198,18 +206,40 @@ It gets a column here for that reason.
 > release. Local by Flywheel offers whichever 8.3 build it ships; matching the patch
 > exactly requires its UI, not a config edit.
 
-### ⚠️ CI runs PHP 8.2 while both remotes run 8.3.30
+### ⚠️ CI runs PHP 8.2 while both remotes run 8.3.30 — partly closed
 
-Every plugin repo pins `php-version: '8.2'`:
+⚠ **This section was audited in 2026-08 and three of its findings had gone stale
+by 2026-11-19.** They are corrected below; the reasoning that follows them was
+sound and is kept. If you are acting on this section, act on the table, not on
+memory of it.
 
-| Repo | Location |
-|---|---|
-| `bcc-trust` | `.github/workflows/ci.yml` **:39** and **:187** (two jobs) |
-| `bcc-core` | `.github/workflows/ci.yml` **:24** |
-| `bcc-search` | `.github/workflows/ci.yml` **:42** |
+| Repo | PHP pin | Where | Composer | `require.php` | `config.platform.php` |
+|---|---|---|---|---|---|
+| `bcc-core` | **8.3** — already bumped | `ci.yml:27` | `install` | `>=8.0` | unset |
+| `bcc-trust` | **8.2** in **FIVE** jobs | `ci.yml:42`, `:285`, `:335`, `:390`, `:456` | `install` *(since bcc-trust #379)* | `>=8.1` | **`8.2.0`** |
+| `bcc-search` | **8.2** | `ci.yml:42` | `install` | `>=8.1` | unset |
 
-Classified **ACCIDENTAL** — nothing depends on 8.2 and no comment defends the choice;
-it is a pin that was correct when written and never revisited.
+All three commit `composer.lock`.
+
+**What had rotted:**
+
+1. **`bcc-trust` pins 8.2 in five jobs, not two.** The two this section named
+   (`:39`, `:187`) are gone; the file has since grown the verified-operator
+   resolver controls, the NFT revocation controls and the MariaDB engine job.
+   Bumping only two would leave three jobs behind *and* report a pass it had
+   not earned.
+2. **`bcc-trust` runs `composer install`, not `composer update`.** Changed in
+   bcc-trust **#379** (issue **#191**, still open), which committed the lock for
+   exactly this reason: `update`
+   had CI testing guzzle 7.16.1 and brick/math 1.0.0 while production ran 7.10.0
+   and 0.17.1. The workflow comment forbids reverting it. **There is no longer a
+   repo whose transitive versions can shift with the runner.**
+3. **`config.platform.php` is not unset everywhere.** `bcc-trust` sets it to
+   **`8.2.0`**, and its lock carries a matching `platform-overrides`. That single
+   line makes `bcc-trust` the most insulated of the three, not the most exposed.
+
+Classified **ACCIDENTAL** — nothing depends on 8.2 and no comment defends the
+choice; it is a pin that was correct when written and never revisited.
 
 This is the drift that matters most, and it is not because the gap is large. Local
 drift produces *confusion* — a developer sees odd behaviour and investigates. **CI
@@ -218,30 +248,47 @@ mean "this is safe for production", and it is issued by the only environment tha
 does not match production. A behaviour that differs between 8.2 and 8.3 is, by
 construction, invisible to the gate designed to catch it.
 
-It also ranks high on cost: **one line per repo**, versus the DNS-plus-host project
-needed to close the staging split.
+**Nothing blocks the bump**, and two of the three things this section said to
+expect do not happen at all — measured on a real PHP 8.3.29 binary against
+`bcc-trust`, not inferred:
 
-**Nothing blocks the bump** (audited, not assumed):
+- **Composer resolves nothing differently.** On the 8.3 runner Composer reports
+  `php 8.2.0 — Package overridden via config.platform, actual: 8.3.29`. A dry-run
+  installs all 36 dev packages at their locked versions (the 21 production
+  packages are already in the committed `vendor/`), and `composer.lock` is
+  byte-identical. With `install` + a committed lock + a platform override, the
+  runner's PHP cannot reach resolution.
+- **PHPStan's analysis target does not follow the runner** — this section's
+  expectation that it would is wrong for `bcc-trust`. `phpstan diagnose` reports
+  *"PHP version for analysis: 8.2 (from `config.platform.php` in composer.json)"*
+  identically under 8.2.30 and 8.3.29. Its suggestion to set `phpVersion`
+  explicitly is already satisfied in effect. For `bcc-core` and `bcc-search`,
+  which set no platform, the target *does* follow the runner.
+- **No locked dependency carries a PHP upper bound,** and the dev toolchain is
+  exact-pinned (`phpstan/phpstan 2.1.51`, `phpunit/phpunit 11.5.55`), so a runner
+  bump will not silently float it.
 
-- `require.php` is `>=8.1` in `bcc-trust` and `bcc-search`, and unset in `bcc-core` —
-  all open-ended.
-- `config.platform.php` is unset in all three, so nothing pins the resolver to 8.2.
-- No locked dependency carries a PHP upper bound — 20+31, 0+30 and 0+30 packages
-  checked across the three lock files.
-- The dev toolchain is exact-pinned (`phpstan/phpstan 2.1.51`,
-  `phpunit/phpunit 11.5.55`), so a runner bump will not silently float it.
+⭐ **The runner still changes what PHPStan can see, in the safe direction.** At
+the same 8.2 analysis target, the 8.3 runner flags an 8.3-only function
+(`json_validate()`) as unavailable, while the 8.2 runner accepts it silently. Both
+runners flag a function that never exists — that is the control, so this is added
+reach, not added noise. The 8.3 runner catches "reached for an 8.3-only symbol
+while the declared platform is 8.2"; the 8.2 runner is blind to it.
 
-**Two things to expect rather than assume**, both worth one trial run:
+⚠ **Bumping `config.platform.php` is not a one-line change.** It is part of
+`composer.lock`'s content hash, so editing it immediately puts the committed lock
+out of date — measured: `composer install` then warns *"The lock file is not up to
+date with the latest changes in composer.json"* and recommends `composer update`.
+Since `vendor/` is committed and is what the deploy rsyncs to production, a
+platform bump necessarily re-resolves dependencies and ships a new `vendor/` — the
+very thing bcc-trust #379 (issue #191) exists to prevent. It also moves PHPStan's analysis target to 8.3,
+which at level 8 can surface new findings. It therefore belongs in its own PR with
+its own review, never bundled with a runner bump.
 
-1. **PHPStan's target version follows the runner.** `phpVersion` is unset in every
-   `phpstan.neon`, so PHPStan currently analyses *as 8.2*. Moving the runner to 8.3
-   moves the analysis target with it, and at level 8 that can surface new findings.
-   Setting `phpVersion` explicitly would decouple the two and is worth considering
-   alongside the bump.
-2. **`bcc-trust` runs `composer update`, not `composer install`** (`ci.yml:48`
-   and `:192`), so it re-resolves against the runner's PHP rather than the lock file.
-   `bcc-core` and `bcc-search` use `composer install`. Transitive versions can
-   therefore shift for `bcc-trust` alone.
+**Remaining work:** `bcc-search` is still on 8.2 and sets no platform, so the bump
+there moves both its runtime *and* its PHPStan target in one step — expect level-8
+findings and treat it as the less trivial of the two. `bcc-trust` is covered by
+#771.
 
 > GMP is a hard requirement, not a nicety — CI already installs it explicitly
 > (`extensions: gmp, mbstring, intl`) with the note that it *"is required by
@@ -276,6 +323,8 @@ It is dangerous because **nothing about it looks broken**:
 - WordPress boots, PeepSo works, wp-admin is normal.
 - `/wp-json/` simply omits every `bcc/*` namespace, and bcc routes return
   **`404`, not `500`** — indistinguishable from a routing or permalink problem.
+  (The index answers at all only because bcc-trust is inert: on a healthy
+  stack `RestRouteAllowlist` refuses it to a signed-out caller with `401`.)
 
 **It also damages persistent state.** With `bcc-core` inert its `cron_schedules`
 filter never registers, so every custom BCC interval (`bcc_one_minute`,
@@ -297,11 +346,14 @@ After **any** Local PHP version change, re-check `conf/php/php.ini.hbs` and then
 confirm the stack is really up:
 
 ```bash
-curl -s http://blue-collar-crypto-custom.local/wp-json/ | grep -o 'bcc[^"]*'
+curl -s -o /dev/null -w '%{http_code}\n' http://blue-collar-crypto-custom.local/wp-json/bcc/v1/ranks
 ```
 
-Empty output means the plugins are loaded-but-inert, not missing. If it is empty,
-also check `wp cron event list` for BCC hooks before assuming the fix is complete.
+`200` means the stack is up. `404` means the plugins are loaded-but-inert, not
+missing. If it is `404`, also check `wp cron event list` for BCC hooks before
+assuming the fix is complete. Don't grep the REST index (`/wp-json/`) for `bcc`:
+on a healthy stack it is `401` to a signed-out caller, so it comes back empty
+either way.
 
 > **Do not trust Local's registry for the current version.** `AppData/Roaming/Local/
 > sites.json` can be read mid-write and report a version that is neither the old nor

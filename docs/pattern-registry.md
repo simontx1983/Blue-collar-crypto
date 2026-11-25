@@ -51,6 +51,82 @@ should point at exactly one source-of-truth class or method per concept.
   always present) → `BCC\Trust\Core\Services\UserViewService::resolveWallets`
   with the egress safety net `enforceWalletPrivacyAtEgress`
   ([app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/UserViewService.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Services/UserViewService.php))
+- **Signature primitives, one implementation each** (bcc-core, pure PHP:
+  GMP + OpenSSL, no Composer dependency). Every wallet verifier uses
+  these; do not add a second secp256k1 or bech32 implementation.
+  - secp256k1 → `BCC\Core\Crypto\Secp256k1`: `verifySha256()` (OpenSSL),
+    `verifyDigest()` (pure GMP, for a digest the caller computed, e.g.
+    Keccak-256), `recoverPublicKey()` (Ethereum ecrecover),
+    `decompress()`, `isCanonicalLowS()` (low-S is required everywhere)
+    ([Secp256k1.php](../app/public/wp-content/plugins/bcc-core/src/Crypto/Secp256k1.php))
+  - bech32 → `BCC\Core\Crypto\Bech32`: `encode()` and a STRICT
+    `decode()` (checksum, case, charset, length, padding)
+    ([Bech32.php](../app/public/wp-content/plugins/bcc-core/src/Crypto/Bech32.php)).
+    bcc-trust's `Onchain\Support\Bech32` is a lenient older copy;
+    moving it onto core's is an open follow-up.
+  - Cosmos address from a key → `BCC\Core\Crypto\CosmosAddress::bytesFromPubKey()`
+    (RIPEMD-160(SHA-256), or Keccak-256 for the Ethermint chains in
+    `ETHERMINT_HRPS`: Injective)
+    ([CosmosAddress.php](../app/public/wp-content/plugins/bcc-core/src/Crypto/CosmosAddress.php))
+- **Cosmos transaction proof** (the validator self-send claim, design A1) →
+  `BCC\Core\Crypto\Cosmos\CosmosTxVerifier::verifySelfSend(txRaw, hash,
+  chainId, accountNumber, valoper)`, returning a `CosmosTxVerdict` (`ok`, or
+  one `REASON_*` code; on success the memo, addresses, amount, sign mode and
+  sequence from the verified bytes)
+  ([CosmosTxVerifier.php](../app/public/wp-content/plugins/bcc-core/src/Crypto/Cosmos/CosmosTxVerifier.php)).
+  Pure: no WordPress, network or database.
+  - What it checks: sha256(bytes) is the submitted hash; strict protobuf
+    decoding (`ProtoReader`: unknown or duplicate fields refused).
+  - Signature: verified LOCALLY, for `SIGN_MODE_DIRECT` and
+    `LEGACY_AMINO_JSON` only.
+  - Shape: one signer, one signature, one `MsgSend`, no extension
+    options, no fee payer or granter.
+  - Addresses: the key's address == from == to == the operator account.
+  - ⚠ An endpoint proves INCLUSION only. Who signed is proved here, over the
+    hash-matching bytes; never take messages, memo or signer from an
+    endpoint's JSON. The chain id is the caller's pinned config.
+- **The validator memo claim's challenge** (design A2) →
+  `BCC\Core\Wallet\ValidatorMemoChallenge`
+  ([ValidatorMemoChallenge.php](../app/public/wp-content/plugins/bcc-core/src/Wallet/ValidatorMemoChallenge.php)):
+  - the memo (`memo()`, `memoMatches()`: byte for byte, ASCII):
+    `BCC: claim validator page <valoper> on <host>. Code <code>`. It names
+    NO member. Which member a challenge is for lives only server-side, on
+    the challenge, and only that member may reserve or consume it;
+  - the 8-symbol code, unique among live challenges (a collision is drawn
+    again);
+  - the 30-minute inclusion window (`blockTimeInWindow()`);
+  - `issue()`, `reserve()` (one hash per challenge), `withdraw()` and
+    `consumeInTransaction()`;
+  - `findLiveByCode()`: the challenge a (valoper, code) pair names while it
+    is live and unreserved, for the operator-facing code lookup (design
+    A5). Null alike for every other case; compared with `hash_equals()`.
+
+  The limits are named constants on the class:
+  - per member: 3 live, 5 issued per hour, one live per (member, valoper);
+  - per valoper: no refusal at normal levels, a `crowded_valoper` signal at
+    5 members, and a 50-live backstop for newcomers only.
+
+  The memo must never be built anywhere else.
+- **A challenge consumed inside the caller's transaction** →
+  `ChallengeRepository::consumeInTransaction()`. It refuses outside a
+  transaction, deletes exactly one row, and the caller's rollback restores
+  the challenge.
+  - Its sibling `update()` is a compare-and-set in its own transaction,
+    refused inside one.
+  - It takes an acceptance check that runs on the locked row BEFORE the
+    delete, so a refused caller deletes nothing.
+  - Both decide "am I in a transaction?" with
+    `ChallengeRepository::transactionState()`: a SAVEPOINT / RELEASE probe
+    with a unique savepoint name.
+    - Error 1305 means outside. It is read by error NUMBER from the
+      connection, never by message alone: a server in another language
+      (`lc_messages`) words it differently.
+    - Any other failure means unknown: it is refused and counted as
+      `wallet_challenge/tx_probe_unknown`.
+  - ⚠ Never use `INFORMATION_SCHEMA.INNODB_TRX` for this. On MySQL 8 it is
+    cached for ~100 ms and does not list a transaction until it touches
+    InnoDB.
+  ([ChallengeRepository.php](../app/public/wp-content/plugins/bcc-core/src/Wallet/ChallengeRepository.php))
 
 ## Profile + account (V2 Phase 2 / 2.5)
 
@@ -133,6 +209,32 @@ should point at exactly one source-of-truth class or method per concept.
   consumed by `CardViewService::getPageCardForList`. Any endpoint hydrating
   N page cards MUST route through this, never loop `getCard` bare.
   ([app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Support/PageCardPrefetcher.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Support/PageCardPrefetcher.php))
+- **SECRET pages (`peepso_page_privacy = 2`)** → bcc-core
+  `BCC\Core\Repositories\PeepSoPagePrivacy`. Any list or search of
+  `peepso-page` posts puts `PeepSoPagePrivacy::notSecretSql('p.ID')` in its
+  WHERE (NOT EXISTS: any secret row hides the page, never a duplicate row;
+  hidden from everyone). Any read of ONE page by id asks
+  `BCC\Trust\Core\Support\PageAccess::viewerMaySee($post, $viewerId)` /
+  `viewerMaySeeId($pageId, $viewerId)` (author, site admin, then
+  `PeepSoPagePrivacy::isVisibleTo`: members and invitees) and, on false,
+  answers exactly as for a page that does not exist. A list shown to ONE
+  viewer (their watchlist, a feed page's page labels) asks
+  `PageAccess::visibleAmong($pageIds, $viewerId)` instead: the same verdict
+  per page, with one batched read rather than one per page. A paginated list
+  read in SQL (a member's reviews or disputes, as another viewer sees them)
+  finds its secret pages with `NOT (notSecretSql(…))`, asks
+  `PageAccess::hiddenAmong($pageIds, $viewerId)` for the ones this viewer may
+  not see, and leaves those out of BOTH the count and the page
+  (`page_id NOT IN (…)`), so the totals agree; a failed read or more than
+  `PageAccess::HIDDEN_LIST_CAP` secret pages fails closed. A page-OWNERSHIP
+  count or owner list (rows of `peepso_page_members` /
+  `peepso_page_categories`) puts
+  `PeepSoPageRepository::listablePageSql('pm.pm_page_id')` in its WHERE:
+  published and not secret, for every viewer. Never hand-roll a
+  `LEFT JOIN … peepso_page_privacy … <> 2`: that form lets a two-row page
+  through.
+  ([bcc-core/src/Repositories/PeepSoPagePrivacy.php](../app/public/wp-content/plugins/bcc-core/src/Repositories/PeepSoPagePrivacy.php),
+  [bcc-trust/app/Domain/Core/Support/PageAccess.php](../app/public/wp-content/plugins/bcc-trust/app/Domain/Core/Support/PageAccess.php))
 
 ## Feed
 
@@ -520,7 +622,7 @@ The platform is intentionally resilient — fail-closed throttles, fail-open cac
   - **NullService activations** — every fallback NullObject in `bcc-core/src/NullServices/*` records when bcc-trust isn't bound. 10 of 11 NullServices instrumented (the 11th, `NullRecalcQueueRead`, returns null which the inline health endpoint already detects as `recalcSource: 'unavailable'`):
     - `null_trust_read` / `activation` (4 read methods) + `is_suspended` (fail-closed) + `lock_active_vote_for_dispute` (fail-closed). Per-method events because security postures differ. (The `eligible_panelists` event retired with the §D5 panel and `TrustReadServiceInterface::getEligiblePanelistUserIds` — Rank Phase 6.)
     - `null_dispute_adjudication`, `null_score_read`, `null_score_contributor`, `null_page_owner`, `null_wallet_link_read`, `null_wallet_link_write`, `null_wallet_signal_write`, `null_onchain_data_read`, `null_trending_data` — all use a single `activation` event per service. The "is this NullService active?" signal is operationally useful; per-method breakdown is recoverable from logs.
-  - `peepso_absence` / 21 events — every BCC writer/repo on the PeepSo boundary contributes a unique event name (the eight F-272 group request/invite doors share one, `group_writer_pending`; added 2026-11-12 with `group_writer_create`, which `createPlainGroup` had recorded since V1.6 without being registered, so /system/health never showed it — a bcc-core test now fails on any recorded event missing from the map). Phase 1.5 (2026-05-09) expanded coverage to all 18 V-11 guards across `bcc-core/src/PeepSo/*` + `bcc-core/src/Repositories/PeepSoMessageRepository`; Rank Phase 7 (2026-08-04) added `group_writer_transfer` (`PeepSoGroupWriter::transferOwnership`, the §21.2 community-custody write), 18 → 19. Events: `status_writer_create`, `comment_writer_add`, `gif_writer_create`, `photo_writer_create`, `follow_writer_follow`, `follow_writer_unfollow`, `group_writer_join`, `group_writer_leave`, `group_writer_transfer`, `group_writer_create`, `group_writer_pending`, `notification_writer_send`, `reaction_writer_set`, `reaction_writer_remove`, `message_writer_send_new`, `message_writer_send_in_conversation`, `message_repo_unread_count`, `message_repo_is_participant`, `message_repo_root_conversation_id`, `message_repo_participants`, `message_repo_mark_viewed`. Counter is per-call (not dedup'd) so `/system/health` shows "the comment writer silently no-opped 1247 times in the last hour" not "we logged it once."
+  - `peepso_absence` / 23 events — every BCC writer/repo on the PeepSo boundary contributes a unique event name (the eight F-272 group request/invite doors share one, `group_writer_pending`; added 2026-11-12 with `group_writer_create`, which `createPlainGroup` had recorded since V1.6 without being registered, so /system/health never showed it — a bcc-core test now fails on any recorded event missing from the map). Phase 1.5 (2026-05-09) expanded coverage to all 18 V-11 guards across `bcc-core/src/PeepSo/*` + `bcc-core/src/Repositories/PeepSoMessageRepository`; Rank Phase 7 (2026-08-04) added `group_writer_transfer` (`PeepSoGroupWriter::transferOwnership`, the §21.2 community-custody write), 18 → 19; F-542 (2026-11-24) added `orphan_repair_unconfirmed` and `orphan_repair_abandoned` (`bcc-core/src/PeepSo/OrphanedPostRepair`, the bounded repair behind `PeepSoAddPostGuard::failClosedIfHijacked()`: that path destroys a post it cannot vouch for and cannot read whether the destroy worked, because it is reached BECAUSE a read already failed — `orphan_repair_unconfirmed` is recorded when the destroy could not be confirmed, so a pinned best-effort trash ran and a bounded retry was queued; `orphan_repair_abandoned` when that retry gave up with the post still unconfirmed. An UNREADABLE confirmation counts as unconfirmed and queues, so neither event means "the post is still there" — only that nobody could prove it is gone), 21 → 23. Events: `status_writer_create`, `comment_writer_add`, `gif_writer_create`, `photo_writer_create`, `follow_writer_follow`, `follow_writer_unfollow`, `group_writer_join`, `group_writer_leave`, `group_writer_transfer`, `group_writer_create`, `group_writer_pending`, `notification_writer_send`, `reaction_writer_set`, `reaction_writer_remove`, `message_writer_send_new`, `message_writer_send_in_conversation`, `message_repo_unread_count`, `message_repo_is_participant`, `message_repo_root_conversation_id`, `message_repo_participants`, `message_repo_mark_viewed`, `orphan_repair_unconfirmed`, `orphan_repair_abandoned`. Counter is per-call (not dedup'd) so `/system/health` shows "the comment writer silently no-opped 1247 times in the last hour" not "we logged it once."
   - `search_lkg` / `served`, `search_lkg` / `unavailable_503` — bcc-search breaker-tripped responses (`SearchController::breakerTrippedResponse`).
   - `search_ft_index` / 1 event (`title_only_fallback`) — bcc-search `SearchRepository::searchCandidates` served an FT-eligible query (≥3 chars) via the title-prefix LIKE fallback because the FULLTEXT index is not installed. Content and category-name matching are silently absent for these queries. Sustained activation = the hourly `bcc_search_ensure_ft_index` self-heal isn't landing the index — rebuild from BCC System → Developer → Search Index. (Added 2026-07-19.)
   - `search_trust` / 1 event (`enrichment_unavailable`) — bcc-search `SearchController` served a search or trending result WITHOUT trust enrichment: the score-read service is the NullObject (bcc-trust unbound). (No scores for a set of brand-new pages is NOT degradation — they have no read-model row yet.) Ranking is text-only and the impersonation guard had nothing to compare, so the response carries `system_degraded: true` and is cached only 10 s under its version key, never as LKG. Sustained activation = bcc-trust unbound. (Added 2026-11-11, F-24.)
@@ -544,8 +646,8 @@ The platform is intentionally resilient — fail-closed throttles, fail-open cac
     - `replay_skipped` — signature was already processed; bumped alongside the existing `bcc_helius_signature_seen_total` wp_options counter (which drives the admin Helius tile). Distinct surface: the admin tile is for operators inspecting Helius volume; `/system/health` is the canonical degradation surface.
     - **Sustained activation** can be either legitimate (Helius double-sent — appears in their dashboard) or hostile (auth header stolen, attacker replaying known signatures against the always-200 endpoint). Operators discover the second case here.
 
-  - **`cron_dispatch` / 2 events** (2026-05-26) — soft enqueue failures on the trust async surface. `wp_schedule_single_event` returning `false` (or AS returning 0) means the worker never fires. Most post-mutation paths recover via a reconciliation sweep (e.g. `DisputeScheduler::doReconcile`, the recurring graph/recalc/stats sweeps). The two events below are the surfaces where loss is **unrecoverable** without manual replay:
-    - `endorsement_fraud_analyzer` — bcc-trust `EndorsementFraudAnalyzer::schedule` enqueue failure. No reconciliation: the endorser keeps a trust bonus they should not.
+  - **`cron_dispatch` / 1 event** (2026-05-26) — soft enqueue failures on the trust async surface. `wp_schedule_single_event` returning `false` (or AS returning 0) means the worker never fires. Most post-mutation paths recover via a reconciliation sweep (e.g. `DisputeScheduler::doReconcile`, the recurring graph/recalc/stats sweeps). The two events below are the surfaces where loss is **unrecoverable** without manual replay:
+    - ~~`endorsement_fraud_analyzer`~~ — RETIRED 2026-11-24 (simontx1983/bcc-core#187). Its only writer, `EndorsementFraudAnalyzer::schedule`, was removed with the Endorse→Attestation cutover (bcc-trust b4a8c6ae), so the counter could never move. Found by bcc-trust's `DegradationMetricsCoreMapTest`.
     - `vote_job_dispatcher` — bcc-trust `VoteJobDispatcher` enqueue failure on EITHER arm: the wp-cron fallback (`wp_schedule_single_event` → `false`) OR the Action Scheduler arm (`enqueueWithLock` → `as_enqueue_async_action` returns 0, added 2026-07-10 / bcc-trust #75). Both strand the composite `bcc_trust_async_post_vote` job, so its sub-tasks (fraud analysis, trust graph, stats refresh) silently drop for that vote.
     - **Sustained nonzero activation** = `wp_options` is unhealthy on the hot mutation path. Treat as incident, not warning.
     - **NOT instrumented** here: `DisputeNotificationService::enqueueAsync` (covered by its existing reconciliation sweep + `Logger::error` in `DisputeController`). The AS arm's *enqueue* failure IS now instrumented (#75) — a `return`-0 creates no action row, so it is invisible in the AS admin UI, unlike an action that runs and then fails.
@@ -585,6 +687,51 @@ The platform is intentionally resilient — fail-closed throttles, fail-open cac
       cron cannot flood. Sustained activation = something is running delivery
       via WP-CLI (`wp cron event run` / `wp action-scheduler run`); queue
       delivery MUST run through the HTTP WP-Cron / Action Scheduler context.
+
+  - **`validator_relationships` / 13 events** (2026-11-24) — bcc-trust's
+    validator owner and team relationship writers: `ValidatorRelationshipService`
+    (staff link / revoke / cancel), the relationship log writer and its daily
+    health check, `PageOwnershipAligner` (the PeepSo ownership move), the weekly
+    claim re-verify sweep and the account-deletion purge. Every event means a
+    change did not happen, or happened without part of its record. Expected
+    steady state zero; bake before alerting, except `log_chain_broken`.
+    - `unknown_verification_method` — the weekly re-verify met a claim whose
+      verification method it does not know; skipped, never revoked.
+    - `log_lock_unavailable` / `claim_lock_unavailable` — a change could not take
+      its lock within 5 s and wrote nothing (a retryable 503).
+    - `log_append_failed` — a standalone log row (a failed or expired staff
+      step-up) was not written.
+    - `followup_failed` — a step after a committed change (audit row, bells,
+      bonus, read model, align schedule) failed; the change stands.
+    - `page_owner_locked` / `page_owner_unknown` / `page_owner_misaligned` — the
+      aligner did not move a page's ownership: its page lock was busy, the
+      claims could not be read, or the author is someone no claim names
+      (reported, never overwritten). The page stays on the retry list.
+    - `align_backlog_full` — that retry list reached its cap.
+    - `deletion_revoke_failed` — an account deletion purged claims it could not
+      revoke through the audited path.
+    - `log_chain_broken` — the daily verification found a break; every
+      administrator is emailed. Any occurrence needs investigation.
+    - `log_verify_incomplete` — the daily walk could not finish (a failed read
+      or the row limit); nothing was proven broken.
+    - `log_anchor_missing` — the log has rows but its anchor option is gone; the
+      next append sets a new one.
+
+  - **`cosmos_tx_proof` / 3 events** (2026-11-24) — bcc-trust's
+    `CosmosTxInclusionFetcher`, A3 of the validator memo claim: was a Cosmos
+    transaction included, per two independent public node operators per
+    chain (`CosmosTxProofEndpoints`)? It proves inclusion only; key control is
+    bcc-core's `CosmosTxVerifier`. Each event leaves the claim "not yet"
+    (nothing is decided) or the warning email unsent. Expected steady state
+    zero; a sustained count on one chain means an operator is serving bad
+    data, so replace it in `CosmosTxProofEndpoints`.
+    - `endpoint_disagreement` — the operators returned different bytes,
+      height, result code or block time for the same hash.
+    - `network_mismatch` — a proof node's `/status`, or a block header it
+      served, named a network other than the one BCC pins for the chain.
+    - `contact_disagreement` — the operators returned different
+      `security_contact` values for a validator; no warning email is sent
+      and staff are flagged.
 
   - **`collection_persist` / 3 events** (2026-11-10) — collection-row write
     loss on the single writer, `CollectionPersistBatch::persist()`. bcc-trust
@@ -633,7 +780,7 @@ The platform is intentionally resilient — fail-closed throttles, fail-open cac
   | Plugin | Block key | Source | Surfaces |
   |---|---|---|---|
   | bcc-core | `throttle` | `Throttle::health()` | `rate_limiter_ready`, `backend` (trust_engine / object_cache / none), `degraded`, `last_success_ts` |
-  | bcc-core | `degradation_metrics` | `DegradationMetrics::healthSnapshot()` | `any_active` triage flag + per-subsystem current/previous-hour counts. Currently wired subsystems: `throttle`, `null_trust_read`, the 10 `null_*` NullService activations, `peepso_absence` (21 events), `search_lkg`, `search_trust` (1 event — `enrichment_unavailable`; search served without trust enrichment, tagged `system_degraded`, never cached as LKG), `read_model_fallback`, `audit_log_swallow` (4 events — 2 read-path + 2 write-path as of 2026-09-01), `account_security_mail` (7 events — AccountSecurityMailer wp_mail failures on credential / wallet change / sessions-revoked-all / password-reset-request side-channel emails; treat sustained activation as P1), `cron_dispatch` (2 events — `endorsement_fraud_analyzer` + `vote_job_dispatcher` soft enqueue failures on the unrecoverable trust async surface; sustained activation = wp_options sick, treat as incident), `post_commit_task` (1 event — `vote_subtask_failed`; swallowed post-commit trust-task *execution* failures, NOT wp_options signals; `dispute_backfill_failed` retired with the §D5 backfill, Rank Phase 6), `helius_dedup` (3 events — `replay_skipped`; Helius webhook signature already seen; sustained activation = double-send or replay attempt. `ingest_failed_unmarked`; a delivery's batch ingest threw and its signatures were unmarked so Helius can redeliver — recovered, no loss. `unmark_failed`; same ingest failure but the unmark was incomplete, so the batch is lost and its resend is refused — P1, manual replay needed), `gated_group_provision` (3 events — `peepso_absent` / `no_admin_owner` / `group_create_failed`; daily cron sweep retry-not-catching-up signal), `contribution_recovery` (1 event — `user_eval_failed`; daily trust-recovery sweep per-user failure), `rank_scoring` (4 events — `tier_snapshot_failed`; the daily tier-day snapshot sweep threw, so the §13.1 trust-window history develops gaps — fail-safe strict (a gap can only delay a promotion, never grant one) but sustained activation means promotions resolve conservatively. `login_write_failed`; a RankLoginListener login-day write threw, so that member's login day may be missing from the time-credit / inactivity clocks. `evidence_ingest_failed`; a Phase 4 rank_events ledger subscriber threw, so that evidence event is missing from the member's ledger — fail-safe strict, sustained activation means silent under-recording. `poll_close_failed`; the hourly Phase 6 meaningful-vote poll-close sweep threw, so due polls stop closing and disputes stall open in `reviewing` — fail-safe strict (no outcome is ever applied early), recovers when the sweep next succeeds), `collection_persist` (3 events — `write_failed`; a `CollectionPersistBatch::persist()` batch lost at least one collection row, so the loss is partial and the row stays eligible for the refresh cron. `batch_total_failure`; `failed === total`, the wallet made no progress at all — usually the table or the connection rather than the data. `watermark_withheld`; ⚠ DECLARED BUT NOT WIRED — the path it names does not exist, see the Observability note above, `moderation_hidden_ids` (5 events — bcc-trust `HiddenActivityRepository` (F-98/F-77), the moderation-hidden list every feed excludes; reads FAIL CLOSED. `exists_read_failed`; a single-row check errored and was answered "hidden". `list_read_failed`; the full-list read errored, never cached. `served_last_good`; the persisted last-known-good list was served, and the paired error log carries `last_good_age_seconds`. `no_last_good`; a failed read with no last-good list, so the request fails rather than show hidden posts. `ceiling_reached`; more than the 50,000-row read ceiling, so the oldest beyond it are NOT excluded. Expected steady state zero, not yet baked), `auth_throttle` (4 events — bcc-trust `AuthSupport::allowIdentityAttempt()` (F-123/F-131), the 300/min route-wide ceilings on the server-side-called sign-in routes. `wallet_login_ceiling`; the `/auth/wallet-login` ceiling tripped. `oauth_login_ceiling`; the `/auth/oauth` ceiling tripped. Either means every identity on that route is refused for the rest of the minute — a flood, or the ceiling set too low. Then bcc-trust's `POST /auth/login` captcha step-up (`LoginStepUp` / `TurnstileVerifier`). `login_failure_spike`; a failed sign-in while more than 50 have failed site-wide in 5 min, which turns the step-up on for everyone, counted per failure so a real wave reaches `DegradationAlerter`. `turnstile_unavailable`; Turnstile siteverify unreachable, non-200, malformed, or rejecting the secret, so the step-up failed open to the login limits. Expected steady state zero for all four), `password_breach_check` (1 event — bcc-trust `BreachedPasswordCheck` (#712), the leaked-password refusal at sign-up, reset and password change. `unavailable`; the Pwned Passwords range lookup failed (a transport error, non-200, empty body or exception), so the password was accepted unchecked, because the check fails open by design. Expected steady state zero; sustained counts mean breached passwords are getting through)). The canonical-subsystem map lives in bcc-core/bcc-core.php — new subsystems wired into `DegradationMetrics::record()` should add their `(subsystem, events)` tuple there. |
+  | bcc-core | `degradation_metrics` | `DegradationMetrics::healthSnapshot()` | `any_active` triage flag + per-subsystem current/previous-hour counts. Currently wired subsystems: `throttle`, `null_trust_read`, the 10 `null_*` NullService activations, `peepso_absence` (23 events), `search_lkg`, `search_trust` (1 event — `enrichment_unavailable`; search served without trust enrichment, tagged `system_degraded`, never cached as LKG), `read_model_fallback`, `audit_log_swallow` (4 events — 2 read-path + 2 write-path as of 2026-09-01), `account_security_mail` (7 events — AccountSecurityMailer wp_mail failures on credential / wallet change / sessions-revoked-all / password-reset-request side-channel emails; treat sustained activation as P1), `cron_dispatch` (1 event — `vote_job_dispatcher` soft enqueue failure on the unrecoverable trust async surface; `endorsement_fraud_analyzer` retired 2026-11-24 (simontx1983/bcc-core#187): its only writer, the endorsement fraud-analysis enqueue, was removed with the Endorse→Attestation cutover, so the counter could never move; sustained activation = wp_options sick, treat as incident), `post_commit_task` (1 event — `vote_subtask_failed`; swallowed post-commit trust-task *execution* failures, NOT wp_options signals; `dispute_backfill_failed` retired with the §D5 backfill, Rank Phase 6), `helius_dedup` (3 events — `replay_skipped`; Helius webhook signature already seen; sustained activation = double-send or replay attempt. `ingest_failed_unmarked`; a delivery's batch ingest threw and its signatures were unmarked so Helius can redeliver — recovered, no loss. `unmark_failed`; same ingest failure but the unmark was incomplete, so the batch is lost and its resend is refused — P1, manual replay needed), `gated_group_provision` (3 events — `peepso_absent` / `no_admin_owner` / `group_create_failed`; daily cron sweep retry-not-catching-up signal), `contribution_recovery` (1 event — `user_eval_failed`; daily trust-recovery sweep per-user failure), `rank_scoring` (4 events — `tier_snapshot_failed`; the daily tier-day snapshot sweep threw, so the §13.1 trust-window history develops gaps — fail-safe strict (a gap can only delay a promotion, never grant one) but sustained activation means promotions resolve conservatively. `login_write_failed`; a RankLoginListener login-day write threw, so that member's login day may be missing from the time-credit / inactivity clocks. `evidence_ingest_failed`; a Phase 4 rank_events ledger subscriber threw, so that evidence event is missing from the member's ledger — fail-safe strict, sustained activation means silent under-recording. `poll_close_failed`; the hourly Phase 6 meaningful-vote poll-close sweep threw, so due polls stop closing and disputes stall open in `reviewing` — fail-safe strict (no outcome is ever applied early), recovers when the sweep next succeeds), `collection_persist` (3 events — `write_failed`; a `CollectionPersistBatch::persist()` batch lost at least one collection row, so the loss is partial and the row stays eligible for the refresh cron. `batch_total_failure`; `failed === total`, the wallet made no progress at all — usually the table or the connection rather than the data. `watermark_withheld`; ⚠ DECLARED BUT NOT WIRED — the path it names does not exist, see the Observability note above), `moderation_hidden_ids` (5 events — bcc-trust `HiddenActivityRepository` (F-98/F-77), the moderation-hidden list every feed excludes; reads FAIL CLOSED. `exists_read_failed`; a single-row check errored and was answered "hidden". `list_read_failed`; the full-list read errored, never cached. `served_last_good`; the persisted last-known-good list was served, and the paired error log carries `last_good_age_seconds`. `no_last_good`; a failed read with no last-good list, so the request fails rather than show hidden posts. `ceiling_reached`; more than the 50,000-row read ceiling, so the oldest beyond it are NOT excluded. Expected steady state zero, not yet baked), `caution_list` (5 events — bcc-trust's fail-closed reader of the §O4.1 caution/risky shadow-limit list (F-454), which every per-viewer feed, the permalink, the anonymous hot feed and member suggestions EXCLUDE; the same last-good pattern as `moderation_hidden_ids`. `list_read_failed`; the list read errored, never answered as []. `served_last_good`; the persisted last-known-good list, within its 24 h bound, was served, and the paired error log carries its age. `last_good_expired`; a failed read whose last-good list is past the bound, so it counts as no list and the request answers 503. `no_last_good`; a failed read with no last-good list, so the request answers 503 and the hot feed writes no cache. `ceiling_reached`; more caution/risky members than the reader's row ceiling, so the list as read may be missing some of them. Expected steady state zero; it alerts at DegradationAlerter's shared threshold, which is intended), `caution_list_risky_ceiling` (1 event — `risky_fills_ceiling`; the escalation of `caution_list`'s `ceiling_reached`: the list is read risky first, and the risky members alone fill the reader's ceiling. Its own subsystem because alert severity is per subsystem: bcc-trust adds it to the P1 set through the `bcc_degradation_p1_subsystems` filter, while `caution_list` stays P2. Expected steady state zero; F-454), `auth_throttle` (4 events — bcc-trust `AuthSupport::allowIdentityAttempt()` (F-123/F-131), the 300/min route-wide ceilings on the server-side-called sign-in routes. `wallet_login_ceiling`; the `/auth/wallet-login` ceiling tripped. `oauth_login_ceiling`; the `/auth/oauth` ceiling tripped. Either means every identity on that route is refused for the rest of the minute — a flood, or the ceiling set too low. Then bcc-trust's `POST /auth/login` captcha step-up (`LoginStepUp` / `TurnstileVerifier`). `login_failure_spike`; a failed sign-in while more than 50 have failed site-wide in 5 min, which turns the step-up on for everyone, counted per failure so a real wave reaches `DegradationAlerter`. `turnstile_unavailable`; Turnstile siteverify unreachable, non-200, malformed, or rejecting the secret, so the step-up failed open to the login limits. Expected steady state zero for all four), `password_breach_check` (1 event — bcc-trust `BreachedPasswordCheck` (#712), the leaked-password refusal at sign-up, reset and password change. `unavailable`; the Pwned Passwords range lookup failed (a transport error, non-200, empty body or exception), so the password was accepted unchecked, because the check fails open by design. Expected steady state zero; sustained counts mean breached passwords are getting through), `meta_cache` (2 events — bcc-core `MetaCacheGuard` (F-459), the post/user meta cache guard. A post- or user-meta read is VERIFIED before its result is cached, through `ProbesReads`; when the read cannot be trusted, NOTHING is cached, so the next request reads again instead of being served a remembered answer. On a healthy database there is no behaviour change. `post_meta_read`; a post-meta cache read could not be trusted. `user_meta_read`; the same for user meta. ⚠ CONTAINMENT, NOT CLOSURE: the request the failure happened in still reads the meta as absent — what this removes is the PERSISTENCE. Gates that must refuse consume `MetaReadHealth`, F-460 / F-461. Expected steady state zero), `page_privacy` (1 event — bcc-trust `PageAccess::refuseOverCap()` (F-528). `member_list_over_cap`; a member's Reviews or Disputes list, read by anyone else, covers more than `PageAccess::HIDDEN_LIST_CAP` secret pages, so it was refused with 503 rather than checked page by page. Since F-571 (v1.242) also a batch of member cards whose members together cover more than the cap; their reviews and disputes counts then show 0 instead. ⚠ Persistent for that member while they stay over the cap, so any count means real tabs cannot be read; the paired error log names the member. Expected steady state zero), `auth_token` (1 event — bcc-trust `JwtToken`'s token revocation writes. `revoke_write_failed`; a revocation write did not land: the revoke-all version bump (a password or email change, sign out everywhere, a suspension), a sign-out's denylist entry, or a refresh's retired-list entry. The caller answers 503 or logs it and claims nothing. Expected steady state zero; any activation is worth a look), `validator_index` (1 event — bcc-trust's validator index run, F-550. `solana_shared_identity`; a Solana identity named more than one vote account in `getVoteAccounts`, so its row keeps no `vote_account` and it can't be self-claimed until that resolves. Counted once per identity per run; expected rare), `cosmos_tx_proof` (3 events — bcc-trust `CosmosTxInclusionFetcher`, the validator memo claim's check that a Cosmos transaction was included, asked of two independent public node operators per chain. `endpoint_disagreement` (the operators returned different bytes, height, result code or block time for one hash), `network_mismatch` (a proof node, or a block header it served, named a network other than the pinned one) and `contact_disagreement` (the operators returned different `security_contact` values, so no warning email is sent and staff are flagged). Each leaves the claim "not yet" or the email unsent. Expected steady state zero), `validator_relationships` (13 events — bcc-trust's validator owner and team relationship writers: the staff link / revoke / cancel service, the relationship log writer and its daily health check, the page ownership aligner, the weekly re-verify sweep and the account-deletion purge. `unknown_verification_method`; `log_lock_unavailable` and `claim_lock_unavailable` (no lock within 5 s, nothing written); `log_append_failed`; `followup_failed` (a post-commit step failed, the change stands); `page_owner_locked`, `page_owner_unknown` and `page_owner_misaligned` (the aligner did not move a page's ownership; an author no claim names is never overwritten); `align_backlog_full`; `deletion_revoke_failed`; `log_chain_broken` (the daily verification found a break, every administrator is emailed); `log_verify_incomplete`; `log_anchor_missing`. Expected steady state zero; bake before alerting, except `log_chain_broken`), `validator_memo_claim` (2 events — bcc-core `ValidatorMemoChallenge::issue()`, the validator memo claim's challenges (design A2). `crowded_valoper`; a challenge was issued while 5 or more members hold live challenges on the same validator, which looks like a phishing campaign against that operator: the paired warning names the validator, flag for staff. `valoper_backstop`; a new member was refused because 50 challenges are already live on one validator, the denial-of-service backstop. Expected steady state zero for both), `wallet_challenge` (1 event — bcc-core `ChallengeRepository::transactionState()`, the SAVEPOINT / RELEASE probe that `consume()` and `consumeInTransaction()` ask before they run. `tx_probe_unknown`; the probe could not tell whether a transaction is open (any error other than 1305, read by number), so the consume was refused. Expected steady state zero; a sustained count means wallet sign-in and linking are failing, a P1). The canonical-subsystem map lives in bcc-core/bcc-core.php — new subsystems wired into `DegradationMetrics::record()` should add their `(subsystem, events)` tuple there. |
   | bcc-search | `search` | bcc-search/bcc-search.php | `ft_index_installed` flag + `persistent_cache` prerequisite |
   | bcc-trust | `trust_engine` | `Plugin.php:1743` | `recalc_queue_depth`, `read_model_drift`, `read_model_coverage` |
   | bcc-trust | `cron_status` | `Plugin.php:1743` | per-canonical-cron `next_run_ts` + `in_seconds`. `null` means "not currently scheduled" — alarm signal that a hook fell out of the activation registry. Covers: `bcc_disputes_reconcile_orphans`, `bcc_gated_group_provision`, `bcc_gated_group_reconcile_sweep`, `bcc_nft_eth_indexer_tick`, `bcc_nft_enrichment_tick`, `bcc_helius_dedupe_sweep`, `bcc_trust_daily_graph_update`, `bcc_trust_process_recalculations`. |
