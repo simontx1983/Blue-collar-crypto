@@ -3109,8 +3109,7 @@ Returns the viewer's identity-snapshot (§N9) — pre-computed tier distribution
 - **Response 200:**
   ```json
   {
-    "handle": "simontx",
-    "watching_size": 39,
+    "total": 39,
     "tier_distribution": {
       "legendary": { "count": 2, "percent": 5 },
       "rare":      { "count": 7, "percent": 18 },
@@ -3119,12 +3118,13 @@ Returns the viewer's identity-snapshot (§N9) — pre-computed tier distribution
       "unknown":   { "count": 2, "percent": 5 }
     },
     "monthly_activity": {
-      "reviews_written":  4,
+      "reviews":          4,
       "solids_received":  12,
       "disputes_signed":  1
     }
   }
   ```
+- **Fields:** `total` is the number of watched items. `monthly_activity` counts the last 30 days. *(Doc corrected v1.NEXT: the example showed `handle`, `watching_size` and `monthly_activity.reviews_written`, which the server has never sent. It sends `total` and `reviews`, and no `handle`. The response is unchanged.)*
 - **Errors:** `bcc_unauthorized`
 - **Rate limit:** 60/min/user
 - **Cache:** `Cache-Control: private, max-age=60`
@@ -9924,6 +9924,13 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-25 — doc correction — the `GET /me/watching/summary` example matches the response
+
+Contract only. No code or response change.
+
+- **`GET /me/watching/summary`:** the example showed `handle`, `watching_size` and `monthly_activity.reviews_written`. The server has always sent `total` and `monthly_activity.reviews`, and no `handle`. The example and a new **Fields** line now say so.
+- **Clients:** no change. The frontend already reads `total` and `reviews`.
 
 ### v1.251 — 2026-11-24 — additive — `GET /groups/:id/members` items carry the member `card` the directory shows
 
