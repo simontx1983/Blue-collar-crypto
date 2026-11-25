@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.259 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.260 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -3379,8 +3379,8 @@ in PeepSo's `peepso_group_members` (single graph rule, §E3); BCC stores only a
 List of available Halls (PeepSo Groups in BCC clothing).
 
 - **Auth:** Anonymous OR Bearer
-- **Query:** `page` (default 1), `page_size` (default 20, max 50), `chain` (optional filter), `q` (optional; v1.239), `kind` (optional; *v1.NEXT*)
-  - **`kind`** *(v1.NEXT)*: `chain` or `topic`, the Hall's `hall_kind` (below). Any other value is `400 bcc_invalid_request` ("kind must be one of: chain, topic."). Without it the list holds every Hall, as before. It combines with `chain` and `q`; `chain` with `kind=topic` is always empty, since a topic Hall has no chain.
+- **Query:** `page` (default 1), `page_size` (default 20, max 50), `chain` (optional filter), `q` (optional; v1.239), `kind` (optional; *v1.260*)
+  - **`kind`** *(v1.260)*: `chain` or `topic`, the Hall's `hall_kind` (below). Any other value is `400 bcc_invalid_request` ("kind must be one of: chain, topic."). Without it the list holds every Hall, as before. It combines with `chain` and `q`; `chain` with `kind=topic` is always empty, since a topic Hall has no chain.
   - **`q`** *(v1.239)*: a name search, as on `GET /groups`. It matches the Hall's name anywhere in it, case-insensitively, and LIKE's wildcards in it match themselves. At most **100 characters** (longer is `400`). A search is throttled to **10 per 5 s** (`429 bcc_rate_limited`).
     - `pagination.total` counts the Halls matching the same `chain`, `q` and `kind`, so the page and its total agree.
 - **Response 200:**
@@ -3420,7 +3420,7 @@ List of available Halls (PeepSo Groups in BCC clothing).
     replayed to a signed-in viewer; `Vary` is what keys those apart.
 - **Mapping:** `peepso-group` CPT posts filtered to Halls (`_bcc_group_kind = 'hall'` meta), JOINed with `peepso_group_members` for `member_count` and viewer membership; the viewer's primary pointer comes from `bcc_primary_hall_group_id` usermeta.
 
-**`hall_kind` / `topic`** *(v1.NEXT, topic Halls)*: what the Hall is about.
+**`hall_kind` / `topic`** *(v1.260, topic Halls)*: what the Hall is about.
 - `"chain"`: the Hall belongs to a chain (`chain` names it, or is `null` if that chain is no longer registered). `topic` is `null`.
 - `"topic"`: the Hall is about a subject rather than a chain, e.g. DeFi. `topic` is `{ "slug": "defi", "label": "DeFi" }`: `label` is the display name an admin gave it (the slug when it has none), so render it verbatim. `chain` is `null`, and `validator_count` / `collection_count` are `0`.
 - `null`: the Hall has neither (a chainless Hall from before topic Halls), or this response could not read it. Show no kind-specific label; never guess one from the name or slug.
@@ -7478,7 +7478,7 @@ Multipart blog cover-image upload (§D6 PR-B). Wraps `wp_handle_upload` + `wp_in
 Public cold-start three-block bridge for the home-feed empty state — a civic map, not a recommendation engine. Composes Halls + recent operators + hot posts. Bounded (3 halls, 4 operators, 2 hot posts); no pagination.
 
 - **Auth:** auth-permissive. Authed viewers get chain-aligned Halls (`bcc_home_chain`) + a per-(viewer, UTC-day) stable-random operator shuffle; anon viewers share the per-day seed.
-- **`halls`** *(v1.NEXT, topic Halls)*: with a home chain, that chain's Halls come first and topic Halls (by name) fill the rest of the 3, so the panel never shows chain Halls only. Without one: the first 3 Halls by name, as before. **`chain_slug` is `null` for a topic Hall** (and for a Hall with no chain): render the Hall without a chain label rather than assume one.
+- **`halls`** *(v1.260, topic Halls)*: with a home chain, that chain's Halls come first and topic Halls (by name) fill the rest of the 3, so the panel never shows chain Halls only. Without one: the first 3 Halls by name, as before. **`chain_slug` is `null` for a topic Hall** (and for a Hall with no chain): render the Hall without a chain label rather than assume one.
 - **Response 200:**
   ```json
   { "halls": [ { "slug": "cosmos-hall", "name": "Cosmos Hall", "chain_slug": "cosmos", "member_count": 88 } ], "recent_operators": [ { "handle": "ramona", "display_name": "Ramona V.", "avatar_url": "https://…", "reputation_tier": "trusted", "reputation_tier_label": "Trusted", "rank_label": "Journeyman", "recent_action": "REVIEWED a card", "link": "/u/ramona" } ], "hot_posts": [ /* §3.3 FeedItem[] */ ] }
@@ -7585,7 +7585,7 @@ Single Hall detail (auth-optional). Same item shape as the `/halls` directory ro
   ```json
   { "id": 342, "slug": "cosmos-hall", "name": "Cosmos Hall", "chain": "cosmos", "hall_kind": "chain", "topic": null, "member_count": 412, "viewer_membership": { "is_member": true, "is_primary": true, "joined_at": "2026-01-12T00:00:00Z" }, "links": { "self": "/communities/cosmos-hall" } }
   ```
-  `chain` comes from the `_bcc_chain_tag` meta FK (`null` when absent). `viewer_membership` carries `is_primary` (Halls own the primary pointer; unlike §4.7.5). `hall_kind` and `topic` *(v1.NEXT)* follow the `GET /halls` rule; a topic Hall has `chain: null`, `chain_profile: null` and empty `validators` / `collections`.
+  `chain` comes from the `_bcc_chain_tag` meta FK (`null` when absent). `viewer_membership` carries `is_primary` (Halls own the primary pointer; unlike §4.7.5). `hall_kind` and `topic` *(v1.260)* follow the `GET /halls` rule; a topic Hall has `chain: null`, `chain_profile: null` and empty `validators` / `collections`.
 - **Errors:** `bcc_invalid_request` 400 (empty slug) · `bcc_not_found` 404
 - **Cache:** anon → `public, max-age=300`; authed → `private, no-store`.
 - **Mapping:** `HallsEndpoint::showBySlug` (route `HallsEndpoint.php:82`) → `HallsService::getHall` (`PeepSoGroupRepository::findOneBySlug` + `findUserMemberships` + `bcc_primary_hall_group_id`).
@@ -9954,7 +9954,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-25 — additive — topic Halls on the read side: `hall_kind`, `topic`, `GET /halls?kind=`
+### v1.260 — 2026-11-25 — additive — topic Halls on the read side: `hall_kind`, `topic`, `GET /halls?kind=`
 
 Ships with bcc-trust #898, after bcc-core #192 (the Hall-kind filter) is in production. Topic Halls, step 2a.
 
