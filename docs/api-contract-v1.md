@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.253 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.254 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -3124,7 +3124,7 @@ Returns the viewer's identity-snapshot (§N9) — pre-computed tier distribution
     }
   }
   ```
-- **Fields:** `total` is the number of watched items. `monthly_activity` counts the last 30 days. *(Doc corrected v1.NEXT: the example showed `handle`, `watching_size` and `monthly_activity.reviews_written`, which the server has never sent. It sends `total` and `reviews`, and no `handle`. The response is unchanged.)*
+- **Fields:** `total` is the number of watched items. `monthly_activity` counts the last 30 days. *(Doc corrected v1.254: the example showed `handle`, `watching_size` and `monthly_activity.reviews_written`, which the server has never sent. It sends `total` and `reviews`, and no `handle`. The response is unchanged.)*
 - **Errors:** `bcc_unauthorized`
 - **Rate limit:** 60/min/user
 - **Cache:** `Cache-Control: private, max-age=60`
@@ -9927,7 +9927,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-25 — doc correction — the `GET /me/watching/summary` example matches the response
+### v1.254 — 2026-11-25 — doc correction — the `GET /me/watching/summary` example matches the response
 
 Contract only. No code or response change.
 
