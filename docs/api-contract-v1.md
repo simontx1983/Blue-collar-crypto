@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.256 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.259 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1123,7 +1123,33 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
 - `reputation_tier_label` is the trust-tier name (the chip a human reads): `risky → "Risky"`, `caution → "Caution"`, `neutral → "Neutral"`, `trusted → "Trusted"`, `elite → "Elite"`. Always present on member and entity surfaces; `null` only on `community` cards, which have no trust system.
 - **`card_tier` / `tier_label` are RETIRED (v1.57).** The collectible-rarity vocabulary is gone — see §10 changelog for the full rationale. Do not reintroduce a rarity mapping anywhere; there is one tier axis and it is `reputation_tier`.
 - `current_rank_label` mirrors `rank_label` exactly (e.g. `"Veteran"`, or `"New Member"` for New Members). It is a member-axis field kept for surface compatibility.
-- `flags` is an array of short slugs; if non-empty, the frontend may render moderation chips. V1 codes: `suspended`, `shadow_limited`, `hidden`, `under_review`.
+- **`flags`** is an array of short slugs. **V1 code: `suspended`** — the only one.
+
+  ⛔ **WHO SEES IT (v1.259, F-582): the member themselves and administrators, nobody else.** For every other viewer — another member, and a signed-out visitor — the array is **empty**, whatever is true of the member.
+
+  ⚠⚠ **AN EMPTY ARRAY IS NOT A STATEMENT ABOUT THE MEMBER.** It means EITHER "no flags" OR "not yours to see", and a client cannot tell which. So a client MUST NOT render "no moderation flags", "in good standing" or any equivalent from an empty `flags`; it may only render chips for slugs it actually receives. The server follows the same rule: the member-profile standing block OMITS its "No active moderation flags" fact for a viewer who may not see the list, rather than stating it from an empty array.
+
+  ⚠ `shadow_limited`, `hidden` and `under_review` were **removed** in v1.259. Nothing in the codebase ever wrote them. They are not dormant: reintroducing one needs a contract amendment and a writer. ⭐ The real reach limit is the Caution/Risky reputation tier, a different mechanism — see `standing.reach_limited` below.
+
+- **`standing.reach_limited`** *(v1.259, F-582)*: whether a Caution or Risky reputation tier is currently limiting this member's reach.
+
+  ⚠ **WIDER THAN "FEEDS".** Their posts are withheld from other viewers on every surface that reads the feed: the anonymous hot feed, every per-viewer feed, **their own profile wall**, and **the permalink** (a direct link answers not-found). The one documented exception is a room that lifts the §O4.1 shadow limit, for an active member of that room.
+
+  ⚠⚠ **THE MEMBER IS NEVER EXCLUDED FROM THEIR OWN VIEW**, which is why the limit is invisible without this field: they see their posts on their own wall and in their own feed exactly as before, while other viewers see none of them. That asymmetry is the reason this field exists.
+
+  ⛔ **TRI-STATE, AND `null` IS NOT `false`:**
+
+  | value | meaning |
+  |---|---|
+  | `true` | you are this member, and your reach IS limited |
+  | `false` | you are this member, and it is not |
+  | `null` | **not disclosed** — you are not this member |
+
+  A client MUST treat `null` as "no answer" and render nothing. `false` is a claim and is only ever sent to the member themselves; sending it to anyone else would assert something about another member's standing.
+
+  ⚠ **MEMBER ONLY — not member-or-admin**, unlike `flags`. It is the member's own Standing tab answer (user decision 2026-11-24).
+
+  It is keyed on the member's displayed `reputation_tier`, which they already see on their own byline, rather than on a separate read of the list the feed consults — the two derive from the same score, and telling a member something that contradicts their own profile would be worse than telling them nothing.
 - Hidden privacy fields (per `privacy.*_hidden: true`) cause the corresponding sections in `counts`, `wallets`, etc. to either be omitted or zeroed depending on the viewer's relationship — server decides, client doesn't.
 - **Secret pages in the counts *(v1.230, F-571)*:** on a single member's view (this `User`, and that member's `MemberSummary.engagement`), `counts.reviews_written` and `counts.disputes_signed` leave out the SECRET pages this viewer may not see, by the same rule as `/users/:handle/reviews` and `/disputes`. So the secret-page part of a count agrees with its list. The member and site admins see the full count. When the pages' privacy cannot be read, or the member has more than 100 secret pages, both counts are `0` for that viewer. *(v1.242)* The member profile's own counts (`GET /users/:handle`) follow this rule, and so do member cards built in batches, for their viewer: the directory, followers and watchers, the viewer's watching list (`/me/watching`), group rosters and join requests, suggestions, the feed cold start, and review and reply authors. For a batch, the viewer's own card and site admins see the full counts. When the pages' privacy cannot be read, or the members of one batch together have more than 100 secret pages, that count is `0` on every card in the batch except the viewer's own; the list itself never fails over it. `reviews_written` still counts every active vote, as before, so it can exceed the Reviews list's `total` by moderation-hidden reviews.
 - **`joined_at` for other viewers *(since v1.238, R12)*:** the member themselves receives the exact time. Every other viewer, anonymous included, receives the **first of the month at `00:00:00Z`** (e.g. `2026-01-12T09:41:07Z` → `2026-01-01T00:00:00Z`), so neither the payload nor a page built from it carries the day or the time. The same holds for `MemberSummary.joined_at` wherever it appears (review and reply authors, group request and invite items, rosters, member cards). `""` (unknown) is unchanged. Admin routes keep the stored value.
@@ -1330,7 +1356,7 @@ Locked field rules:
     { "key": "access",   "label": "Access",     "value": "Public",         "format": "text" }
   ]
   ```
-  `posts_7d` is the §4.7.1 activity-heat `posts_last_7d` number (already resolved by both producers — no extra query). *(v1.65)* `active` is the count of **distinct authors** who posted in that same 7-day window (`getActivityHeat` `actives`, riding free on the heat aggregate); `members` rides in the nameplate slot other kinds use for watchers, and `access` is a **server-rendered** text word (`Public` / `Private` — precedence matches the front-face standing strip; §A2 — the client never derives the gate). Communities have no trust axis, so Trust/Reviews/Vouches never appear here.
+  `posts_7d` is the §4.7.1 activity-heat `posts_last_7d` number (already resolved by both producers — no extra query). *(v1.65)* `active` is the count of **distinct authors** who posted in that same 7-day window (`getActivityHeat` `actives`, riding free on the heat aggregate); `members` rides in the nameplate slot other kinds use for watchers, and `access` is a **server-rendered** text word (`Public` / `Private` — precedence matches the front-face standing strip; §A2 — the client never derives the gate). Communities have no trust axis, so Trust/Reviews/Vouches never appear here. *(v1.257)* Both counts exclude moderated posts. When those cannot be read (the §4.7.1 block's values are `null`), the `posts_7d` and `active` stats are left out of `stats`; `members` and `access` stay.
 - **Permissions:** the full §3.2 key set (`can_watch`, `can_review`, `can_open_dispute`, `can_endorse`, `can_post_as_entity`, `can_edit_bio`, `can_edit_image`, `can_vouch`, `can_stand_behind`, `can_report`), every entry `{ allowed: false, unlock_hint: null, reason_code: "not_applicable" }` for ALL viewers — anon and authed alike. Communities use JOIN (gated on the group detail's own `permissions.can_join`), never the card verbs; signing in unlocks nothing on the card itself, so no `signin_required` copy is emitted.
 - **Always-null/constant envelope fields:** `member_dossier: null`, `chains: null`, `claim_target: null`, `onchain_signals: null`, `social_proof: null`, `viewer_attestation: null`, `viewer_has_reviewed: false`, `viewer_has_endorsed: false`, `endorse_unlock_hint: null`, `is_claimed: true`.
 - **`community_dossier`** — the community-only block, mirror of how `member_dossier` works: ALWAYS present on the wire, non-null on community cards, `null` on every other kind (and `member_dossier` is `null` here). Powers the community back face (`collection_stats` replaces FlippableNftCard's bespoke stats display):
@@ -2487,7 +2513,8 @@ Returns a full Card view-model.
 - **Rate limit:** 60/min/user (anonymous: 60/min/IP)
 - **Cache:** `Cache-Control: max-age=30, stale-while-revalidate=60`; React Query `staleTime: 30s`
 - **Mapping:**
-  - `trust_score`, `reputation_tier`, `reputation_tier_label`, `is_in_good_standing`, `flags` ← `bcc_page_read_model` (§A4)
+  - `trust_score`, `reputation_tier`, `reputation_tier_label`, `is_in_good_standing` ← `bcc_page_read_model` (§A4)
+  - `flags` ← the page OWNER's suspension state, through the viewer-gated reader (`UserViewService::flagsForViewer`), **not** the read model — corrected in v1.259, F-582
   - `is_claimed`, `claimed_by_handle` ← `peepso_pages.claimed_by` (§B5)
   - `chain` ← `peepso_page` meta (existing AbstractPageType)
   - `operator_profile` ← shared operator profile + page override, exposed only after the verified operator resolver returns one unambiguous owner (operator-profile routes below)
@@ -3247,47 +3274,41 @@ columns→`*_at_watch`) via a data-preserving migration. Canonical celebration c
 
 #### `POST /bcc/v1/pages/:id/claim`
 
-Claims a validator/creator/project page using a wallet signature (§B5, §N8).
+Claims a validator or collection page with a wallet the member has **already linked and verified** (§B5, §N8). This route takes no signature: the wallet was proven when it was linked (`POST /auth/wallet-link`). *(Body, response and mapping corrected in v1.258; they described a signature flow this route never implemented.)*
 
-- **Auth:** Bearer (the user must be signed in; the wallet does the proving)
+- **Auth:** Bearer (the member must be signed in)
 - **Path:** `id` (the `peepso_pages` ID)
-- **Body:**
+- **Body** (the shape §1's card action descriptor already gives):
   ```json
-  {
-    "wallet_address": "cosmosvaloper1abc…",
-    "chain": "cosmos",
-    "nonce": "8f3a7b2e9c1d4f6a",
-    "signature": "<hex>",
-    "public_key": "<hex, optional>"
-  }
+  { "entity_type": "validator", "entity_id": 47 }
   ```
-- **Response 201 (success):**
+  `entity_type` is `validator` or `collection`; `entity_id` is that entity's id, which must be the one bound to this page. There are no wallet, chain, nonce, signature or key fields.
+- **Response 200:**
   ```json
   {
-    "claimed": true,
+    "claim_id": 311,
     "page_id": 1842,
-    "claimed_by_user_id": 42,
-    "card": { "...": "updated Card view-model with is_claimed: true" },
-    "celebration": {
-      "kind": "heavy",
-      "label": "Page claimed. The stream is yours.",
-      "icon": "claim-stamp",
-      "rarity_tint": null
-    },
-    "next_steps": [
-      { "kind": "edit_bio",      "label": "Write your bio",       "href": "/v/blacksmith-node?compose=bio" },
-      { "kind": "first_post",    "label": "Post your first update", "href": "/v/blacksmith-node?compose=status" }
-    ]
+    "entity_type": "validator",
+    "entity_id": 47,
+    "role": "operator",
+    "is_primary": true,
+    "status": "verified",
+    "message": "Verified as operator.",
+    "claimed_by": { "user_id": 42, "handle": "alice" }
   }
   ```
+  - `status`: `verified` (this request made the claim) or `already_verified` (the member already held the verified claim; nothing new is written, and `message` says *"You are already the verified operator."*).
+  - `role`: `operator` (validator) or `creator` (collection).
+  - `claimed_by`: the claimer's public identity.
+  - There is no `card`, `celebration` or `next_steps`: refetch the card for `is_claimed`.
 - **Errors:** the complete set this route can emit, each with its HTTP status. Corrected and completed in **v1.86** against the implementation; see the changelog for what was wrong and why it mattered.
   - `bcc_unauthorized` **401** — not signed in.
-  - `bcc_invalid_request` **400** — missing or malformed `page_id` or `entity_id`, or an `entity_type` outside the accepted set.
-  - `bcc_forbidden` **403** — four distinct causes behind one code, each with its own message and, **since v1.137, a machine-readable `error.data.reason`** a client MUST branch on instead of the message:
+  - `bcc_invalid_request` **400** — missing or malformed `page_id` or `entity_id`, or an `entity_type` outside the accepted set (`validator`, `collection`).
+  - `bcc_forbidden` **403** — six distinct causes behind one code, each with its own message and, **since v1.137, a machine-readable `error.data.reason`** a client MUST branch on instead of the message:
     - `suspended` — the account is suspended (`Your account is suspended.`). **Final**: no wallet or retry will help.
     - `entity_not_bound` — the entity is **not bound to this page** (`That entity is not attached to this page.`).
     - `not_claimable` *(v1.221, F-515)* — the validator **cannot be claimed at all**: BCC cannot prove an operator on its chain from the data it stores. `error.message` is the card's `claim_target.unclaimable_hint`, and `error.data.unclaimable_reason_code` is its `unclaimable_reason_code`. **Final**: no wallet or retry will help. Decided before any wallet check, and records nothing.
-    - `not_operator` — the caller's connected wallet **does not match the entity's operator** (§B5 — operator address + consensus pubkey only; delegators excluded). The one cause where connecting a different wallet can help.
+    - `not_operator` — the caller's connected wallet **does not match the entity's operator** (§B5 — the operator address only; delegators excluded; corrected in v1.258, it said "+ consensus pubkey"). The one cause where connecting a different wallet can help.
     - `holder_not_owner` *(new in v1.137)* — the wallet only **holds** the collection (`Holding an NFT doesn't make you this collection's creator.`). Only an **operator** or **creator** can claim a page; a holder result records nothing.
     - `creator_unverifiable` *(v1.173, F-339)* — a **Solana** collection whose creator the chain cannot prove (`We can't confirm this collection's creator on-chain.`): its update authority is renounced (none listed, or handed to the System Program or the incinerator), only a delegated (non-`full`) scope is listed, or the collection mint is not found. **Final**: retrying or another wallet won't help. Records nothing.
     ⚠ **This replaces `bcc_permission_denied`, which this route has never emitted.** Measured against the implementation: the endpoint produces zero `bcc_permission_denied`, and its 403 is `bcc_forbidden`. Same defect class as the `/members` `bcc_validation` line corrected in v1.80 — a documented code no producer emits is a code a client would wait forever to see.
@@ -3298,15 +3319,16 @@ Claims a validator/creator/project page using a wallet signature (§B5, §N8).
   - `bcc_unavailable` **503 (new in v1.86)** — the claim could not be completed for a **server-side, transient** reason: an advisory-lock timeout (two submissions in quick succession), a failed write, or a database error. **Retryable** — a client may re-submit the same claim unchanged, and should offer that rather than suggesting the wallet is wrong.
     - **(v1.173, F-339)** with `error.data.reason: "verification_unavailable"` — a **Solana** collection whose creator could not be read this time (the on-chain provider failed, or answered something unreadable): `We couldn't verify this collection's creator on-chain right now. Try again in a few minutes.` **Retryable**, and never a statement about the wallet. The other 503 causes carry no `reason`.
   - ⚠⚠ **Why the last two are a behaviour change and not just new documentation.** Both causes previously fell through to the **403** above, so a server fault and a missing entity both told a legitimate operator that *their wallet does not match the validator*. The plausible reaction to that message is to unlink a correct wallet or give up, and it left support with nothing to diagnose. A client that treats 403 as "wallet is wrong" MUST now distinguish these: 503 is retryable, 404 is not, and neither says anything about the wallet.
-- **Rate limit:** 3/hour/user, 10/day/IP, **30 attempts/day/page** (caps total claim attempts on a single page across all users to prevent attempt flooding per §B5)
-- ⚠⚠ **ERRATUM, OPEN (noted v1.86, NOT fixed here): the Body and Response blocks above do not describe this endpoint.** They show a signature-bearing body (`wallet_address`, `chain`, `nonce`, `signature`, `public_key`) and a **201**. The implementation reads **`entity_type` + `entity_id`** and proves ownership from the caller's **already-linked, already-verified** wallet — it takes no signature on this route — and the success path returns **200**. The accurate request shape is the one this contract already gives in §1's card action descriptor: `{ "entity_type": "validator", "entity_id": 47 }`. So the two halves of this document disagree, and §1 is the half that matches the code. **Send the §1 shape.** Only the error list above was brought in line with the implementation in v1.86; correcting the Body, the status code and the Mapping bullets is a larger, separate change, deliberately not bundled with an error-code correction.
+- **Rate limit:** **10 per minute per member** (the `claim_entity` bucket). *(Corrected in v1.258: this listed 3/hour/user, 10/day/IP and 30 attempts/day/page, none of which the route enforces; see §7 decision 8.)*
+- **Erratum resolved (v1.258):** the v1.86 erratum said the Body and Response blocks above described a signature flow this endpoint does not implement. They, the status code, the rate limit and the Mapping below now describe the implementation.
 - **Cache:** `Cache-Control: no-store`
-- **Mapping:**
-  - Verifies signature via `bcc-core` `WalletVerifier`
-  - Checks wallet against the page's claim key set: **operator address + consensus pubkey ONLY** (§B5 — delegators excluded)
-  - Single-claim-wins via unique index on `peepso_pages.claimed_by` (§B5 race rule)
-  - Emits `bcc_page_claimed` (§A3 async)
-  - Lost-wallet edge case (§B5): if the page is in `claim_recovery_pending` state, this endpoint returns 409 with a recovery hint — the user must use the admin recovery flow.
+- **Mapping** *(corrected in v1.258)*: `PagesEndpoint::claim` → `ClaimService::claim`.
+  - In order: signed in, rate limit, not suspended, a published `peepso-page` (else 404), the entity bound to this page (else 403 `entity_not_bound`).
+  - If the member already holds the verified claim → `already_verified`, as above.
+  - Otherwise the member's **verified** linked wallets on the entity's chain are matched. **Validator:** a wallet whose address is the validator's operator address (Cosmos: the same bytes under the account and `valoper` prefixes; delegators never match). **Collection:** the contract's owner or creator (a holder is refused, `holder_not_owner`).
+  - Single claim wins: a validator claim goes through `ValidatorRelationshipService::claimByWallet`, a collection claim through `ClaimRepository::createExclusiveClaim`, and a page row mirrors either one.
+  - Emits `bcc_page_claimed` under a per-page advisory lock, and writes a `page_claimed` audit row.
+  - This route checks no recovery-pending state.
 
 #### `POST /bcc/v1/pages/:id/avatar`
 
@@ -3587,6 +3609,8 @@ Server-authoritative copy. The frontend MUST render `label` verbatim — never a
   riding the heat aggregate — no extra query). `0` when the window is empty or
   the block is built on a degraded/anon default path. Emitted in **every**
   §4.7.1 `activity` block (holder groups, discovery, communities, halls).
+- **Moderated posts** *(v1.257)*: every number here excludes moderated posts. A post that moderation has hidden counts toward none of `posts_last_7d`, `active_members_7d`, `last_activity_at` or `heat`.
+- **Unknown** *(v1.257)*: when the moderated posts cannot be read, `posts_last_7d`, `active_members_7d`, `heat` and `heat_label` are `null`, and so is `last_activity_at`: when the moderated posts cannot be read, the values are null, never a guessed `0` or `cold`. Clients show no number and no heat label then.
 
 #### `GET /bcc/v1/me/holder-groups`
 
@@ -9714,8 +9738,8 @@ For each view-model field, the table below names the existing BCC system that ow
 | `reputation_tier_label` | Server-side mapping `reputation_tier → label` (`ReputationTierMap::TIER_LABEL`; elite → "Elite") — the sole tier vocabulary since v1.57 |
 | ~~`card_tier`, `tier_label`~~ | **RETIRED v1.57** — the rarity vocabulary is gone; use `reputation_tier` / `reputation_tier_label` |
 | `member_state`, `rank`, `rank_label`, `current_rank_label` | `RankStateService::memberState` over `wp_bcc_trust_rank_state` (v1.59 — earned Rank, written by the promotion engine / §5.2 readiness path). Missing row = New Member: `member_state: "new_member"`, nullable rank fields. No conferred-Role rows (§4.8) |
-| `is_in_good_standing` | `bcc-trust` derived from tier ≥ neutral AND no moderation flags (§E1) |
-| `flags` | suspension state + `wp_usermeta` moderation flags (`bcc_shadow_limited`/`bcc_hidden`/`bcc_under_review`) via `UserViewService::resolveFlags` — NOT the retired `bcc_trust_flags` vote-flag table |
+| `is_in_good_standing` | `bcc-trust`, from the TIER ALONE: `neutral`, `trusted` or `elite`. ⚠ Corrected in v1.259 (F-582) — it never consulted moderation flags, so it is the SAME for every viewer and is unaffected by `flags` being viewer-gated |
+| `flags` | suspension state via `UserViewService::flagsForViewer`, which gates `resolveFlags` to the member and administrators (F-582). The three `wp_usermeta` flags it also read were retired in v1.259. Never the retired `bcc_trust_flags` vote-flag table |
 | `bio` | PeepSo profile description |
 | `primary_hall`, `halls` | `peepso_group_members` (PeepSo's membership ledger — single graph rule) joined with `wp_usermeta.bcc_primary_hall_group_id` for the primary pointer; no dedicated BCC table |
 | `wallets` | `bcc_wallet_links` (existing) |
@@ -9740,7 +9764,8 @@ For each view-model field, the table below names the existing BCC system that ow
 | `card_kind` | `peepso_pages.peepso_page_type` mapped via `AbstractPageType` |
 | `name`, `handle` | `peepso_pages.name` + slug |
 | `chain` | `peepso_page` meta (existing AbstractPageType) |
-| `trust_score`, `reputation_tier`, `reputation_tier_label`, `is_in_good_standing`, `flags` | `bcc_page_read_model` (denormalized read model, §A4) |
+| `trust_score`, `reputation_tier`, `reputation_tier_label`, `is_in_good_standing` | `bcc_page_read_model` (denormalized read model, §A4) |
+| `flags` | the page OWNER's suspension state via `UserViewService::flagsForViewer` (viewer-gated, F-582) — **not** the read model, corrected in v1.259 |
 | `rank_label` | `null` for V1 entity cards (members only have ranks); for member cards, the earned-Rank label via `UserViewService::getSummary`'s member-state resolution over `wp_bcc_trust_rank_state` (v1.59; `null` for New Members; §4.8) |
 | `is_claimed` | `peepso_pages.claimed_by IS NOT NULL` (new V1 column, per §B5) |
 | `claimed_by_handle` | JOIN to `wp_usermeta.bcc_handle` |
@@ -9812,7 +9837,7 @@ All ten open items locked **2026-04-27**. Phase 1 implementation may begin.
 5. **Anonymous `GET /me/highlights`** — **401 `bcc_unauthorized`.** Frontend hides the entire HighlightStrip for unauthenticated viewers. See §3.4.
 6. **Cursor format** — **base64-encoded JSON of `(timestamp, id, rank_score_at_emit)`.** Preserves scroll order across re-ranks. Opaque to the client; never decode. See §1.5.
 7. **Wallet `address_short`** — **`<first-6>…<last-4>` for all chains.** Sliced from the full chain-prefixed address. Server-only writer; frontend never re-truncates. See §1.7.
-8. **Claim rate limit per page** — **30 attempts/day/page** (in addition to 3/hour/user and 10/day/IP). Prevents attempt flooding. See §4.6.
+8. **Claim rate limit per page** — **30 attempts/day/page** (in addition to 3/hour/user and 10/day/IP). Prevents attempt flooding. See §4.6. *(v1.258: never built. `POST /pages/:id/claim` enforces 10 per minute per member only.)*
 9. **Wallet-link celebration** — **first link only**, tracked via `wp_usermeta.bcc_first_wallet_link` (§O1.2 first-occurrence pattern). All subsequent links return `celebration: null`. See §4.1. *(v1.256, F-524: never built. `POST /auth/wallet-link` returns no `celebration` field, and nothing writes the key.)*
 10. **`Card.updated_at`** — **read-model recompute timestamp** from `bcc_page_read_model.updated_at`. Use as cache validator only; do not surface in UI as "last edited". See §3.2 field rules and §6.2.
 
@@ -9938,6 +9963,36 @@ Ships with bcc-trust #898, after bcc-core #192 (the Hall-kind filter) is in prod
 - **`GET /feed/cold-start` `halls`:** with a home chain, topic Halls fill the slots its chain's Halls leave. `chain_slug` is `null` for a topic Hall (doc: it was already nullable for a Hall with no chain).
 - **Unchanged:** every existing field, the error envelope, the cache headers, and every request without `kind`.
 - **Clients:** additive. A client that reads `chain_slug` must handle `null`.
+
+### v1.259 — 2026-11-25 — behaviour change (privacy) — moderation flags are the member's and administrators' to see (F-582)
+
+Ships with bcc-trust #902.
+
+- **`flags` is viewer-scoped.** The member themselves and administrators receive it; every other viewer, signed-out included, receives an **empty array** whatever is true of the member. No server behaviour depends on the list, and no cache changes: every shared cache holds signed-out responses, which now carry an empty array.
+- ⚠⚠ **An empty `flags` is NOT a statement about the member** — it means either "no flags" or "not yours to see", and a client cannot tell which. Clients MUST NOT render "no moderation flags", "in good standing" or any equivalent from an empty array; render chips only for slugs actually received. The member-profile standing block follows the same rule and OMITS its "No active moderation flags" fact for a viewer who may not see the list, rather than asserting it from an empty array.
+- **Three slugs removed:** `shadow_limited`, `hidden` and `under_review`. Nothing in the codebase ever wrote them. `suspended` is the only V1 code. Reintroducing one needs a contract amendment and a writer.
+- **New `standing.reach_limited`** — whether a Caution or Risky tier is limiting the member's reach. ⚠ Wider than "feeds": their posts are withheld from other viewers on every feed-backed surface, including their own profile wall and the permalink, with one documented room exception — while the member themselves is never excluded from their own view, which is why the limit was invisible. ⛔ **Tri-state, and `null` is not `false`:** `true`/`false` to the member, `null` (not disclosed) to anyone else. Clients MUST treat `null` as "no answer". ⚠ MEMBER ONLY, not member-or-admin, unlike `flags` (user decision 2026-11-24).
+- ⚠ **Two documentation corrections, no code change:** page-card `flags` come from the page OWNER's suspension through the viewer-gated reader, NOT from `bcc_page_read_model` as §4 and §9 said; and `is_in_good_standing` is derived from the TIER ALONE (`neutral`/`trusted`/`elite`), never from moderation flags — so it is the same for every viewer and is unaffected by this change.
+- **Unchanged:** suspension enforcement, the public index and sitemap (a suspended member is excluded by the listing clause, which never used the three removed keys), `indexable` (already the anonymous answer whoever asks, and already documented as never derived from `flags`), and every write gate.
+### v1.258 — 2026-11-25 — doc correction — `POST /pages/:id/claim` describes the implementation; the v1.86 erratum is resolved (F-524 follow-up)
+
+Contract only. No code or response change.
+
+- **Body:** the block showed a signature flow (`wallet_address`, `chain`, `nonce`, `signature`, `public_key`). The route reads `entity_type` (`validator` or `collection`) and `entity_id`, the shape §1's card action descriptor gives, and proves ownership from the member's already-linked, verified wallets. It takes no signature.
+- **Response:** the block showed a **201** with `claimed`, `card`, `celebration` and `next_steps`. The route answers **200** with `claim_id`, `page_id`, `entity_type`, `entity_id`, `role`, `is_primary`, `status` (`verified` or `already_verified`), `message` and `claimed_by`.
+- **Rate limit:** 10 per minute per member. The 3/hour/user, 10/day/IP and 30/day/page caps were never built, and §7 decision 8 now says so.
+- **Mapping:** no signature check, no consensus-pubkey match and no recovery-pending 409. The bullets now describe the gates, the wallet match, the single-claim-wins writes and the event.
+- **Clients:** no change. The frontend already sends `{ id, entity_type, entity_id }` (`claimPage`) and reads `status`, `role`, `claim_id`, `is_primary` and `message`.
+- **The v1.86 erratum** is resolved and replaced by a one-line note. The error list, already corrected in v1.86, keeps its codes. It now names the two accepted `entity_type` values, counts its six 403 causes (it said four), and drops "+ consensus pubkey" from `not_operator`, because the match is on the operator address only.
+
+### v1.257 — 2026-11-25 — behaviour change — community activity counts exclude moderated posts; unknown counts are null
+
+Ships with bcc-core #194 and bcc-trust #901 (core first). Clients: bcc-frontend #427, already live, treats the nulls.
+
+- **§4.7.1 `activity` block** (holder groups, discovery, the group detail, Halls): `posts_last_7d`, `active_members_7d`, `last_activity_at` and `heat` now exclude moderated posts.
+- **Unknown counts are `null`:** when the moderated posts cannot be read, `posts_last_7d`, `active_members_7d`, `heat`, `heat_label` and `last_activity_at` are `null`, never a guessed `0` or `cold`.
+- **§3.2.4 community `Card`:** the `posts_7d` and `active` stats exclude moderated posts, and are left out of `stats` when the counts are unknown.
+- **Unchanged:** every other field, and the shapes when the counts are known.
 
 ### v1.256 — 2026-11-25 — doc correction — wallet requests carry the Cosmos key as `extra.pub_key` (F-524)
 
