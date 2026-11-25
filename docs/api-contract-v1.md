@@ -9917,7 +9917,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ### v1.NEXT — 2026-11-25 — additive — admin Halls: list, create a topic Hall, edit (F-597)
 
-Ships with bcc-trust PR_TRUST (topic Halls step 3a). Admin-only routes: §4.34.
+Ships with bcc-trust #904 (topic Halls step 3a), after #898. Admin-only routes: §4.34.
 
 - **`GET /admin/halls`:** every published Hall, with the fields an admin edits and which of them each Hall allows (`editable`).
 - **`POST /admin/halls`:** create a topic Hall. Its topic slug is its address, and the create is idempotent per topic.
