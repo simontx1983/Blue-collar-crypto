@@ -1408,6 +1408,18 @@ exists to remove; `null` is the honest answer to "which wire outcome was
 this?" when there was no wire outcome. A surface must render a null as **"not
 recorded"**, never as "no failure".
 
+⚠ **One measured exception: `refused` (simontx1983/bcc-trust#890).** When a
+provider REFUSES a request with a 4xx other than 429 (Subscan answering a page
+larger than the key's plan allows with HTTP 403 `row_limit_exceeded`),
+`ApiRetry` still charges nothing, but it notes the refusal on the caller's
+receipt (`recordProviderRefusal()`). If that refusal ends the operation and the
+domain verdict charges, the validator index (`ChainRefreshService`, both of its
+charge sites) records `refused` (`domainChargeKind()`). A later success, charge
+or open-breaker refusal on the same receipt clears it, because the last request
+is the one that ended the operation. The other domain sites still pass nothing,
+and `ProviderFailureKind::fromOutcome()` still returns null for every 4xx: the
+transport charging rule in the table below is unchanged.
+
 **The vocabulary is exactly as wide as the charging rule** — measured by
 driving the real retry loop against a scripted wire, not asserted:
 
@@ -1422,7 +1434,7 @@ bcc-trust `8c027ca4`):
 | **intermediate retry of either** | no | **0** — local retry state only (`continue` at `:399`, `:446`) | — |
 | HTTP 2xx, payload usable | no | 0 | records a SUCCESS (`:332`) |
 | HTTP 2xx rejected by `validate_success` | yes | **1** logical failure, not retried (`:323`) | null — no wire fault to name |
-| HTTP 4xx other than 429 | no | 0 (`:420`) | — nothing recorded |
+| HTTP 4xx other than 429 | no | 0 (`:420`) | — not charged; noted on the receipt, so a domain charge that follows records `refused` |
 | HTTP 3xx and other codes | no | 0 (`:424`) | — nothing recorded |
 | 5xx claimed by `application_error` | no | 0 (`:373`) | — a contract ANSWER, not a fault |
 | breaker already open | no | 0 — refused before any request | receipt reads `BLOCKED` |
@@ -1571,7 +1583,9 @@ chains.
 
 **The tab also surfaces the attribution, as wording rather than tokens:**
 `rate_limited` → “Provider rate limit”, `http_5xx` → “Provider server error”,
-`transport` → “Network connection failure”, with the request class alongside
+`transport` → “Network connection failure”, `refused` → “Provider rejected the
+request” (never “refused”: the tab must not render a raw token), with the
+request class alongside
 (“Smart contract query”, “Standard provider request”, “Batch provider
 request”). ⚠ A pre-PR-7.8 record and a domain-level charge both render as
 **“Not recorded”** — not a success, and not provider blame. An unrecognised or
