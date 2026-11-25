@@ -2479,7 +2479,7 @@ every reader and writer goes through it:
 | chain_type | canonical form |
 |---|---|
 | `evm` | strict `0x` + 40 hex, lowercased (EIP-55 case is a checksum, not identity) |
-| `cosmos` | full bech32 checksum verified via `Support/Bech32.php`, lowercased |
+| `cosmos` | strict bech32 decode via bcc-core's `BCC\Core\Crypto\Bech32` (checksum, case, length and padding: only the canonical spelling), lowercased |
 | `solana` | base58 **decoding to exactly 32 bytes**, encoded text preserved byte-for-byte — **never folded** |
 | `near`, `thorchain`, `polkadot`, `utxo`, unknown | **refused** — no identity rule, fail closed |
 
