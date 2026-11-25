@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.260 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.261 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -9662,7 +9662,7 @@ Validator, project and creator pages, as `/v/`, `/p/` or `/c/{slug}`: published,
 
 Open communities and Halls, as `/communities/{slug}` *(Halls too since v1.248, F-594; they were `/halls/{slug}`)*: published, with a slug, and **explicitly** open (a privacy row reads open and none reads closed or secret). Closed and secret groups are never listed. A group the app cannot place, one with disagreeing kind rows for example, is left out, so every listed URL is one the app serves.
 
-### 4.34 Admin Halls — topic Halls (F-597) *(v1.NEXT)*
+### 4.34 Admin Halls — topic Halls (F-597) *(v1.261)*
 
 The admin dashboard's Halls tab. Every route is **site administrators only** (`manage_options`): anonymous `401 bcc_unauthorized`, signed-in non-admin `403 bcc_forbidden`, before any work. Every response is `Cache-Control: no-store`.
 
@@ -10039,7 +10039,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-25 — additive — admin Halls: list, create a topic Hall, edit (F-597)
+### v1.261 — 2026-11-25 — additive — admin Halls: list, create a topic Hall, edit (F-597)
 
 Ships with bcc-trust #904 (topic Halls step 3a), after #898. Admin-only routes: §4.34.
 
