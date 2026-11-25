@@ -2047,16 +2047,17 @@ Issues a single-use challenge nonce for wallet signing, for a **signed-in** memb
 Verifies a signed nonce and links the wallet to the authenticated user.
 
 - **Auth:** Bearer (required — must already have a session via email signup)
-- **Body:**
+- **Body** *(corrected in v1.NEXT, F-524)*:
   ```json
   {
     "wallet_address": "cosmos1abcdef…",
-    "chain": "cosmos",
-    "nonce": "8f3a7b2e9c1d4f6a",
     "signature": "<hex or base64 signature>",
-    "public_key": "<hex pubkey, optional for chains where signature includes pubkey>"
+    "wallet_type": "user",
+    "label": "",
+    "extra": { "pub_key": "<base64 pubkey, Cosmos only>" }
   }
   ```
+  `wallet_address` and `signature` are required. `wallet_type` (default `"user"`) and `label` (default `""`) are optional. There is no `chain` or `nonce` field: the chain and the signed message come from the `GET /auth/nonce` challenge stored for this member and `wallet_address`. `extra` is as for `POST /auth/wallet-login`. There is no top-level `public_key` (or `pub_key`); one sent there is ignored.
 - **Response 201 (first-ever wallet link):**
   ```json
   {
@@ -2129,10 +2130,10 @@ Verifies a signed nonce, looks up the BCC user the wallet is linked to, mints + 
   {
     "wallet_address": "cosmos1abcdef…",
     "signature": "<base64 or hex signature>",
-    "extra": { "public_key": "<base64 pubkey, Cosmos only>" }
+    "extra": { "pub_key": "<base64 pubkey, Cosmos only>" }
   }
   ```
-  `extra` is an optional object passed verbatim to `WalletVerifier::verify` — Cosmos requires `public_key` here; ETH/Solana ignore it.
+  `extra` is an optional object passed verbatim to `WalletVerifier::verify` — Cosmos requires `pub_key` here (the base64 public key Keplr returns with the signature); ETH, Solana and Polkadot ignore it. `chain_id` may also be sent (the frontend sends the on-chain id) and is ignored: ADR-036 signs over an empty `chain_id`. *(Corrected in v1.NEXT, F-524: this said `public_key`, a key the server has never read.)*
 - **Response 200:**
   ```json
   {
@@ -2170,10 +2171,10 @@ Verifies a signed nonce, creates a new user (placeholder email if none supplied)
     "handle": "alice",
     "display_name": "Alice",
     "email": "alice@example.com",
-    "extra": { "public_key": "<base64 pubkey, Cosmos only>" }
+    "extra": { "pub_key": "<base64 pubkey, Cosmos only>" }
   }
   ```
-  `handle` is required (§B6 rules: 3–20 chars, lowercase + digits + hyphens). `display_name` and `email` are optional. The account's email is always a deterministic placeholder at first; a supplied `email` is held **pending** until it is verified *(since v1.182, F-294; see "Email state")*.
+  `extra` is as for `POST /auth/wallet-login` (Cosmos: `pub_key`; corrected in v1.NEXT, F-524). `handle` is required (§B6 rules: 3–20 chars, lowercase + digits + hyphens). `display_name` and `email` are optional. The account's email is always a deterministic placeholder at first; a supplied `email` is held **pending** until it is verified *(since v1.182, F-294; see "Email state")*.
 - **Response 201:**
   ```json
   {
@@ -9926,6 +9927,16 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-25 — doc correction — wallet requests carry the Cosmos key as `extra.pub_key` (F-524)
+
+Contract only. No code or response change.
+
+- **`POST /auth/wallet-login`, `POST /auth/wallet-signup`:** the examples put the Cosmos public key at `extra.public_key`. The server reads `extra.pub_key` (bcc-core `WalletVerifier::verify`) and has never read `public_key`. The examples and the `extra` note now say so, and note that a sent `chain_id` is ignored (ADR-036 signs over an empty one).
+- **`POST /auth/wallet-link`:** the body showed `chain`, `nonce` and a top-level `public_key`. The server reads `wallet_address`, `signature`, the optional `wallet_type` and `label`, and the same `extra`; the chain and the message come from the stored `GET /auth/nonce` challenge. The body now says so.
+- **Unchanged:** the three account-change confirmations already said Cosmos `pub_key`, which is now what wallet linking says too.
+- **Clients:** no change. The frontend already sends `extra: { pub_key, chain_id }` (`lib/wallet/dispatch.ts`).
+- **Not changed here:** the wallet-link **response** examples (see the PR), and the `POST /pages/:id/claim` body, which its open erratum already flags.
 
 ### v1.254 — 2026-11-25 — doc correction — the `GET /me/watching/summary` example matches the response
 
