@@ -3296,7 +3296,7 @@ Claims a validator or collection page with a wallet the member has **already lin
 - **Erratum resolved (v1.258):** the v1.86 erratum said the Body and Response blocks above described a signature flow this endpoint does not implement. They, the status code, the rate limit and the Mapping below now describe the implementation.
 - **Cache:** `Cache-Control: no-store`
 - **Mapping** *(corrected in v1.258)*: `PagesEndpoint::claim` → `ClaimService::claim`.
-  - In order: signed in, rate limit, not suspended, a published `peepso-page` (else 404), the entity bound to this page (else 403 `entity_not_bound`).
+  - In order: signed in, rate limit, not suspended, a valid `id` / `entity_type` / `entity_id` (else 400 `bcc_invalid_request`), a published `peepso-page` (else 404), the entity bound to this page (else 403 `entity_not_bound`). *(The 400 step added in v1.NEXT; v1.258's list skipped it.)*
   - If the member already holds the verified claim → `already_verified`, as above.
   - Otherwise the member's **verified** linked wallets on the entity's chain are matched. **Validator:** a wallet whose address is the validator's operator address (Cosmos: the same bytes under the account and `valoper` prefixes; delegators never match). **Collection:** the contract's owner or creator (a holder is refused, `holder_not_owner`).
   - Single claim wins: a validator claim goes through `ValidatorRelationshipService::claimByWallet`, a collection claim through `ClaimRepository::createExclusiveClaim`, and a page row mirrors either one.
@@ -9915,6 +9915,13 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-25 — doc correction — the claim route's gate order includes its input check
+
+Contract only. No code or response change.
+
+- **`POST /pages/:id/claim` › Mapping:** v1.258's "In order" list went from the suspension check straight to the page lookup. The handler checks the input between the two: a missing or malformed `id` or `entity_id`, or an `entity_type` other than `validator` / `collection`, answers `bcc_invalid_request` 400 there, before the page is read. The list now includes that step. The error list already had the 400.
+- **Clients:** no change.
 
 ### v1.258 — 2026-11-25 — doc correction — `POST /pages/:id/claim` describes the implementation; the v1.86 erratum is resolved (F-524 follow-up)
 
