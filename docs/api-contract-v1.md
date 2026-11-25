@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.258 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.261 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -1125,7 +1125,33 @@ The full member view-model. Returned by `GET /users/:handle` and embedded everyw
 - `reputation_tier_label` is the trust-tier name (the chip a human reads): `risky → "Risky"`, `caution → "Caution"`, `neutral → "Neutral"`, `trusted → "Trusted"`, `elite → "Elite"`. Always present on member and entity surfaces; `null` only on `community` cards, which have no trust system.
 - **`card_tier` / `tier_label` are RETIRED (v1.57).** The collectible-rarity vocabulary is gone — see §10 changelog for the full rationale. Do not reintroduce a rarity mapping anywhere; there is one tier axis and it is `reputation_tier`.
 - `current_rank_label` mirrors `rank_label` exactly (e.g. `"Veteran"`, or `"New Member"` for New Members). It is a member-axis field kept for surface compatibility.
-- `flags` is an array of short slugs; if non-empty, the frontend may render moderation chips. V1 codes: `suspended`, `shadow_limited`, `hidden`, `under_review`.
+- **`flags`** is an array of short slugs. **V1 code: `suspended`** — the only one.
+
+  ⛔ **WHO SEES IT (v1.259, F-582): the member themselves and administrators, nobody else.** For every other viewer — another member, and a signed-out visitor — the array is **empty**, whatever is true of the member.
+
+  ⚠⚠ **AN EMPTY ARRAY IS NOT A STATEMENT ABOUT THE MEMBER.** It means EITHER "no flags" OR "not yours to see", and a client cannot tell which. So a client MUST NOT render "no moderation flags", "in good standing" or any equivalent from an empty `flags`; it may only render chips for slugs it actually receives. The server follows the same rule: the member-profile standing block OMITS its "No active moderation flags" fact for a viewer who may not see the list, rather than stating it from an empty array.
+
+  ⚠ `shadow_limited`, `hidden` and `under_review` were **removed** in v1.259. Nothing in the codebase ever wrote them. They are not dormant: reintroducing one needs a contract amendment and a writer. ⭐ The real reach limit is the Caution/Risky reputation tier, a different mechanism — see `standing.reach_limited` below.
+
+- **`standing.reach_limited`** *(v1.259, F-582)*: whether a Caution or Risky reputation tier is currently limiting this member's reach.
+
+  ⚠ **WIDER THAN "FEEDS".** Their posts are withheld from other viewers on every surface that reads the feed: the anonymous hot feed, every per-viewer feed, **their own profile wall**, and **the permalink** (a direct link answers not-found). The one documented exception is a room that lifts the §O4.1 shadow limit, for an active member of that room.
+
+  ⚠⚠ **THE MEMBER IS NEVER EXCLUDED FROM THEIR OWN VIEW**, which is why the limit is invisible without this field: they see their posts on their own wall and in their own feed exactly as before, while other viewers see none of them. That asymmetry is the reason this field exists.
+
+  ⛔ **TRI-STATE, AND `null` IS NOT `false`:**
+
+  | value | meaning |
+  |---|---|
+  | `true` | you are this member, and your reach IS limited |
+  | `false` | you are this member, and it is not |
+  | `null` | **not disclosed** — you are not this member |
+
+  A client MUST treat `null` as "no answer" and render nothing. `false` is a claim and is only ever sent to the member themselves; sending it to anyone else would assert something about another member's standing.
+
+  ⚠ **MEMBER ONLY — not member-or-admin**, unlike `flags`. It is the member's own Standing tab answer (user decision 2026-11-24).
+
+  It is keyed on the member's displayed `reputation_tier`, which they already see on their own byline, rather than on a separate read of the list the feed consults — the two derive from the same score, and telling a member something that contradicts their own profile would be worse than telling them nothing.
 - Hidden privacy fields (per `privacy.*_hidden: true`) cause the corresponding sections in `counts`, `wallets`, etc. to either be omitted or zeroed depending on the viewer's relationship — server decides, client doesn't.
 - **Secret pages in the counts *(v1.230, F-571)*:** on a single member's view (this `User`, and that member's `MemberSummary.engagement`), `counts.reviews_written` and `counts.disputes_signed` leave out the SECRET pages this viewer may not see, by the same rule as `/users/:handle/reviews` and `/disputes`. So the secret-page part of a count agrees with its list. The member and site admins see the full count. When the pages' privacy cannot be read, or the member has more than 100 secret pages, both counts are `0` for that viewer. *(v1.242)* The member profile's own counts (`GET /users/:handle`) follow this rule, and so do member cards built in batches, for their viewer: the directory, followers and watchers, the viewer's watching list (`/me/watching`), group rosters and join requests, suggestions, the feed cold start, and review and reply authors. For a batch, the viewer's own card and site admins see the full counts. When the pages' privacy cannot be read, or the members of one batch together have more than 100 secret pages, that count is `0` on every card in the batch except the viewer's own; the list itself never fails over it. `reviews_written` still counts every active vote, as before, so it can exceed the Reviews list's `total` by moderation-hidden reviews.
 - **`joined_at` for other viewers *(since v1.238, R12)*:** the member themselves receives the exact time. Every other viewer, anonymous included, receives the **first of the month at `00:00:00Z`** (e.g. `2026-01-12T09:41:07Z` → `2026-01-01T00:00:00Z`), so neither the payload nor a page built from it carries the day or the time. The same holds for `MemberSummary.joined_at` wherever it appears (review and reply authors, group request and invite items, rosters, member cards). `""` (unknown) is unchanged. Admin routes keep the stored value.
@@ -2489,7 +2515,8 @@ Returns a full Card view-model.
 - **Rate limit:** 60/min/user (anonymous: 60/min/IP)
 - **Cache:** `Cache-Control: max-age=30, stale-while-revalidate=60`; React Query `staleTime: 30s`
 - **Mapping:**
-  - `trust_score`, `reputation_tier`, `reputation_tier_label`, `is_in_good_standing`, `flags` ← `bcc_page_read_model` (§A4)
+  - `trust_score`, `reputation_tier`, `reputation_tier_label`, `is_in_good_standing` ← `bcc_page_read_model` (§A4)
+  - `flags` ← the page OWNER's suspension state, through the viewer-gated reader (`UserViewService::flagsForViewer`), **not** the read model — corrected in v1.259, F-582
   - `is_claimed`, `claimed_by_handle` ← `peepso_pages.claimed_by` (§B5)
   - `chain` ← `peepso_page` meta (existing AbstractPageType)
   - `operator_profile` ← shared operator profile + page override, exposed only after the verified operator resolver returns one unambiguous owner (operator-profile routes below)
@@ -3354,9 +3381,10 @@ in PeepSo's `peepso_group_members` (single graph rule, §E3); BCC stores only a
 List of available Halls (PeepSo Groups in BCC clothing).
 
 - **Auth:** Anonymous OR Bearer
-- **Query:** `page` (default 1), `page_size` (default 20, max 50), `chain` (optional filter), `q` (optional; v1.239)
+- **Query:** `page` (default 1), `page_size` (default 20, max 50), `chain` (optional filter), `q` (optional; v1.239), `kind` (optional; *v1.260*)
+  - **`kind`** *(v1.260)*: `chain` or `topic`, the Hall's `hall_kind` (below). Any other value is `400 bcc_invalid_request` ("kind must be one of: chain, topic."). Without it the list holds every Hall, as before. It combines with `chain` and `q`; `chain` with `kind=topic` is always empty, since a topic Hall has no chain.
   - **`q`** *(v1.239)*: a name search, as on `GET /groups`. It matches the Hall's name anywhere in it, case-insensitively, and LIKE's wildcards in it match themselves. At most **100 characters** (longer is `400`). A search is throttled to **10 per 5 s** (`429 bcc_rate_limited`).
-    - `pagination.total` counts the Halls matching the same `chain` and `q`, so the page and its total agree.
+    - `pagination.total` counts the Halls matching the same `chain`, `q` and `kind`, so the page and its total agree.
 - **Response 200:**
   ```json
   {
@@ -3366,6 +3394,8 @@ List of available Halls (PeepSo Groups in BCC clothing).
         "slug": "cosmos-hall",
         "name": "Cosmos Hall",
         "chain": "cosmos",
+        "hall_kind": "chain",
+        "topic": null,
         "member_count": 412,
         "validator_count": 261,
         "collection_count": 95,
@@ -3391,6 +3421,12 @@ List of available Halls (PeepSo Groups in BCC clothing).
     about an ANONYMOUS response already cached under the same URL being
     replayed to a signed-in viewer; `Vary` is what keys those apart.
 - **Mapping:** `peepso-group` CPT posts filtered to Halls (`_bcc_group_kind = 'hall'` meta), JOINed with `peepso_group_members` for `member_count` and viewer membership; the viewer's primary pointer comes from `bcc_primary_hall_group_id` usermeta.
+
+**`hall_kind` / `topic`** *(v1.260, topic Halls)*: what the Hall is about.
+- `"chain"`: the Hall belongs to a chain (`chain` names it, or is `null` if that chain is no longer registered). `topic` is `null`.
+- `"topic"`: the Hall is about a subject rather than a chain, e.g. DeFi. `topic` is `{ "slug": "defi", "label": "DeFi" }`: `label` is the display name an admin gave it (the slug when it has none), so render it verbatim. `chain` is `null`, and `validator_count` / `collection_count` are `0`.
+- `null`: the Hall has neither (a chainless Hall from before topic Halls), or this response could not read it. Show no kind-specific label; never guess one from the name or slug.
+- `GET /halls?kind=` filters by exactly this rule, so every row a `kind` filter returns carries that `hall_kind` (unless it could not be read).
 
 **`validator_count` / `collection_count`** are the indexed on-chain content for the
 Hall's chain. They exist because a Hall with one member reads as dead while the same
@@ -7444,6 +7480,7 @@ Multipart blog cover-image upload (§D6 PR-B). Wraps `wp_handle_upload` + `wp_in
 Public cold-start three-block bridge for the home-feed empty state — a civic map, not a recommendation engine. Composes Halls + recent operators + hot posts. Bounded (3 halls, 4 operators, 2 hot posts); no pagination.
 
 - **Auth:** auth-permissive. Authed viewers get chain-aligned Halls (`bcc_home_chain`) + a per-(viewer, UTC-day) stable-random operator shuffle; anon viewers share the per-day seed.
+- **`halls`** *(v1.260, topic Halls)*: with a home chain, that chain's Halls come first and topic Halls (by name) fill the rest of the 3, so the panel never shows chain Halls only. Without one: the first 3 Halls by name, as before. **`chain_slug` is `null` for a topic Hall** (and for a Hall with no chain): render the Hall without a chain label rather than assume one.
 - **Response 200:**
   ```json
   { "halls": [ { "slug": "cosmos-hall", "name": "Cosmos Hall", "chain_slug": "cosmos", "member_count": 88 } ], "recent_operators": [ { "handle": "ramona", "display_name": "Ramona V.", "avatar_url": "https://…", "reputation_tier": "trusted", "reputation_tier_label": "Trusted", "rank_label": "Journeyman", "recent_action": "REVIEWED a card", "link": "/u/ramona" } ], "hot_posts": [ /* §3.3 FeedItem[] */ ] }
@@ -7548,9 +7585,9 @@ Single Hall detail (auth-optional). Same item shape as the `/halls` directory ro
 - **Path:** `slug` — `[a-z0-9][a-z0-9-]{0,99}`, required.
 - **Response 200:**
   ```json
-  { "id": 342, "slug": "cosmos-hall", "name": "Cosmos Hall", "chain": "cosmos", "member_count": 412, "viewer_membership": { "is_member": true, "is_primary": true, "joined_at": "2026-01-12T00:00:00Z" }, "links": { "self": "/communities/cosmos-hall" } }
+  { "id": 342, "slug": "cosmos-hall", "name": "Cosmos Hall", "chain": "cosmos", "hall_kind": "chain", "topic": null, "member_count": 412, "viewer_membership": { "is_member": true, "is_primary": true, "joined_at": "2026-01-12T00:00:00Z" }, "links": { "self": "/communities/cosmos-hall" } }
   ```
-  `chain` comes from the `_bcc_chain_tag` meta FK (`null` when absent). `viewer_membership` carries `is_primary` (Halls own the primary pointer; unlike §4.7.5).
+  `chain` comes from the `_bcc_chain_tag` meta FK (`null` when absent). `viewer_membership` carries `is_primary` (Halls own the primary pointer; unlike §4.7.5). `hall_kind` and `topic` *(v1.260)* follow the `GET /halls` rule; a topic Hall has `chain: null`, `chain_profile: null` and empty `validators` / `collections`.
 - **Errors:** `bcc_invalid_request` 400 (empty slug) · `bcc_not_found` 404
 - **Cache:** anon → `public, max-age=300`; authed → `private, no-store`.
 - **Mapping:** `HallsEndpoint::showBySlug` (route `HallsEndpoint.php:82`) → `HallsService::getHall` (`PeepSoGroupRepository::findOneBySlug` + `findUserMemberships` + `bcc_primary_hall_group_id`).
@@ -9627,6 +9664,91 @@ Validator, project and creator pages, as `/v/`, `/p/` or `/c/{slug}`: published,
 
 Open communities and Halls, as `/communities/{slug}` *(Halls too since v1.248, F-594; they were `/halls/{slug}`)*: published, with a slug, and **explicitly** open (a privacy row reads open and none reads closed or secret). Closed and secret groups are never listed. A group the app cannot place, one with disagreeing kind rows for example, is left out, so every listed URL is one the app serves.
 
+### 4.34 Admin Halls — topic Halls (F-597) *(v1.261)*
+
+The admin dashboard's Halls tab. Every route is **site administrators only** (`manage_options`): anonymous `401 bcc_unauthorized`, signed-in non-admin `403 bcc_forbidden`, before any work. Every response is `Cache-Control: no-store`.
+
+**Every 400 and 409 refusal carries `error.data.reason` (so does a create's 503). Clients key their copy on the code and `data`, never on the message.** The 401/403 gate and the 404/503 of `GET` / `PATCH /admin/halls/:id` carry none.
+- `400 bcc_invalid_request`:
+  - `reason` `invalid_value` with `field` and `rule`. `rule` is one of `empty`, `too_long`, `markup`, `format` (also a non-string field), `no_letter`, `ends_with_hall` or `reserved`.
+  - `reason` `not_editable` or `unknown_field`, with `field`.
+  - `reason` `nothing_to_change`.
+- `409 bcc_conflict`: `reason` `topic_exists` (with `group_id`), `address_taken` or `create_in_progress`.
+- `503 bcc_unavailable`: `reason` `unverified` (a check could not be read) or `create_failed`.
+
+`AdminHall` (the item every route returns):
+
+```json
+{
+  "id": 3012,
+  "slug": "defi",
+  "name": "DeFi Hall",
+  "description": "Lending, swaps and yield.",
+  "hall_kind": "topic",
+  "topic": { "slug": "defi", "label": "DeFi" },
+  "chain": null,
+  "member_count": 12,
+  "editable": { "name": true, "description": true, "topic_label": true },
+  "links": { "self": "/communities/defi" }
+}
+```
+
+- `hall_kind` / `topic` follow `GET /halls` (§4.7). They are `null` when the Hall has neither kind, or its kind could not be read.
+- `editable` says which fields `PATCH` accepts for this Hall:
+  - a topic Hall: all three;
+  - any other Hall: `description` only. A chain Hall's name and chain come from the chain registry, and chain Halls are still created in wp-admin ▸ Chains. A Hall not known to be a topic Hall fails closed to its description.
+- `slug` is the Hall's address, `/communities/{slug}`. It never changes.
+
+#### `GET /bcc/v1/admin/halls`
+
+Every published Hall, chain and topic alike, filtered as `GET /halls` is.
+
+- **Query:** `page` (default 1), `page_size` (default 20, max 50), `kind` (`chain` | `topic`; anything else is `400 bcc_invalid_request`), `chain` (a chain slug), `q` (a name search, at most 100 characters, else `400`).
+- **Response 200:** `{ "items": AdminHall[], "pagination": { "page", "page_size", "total", "total_pages" } }`. `total` uses the same filters as the rows.
+- **Mapping:** `AdminHallsEndpoint::list` → `AdminHallsService::list` (the `GET /halls` reads, then `findManyByIds` + `HallRepository::kindFactsForHalls`).
+
+#### `POST /bcc/v1/admin/halls`
+
+Create a **topic Hall**: an official, open Hall about a subject rather than a chain (DeFi, NFTs, …). It is created exactly as open as a chain Hall (public, joinable, auto-accept), and owned by the site's first administrator, not by whoever created it.
+
+- **Body:**
+  - `name` (1–80 characters);
+  - `topic_slug`: lowercase letters and digits in hyphen-separated runs, at most 50 characters, with at least one letter. It may not end in `hall` (kept for chain Halls) and may not be a reserved word (`peepso`, `peepsoajax`, `category`);
+  - `topic_label` (1–60 characters): the topic's display name;
+  - `description` (optional, at most 1000 characters).
+
+  Values are trimmed. **The topic slug is the Hall's address** (`/communities/{topic_slug}`), set at create and never changed.
+- **Response 201:** `{ "status": "created" | "incomplete", "message": string, "hall": AdminHall, "audit_degraded": bool }`.
+  - `incomplete`: the Hall exists, but its ownership could not be moved to the site owner. It is flagged, and resending a create with the same `topic_slug` repairs it.
+  - `audit_degraded`: the Hall is correct, but its audit row could not be written.
+- **Errors:**
+  - `400 bcc_invalid_request`: an invalid field. The message names the rule.
+  - `409 bcc_conflict`: the topic already has a Hall (with `error.data.group_id`); another group already has that address (never a silently suffixed address); or another create for the same topic is still running.
+  - `503 bcc_unavailable`: a check could not be read, or the create failed. Nothing is left behind, because a Hall that cannot be proven linked to its topic, at its address, is rolled back.
+- **Idempotent per topic.** One Hall per topic, serialized by a per-topic lock.
+- **Mapping:** `AdminHallsEndpoint::create` → `HallProvisioningService::provisionTopic` (the chain Hall pipeline: lock, existence check inside it, PeepSo create, marker plus re-read proof, deterministic owner, checked audit `admin_hall_created`).
+
+#### `GET /bcc/v1/admin/halls/:id`
+
+One Hall, in any post status, for the edit page.
+
+- **Response 200:** `{ "hall": AdminHall }`.
+- **Errors:** `404 bcc_not_found` (not a Hall), `503 bcc_unavailable`.
+- **Mapping:** `AdminHallsEndpoint::show` → `AdminHallsService::get`.
+
+#### `PATCH /bcc/v1/admin/halls/:id`
+
+Edit a Hall's `name`, `description` or `topic_label` (send only what changes), within the Hall's `editable`. A Hall in any post status can be edited.
+
+- **Body:** any of `name`, `description`, `topic_label`, with the same rules as `POST`. Values are trimmed.
+- **Response 200:** `{ "hall": AdminHall, "audit_degraded": bool }`. The edit is recorded with the checked audit `admin_hall_updated`. A correct edit whose audit row could not be written is kept and reported, never silently undone.
+- **Idempotent.** Name and description are one write; the topic label is a second. If the second fails after the first succeeded, the answer is `503` with the first part kept, and resending the same body completes the edit. Concurrent edits: the last write wins.
+- **Errors:**
+  - `400 bcc_invalid_request`, with a `data.reason` from the list above: nothing sent, an unknown field, a field this Hall does not allow (e.g. a chain Hall's `name`), or an invalid value. **Nothing is written unless every change passes.**
+  - `404 bcc_not_found`: not a Hall.
+  - `503 bcc_unavailable`: the Hall could not be read, or the write failed.
+- **Mapping:** `AdminHallsEndpoint::update` → `AdminHallsService::update` (`PeepSoGroup::update` for name and description, `HallRepository::writeTopicLabel` for the label).
+
 ## 5. Encoded rules — quick reference
 
 ### 5.1 §N7 — gated actions always visible
@@ -9703,8 +9825,8 @@ For each view-model field, the table below names the existing BCC system that ow
 | `reputation_tier_label` | Server-side mapping `reputation_tier → label` (`ReputationTierMap::TIER_LABEL`; elite → "Elite") — the sole tier vocabulary since v1.57 |
 | ~~`card_tier`, `tier_label`~~ | **RETIRED v1.57** — the rarity vocabulary is gone; use `reputation_tier` / `reputation_tier_label` |
 | `member_state`, `rank`, `rank_label`, `current_rank_label` | `RankStateService::memberState` over `wp_bcc_trust_rank_state` (v1.59 — earned Rank, written by the promotion engine / §5.2 readiness path). Missing row = New Member: `member_state: "new_member"`, nullable rank fields. No conferred-Role rows (§4.8) |
-| `is_in_good_standing` | `bcc-trust` derived from tier ≥ neutral AND no moderation flags (§E1) |
-| `flags` | suspension state + `wp_usermeta` moderation flags (`bcc_shadow_limited`/`bcc_hidden`/`bcc_under_review`) via `UserViewService::resolveFlags` — NOT the retired `bcc_trust_flags` vote-flag table |
+| `is_in_good_standing` | `bcc-trust`, from the TIER ALONE: `neutral`, `trusted` or `elite`. ⚠ Corrected in v1.259 (F-582) — it never consulted moderation flags, so it is the SAME for every viewer and is unaffected by `flags` being viewer-gated |
+| `flags` | suspension state via `UserViewService::flagsForViewer`, which gates `resolveFlags` to the member and administrators (F-582). The three `wp_usermeta` flags it also read were retired in v1.259. Never the retired `bcc_trust_flags` vote-flag table |
 | `bio` | PeepSo profile description |
 | `primary_hall`, `halls` | `peepso_group_members` (PeepSo's membership ledger — single graph rule) joined with `wp_usermeta.bcc_primary_hall_group_id` for the primary pointer; no dedicated BCC table |
 | `wallets` | `bcc_wallet_links` (existing) |
@@ -9729,7 +9851,8 @@ For each view-model field, the table below names the existing BCC system that ow
 | `card_kind` | `peepso_pages.peepso_page_type` mapped via `AbstractPageType` |
 | `name`, `handle` | `peepso_pages.name` + slug |
 | `chain` | `peepso_page` meta (existing AbstractPageType) |
-| `trust_score`, `reputation_tier`, `reputation_tier_label`, `is_in_good_standing`, `flags` | `bcc_page_read_model` (denormalized read model, §A4) |
+| `trust_score`, `reputation_tier`, `reputation_tier_label`, `is_in_good_standing` | `bcc_page_read_model` (denormalized read model, §A4) |
+| `flags` | the page OWNER's suspension state via `UserViewService::flagsForViewer` (viewer-gated, F-582) — **not** the read model, corrected in v1.259 |
 | `rank_label` | `null` for V1 entity cards (members only have ranks); for member cards, the earned-Rank label via `UserViewService::getSummary`'s member-state resolution over `wp_bcc_trust_rank_state` (v1.59; `null` for New Members; §4.8) |
 | `is_claimed` | `peepso_pages.claimed_by IS NOT NULL` (new V1 column, per §B5) |
 | `claimed_by_handle` | JOIN to `wp_usermeta.bcc_handle` |
@@ -9925,6 +10048,37 @@ Ships with bcc-trust #907. Frontend half to follow (friend).
 - **`GET /me/progression` → `progression.findings_unavailable`** (bool, ranked members, always present beside `findings`): `true` when the findings could not be loaded. `findings` is then `[]`, which is not "none". `false` means `findings` is the real list.
 - **Unchanged:** `findings` items and every other field. A client that does not read the flag renders as before.
 
+### v1.261 — 2026-11-25 — additive — admin Halls: list, create a topic Hall, edit (F-597)
+
+Ships with bcc-trust #904 (topic Halls step 3a), after #898. Admin-only routes: §4.34.
+
+- **`GET /admin/halls`:** every published Hall, with the fields an admin edits and which of them each Hall allows (`editable`).
+- **`POST /admin/halls`:** create a topic Hall. Its topic slug is its address, and the create is idempotent per topic.
+- **`GET /admin/halls/:id`:** one Hall, in any post status.
+- **`PATCH /admin/halls/:id`:** edit a topic Hall's name, description and topic label; any other Hall's description only.
+- Every 400/409 refusal carries `error.data.reason`, plus `field` and `rule` for a bad value.
+- **Unchanged:** every public route. A topic Hall appears in `GET /halls` with `hall_kind: "topic"` (§4.7, step 2a).
+
+### v1.260 — 2026-11-25 — additive — topic Halls on the read side: `hall_kind`, `topic`, `GET /halls?kind=`
+
+Ships with bcc-trust #898, after bcc-core #192 (the Hall-kind filter) is in production. Topic Halls, step 2a.
+
+- **`GET /halls` and `GET /halls/:slug`:** each Hall carries `hall_kind` (`"chain"` | `"topic"` | `null`) and `topic` (`{slug, label}` | `null`). A topic Hall has no chain: `chain` is `null` and its on-chain counts are `0`.
+- **`GET /halls?kind=chain|topic`:** filters by the same rule, on the page and on `pagination.total`. Any other value is `400 bcc_invalid_request`.
+- **`GET /feed/cold-start` `halls`:** with a home chain, topic Halls fill the slots its chain's Halls leave. `chain_slug` is `null` for a topic Hall (doc: it was already nullable for a Hall with no chain).
+- **Unchanged:** every existing field, the error envelope, the cache headers, and every request without `kind`.
+- **Clients:** additive. A client that reads `chain_slug` must handle `null`.
+
+### v1.259 — 2026-11-25 — behaviour change (privacy) — moderation flags are the member's and administrators' to see (F-582)
+
+Ships with bcc-trust #902.
+
+- **`flags` is viewer-scoped.** The member themselves and administrators receive it; every other viewer, signed-out included, receives an **empty array** whatever is true of the member. No server behaviour depends on the list, and no cache changes: every shared cache holds signed-out responses, which now carry an empty array.
+- ⚠⚠ **An empty `flags` is NOT a statement about the member** — it means either "no flags" or "not yours to see", and a client cannot tell which. Clients MUST NOT render "no moderation flags", "in good standing" or any equivalent from an empty array; render chips only for slugs actually received. The member-profile standing block follows the same rule and OMITS its "No active moderation flags" fact for a viewer who may not see the list, rather than asserting it from an empty array.
+- **Three slugs removed:** `shadow_limited`, `hidden` and `under_review`. Nothing in the codebase ever wrote them. `suspended` is the only V1 code. Reintroducing one needs a contract amendment and a writer.
+- **New `standing.reach_limited`** — whether a Caution or Risky tier is limiting the member's reach. ⚠ Wider than "feeds": their posts are withheld from other viewers on every feed-backed surface, including their own profile wall and the permalink, with one documented room exception — while the member themselves is never excluded from their own view, which is why the limit was invisible. ⛔ **Tri-state, and `null` is not `false`:** `true`/`false` to the member, `null` (not disclosed) to anyone else. Clients MUST treat `null` as "no answer". ⚠ MEMBER ONLY, not member-or-admin, unlike `flags` (user decision 2026-11-24).
+- ⚠ **Two documentation corrections, no code change:** page-card `flags` come from the page OWNER's suspension through the viewer-gated reader, NOT from `bcc_page_read_model` as §4 and §9 said; and `is_in_good_standing` is derived from the TIER ALONE (`neutral`/`trusted`/`elite`), never from moderation flags — so it is the same for every viewer and is unaffected by this change.
+- **Unchanged:** suspension enforcement, the public index and sitemap (a suspended member is excluded by the listing clause, which never used the three removed keys), `indexable` (already the anonymous answer whoever asks, and already documented as never derived from `flags`), and every write gate.
 ### v1.258 — 2026-11-25 — doc correction — `POST /pages/:id/claim` describes the implementation; the v1.86 erratum is resolved (F-524 follow-up)
 
 Contract only. No code or response change.
