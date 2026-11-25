@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.251 · 2026-11-12 · Phase 1 deliverable
+**Status:** Draft v1.252 · 2026-11-12 · Phase 1 deliverable
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Source of truth for decisions referenced as `§Xn`:** `C:\Users\simon\.claude\plans\snazzy-wiggling-muffin.md`.
@@ -3464,8 +3464,8 @@ Mark a Hall as the user's primary.
     "primary_hall": { "...": "Hall view-model" }
   }
   ```
-- **Errors:** `bcc_unauthorized`, `bcc_forbidden` (not a member of this Hall; *v1.NEXT:* also any group that is not a published, non-secret Hall, with the same message), `bcc_unavailable` 503 *(v1.NEXT)* (the check could not be read; nothing was written; retry)
-- **A home Hall accepts only published, non-secret Halls** *(v1.NEXT)*. A member's `primary_hall` (and a member card's home Hall) shows only while the pointer still names a published, non-secret Hall. If that check cannot be read, no home Hall is shown.
+- **Errors:** `bcc_unauthorized`, `bcc_forbidden` (not a member of this Hall; *v1.252:* also any group that is not a published, non-secret Hall, with the same message), `bcc_unavailable` 503 *(v1.252)* (the check could not be read; nothing was written; retry)
+- **A home Hall accepts only published, non-secret Halls** *(v1.252)*. A member's `primary_hall` (and a member card's home Hall) shows only while the pointer still names a published, non-secret Hall. If that check cannot be read, no home Hall is shown.
 - **Mapping:** Writes the `bcc_primary_hall_group_id` usermeta pointer (singleton — one Hall per user). Emits `bcc_hall_primary_changed`.
 
 #### `DELETE /bcc/v1/me/halls/primary`
@@ -9926,7 +9926,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-24 — behaviour change — a home Hall accepts only published, non-secret Halls
+### v1.252 — 2026-11-24 — behaviour change — a home Hall accepts only published, non-secret Halls
 
 Ships with bcc-trust #893. bcc-trust only.
 
