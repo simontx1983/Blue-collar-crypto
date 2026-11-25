@@ -13,6 +13,12 @@
  *   - legacy_ajax lagging behind the 9→3 retirement until both docs
  *     were touched in lockstep.
  *
+ * Both directions (F-601): every doc claim must match the map, AND every
+ * mapped subsystem must be claimed by at least one of the two docs, unless
+ * scripts/subsystem-count-allowlist.php names it with a reason. Before
+ * F-601 only the first direction ran, so a subsystem added to the map with
+ * no doc line passed silently.
+ *
  * Exit 0 = canonical map and docs agree.
  * Exit 1 = drift detected; mismatches printed with file:line refs.
  *
@@ -206,6 +212,8 @@ if ($canonical === []) {
 // because the loop skips underscore-free names, so "total (5 events)" would
 // otherwise satisfy the floor while comparing nothing.
 $comparedTotal = 0;
+/** @var array<string, true> mapped subsystems some doc claims (map → docs check) */
+$claimed = [];
 
 foreach ($docFiles as $absPath => $relPath) {
     $compared = 0;
@@ -228,6 +236,7 @@ foreach ($docFiles as $absPath => $relPath) {
         }
 
         $compared++;
+        $claimed[$name] = true;
         if ($canonical[$name] !== $count) {
             $findings[] = sprintf(
                 "%s:%d — '%s' claims %d events but canonical map has %d",
@@ -244,10 +253,56 @@ foreach ($docFiles as $absPath => $relPath) {
     $comparedTotal += $compared;
 }
 
+/*
+|--------------------------------------------------------------------------
+| MAP → DOCS — every mapped subsystem is claimed somewhere (F-601)
+|--------------------------------------------------------------------------
+| A mapped subsystem needs a `name (N events)` / `name / N events` claim in
+| pattern-registry.md or GOLDEN_PATHS.md, or an entry (with a reason) in
+| scripts/subsystem-count-allowlist.php. An allowlist entry that is no
+| longer mapped, that a doc now claims, or that has no reason fails too, so
+| the list cannot rot. A missing allowlist file is an EMPTY list: stricter,
+| never looser.
+*/
+$ALLOWLIST_REL  = 'scripts/subsystem-count-allowlist.php';
+$allowlistPath  = $REPO_ROOT . '/' . $ALLOWLIST_REL;
+$allowlist      = is_readable($allowlistPath) ? require $allowlistPath : [];
+if (!is_array($allowlist)) {
+    $findings[] = "{$ALLOWLIST_REL} must return an array (subsystem => reason)";
+    $allowlist  = [];
+}
+foreach ($allowlist as $name => $reason) {
+    if (!is_string($name) || !is_string($reason) || trim($reason) === '') {
+        $findings[] = sprintf("%s — '%s' needs a non-empty reason", $ALLOWLIST_REL, (string) $name);
+        continue;
+    }
+    if (!array_key_exists($name, $canonical)) {
+        $findings[] = sprintf(
+            "%s — '%s' is allowlisted but not in the bcc-core.php canonical map (stale: remove the entry)",
+            $ALLOWLIST_REL, $name
+        );
+    } elseif (isset($claimed[$name])) {
+        $findings[] = sprintf(
+            "%s — '%s' is allowlisted but a doc now claims it (stale: remove the entry)",
+            $ALLOWLIST_REL, $name
+        );
+    }
+}
+foreach ($canonical as $name => $count) {
+    if (isset($claimed[$name]) || array_key_exists($name, $allowlist)) {
+        continue;
+    }
+    $findings[] = sprintf(
+        "bcc-core.php canonical map has '%s' (%d event%s) but neither doc claims it — add `%s (%d event%s)` to docs/GOLDEN_PATHS.md or docs/pattern-registry.md, or allowlist it with a reason in %s",
+        $name, $count, $count === 1 ? '' : 's', $name, $count, $count === 1 ? '' : 's', $ALLOWLIST_REL
+    );
+}
+
 if ($findings === []) {
     echo "PASS: subsystem counts match between bcc-core.php and docs ("
        . $comparedTotal . " doc claims compared across " . count($docFiles)
-       . " docs; canonical map has " . count($canonical) . " subsystems).\n";
+       . " docs; canonical map has " . count($canonical) . " subsystems; "
+       . count($claimed) . " claimed, " . count($allowlist) . " allowlisted).\n";
     exit(0);
 }
 
