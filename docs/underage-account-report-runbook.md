@@ -1,0 +1,10 @@
+# Underage account report handling
+
+Review draft for support, privacy and counsel. Store actual reports in restricted case files.
+
+1. Route reports from the existing privacy contact to staff responsible for privacy. Ask for the minimum information needed to locate the account and understand the report. Keep the account reference and receipt date. Avoid asking for a full birth date or an identity document by ordinary email.
+2. Assess credibility promptly. Record the facts and source, who reviewed them, and the action taken. Restrict the case to staff with a role in the response and avoid discussing the report publicly.
+3. When the report credibly concerns someone under 18, escalate to privacy and support for the existing account restriction and deletion process. A possible under-13 case needs prompt review for actual knowledge under COPPA, including what personal information was collected and whether collection should stop. Obtain the existing approval for production account changes. Record and verify vendor, notification, and content handling only to the extent relevant to the case.
+4. Use existing approved account controls and privacy request handling. Have counsel confirm what to delete, what any applicable obligation requires preserving, and the timing and content of any notice. Follow up through the verified contact with a brief description of the actions taken. Apply the approved retention period for restricted case records.
+
+BCC’s Terms set an 18+ membership rule. COPPA uses an under-13 threshold and its application depends on facts including the site's audience and, for a general-audience service, actual knowledge. A neutral date question does not independently prove age. Counsel should review the service classification, collection before the screen and during first-time provider sign-in, credible-report handling, and what notice or handling is required under applicable rules. [FTC COPPA FAQs](https://www.ftc.gov/business-guidance/resources/complying-coppa-frequently-asked-questions)
