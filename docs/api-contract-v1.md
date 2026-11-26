@@ -10225,6 +10225,11 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
+### v1.NEXT — 2026-11-26 — behavior clarification — weekly digest unsubscribe
+
+- **`/bcc/v1/digest/unsubscribe` (internal HTML route):** signed-out GET and POST keep the existing signed `uid`, `exp`, and `sig` parameters. An invalid token returns `400`. A saved opt-out, including a repeated request for an already-saved opt-out, returns `200`. If WordPress cannot confirm the preference was saved, the endpoint returns a retryable `503`. Each HTML response uses `Cache-Control: no-store`.
+- **Delivery:** the weekly sender checks the current digest opt-in again before handing a message to the mail transport. This preference affects the weekly digest. Account verification, password resets, and security messages use separate senders.
+
 ### v1.264 — 2026-11-26 — additive — admin validator owner API
 
 Route availability depends on the Trust version deployed to each environment.
