@@ -2183,6 +2183,8 @@ Verifies a signed nonce, looks up the BCC user the wallet is linked to, mints + 
 
 Verifies a signed nonce, creates a new user (placeholder email if none supplied), links the wallet, mints + returns a JWT. Wallet-as-credential equivalent of `/auth/signup`.
 
+- **Age eligibility (v1.NEXT):** include `eligibility_token` from `POST /auth/age-eligibility` in the JSON body. A missing, invalid or expired proof returns `age_eligibility_required` (403) before wallet-proof consumption or account creation. Existing wallet sign-in does not need this proof.
+
 - **Auth:** Anonymous
 - **Body:**
   ```json
@@ -2283,9 +2285,22 @@ Consumes a reset key issued by `/auth/forgot-password` and sets a new password. 
   - `AuditLogger::log('password_reset_completed', $userId, [], 'user', $userId)`.
   - **Confirms a pending email sign-up (since v1.147, F-287):** the reset key reached `user_email` and came back, so an account created by email sign-up that is still unconfirmed (`_bcc_email_verified='0'`, a password, no wallet or OAuth link) is marked confirmed, its pending code is burned and `bcc_email_verified` fires. The next `/auth/login` no longer answers `bcc_email_not_verified`. ⚠ A wallet or OAuth account is **not** confirmed by a reset: its email may be one someone else typed.
 
+#### `POST /bcc/v1/auth/age-eligibility`
+
+Checks Blue Collar Crypto’s 18+ signup rule against a self-reported date of birth. The server determines eligibility using the current UTC calendar date.
+
+- **Auth:** Anonymous.
+- **JSON body:** `{ "birth_date": "YYYY-MM-DD" }`. Send the date only to this first-party endpoint.
+- **200 data:** `{ "eligibility_token": "<opaque token>" }`. The proof expires after 20 minutes. It contains no birth date or age. The handler does not echo the date or attach it to an account.
+- **Errors:** `bcc_invalid_request` (400) for missing, malformed, impossible or future dates; `age_ineligible` (403) when the 18th birthday has not arrived; `bcc_rate_limited` (429); `bcc_unavailable` (503) if the server cannot issue the proof.
+- **Rate limit:** IP-bucketed, 5 per 60 seconds. **Cache:** `Cache-Control: no-store`.
+- **Use:** `POST /auth/signup`, `POST /auth/wallet-signup` and new-account `POST /auth/oauth-complete` take this proof in their JSON body. The proof and age answer are excluded from navigation URLs, OAuth provider parameters and analytics.
+
 #### `POST /bcc/v1/auth/signup`
 
 Creates an email/password account with a public handle. Mints no JWT — the account is marked pending email verification and the user must complete `/auth/verify-email` (or sign in after verifying) before `/auth/login` will issue a token.
+
+- **Age eligibility (v1.NEXT):** include `eligibility_token` from `POST /auth/age-eligibility` in the JSON body. A missing, invalid or expired proof returns `age_eligibility_required` (403) before signup writes. This includes retrying an unconfirmed signup.
 
 - **Auth:** Anonymous (no token)
 - **Body:**
@@ -2383,6 +2398,8 @@ Re-sends a fresh 2FA code for an in-progress login challenge.
 #### `POST /bcc/v1/auth/oauth-complete`
 
 Completes an OAuth (Google/X) signup for a first-time user: exchanges the `provider_token` minted by the internal `/auth/oauth` bridge (see `EXEMPT_INTERNAL`) plus a chosen handle for a new account + JWT. Browser-called from `/signup/complete-profile`; its security rests on the `provider_token` — an unforgeable, single-use, server-issued capability carrying server-stored (not client-supplied) provider identity.
+
+- **Age eligibility (v1.NEXT):** include `eligibility_token` from `POST /auth/age-eligibility` in the JSON body to create an account. A missing, invalid or expired proof returns `age_eligibility_required` (403) and leaves the pending provider token usable. Existing OAuth sign-in and the existing post-create retry are unchanged.
 
 - **Auth:** Anonymous (no token — the provider_token is the credential)
 - **Body:**
@@ -10224,6 +10241,10 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-26 — signup age eligibility
+
+- Adds the first-party age eligibility endpoint and requires its proof before password, wallet or OAuth account creation. Existing member sign-in is unchanged.
 
 ### v1.264 — 2026-11-26 — additive — admin validator owner API
 
