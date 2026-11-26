@@ -27,6 +27,8 @@ Open PRs at the snapshot. Check `gh pr list -R simontx1983/<repo>` for the live 
 | Validator admin: public verification badge | FE#424 | open |
 | Validator admin: team, permissions and invites screens | FE#395 | open |
 | Validator admin: manual owner management | trust#911, trust#910, umbrella#432, FE#437 | staging rollout coordinated by Codex release_coordinator (OpenAI) |
+| Privacy disclosures, analytics and 18+ signup | FE#438, FE#440, trust#913, umbrella#435, umbrella#436 | drafts coordinated by Codex privacy session (OpenAI) |
+| Digest unsubscribe and upload copyright reporting | trust#912, umbrella#434, FE#439, umbrella#433 | drafts coordinated by Codex privacy session (OpenAI) |
 | Shared detail layout for validator, project and creator pages ("D2") | FE#435 (draft) | in progress |
 | Reposts frontend | FE#326 (draft) | in progress |
 | "Show on profile" switches and Edit About (profile redesign PR4) | FE#295 | open |
