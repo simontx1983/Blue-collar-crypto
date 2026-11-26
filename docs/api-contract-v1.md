@@ -2192,12 +2192,13 @@ Verifies a signed nonce, creates a new user (placeholder email if none supplied)
     "wallet_address": "cosmos1abcdef…",
     "signature": "<base64 or hex signature>",
     "handle": "alice",
+    "eligibility_token": "<opaque proof>",
     "display_name": "Alice",
     "email": "alice@example.com",
     "extra": { "pub_key": "<base64 pubkey, Cosmos only>" }
   }
   ```
-  `extra` is as for `POST /auth/wallet-login` (Cosmos: `pub_key`; corrected in v1.256, F-524). `handle` is required (§B6 rules: 3–20 chars, lowercase + digits + hyphens). `display_name` and `email` are optional. The account's email is always a deterministic placeholder at first; a supplied `email` is held **pending** until it is verified *(since v1.182, F-294; see "Email state")*.
+  `extra` is as for `POST /auth/wallet-login` (Cosmos: `pub_key`; corrected in v1.256, F-524). `wallet_address`, `signature`, `handle` and `eligibility_token` are required. See §B6 for handle rules. `display_name` and `email` are optional. The account's email is always a deterministic placeholder at first; a supplied `email` is held **pending** until it is verified *(since v1.182, F-294; see "Email state")*.
 - **Response 201:**
   ```json
   {
@@ -2305,9 +2306,9 @@ Creates an email/password account with a public handle. Mints no JWT — the acc
 - **Auth:** Anonymous (no token)
 - **Body:**
   ```json
-  { "email": "alice@example.com", "password": "<min 8 chars>", "handle": "alice", "display_name": "Alice" }
+  { "email": "alice@example.com", "password": "<min 8 chars>", "handle": "alice", "eligibility_token": "<opaque proof>", "display_name": "Alice" }
   ```
-  `email`, `password`, `handle` required; `display_name` optional (defaults to the handle). `handle` is lowercased + trimmed and validated per §B6 (3–20 chars, lowercase letters / digits / hyphens, no leading / trailing / consecutive hyphens).
+  `email`, `password`, `handle` and `eligibility_token` are required. `display_name` is optional and defaults to the handle. `handle` is lowercased + trimmed and validated per §B6 (3–20 chars, lowercase letters / digits / hyphens, no leading / trailing / consecutive hyphens).
 - **Response 201:**
   ```json
   { "ok": true, "email": "alice@example.com" }
@@ -2404,9 +2405,9 @@ Completes an OAuth (Google/X) signup for a first-time user: exchanges the `provi
 - **Auth:** Anonymous (no token — the provider_token is the credential)
 - **Body:**
   ```json
-  { "provider_token": "<64-hex>", "handle": "alice", "display_name": "Alice", "email": "alice@example.com" }
+  { "provider_token": "<64-hex>", "handle": "alice", "eligibility_token": "<opaque proof>", "display_name": "Alice", "email": "alice@example.com" }
   ```
-  `provider_token`, `handle` required; `display_name` optional (falls back to the provider's display name, then the handle). `email` is **required iff the provider didn't supply one** (X/Twitter's OAuth2 user-context never returns an email; Google always does) and is ignored when it did.
+  `provider_token` and `handle` are required. Account creation also requires `eligibility_token`. `display_name` is optional and falls back to the provider's display name, then the handle. `email` is **required iff the provider didn't supply one** (X/Twitter's OAuth2 user-context never returns an email; Google always does) and is ignored when it did.
 - **Response 201:** identical shape to `/auth/2fa/verify` (`{ user_id, handle, token, expires_in, token_type, in_good_standing, suspended }`) — the user is signed in immediately.
 - **Errors:** `bcc_invalid_request` 400 (missing provider_token) · `bcc_invalid_oauth_token` 400 (provider_token expired (15 min) or consumed — restart the OAuth flow) · `bcc_invalid_handle` 422 / `bcc_handle_reserved` 422 (§B6) · `bcc_invalid_email` 422 (email missing/invalid when the provider supplied none or supplied an unusable one; *since v1.209 (F-458)*, including any address on the reserved `@noreply.bcc.local` domain. A typed address is never taken as provider-verified) · `bcc_conflict` 409 (handle or email already taken) · `bcc_rate_limited` 429 · `bcc_unavailable` 503 *(since v1.182, F-294)* "Your sign-up is still being completed. Please try again." (another submit with the same `provider_token` is still being processed; nothing was created by this submit; retry the same request) · `bcc_internal_error` 500. Validation errors leave the provider_token intact so the user corrects and retries in place.
 - **A retry is the same sign-up (since v1.182, F-294):** submits with one `provider_token` are processed one at a time (a submit waits up to 5 seconds, then answers the 503 above). After a successful create, **one** retry of the same request signs in as **that** account: a fresh token, the same 201 shape, no second account and no second mail. It counts only if it comes within **2 minutes**, carries the **same `handle`** (compared trimmed and lowercased, as the create does), and arrives before any "sign out everywhere" on the account. Anything else answers the spent-token `bcc_invalid_oauth_token` 400 "Session expired. Please sign in again.": a second retry, a later one, one with another handle (which also uses up the one retry), or one after the account's sessions were revoked. A double submit or a retry after a lost response used to answer "That handle is already taken." or "Session expired." for an account that existed. The narrow window is there because the token sits in the `/signup/complete-profile?pt=…` URL, where browser history keeps it. **Clients:** resend the same request once; after a 201, drop the `provider_token` (and strip it from the URL).
