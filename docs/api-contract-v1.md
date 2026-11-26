@@ -9758,6 +9758,181 @@ Edit a Hall's `name`, `description` or `topic_label` (send only what changes), w
   - `503 bcc_unavailable`: the Hall could not be read, or the write failed.
 - **Mapping:** `AdminHallsEndpoint::update` → `AdminHallsService::update` (`PeepSoGroup::update` for name and description, `HallRepository::writeTopicLabel` for the label).
 
+### 4.35 Admin validator owners — manual owner management *(v1.NEXT, prepared; not merged)*
+
+**Status:** the owner API and its consuming frontend changes are prepared in isolated branches. This section describes that implementation; it does not assert that these routes are merged or deployed. Team management is outside this section.
+
+Every route below requires a signed-in **site administrator** (`manage_options`), checked before work: anonymous `401 bcc_unauthorized`, signed-in non-admin `403 bcc_forbidden`. Responses use the canonical success/error envelopes (§1.4–§1.5); the shapes below are the inner `data`. Read responses, including the POST user search, carry `Cache-Control: private, no-store`; write and step-up responses carry `Cache-Control: no-store`. These guarantees also apply to handler error responses.
+
+Identifiers are positive integers. Path and query identifiers use canonical decimal strings; zero, negatives, fractions, leading-zero forms, arrays and integer overflow are `422 bcc_invalid_request`. JSON user identifiers must be positive JSON integers. Path identifiers come from the matched route; query or JSON fields cannot replace them. Write fields and credentials come from JSON, with no query-string credential fallback.
+
+**Shared shapes:**
+
+```ts
+type AdminUserRef = {
+  user_id: number; handle: string; display_name: string; avatar_url: string | null;
+};
+type AdminValidatorState = "unclaimed" | "wallet_verified" | "staff_verified" | "conflict";
+type AdminValidatorCounts = {
+  unclaimed: number; wallet_verified: number; staff_verified: number; conflict: number;
+};
+type AdminValidatorChain = { slug: string; name: string };
+type AdminOwnerVerification = {
+  kind: "wallet" | "staff" | "node_key";
+  method: string; label: string; verified_at: string;
+};
+type AdminOwnerSummary = {
+  user: AdminUserRef; verification: AdminOwnerVerification; locked_for_staff: boolean;
+};
+type AdminValidatorOwner = AdminOwnerSummary & {
+  link_id: number;
+  linked_by: AdminUserRef | null; linked_at: string;
+  evidence_type: "website" | "keybase" | "manual" | null;
+  evidence_note: string | null; evidence_ref: string | null;
+  cancellable: boolean;
+};
+```
+
+- `AdminUserRef` never returns an email address or login. Public handle/display-name sanitization applies; this private staff surface retains the established admin real-name visibility policy.
+- Verification `method` is the stored method: currently `wallet`, `siws`, `solana_identity` or `staff`. A staff link reads back as `kind: "staff", method: "staff"`; its form evidence type is returned separately as `evidence_type`. Clients display the server's `label`.
+- `locked_for_staff` is the authority for offering staff revoke/cancel: it is `false` only for a staff verification, and `true` for proof or unknown methods. Missing or malformed lock data must be treated as locked. `kind` is display information, not permission.
+- `owner.link_id` is the **canonical validator operator claim ID**, used for revoke/cancel. It is not a history event ID or a history sequence cursor. Clients treat all three as separate opaque identifiers.
+- Dates are ISO 8601 UTC strings; historical relationship dates without a usable stored value may be `""`. `linked_by` and evidence fields are null for proof owners. Evidence is **plain text**, never HTML and never rendered as an active link; a client may offer a copy action for `evidence_ref`.
+
+#### `GET /bcc/v1/admin/validator-pages`
+
+- **Query:** `chain` (optional lowercase chain slug, at most 100 characters, letters/digits/hyphens), `state` (optional `AdminValidatorState`), `q` (optional UTF-8 title or operator-address substring, at most 200 characters; trimmed), `limit` (default 25, maximum 100), `cursor` (optional positive page ID).
+- **Response 200:**
+
+  ```ts
+  {
+    items: Array<{
+      page_id: number; title: string; slug: string; chain: AdminValidatorChain;
+      operator_addresses: string[]; state: AdminValidatorState;
+      owner: AdminOwnerSummary | null;
+      uncovered_validator_count: number; wallet_claim_possible: boolean;
+    }>;
+    pagination: { next_cursor: string | null; has_more: boolean };
+    chains: Array<AdminValidatorChain & {
+      wallet_claim_possible: boolean; counts: AdminValidatorCounts;
+    }>;
+    total_counts: AdminValidatorCounts;
+  }
+  ```
+
+- One row per non-trash validator page, ordered by ascending page ID. The cursor selects page IDs greater than it. `chain`, `state` and `q` filter the rows; the selected chain supplies the row's chain reference, otherwise its first recognized binding does. `operator_addresses` is deduplicated across the page's recognized bindings. This information is private to the admin route.
+- `chains` and `total_counts` describe the full directory, independently of row filters and pagination. A page counts once per chain in a chain facet, and once overall in `total_counts`. A page bound across several chains must not be double-counted in overall totals; summing chain facets is not an overall total.
+- Ownership comes from the canonical strict page-owner resolver, with actual verified operator claims checked against recognized validator bindings. `conflict` has no single `owner`; it is not unclaimed. `uncovered_validator_count` counts distinct bound validators not covered by the resolved claims. `wallet_claim_possible` is server-computed using existing chain claim support.
+- The directory read admits at most **5000 binding rows**, not 5000 returned pages. Exceeding this bound is `503 bcc_unavailable`, not a truncated directory or partial counts. Unavailable ownership/identity reads also return `503`.
+- **Mapping:** `AdminValidatorReadEndpoint::directory` → `AdminValidatorReadService::directory`, reusing strict claim resolution.
+
+#### `GET /bcc/v1/admin/validator-pages/:pageId/relationships`
+
+- **Response 200:** `{ page: { page_id, title, slug, chain: AdminValidatorChain }, state: AdminValidatorState, owner: AdminValidatorOwner | null, conflict_users: Array<{ user: AdminUserRef, verification: AdminOwnerVerification }>, revoke_reasons: Array<{ key: string, label: string }> }`.
+- Competing resolved users produce `state: "conflict"`, `owner: null` and `conflict_users`; no arbitrary winner is selected. Staff evidence follows the actual selected validator claim, including pages with several bindings.
+- `revoke_reasons` is the server's ordered allowlist: `linked_in_error`, `evidence_withdrawn`, `owner_requested`, `ownership_disputed`, each with display copy. Send its key on revoke; render its label.
+- **Errors:** `404 bcc_not_found` for a missing/non-validator page; `503 bcc_unavailable` for unreadable or inconsistent references.
+- **Mapping:** `AdminValidatorReadEndpoint::relationships` → `AdminValidatorReadService::relationships`.
+
+#### `POST /bcc/v1/admin/users/search`
+
+- **JSON body:** `{ q: string }`. UTF-8; at least one character after trimming, at most 200 characters before trimming. `q` is never taken from the URL query string.
+- Matches a handle/display-name substring or an exact email/login. **Response 200:** `{ items: AdminUserRef[] }`, at most **10** results, ordered by user ID. Matching an email/login does not return that credential.
+- Limited to **30 valid searches per administrator per 60 seconds**. Exhaustion is `429 bcc_rate_limited` with `Retry-After: 60` and `error.data.retry_after: 60`, not an empty successful result. Unavailable reads are `503 bcc_unavailable`.
+- **Mapping:** `AdminValidatorReadEndpoint::searchUsers` → `AdminValidatorReadService::searchUsers`.
+
+#### `POST /bcc/v1/admin/validator-pages/:pageId/step-up`
+
+- **JSON body:** `{ action: "link_owner" | "revoke_owner" | "cancel_link", target_user_id: number, current_password: string }`.
+- V1 requires the acting administrator's current password and an emailed six-digit code. This route fixes the bound role to `owner`. The grant is bound to the acting administrator, action, page, target user and role. For revoke/cancel the target must match the page's current owner, and that owner must be staff-manageable.
+- **Response 200:** `{ step_up_id: string, expires_in: 600, resend_after: 60 }`. The ID is an opaque 32-character lowercase hex string. The destination email address is never returned.
+- Password verification and email limits remain those of the existing step-up service: 10 password checks and five code emails per administrator per 15 minutes. Rate errors carry `Retry-After`.
+- **Mapping:** `AdminValidatorWriteEndpoint::start` → `ValidatorStepUpService::start`, with JSON-only password confirmation.
+
+#### `POST /bcc/v1/admin/validator-pages/step-up/:stepUpId/resend`
+
+- Resends the code for the acting administrator's owner-action grant. It never creates an unrelated action grant or changes its bindings.
+- **Response 200:** `{ expires_in: number, resend_after: 60 }` in seconds. A resend offers up to 600 seconds of remaining validity without extending beyond 1800 seconds from the original start. The existing service's resend window, email limit, spent state and attempt cap apply.
+- If WordPress rejects sending the code on start or resend, the endpoint returns `503 bcc_unavailable` with `error.data.reason: "mail_unavailable"`. The dialog returns to password confirmation for a fresh attempt. Sending success reflects acceptance by the configured mail transport.
+- **Mapping:** `AdminValidatorWriteEndpoint::resend` → `ValidatorStepUpService::resend`.
+
+#### `POST /bcc/v1/admin/validator-pages/:pageId/relationships`
+
+- **JSON body:** `{ user_id: number, role: "owner", verification_method: "website" | "keybase" | "manual", evidence_note: string, evidence_ref: string, step_up_id: string, code: string }`.
+- `evidence_note` and `evidence_ref` are required, nonblank UTF-8 strings, at most **2000** and **500** characters respectively. The reference requires an HTTP(S) scheme and a nonempty host. Values are preserved as text. The form's `verification_method` names evidence, not the stored verification method.
+- `code` is six decimal digits, kept as a string. The existing code service counts checks, caps attempts at five and consumes the correctly bound grant in the write transaction. Its locked relationship service remains authoritative for target eligibility, existing owners, proof protection and concurrency.
+- Manual linking applies to an unowned page. It does not replace an existing owner. A proof owner or an unknown verification method cannot be removed by this API.
+- **Response 201:** `{ link_id: number, owner: AdminValidatorOwner }`, with the saved canonical claim ID and a re-read owner projection.
+- **Mapping:** `AdminValidatorWriteEndpoint::link` → `ValidatorRelationshipService::linkOwnerByStaff`; existing audit, relationship log and post-commit alignment/notification behavior is reused.
+
+#### `POST /bcc/v1/admin/validator-pages/:pageId/relationships/:linkId/revoke`
+
+- **JSON body:** `{ reason: string, note?: string, step_up_id: string, code: string }`. `reason` must be a key from `revoke_reasons`; `note` is optional and may be blank, but must be UTF-8 text of at most 2000 characters when supplied. The same code/grant rules apply.
+- The current owner claim must match `linkId`; the grant's target must match that claim's user, with action `revoke_owner`. A matching staff-manageable claim is rechecked under the existing write locks.
+- **Response 200:** `{ revoked: true }`.
+- **Mapping:** `AdminValidatorWriteEndpoint::revoke` → `ValidatorRelationshipService::revokeOwnerByStaff`.
+
+#### `POST /bcc/v1/admin/validator-pages/:pageId/relationships/:linkId/cancel`
+
+- **JSON body:** `{ note?: string, step_up_id: string, code: string }`, with the same optional-note/code constraints. Any site administrator may cancel a current staff link with their own action-bound step-up; it is not restricted to the original linking administrator.
+- The current owner claim must match `linkId`; the grant's target must match that claim's user, with action `cancel_link`.
+- **Response 200:** `{ cancelled: true, restored_owner: null }`. Cancellation removes the mistaken staff link. Since manual links are created only on unowned pages, this operation does not restore a previously replaced owner.
+- **Mapping:** `AdminValidatorWriteEndpoint::cancel` → `ValidatorRelationshipService::cancelLinkByStaff`.
+
+**Shared owner-write errors:** clients use `error.code` and `error.data`, never message matching.
+
+| Status / code | Data and handling |
+|---|---|
+| `422 bcc_invalid_request` | Invalid input carries `field` where available. An ineligible link target carries `reason: "target_not_eligible", field: "user_id"`. |
+| `403 bcc_step_up_required` | No step-up proof supplied; obtain a grant. |
+| `403 bcc_step_up_failed` | `reason` is `password`, `code`, `expired`, `used` or `mismatch`. `used` includes a spent grant or exhausted attempt cap; `mismatch` includes wrong bindings or malformed IDs. Restart the grant when it cannot be reused. |
+| `404 bcc_not_found` | Page/current owner claim not found or no longer matches the requested relationship. Refresh the reads. |
+| `409 bcc_conflict` | `reason` is `wallet_owner_present`, `owner_exists`, `validator_has_operator`, `already_cancelled` or `not_cancellable`, as reported by the authoritative service. Refresh ownership before another action. |
+| `429 bcc_rate_limited` | `Retry-After` header and `data.retry_after` seconds. Wait before retrying. |
+| `503 bcc_unavailable` | A required read/write could not be completed; no internal error detail is returned. A special saved-result outcome is described below. |
+
+If the owner link commits but its returned projection cannot be verified/read, the response is **`503 bcc_unavailable` with `{ reason: "result_unavailable", committed: true }` in `error.data`**. Its message states that the change was saved and the latest result could not be read. Close the write flow and refresh ownership/history; **do not blindly repeat the write**. A failure to read the result is not a rollback claim.
+
+#### `GET /bcc/v1/admin/validator-pages/:pageId/history`
+
+- **Query:** optional `user_id`, `cursor` and `limit` (default 25, maximum 100). The route page takes precedence over a query page filter. A missing/non-validator route page is `404 bcc_not_found`.
+- **Response 200:** the history shape below, restricted to the page.
+
+#### `GET /bcc/v1/admin/validator-relationships/history`
+
+- **Query:** optional `page_id`, `user_id`, `cursor` and `limit` (default 25, maximum 100). `user_id` matches the subject **or** actor.
+- Both history routes return newest first:
+
+  ```ts
+  {
+    items: Array<{
+      id: number; created_at: string; action: string;
+      subject: AdminUserRef | null; actor: AdminUserRef | null;
+      page: { page_id: number; title: string };
+      prev: { role: string | null; status: string | null; method: string | null };
+      new: { role: string | null; status: string | null; method: string | null };
+      reason: string | null; reason_label: string | null;
+      evidence_note: string | null; evidence_ref: string | null;
+      step_up: "password" | "password+code" | null;
+    }>;
+    pagination: { next_cursor: string | null; has_more: boolean };
+  }
+  ```
+
+- `id` identifies the **history event**. Pagination uses the log's separate monotonic **sequence**, returned as `next_cursor`; the next page selects sequences less than it. Never construct a cursor from `items[].id`, and never use a history event ID as `owner.link_id`.
+- Owner link/revoke/cancel events are named `linked`, `revoked`, `cancelled`. Other existing relationship event names are preserved. Render server reason labels and evidence as text. Null subject/actor represents a deleted account or a system event; a missing page title reads `Deleted page`.
+- **Errors:** invalid filters `422 bcc_invalid_request`; unavailable reads `503 bcc_unavailable`.
+- **Mapping:** `AdminValidatorReadEndpoint::history` → `AdminValidatorReadService::history` → the existing relationship log reader.
+
+#### `GET /bcc/v1/admin/validator-relationships/health`
+
+- **Response 200:** `{ chain_ok: boolean, checked_at: string, rows_checked: number, head_seq: number }`, with an ISO 8601 UTC check time and nonnegative counts.
+- Reads the **stored scheduled health-check verdict only**. GET never runs the verifier, repairs data, sends email or advances the log. `chain_ok` is true only for a stored successful verdict with status `ok`; warning/incomplete/broken verdicts do not become a green result. `false` means the latest stored check needs attention; it does not by itself establish that history was changed. `checked_at` says when that stored check ran, not when this GET ran.
+- No stored result, malformed result or an unavailable read is `503 bcc_unavailable`, never an invented healthy snapshot.
+- **Mapping:** `AdminValidatorReadEndpoint::health` → `AdminValidatorReadService::health` → the stored result reader.
+
+**Rollout prerequisites:** the owner relationship service continuation (C1b-2), step-up persistence, relationship log and required schema must be present before this adapter is enabled. Coordinate the backend route PR to merge **immediately before** its contract PR, as required by `AGENTS.md`; retain `v1.NEXT` until the coordinated release assigns a numeric version. Backend merge, staging validation, production plugin deployment and frontend release are separate steps. Confirm the owner backend/schema on the target environment before releasing its consuming frontend; frontend `main` merges deploy through Vercel, while plugin production deployment requires its own explicit owner authorization. This contract change authorizes no deployment.
+
 ## 5. Encoded rules — quick reference
 
 ### 5.1 §N7 — gated actions always visible
@@ -10049,6 +10224,15 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-26 — additive — prepared admin validator owner API
+
+Prepared implementation, not merged or deployed. Numeric version remains unassigned.
+
+- **§4.35:** documents the admin-only validator directory, ownership reads, JSON user search, owner-bound password/code step-up, link/revoke/cancel, relationship history and stored health routes. No team API is promised.
+- **Identifiers:** owner `link_id` is a canonical operator claim ID; history `id` is an event ID; history cursors are log sequences. These are distinct.
+- **Counting/privacy/errors:** unique overall page counts alongside per-chain facets, a 5000-binding fail-closed directory bound, private uncached reads, credential searches in JSON, and the explicit `result_unavailable` / `committed: true` saved-result outcome.
+- **Rollout:** requires the C1b-2 owner service continuation and schema; route PR immediately precedes its contract PR. Backend deployment and frontend release remain separately gated.
 
 ### v1.NEXT — 2026-11-25 — documentation reconciliation
 
