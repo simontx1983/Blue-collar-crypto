@@ -10227,7 +10227,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ### v1.264 — 2026-11-26 — additive — admin validator owner API
 
-Prepared implementation, not merged or deployed. Numeric version remains unassigned.
+Route availability depends on the Trust version deployed to each environment.
 
 - **§4.35:** documents the admin-only validator directory, ownership reads, JSON user search, owner-bound password/code step-up, link/revoke/cancel, relationship history and stored health routes. No team API is promised.
 - **Identifiers:** owner `link_id` is a canonical operator claim ID; history `id` is an event ID; history cursors are log sequences. These are distinct.
