@@ -1,6 +1,6 @@
 # BCC API View-Model Contract — V1
 
-**Status:** Draft v1.NEXT · 2026-11-25 · Phase 1 deliverable
+**Status:** v1.264 · 2026-11-26 · Phase 1 deliverable. The documentation reconciliation entry remains a v1.NEXT draft.
 **Scope:** every endpoint the Next.js frontend (`bcc-frontend/`) calls during V1, and every view-model those endpoints return.
 **Authority:** this document is the lock point between WordPress (implements) and Next.js (consumes). When implementation diverges from this contract, the contract wins until a versioned contract update lands.
 **Decision references (`§Xn`):** `§J.*` is defined in [`trust-attestation-layer.md`](trust-attestation-layer.md) and in §J of this contract. Other lettered references (`§A`–`§L`, `§O`) cite the original V1 planning document, which was never committed to this repository and is no longer available. Where those decisions are still in force they are recorded in [`ai/DECISIONS.md`](ai/DECISIONS.md). Read an unresolvable `§Xn` as historical context, not as a link you can follow.
@@ -9758,9 +9758,9 @@ Edit a Hall's `name`, `description` or `topic_label` (send only what changes), w
   - `503 bcc_unavailable`: the Hall could not be read, or the write failed.
 - **Mapping:** `AdminHallsEndpoint::update` → `AdminHallsService::update` (`PeepSoGroup::update` for name and description, `HallRepository::writeTopicLabel` for the label).
 
-### 4.35 Admin validator owners — manual owner management *(v1.NEXT, prepared; not merged)*
+### 4.35 Admin validator owners — manual owner management *(v1.264)*
 
-**Status:** the owner API and its consuming frontend changes are prepared in isolated branches. This section describes that implementation; it does not assert that these routes are merged or deployed. Team management is outside this section.
+This section covers validator owner management. Route availability depends on the Trust version deployed in the target environment.
 
 Every route below requires a signed-in **site administrator** (`manage_options`), checked before work: anonymous `401 bcc_unauthorized`, signed-in non-admin `403 bcc_forbidden`. Responses use the canonical success/error envelopes (§1.4–§1.5); the shapes below are the inner `data`. Read responses, including the POST user search, carry `Cache-Control: private, no-store`; write and step-up responses carry `Cache-Control: no-store`. These guarantees also apply to handler error responses.
 
@@ -9931,7 +9931,7 @@ If the owner link commits but its returned projection cannot be verified/read, t
 - No stored result, malformed result or an unavailable read is `503 bcc_unavailable`, never an invented healthy snapshot.
 - **Mapping:** `AdminValidatorReadEndpoint::health` → `AdminValidatorReadService::health` → the stored result reader.
 
-**Rollout prerequisites:** the owner relationship service continuation (C1b-2), step-up persistence, relationship log and required schema must be present before this adapter is enabled. Coordinate the backend route PR to merge **immediately before** its contract PR, as required by `AGENTS.md`; retain `v1.NEXT` until the coordinated release assigns a numeric version. Backend merge, staging validation, production plugin deployment and frontend release are separate steps. Confirm the owner backend/schema on the target environment before releasing its consuming frontend; frontend `main` merges deploy through Vercel, while plugin production deployment requires its own explicit owner authorization. This contract change authorizes no deployment.
+**Rollout prerequisites:** deploy the Core mail transport update and the Trust owner relationship service, step-up persistence, relationship log and required schema to the target environment before releasing the frontend that calls these routes. Follow [the deployment procedure](ai/DEPLOYMENT.md) for staging verification and release approval.
 
 ## 5. Encoded rules — quick reference
 
@@ -10225,7 +10225,7 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 
 ## 10. Changelog
 
-### v1.NEXT — 2026-11-26 — additive — prepared admin validator owner API
+### v1.264 — 2026-11-26 — additive — admin validator owner API
 
 Prepared implementation, not merged or deployed. Numeric version remains unassigned.
 

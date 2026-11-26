@@ -1,6 +1,6 @@
 # Current state
 
-**Snapshot: 2026-11-25.** Update this page whenever a workstream starts, finishes or changes hands, and change the date when you do.
+**Snapshot: 2026-11-26.** Update this page whenever a workstream starts, finishes or changes hands, and change the date when you do.
 
 ## Where `main` is
 
@@ -26,6 +26,7 @@ Open PRs at the snapshot. Check `gh pr list -R simontx1983/<repo>` for the live 
 | Card cover photo on the Card view-model | trust#897, umbrella#415 | open |
 | Validator admin: public verification badge | FE#424 | open |
 | Validator admin: team, permissions and invites screens | FE#395 | open |
+| Validator admin: manual owner management | trust#911, trust#910, umbrella#432, FE#437 | staging rollout coordinated by Codex release_coordinator (OpenAI) |
 | Shared detail layout for validator, project and creator pages ("D2") | FE#435 (draft) | in progress |
 | Reposts frontend | FE#326 (draft) | in progress |
 | "Show on profile" switches and Edit About (profile redesign PR4) | FE#295 | open |
