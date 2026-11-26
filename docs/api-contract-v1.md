@@ -2183,6 +2183,8 @@ Verifies a signed nonce, looks up the BCC user the wallet is linked to, mints + 
 
 Verifies a signed nonce, creates a new user (placeholder email if none supplied), links the wallet, mints + returns a JWT. Wallet-as-credential equivalent of `/auth/signup`.
 
+- **Age eligibility (v1.NEXT):** include `eligibility_token` from `POST /auth/age-eligibility` in the JSON body. A missing, invalid or expired proof returns `age_eligibility_required` (403) before wallet-proof consumption or account creation. Existing wallet sign-in does not need this proof.
+
 - **Auth:** Anonymous
 - **Body:**
   ```json
@@ -2190,12 +2192,13 @@ Verifies a signed nonce, creates a new user (placeholder email if none supplied)
     "wallet_address": "cosmos1abcdef…",
     "signature": "<base64 or hex signature>",
     "handle": "alice",
+    "eligibility_token": "<opaque proof>",
     "display_name": "Alice",
     "email": "alice@example.com",
     "extra": { "pub_key": "<base64 pubkey, Cosmos only>" }
   }
   ```
-  `extra` is as for `POST /auth/wallet-login` (Cosmos: `pub_key`; corrected in v1.256, F-524). `handle` is required (§B6 rules: 3–20 chars, lowercase + digits + hyphens). `display_name` and `email` are optional. The account's email is always a deterministic placeholder at first; a supplied `email` is held **pending** until it is verified *(since v1.182, F-294; see "Email state")*.
+  `extra` is as for `POST /auth/wallet-login` (Cosmos: `pub_key`; corrected in v1.256, F-524). `wallet_address`, `signature`, `handle` and `eligibility_token` are required. See §B6 for handle rules. `display_name` and `email` are optional. The account's email is always a deterministic placeholder at first; a supplied `email` is held **pending** until it is verified *(since v1.182, F-294; see "Email state")*.
 - **Response 201:**
   ```json
   {
@@ -2283,16 +2286,29 @@ Consumes a reset key issued by `/auth/forgot-password` and sets a new password. 
   - `AuditLogger::log('password_reset_completed', $userId, [], 'user', $userId)`.
   - **Confirms a pending email sign-up (since v1.147, F-287):** the reset key reached `user_email` and came back, so an account created by email sign-up that is still unconfirmed (`_bcc_email_verified='0'`, a password, no wallet or OAuth link) is marked confirmed, its pending code is burned and `bcc_email_verified` fires. The next `/auth/login` no longer answers `bcc_email_not_verified`. ⚠ A wallet or OAuth account is **not** confirmed by a reset: its email may be one someone else typed.
 
+#### `POST /bcc/v1/auth/age-eligibility`
+
+Checks Blue Collar Crypto’s 18+ signup rule against a self-reported date of birth. The server determines eligibility using the current UTC calendar date.
+
+- **Auth:** Anonymous.
+- **JSON body:** `{ "birth_date": "YYYY-MM-DD" }`. Send the date only to this first-party endpoint.
+- **200 data:** `{ "eligibility_token": "<opaque token>" }`. The proof expires after 20 minutes. It contains no birth date or age. The handler does not echo the date or attach it to an account.
+- **Errors:** `bcc_invalid_request` (400) for missing, malformed, impossible or future dates; `age_ineligible` (403) when the 18th birthday has not arrived; `bcc_rate_limited` (429); `bcc_unavailable` (503) if the server cannot issue the proof.
+- **Rate limit:** IP-bucketed, 5 per 60 seconds. **Cache:** `Cache-Control: no-store`.
+- **Use:** `POST /auth/signup`, `POST /auth/wallet-signup` and new-account `POST /auth/oauth-complete` take this proof in their JSON body. The proof and age answer are excluded from navigation URLs, OAuth provider parameters and analytics.
+
 #### `POST /bcc/v1/auth/signup`
 
 Creates an email/password account with a public handle. Mints no JWT — the account is marked pending email verification and the user must complete `/auth/verify-email` (or sign in after verifying) before `/auth/login` will issue a token.
 
+- **Age eligibility (v1.NEXT):** include `eligibility_token` from `POST /auth/age-eligibility` in the JSON body. A missing, invalid or expired proof returns `age_eligibility_required` (403) before signup writes. This includes retrying an unconfirmed signup.
+
 - **Auth:** Anonymous (no token)
 - **Body:**
   ```json
-  { "email": "alice@example.com", "password": "<min 8 chars>", "handle": "alice", "display_name": "Alice" }
+  { "email": "alice@example.com", "password": "<min 8 chars>", "handle": "alice", "eligibility_token": "<opaque proof>", "display_name": "Alice" }
   ```
-  `email`, `password`, `handle` required; `display_name` optional (defaults to the handle). `handle` is lowercased + trimmed and validated per §B6 (3–20 chars, lowercase letters / digits / hyphens, no leading / trailing / consecutive hyphens).
+  `email`, `password`, `handle` and `eligibility_token` are required. `display_name` is optional and defaults to the handle. `handle` is lowercased + trimmed and validated per §B6 (3–20 chars, lowercase letters / digits / hyphens, no leading / trailing / consecutive hyphens).
 - **Response 201:**
   ```json
   { "ok": true, "email": "alice@example.com" }
@@ -2384,12 +2400,14 @@ Re-sends a fresh 2FA code for an in-progress login challenge.
 
 Completes an OAuth (Google/X) signup for a first-time user: exchanges the `provider_token` minted by the internal `/auth/oauth` bridge (see `EXEMPT_INTERNAL`) plus a chosen handle for a new account + JWT. Browser-called from `/signup/complete-profile`; its security rests on the `provider_token` — an unforgeable, single-use, server-issued capability carrying server-stored (not client-supplied) provider identity.
 
+- **Age eligibility (v1.NEXT):** include `eligibility_token` from `POST /auth/age-eligibility` in the JSON body to create an account. A missing, invalid or expired proof returns `age_eligibility_required` (403) and leaves the pending provider token usable. Existing OAuth sign-in and the existing post-create retry are unchanged.
+
 - **Auth:** Anonymous (no token — the provider_token is the credential)
 - **Body:**
   ```json
-  { "provider_token": "<64-hex>", "handle": "alice", "display_name": "Alice", "email": "alice@example.com" }
+  { "provider_token": "<64-hex>", "handle": "alice", "eligibility_token": "<opaque proof>", "display_name": "Alice", "email": "alice@example.com" }
   ```
-  `provider_token`, `handle` required; `display_name` optional (falls back to the provider's display name, then the handle). `email` is **required iff the provider didn't supply one** (X/Twitter's OAuth2 user-context never returns an email; Google always does) and is ignored when it did.
+  `provider_token` and `handle` are required. Account creation also requires `eligibility_token`. `display_name` is optional and falls back to the provider's display name, then the handle. `email` is **required iff the provider didn't supply one** (X/Twitter's OAuth2 user-context never returns an email; Google always does) and is ignored when it did.
 - **Response 201:** identical shape to `/auth/2fa/verify` (`{ user_id, handle, token, expires_in, token_type, in_good_standing, suspended }`) — the user is signed in immediately.
 - **Errors:** `bcc_invalid_request` 400 (missing provider_token) · `bcc_invalid_oauth_token` 400 (provider_token expired (15 min) or consumed — restart the OAuth flow) · `bcc_invalid_handle` 422 / `bcc_handle_reserved` 422 (§B6) · `bcc_invalid_email` 422 (email missing/invalid when the provider supplied none or supplied an unusable one; *since v1.209 (F-458)*, including any address on the reserved `@noreply.bcc.local` domain. A typed address is never taken as provider-verified) · `bcc_conflict` 409 (handle or email already taken) · `bcc_rate_limited` 429 · `bcc_unavailable` 503 *(since v1.182, F-294)* "Your sign-up is still being completed. Please try again." (another submit with the same `provider_token` is still being processed; nothing was created by this submit; retry the same request) · `bcc_internal_error` 500. Validation errors leave the provider_token intact so the user corrects and retries in place.
 - **A retry is the same sign-up (since v1.182, F-294):** submits with one `provider_token` are processed one at a time (a submit waits up to 5 seconds, then answers the 503 above). After a successful create, **one** retry of the same request signs in as **that** account: a fresh token, the same 201 shape, no second account and no second mail. It counts only if it comes within **2 minutes**, carries the **same `handle`** (compared trimmed and lowercased, as the create does), and arrives before any "sign out everywhere" on the account. Anything else answers the spent-token `bcc_invalid_oauth_token` 400 "Session expired. Please sign in again.": a second retry, a later one, one with another handle (which also uses up the one retry), or one after the account's sessions were revoked. A double submit or a retry after a lost response used to answer "That handle is already taken." or "Session expired." for an account that existed. The narrow window is there because the token sits in the `/signup/complete-profile?pt=…` URL, where browser history keeps it. **Clients:** resend the same request once; after a 201, drop the `provider_token` (and strip it from the URL).
@@ -10224,6 +10242,10 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-26 — signup age eligibility
+
+- Adds the first-party age eligibility endpoint and requires its proof before password, wallet or OAuth account creation. Existing member sign-in is unchanged.
 
 ### v1.264 — 2026-11-26 — additive — admin validator owner API
 
