@@ -2291,7 +2291,7 @@ Checks a self-reported birth date against the 18+ membership rule and issues a s
 - **JSON body:** `{ "birth_date": "YYYY-MM-DD" }`. Use a real, non-future calendar date. The check uses the current UTC date, including the eighteenth birthday. For a February 29 birth date, the cutoff in a non-leap year is March 1.
 - **Response 200:** `{ "data": { "eligibility_token": "<opaque proof>" }, "_meta": { … } }`. The proof expires after 20 minutes and contains an expiry, random value and signature. The handler discards the submitted date after the check.
 - **Errors:** `bcc_invalid_request` (400) for a missing, malformed, impossible or future date, `age_ineligible` (403) before the eighteenth birthday, `bcc_rate_limited` (429) when the throttle refuses the request, and `bcc_unavailable` (503) when the server cannot issue a proof.
-- **Rate limit:** Five requests per 60 seconds per client IP for anonymous traffic.
+- **Rate limit:** Five requests per 60 seconds per anonymous client network.
 - **Cache:** `Cache-Control: no-store` on success and errors.
 - **Rollout:** This release adds the proof issuer. Existing signup clients can continue to use their current account-creation payloads.
 
