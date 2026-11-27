@@ -2283,6 +2283,18 @@ Consumes a reset key issued by `/auth/forgot-password` and sets a new password. 
   - `AuditLogger::log('password_reset_completed', $userId, [], 'user', $userId)`.
   - **Confirms a pending email sign-up (since v1.147, F-287):** the reset key reached `user_email` and came back, so an account created by email sign-up that is still unconfirmed (`_bcc_email_verified='0'`, a password, no wallet or OAuth link) is marked confirmed, its pending code is burned and `bcc_email_verified` fires. The next `/auth/login` no longer answers `bcc_email_not_verified`. ⚠ A wallet or OAuth account is **not** confirmed by a reset: its email may be one someone else typed.
 
+#### `POST /bcc/v1/auth/age-eligibility`
+
+Checks a self-reported birth date against the 18+ membership rule and issues a short-lived eligibility proof (v1.NEXT).
+
+- **Auth:** Anonymous.
+- **JSON body:** `{ "birth_date": "YYYY-MM-DD" }`. Use a real, non-future calendar date. The check uses the current UTC date, including the eighteenth birthday. For a February 29 birth date, the cutoff in a non-leap year is March 1.
+- **Response 200:** `{ "data": { "eligibility_token": "<opaque proof>" }, "_meta": { … } }`. The proof expires after 20 minutes and contains an expiry, random value and signature. The handler discards the submitted date after the check.
+- **Errors:** `bcc_invalid_request` (400) for a missing, malformed, impossible or future date, `age_ineligible` (403) before the eighteenth birthday, `bcc_rate_limited` (429) when the throttle refuses the request, and `bcc_unavailable` (503) when the server cannot issue a proof.
+- **Rate limit:** Five requests per 60 seconds per client IP for anonymous traffic.
+- **Cache:** `Cache-Control: no-store` on success and errors.
+- **Rollout:** This release adds the proof issuer. Existing signup clients can continue to use their current account-creation payloads.
+
 #### `POST /bcc/v1/auth/signup`
 
 Creates an email/password account with a public handle. Mints no JWT — the account is marked pending email verification and the user must complete `/auth/verify-email` (or sign in after verifying) before `/auth/login` will issue a token.
@@ -10224,6 +10236,11 @@ These routes ARE shipped in V1 with real data — earlier drafts of this doc lis
 ---
 
 ## 10. Changelog
+
+### v1.NEXT — 2026-11-26 — additive — signup age eligibility issuer
+
+- **`POST /auth/age-eligibility`:** checks a self-reported birth date and returns a 20-minute opaque proof. The handler discards the date after checking it.
+- **Clients:** Existing account-creation payloads continue to work. Clients can call the new endpoint before starting signup once the target environment has the route.
 
 ### v1.264 — 2026-11-26 — additive — admin validator owner API
 
